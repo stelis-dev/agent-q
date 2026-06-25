@@ -22,6 +22,7 @@ namespace agent_q {
 namespace {
 
 uint8_t g_chunk_decode_buffer[kAgentQPayloadDeliveryDefaultChunkMaxBytes];
+constexpr const char* kPayloadTransferMethod = "payload_transfer";
 
 bool parse_size_string(const char* value, size_t* output)
 {
@@ -191,66 +192,63 @@ bool write_size_string(JsonObject target, const char* key, size_t value)
     return true;
 }
 
-void write_begin_result(
+void write_payload_transfer_success(
+    const char* id,
+    JsonObjectConst result,
+    const char* log_label,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    if (!usb_response_write_success_result(id, kPayloadTransferMethod, result)) {
+        writer.log_write_failure(log_label, id);
+    }
+}
+
+void write_begin_success(
     const char* id,
     const AgentQPayloadDeliveryBeginOutput& output,
     const AgentQUsbOperationResponseWriter& writer)
 {
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
-    response["success"] = true;
-    JsonObject result = response["result"].to<JsonObject>();
+    JsonDocument result_doc;
+    JsonObject result = result_doc.to<JsonObject>();
     result["transferId"] = output.transfer_id;
     if (!write_size_string(result, "receivedBytes", output.received_bytes) ||
-        !write_size_string(result, "chunkMaxBytes", output.chunk_max_bytes) ||
-        !usb_response_write_json(response)) {
+        !write_size_string(result, "chunkMaxBytes", output.chunk_max_bytes)) {
         writer.log_write_failure("payload_transfer_begin", id);
+        return;
     }
+    write_payload_transfer_success(id, result_doc.as<JsonObjectConst>(), "payload_transfer_begin", writer);
 }
 
-void write_chunk_result(
+void write_chunk_success(
     const char* id,
     size_t received_bytes,
     const AgentQUsbOperationResponseWriter& writer)
 {
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
-    response["success"] = true;
-    JsonObject result = response["result"].to<JsonObject>();
-    if (!write_size_string(result, "receivedBytes", received_bytes) ||
-        !usb_response_write_json(response)) {
+    JsonDocument result_doc;
+    JsonObject result = result_doc.to<JsonObject>();
+    if (!write_size_string(result, "receivedBytes", received_bytes)) {
         writer.log_write_failure("payload_transfer_chunk", id);
+        return;
     }
+    write_payload_transfer_success(id, result_doc.as<JsonObjectConst>(), "payload_transfer_chunk", writer);
 }
 
-void write_finish_result(
+void write_finish_success(
     const char* id,
     const AgentQPayloadDeliveryFinishOutput& output,
     const AgentQUsbOperationResponseWriter& writer)
 {
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
-    response["success"] = true;
-    JsonObject result = response["result"].to<JsonObject>();
+    JsonDocument result_doc;
+    JsonObject result = result_doc.to<JsonObject>();
     result["payloadRef"] = output.descriptor.payload_ref;
-    if (!usb_response_write_json(response)) {
-        writer.log_write_failure("payload_transfer_finish", id);
-    }
+    write_payload_transfer_success(id, result_doc.as<JsonObjectConst>(), "payload_transfer_finish", writer);
 }
 
-void write_abort_result(const char* id, const AgentQUsbOperationResponseWriter& writer)
+void write_abort_success(const char* id, const AgentQUsbOperationResponseWriter& writer)
 {
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
-    response["success"] = true;
-    response["result"].to<JsonObject>();
-    if (!usb_response_write_json(response)) {
-        writer.log_write_failure("payload_transfer_abort", id);
-    }
+    JsonDocument result_doc;
+    result_doc.to<JsonObject>();
+    write_payload_transfer_success(id, result_doc.as<JsonObjectConst>(), "payload_transfer_abort", writer);
 }
 
 }  // namespace
@@ -310,7 +308,7 @@ void handle_usb_payload_transfer_begin_request(
         write_store_error(id, writer, result);
         return;
     }
-    write_begin_result(id, output, writer);
+    write_begin_success(id, output, writer);
 }
 
 void handle_usb_payload_transfer_chunk_request(
@@ -387,7 +385,7 @@ void handle_usb_payload_transfer_chunk_request(
         write_store_error(id, writer, result);
         return;
     }
-    write_chunk_result(id, received_bytes, writer);
+    write_chunk_success(id, received_bytes, writer);
 }
 
 void handle_usb_payload_transfer_finish_request(
@@ -428,7 +426,7 @@ void handle_usb_payload_transfer_finish_request(
         write_store_error(id, writer, result);
         return;
     }
-    write_finish_result(id, output, writer);
+    write_finish_success(id, output, writer);
 }
 
 void handle_usb_payload_transfer_abort_request(
@@ -471,7 +469,7 @@ void handle_usb_payload_transfer_abort_request(
         write_store_error(id, writer, result);
         return;
     }
-    write_abort_result(id, writer);
+    write_abort_success(id, writer);
 }
 
 }  // namespace agent_q

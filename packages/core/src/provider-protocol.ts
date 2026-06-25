@@ -12,8 +12,8 @@ import {
 } from "./safe-text.js";
 import { ProtocolError } from "./protocol-error.js";
 import {
-  SIGN_RESULT_ERROR_MESSAGES,
-  type SignResultErrorCode,
+  SIGNING_OUTCOME_ERROR_MESSAGES,
+  type SigningOutcomeErrorCode,
 } from "./device-contract.js";
 import {
   ED25519_PUBLIC_KEY_BASE64_PATTERN,
@@ -26,7 +26,7 @@ import {
   MAX_CREDENTIAL_CAPABILITIES,
   MAX_RAW_PROTOCOL_JSON_BYTES,
   MAX_SESSION_TTL_MS,
-  MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
+  MAX_SIGNING_OUTCOME_PAYLOAD_BASE64_CHARS,
   MAX_SIGNING_CAPABILITIES,
   MAX_SUI_SIGN_PERSONAL_MESSAGE_BASE64_CHARS,
   MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES,
@@ -80,14 +80,14 @@ export {
   MAX_CAPABILITY_CHAINS,
   MAX_RAW_PROTOCOL_JSON_BYTES,
   MAX_SESSION_TTL_MS,
-  MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
+  MAX_SIGNING_OUTCOME_PAYLOAD_BASE64_CHARS,
   MAX_SIGNING_CAPABILITIES,
   MAX_SUI_SIGN_PERSONAL_MESSAGE_BASE64_CHARS,
   MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES,
   MAX_SUI_SIGN_TRANSACTION_TX_BYTES,
   MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS,
   PROTOCOL_VERSION,
-  SIGN_RESULT_ERROR_MESSAGES,
+  SIGNING_OUTCOME_ERROR_MESSAGES,
   SUI_ADDRESS_PATTERN,
   SUI_CHAIN_ID,
   SUI_DERIVATION_PATH,
@@ -141,35 +141,13 @@ export interface SignPersonalMessageParams {
   message: string;
 }
 
-export interface ConnectApprovedResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "connect_result";
-  status: "approved";
+export interface ConnectResult {
   sessionId: string;
   sessionTtlMs: number;
   device: DeviceStatus;
 }
 
-export interface ConnectRejectedResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "connect_result";
-  status: "rejected";
-  error: {
-    code: string;
-    message: string;
-  };
-}
-
-export type ConnectResponse = ConnectApprovedResponse | ConnectRejectedResponse;
-
-export interface DisconnectResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "disconnect_result";
-  status: "disconnected";
-}
+export type DisconnectResult = Record<string, never>;
 
 export type CapabilityAccount =
   | {
@@ -191,10 +169,10 @@ export interface SigningCapabilityEntry {
   method: SuiSignMethod;
 }
 
-export type SignResultAuthorization = "user" | "policy";
+export type SigningOutcomeAuthorization = "user" | "policy";
 
 export interface SigningCapabilities {
-  authorization: SignResultAuthorization;
+  authorization: SigningOutcomeAuthorization;
   methods: SigningCapabilityEntry[];
 }
 
@@ -208,10 +186,7 @@ export interface AccountSponsoredTransactions {
   acceptGasSponsor: boolean;
 }
 
-export interface CapabilitiesResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "capabilities";
+export interface CapabilitiesResult {
   chains: CapabilityChain[];
   signing?: SigningCapabilities;
   credentials?: CredentialCapability[];
@@ -234,28 +209,19 @@ export type Account =
       sponsoredTransactions: AccountSponsoredTransactions;
     };
 
-export interface AccountsResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "accounts";
+export interface AccountsResult {
   accounts: Account[];
 }
 
-export interface SignTransactionSignedResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "sign_result";
-  authorization: SignResultAuthorization;
+export interface SignTransactionSignedResult {
+  authorization: SigningOutcomeAuthorization;
   status: "signed";
   chain: typeof SUI_CHAIN_ID;
   method: typeof SUI_SIGN_TRANSACTION_METHOD;
   signature: string;
 }
 
-export interface SignPersonalMessageSignedResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "sign_result";
+export interface SignPersonalMessageSignedResult {
   authorization: "user";
   status: "signed";
   chain: typeof SUI_CHAIN_ID;
@@ -264,12 +230,9 @@ export interface SignPersonalMessageSignedResponse {
   messageBytes: string;
 }
 
-export type SignResultSignedResponse = SignTransactionSignedResponse | SignPersonalMessageSignedResponse;
+export type SigningOutcomeSigned = SignTransactionSignedResult | SignPersonalMessageSignedResult;
 
-export interface SignResultUserRejectedResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "sign_result";
+export interface SigningOutcomeUserRejected {
   authorization: "user";
   status: "user_rejected" | "user_timed_out";
   error: {
@@ -278,10 +241,7 @@ export interface SignResultUserRejectedResponse {
   };
 }
 
-export interface SignResultPolicyRejectedResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "sign_result";
+export interface SigningOutcomePolicyRejected {
   authorization: "policy";
   status: "policy_rejected";
   policyHash: string;
@@ -292,11 +252,8 @@ export interface SignResultPolicyRejectedResponse {
   };
 }
 
-export interface SignResultSigningFailedResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "sign_result";
-  authorization: SignResultAuthorization;
+export interface SigningOutcomeSigningFailed {
+  authorization: SigningOutcomeAuthorization;
   status: "signing_failed";
   error: {
     code: "signing_failed";
@@ -304,12 +261,12 @@ export interface SignResultSigningFailedResponse {
   };
 }
 
-export type SignResultResponse =
-  | SignResultSignedResponse
-  | SignResultUserRejectedResponse
-  | SignResultPolicyRejectedResponse
-  | SignResultSigningFailedResponse;
-export type SignResultStatus = SignResultResponse["status"];
+export type SigningOutcome =
+  | SigningOutcomeSigned
+  | SigningOutcomeUserRejected
+  | SigningOutcomePolicyRejected
+  | SigningOutcomeSigningFailed;
+export type SigningOutcomeStatus = SigningOutcome["status"];
 
 export function validateSignTransactionInput(
   chain: unknown,

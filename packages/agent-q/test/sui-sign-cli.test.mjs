@@ -151,7 +151,7 @@ for (const [name, args, pattern] of [
 
 for (const [name, core] of [
   ["account-read failure", { async getAccounts() { throw new Error("lost"); } }],
-  ["terminal signing result", { async signTransaction() { return { source: "live", status: "user_rejected" }; } }],
+  ["terminal signing outcome", { async signTransaction() { return { source: "live", status: "user_rejected" }; } }],
   ["thrown signing error", { async signTransaction() { throw new Error("lost"); } }],
 ]) {
   test(`${name} disconnects after connect`, async () => {

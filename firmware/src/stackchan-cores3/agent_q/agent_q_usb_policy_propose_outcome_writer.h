@@ -4,7 +4,7 @@
 
 namespace agent_q {
 
-bool usb_policy_propose_result_write(
+bool usb_policy_propose_outcome_write(
     const char* id,
     const char* status,
     const char* reason_code,

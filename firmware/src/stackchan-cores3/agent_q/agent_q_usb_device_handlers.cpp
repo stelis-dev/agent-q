@@ -58,7 +58,7 @@ void handle_usb_get_status_request(
         return;
     }
     {
-        writer.log_write_failure("status", id);
+        writer.log_write_failure("get_status", id);
     }
 }
 

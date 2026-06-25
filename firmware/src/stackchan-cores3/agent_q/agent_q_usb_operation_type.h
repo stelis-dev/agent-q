@@ -27,7 +27,7 @@ enum class AgentQUsbOperationType {
 
 AgentQUsbOperationType classify_usb_operation_type(const char* type);
 const char* usb_operation_type_wire_name(AgentQUsbOperationType operation);
-bool usb_operation_is_retained_result_read_cleanup(
+bool usb_operation_is_retained_response_read_cleanup(
     AgentQUsbOperationType operation);
 
 }  // namespace agent_q

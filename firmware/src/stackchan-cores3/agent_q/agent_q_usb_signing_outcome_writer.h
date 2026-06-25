@@ -9,21 +9,21 @@
 
 namespace agent_q {
 
-bool usb_signing_result_write_user_signed(
+bool usb_signing_outcome_write_user_signed(
     const char* id,
     const char* session_id,
     const char* authorization,
     const AgentQUserSigningFlowCoreSnapshot& snapshot,
     const AgentQUserSigningOutput& signing_output);
 
-bool usb_signing_result_write_user_terminal(
+bool usb_signing_outcome_write_user_terminal(
     const char* id,
     const char* session_id,
     const uint8_t* request_identity,
     const char* method,
     AgentQUserSigningTerminalResult result);
 
-bool usb_signing_result_write_policy_execution(
+bool usb_signing_outcome_write_policy_execution(
     const char* id,
     const char* session_id,
     const uint8_t* request_identity,

@@ -77,17 +77,13 @@ cat >"${TMP_DIR}/stubs.cpp" <<'CPP'
 #include <string.h>
 
 #include "agent_q_approval_history.h"
+#include "agent_q_protocol_constants.h"
 
 namespace {
 
-char g_response_type[48] = {};
 char g_response_transfer_id[96] = {};
 char g_response_payload_ref[96] = {};
-char g_response_chain[32] = {};
 char g_response_method[80] = {};
-char g_response_payload_kind[24] = {};
-char g_response_size_bytes[24] = {};
-char g_response_payload_digest[96] = {};
 char g_response_received_bytes[24] = {};
 char g_response_chunk_max_bytes[24] = {};
 char g_response_status[24] = {};
@@ -163,30 +159,31 @@ bool approval_history_digest_payload(
 bool usb_response_write_json(JsonDocument& response)
 {
     serializeJson(response, g_response_json, sizeof(g_response_json));
-    snprintf(g_response_type, sizeof(g_response_type), "%s", response["type"] | "");
+    snprintf(g_response_method, sizeof(g_response_method), "%s", response["method"] | "");
     snprintf(g_response_transfer_id, sizeof(g_response_transfer_id), "%s", response["result"]["transferId"] | "");
     snprintf(g_response_payload_ref, sizeof(g_response_payload_ref), "%s", response["result"]["payloadRef"] | "");
-    snprintf(g_response_chain, sizeof(g_response_chain), "%s", response["chain"] | "");
-    snprintf(g_response_method, sizeof(g_response_method), "%s", response["method"] | "");
-    snprintf(g_response_payload_kind, sizeof(g_response_payload_kind), "%s", response["payloadKind"] | "");
-    snprintf(g_response_size_bytes, sizeof(g_response_size_bytes), "%s", response["sizeBytes"] | "");
-    snprintf(g_response_payload_digest, sizeof(g_response_payload_digest), "%s", response["payloadDigest"] | "");
     snprintf(g_response_received_bytes, sizeof(g_response_received_bytes), "%s", response["result"]["receivedBytes"] | "");
     snprintf(g_response_chunk_max_bytes, sizeof(g_response_chunk_max_bytes), "%s", response["result"]["chunkMaxBytes"] | "");
     snprintf(g_response_status, sizeof(g_response_status), "%s", response["result"]["status"] | "");
     return true;
 }
 
+bool usb_response_write_success_result(const char* id, const char* method, JsonObjectConst result)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kAgentQProtocolVersion;
+    response["success"] = true;
+    response["method"] = method;
+    response["result"].set(result);
+    return usb_response_write_json(response);
+}
+
 }  // namespace agent_q
 
-const char* response_type() { return g_response_type; }
 const char* response_transfer_id() { return g_response_transfer_id; }
 const char* response_payload_ref() { return g_response_payload_ref; }
-const char* response_chain() { return g_response_chain; }
 const char* response_method() { return g_response_method; }
-const char* response_payload_kind() { return g_response_payload_kind; }
-const char* response_size_bytes() { return g_response_size_bytes; }
-const char* response_payload_digest() { return g_response_payload_digest; }
 const char* response_received_bytes() { return g_response_received_bytes; }
 const char* response_chunk_max_bytes() { return g_response_chunk_max_bytes; }
 const char* response_status() { return g_response_status; }
@@ -217,14 +214,9 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include "agent_q_payload_delivery_store.h"
 #include "agent_q_usb_payload_transfer_handlers.h"
 
-extern const char* response_type();
 extern const char* response_transfer_id();
 extern const char* response_payload_ref();
-extern const char* response_chain();
 extern const char* response_method();
-extern const char* response_payload_kind();
-extern const char* response_size_bytes();
-extern const char* response_payload_digest();
 extern const char* response_received_bytes();
 extern const char* response_chunk_max_bytes();
 extern const char* response_status();
@@ -377,7 +369,7 @@ void begin_transfer()
     JsonDocument doc = parse(request);
     agent_q::handle_usb_payload_transfer_begin_request("req_begin", doc, make_writer(), make_ops());
     assert(g_error_calls == 0);
-    assert(strcmp(response_type(), "") == 0);
+    assert(strcmp(response_method(), "payload_transfer") == 0);
     assert(strncmp(response_transfer_id(), "transfer_", 7) == 0);
     assert(strcmp(response_received_bytes(), "0") == 0);
     assert(strcmp(response_chunk_max_bytes(), "2700") == 0);
@@ -404,7 +396,7 @@ void begin_max_payload_transfer()
         make_writer(),
         make_ops());
     assert(g_error_calls == 0);
-    assert(strcmp(response_type(), "") == 0);
+    assert(strcmp(response_method(), "payload_transfer") == 0);
     assert(strncmp(response_transfer_id(), "transfer_", 7) == 0);
     assert(strcmp(response_received_bytes(), "0") == 0);
     assert(strcmp(response_chunk_max_bytes(), "2700") == 0);
@@ -448,7 +440,7 @@ void append_chunk()
     JsonDocument doc = parse(request);
     agent_q::handle_usb_payload_transfer_chunk_request("req_chunk", doc, make_writer(), make_ops());
     assert(g_error_calls == 0);
-    assert(strcmp(response_type(), "") == 0);
+    assert(strcmp(response_method(), "payload_transfer") == 0);
     assert(strcmp(response_received_bytes(), kPayloadSize) == 0);
     assert(strstr(response_json(), "\"receivedBytes\":\"37\"") != nullptr);
 }
@@ -509,13 +501,8 @@ void finish_transfer()
     JsonDocument doc = parse(request);
     agent_q::handle_usb_payload_transfer_finish_request("req_finish", doc, make_writer(), make_ops());
     assert(g_error_calls == 0);
-    assert(strcmp(response_type(), "") == 0);
+    assert(strcmp(response_method(), "payload_transfer") == 0);
     assert(strncmp(response_payload_ref(), "payload_", 8) == 0);
-    assert(strcmp(response_chain(), "") == 0);
-    assert(strcmp(response_method(), "") == 0);
-    assert(strcmp(response_payload_kind(), "") == 0);
-    assert(strcmp(response_size_bytes(), "") == 0);
-    assert(strcmp(response_payload_digest(), "") == 0);
     assert(strstr(response_json(), "\"payloadRef\":\"payload_") != nullptr);
 }
 
@@ -556,7 +543,7 @@ int main()
         JsonDocument doc = parse(request);
         agent_q::handle_usb_payload_transfer_abort_request("req_abort", doc, make_writer(), make_ops());
         assert(g_error_calls == 0);
-        assert(strcmp(response_type(), "") == 0);
+        assert(strcmp(response_method(), "payload_transfer") == 0);
         assert(strcmp(response_status(), "") == 0);
     }
 

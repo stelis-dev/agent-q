@@ -158,12 +158,12 @@ Implemented today:
   device boundary. Product-active status is not claimed unless
   `docs/IMPLEMENTATION_STATUS.md` says the matching source, docs, tests, build,
   hardware, and visual evidence are complete.
-- Completed signing results are buffered in Firmware RAM for bounded recovery.
+- Completed signing responses are buffered in Firmware RAM for bounded recovery.
   A repeated signing request replays a result only when its session, public
   request id, selected route, and validated method parameters match the
   versioned internal request identity stored with that result. Conflicting
   reuse returns `request_id_conflict` before adapter or authorization work.
-  `get_result` and `ack_result` address an already-stored result by session and
+  `get_result` and `ack_result` address an already-stored response by session and
   request id; this recovery contract is not persistent anti-replay protection
   across device reset. Host and browser transports may use those operations
   only to recover or release a result for a signing request whose write may have

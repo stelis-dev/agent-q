@@ -288,7 +288,7 @@ function startupLiveDevice(id) {
     source: "live",
     connected: true,
     portPath: `/dev/cu.${id}`,
-    protocolResponse: {
+    status: {
       protocolVersion: 1,
       device: startupDevice(id),
       provisioning: { state: "provisioned" },

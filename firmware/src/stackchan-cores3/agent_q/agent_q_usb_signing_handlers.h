@@ -45,8 +45,8 @@ struct AgentQUsbSigningHandlerOps {
     void* read_signing_mode_context;
     AgentQSigningPreflightRetryResponder retry_responder;
     void* retry_responder_context;
-    char* retry_stored_result;
-    size_t retry_stored_result_size;
+    char* retry_stored_response;
+    size_t retry_stored_response_size;
     AgentQEvaluateSignTransactionPreflightFn evaluate_transaction_preflight;
     AgentQEvaluateSignPersonalMessagePreflightFn evaluate_personal_message_preflight;
     void (*record_account_unavailable_runtime_failure)();

@@ -234,10 +234,10 @@ int main(int argc, char** argv)
     uint8_t signature[agent_q::kSuiEd25519SignatureBytes] = {};
     g_root_available = true;
     g_mnemonic_available = true;
-    const agent_q::SuiTransactionSigningResult result =
+    const agent_q::SuiSigningStatus result =
         agent_q::sign_sui_ed25519_transaction_from_stored_root(
             tx_bytes.data(), tx_bytes.size(), signature);
-    expect(result == agent_q::SuiTransactionSigningResult::ok, "stored-root signing succeeds");
+    expect(result == agent_q::SuiSigningStatus::ok, "stored-root signing succeeds");
     expect(signature[0] == 0x00, "Sui signature uses Ed25519 scheme byte");
     expect(
         sui_signing_verify_signature_ed25519(
@@ -260,7 +260,7 @@ int main(int argc, char** argv)
         agent_q::sign_sui_ed25519_personal_message_from_stored_root(
             kPersonalMessage,
             sizeof(kPersonalMessage) - 1,
-            personal_signature) == agent_q::SuiTransactionSigningResult::ok,
+            personal_signature) == agent_q::SuiSigningStatus::ok,
         "stored-root personal-message signing succeeds");
     expect(personal_signature[0] == 0x00, "Sui personal-message signature uses Ed25519 scheme byte");
     expect(
@@ -275,7 +275,7 @@ int main(int argc, char** argv)
             kPersonalMessage,
             sizeof(kPersonalMessage) - 1,
             active_personal_signature,
-            &active_personal_signature_size) == agent_q::SuiTransactionSigningResult::ok,
+            &active_personal_signature_size) == agent_q::SuiSigningStatus::ok,
         "active native personal-message signing succeeds");
     expect(active_personal_signature_size == agent_q::kSuiEd25519SignatureBytes,
            "active native personal-message signature keeps Ed25519 size");
@@ -292,7 +292,7 @@ int main(int argc, char** argv)
             kPersonalMessage,
             sizeof(kPersonalMessage) - 1,
             active_personal_signature,
-            &active_personal_signature_size) == agent_q::SuiTransactionSigningResult::ok,
+            &active_personal_signature_size) == agent_q::SuiSigningStatus::ok,
         "active zkLogin personal-message signing succeeds");
     expect(::g_zklogin_envelope_build_calls == 1,
            "active zkLogin personal-message signing builds a zkLogin envelope");
@@ -326,7 +326,7 @@ int main(int argc, char** argv)
     expect(
         agent_q::sign_sui_ed25519_transaction_from_stored_root(
             nullptr, tx_bytes.size(), invalid_signature) ==
-            agent_q::SuiTransactionSigningResult::invalid_input,
+            agent_q::SuiSigningStatus::invalid_input,
         "null tx bytes are invalid");
     expect_signature_cleared(invalid_signature);
 
@@ -334,7 +334,7 @@ int main(int argc, char** argv)
     expect(
         agent_q::sign_sui_ed25519_transaction_from_stored_root(
             tx_bytes.data(), 0, invalid_signature) ==
-            agent_q::SuiTransactionSigningResult::invalid_input,
+            agent_q::SuiSigningStatus::invalid_input,
         "zero tx size is invalid");
     expect_signature_cleared(invalid_signature);
 
@@ -344,7 +344,7 @@ int main(int argc, char** argv)
     expect(
         agent_q::sign_sui_ed25519_transaction_from_stored_root(
             tx_bytes.data(), tx_bytes.size(), stored_root_signature) ==
-            agent_q::SuiTransactionSigningResult::root_material_unavailable,
+            agent_q::SuiSigningStatus::root_material_unavailable,
         "missing root material is reported");
     expect_signature_cleared(stored_root_signature);
 
@@ -353,7 +353,7 @@ int main(int argc, char** argv)
     expect(
         agent_q::sign_sui_ed25519_transaction_from_stored_root(
             tx_bytes.data(), tx_bytes.size(), stored_root_signature) ==
-            agent_q::SuiTransactionSigningResult::mnemonic_error,
+            agent_q::SuiSigningStatus::mnemonic_error,
         "mnemonic derivation failure is reported");
 
     if (failures != 0) {

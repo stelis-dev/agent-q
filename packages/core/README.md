@@ -78,7 +78,7 @@ proof-clear path.
   see policy proposal or server management methods.
 - `@stelis/agent-q-core/protocol` exposes the shared protocol builders,
   parsers, constants, and response types. It also exposes low-level
-  `get_result` / `ack_result` and payload-upload wire primitives for official
+  `get_result` / `ack_result` and payload-transfer wire primitives for official
   transport and provider implementations. Direct application use is
   unsupported; those primitives are not a signing API and do not authorize,
   replay, create, or execute signing requests.
@@ -86,7 +86,7 @@ proof-clear path.
   protocol projection used by official dapp-facing adapters. It includes
   provider request builders, an exact provider request serializer, provider
   response parsers, bounded response-line handling, USB identifiers, and fixed
-  internal deadline constants; it does not expose retained-result recovery
+  internal deadline constants; it does not expose retained-response recovery
   request or response types, recovery builders, Admin, policy read/update,
   approval-history, or full-protocol request serialization.
 - `@stelis/agent-q-core/adapter-internal` exposes support APIs for official
@@ -111,9 +111,9 @@ proof-clear path.
   advertised through top-level `signing.authorization` and `signing.methods`,
   and the device API facade exposes `signTransaction` and
   `signPersonalMessage`. The core parser accepts Firmware-authored
-  `sign_result` values for transaction policy/user outcomes and user-mode
+  `signing outcome` values for transaction policy/user outcomes and user-mode
   personal-message outcomes. It accepts `messageBytes` only for signed
-  personal-message results and rejects raw transaction bytes in results, decoded
+  personal-message results and rejects raw transaction bytes in signing outcomes, decoded
   internals, session ids, request ids, and secret-like fields.
 - The limited device API facade also exposes `credentialPrepare` and
   `credentialPropose` for the common Sui zkLogin setup boundary. Firmware

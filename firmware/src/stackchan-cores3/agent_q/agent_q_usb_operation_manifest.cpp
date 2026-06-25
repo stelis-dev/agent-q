@@ -12,7 +12,7 @@ constexpr AgentQUsbOperationManifestEntry kUsbOperationManifest[] = {
         "get_status",
         AgentQUsbOperationHandlerSlot::get_status,
         AgentQPayloadDeliveryOperationKind::safe_read,
-        AgentQUsbOperationTerminalResultPolicy::immediate_response,
+        AgentQUsbOperationCompletionPolicy::immediate_response,
         AgentQUsbOperationReadSideEffectPolicy::persistent_material_consistency_refresh,
     },
     {
@@ -20,7 +20,7 @@ constexpr AgentQUsbOperationManifestEntry kUsbOperationManifest[] = {
         "identify_device",
         AgentQUsbOperationHandlerSlot::identify_device,
         AgentQPayloadDeliveryOperationKind::identify_device,
-        AgentQUsbOperationTerminalResultPolicy::immediate_response,
+        AgentQUsbOperationCompletionPolicy::immediate_response,
         AgentQUsbOperationReadSideEffectPolicy::none,
     },
     {
@@ -28,7 +28,7 @@ constexpr AgentQUsbOperationManifestEntry kUsbOperationManifest[] = {
         "connect",
         AgentQUsbOperationHandlerSlot::connect,
         AgentQPayloadDeliveryOperationKind::connect,
-        AgentQUsbOperationTerminalResultPolicy::connect_approval_result,
+        AgentQUsbOperationCompletionPolicy::connect_approval,
         AgentQUsbOperationReadSideEffectPolicy::none,
     },
     {
@@ -36,7 +36,7 @@ constexpr AgentQUsbOperationManifestEntry kUsbOperationManifest[] = {
         "sign_transaction",
         AgentQUsbOperationHandlerSlot::sign_transaction,
         AgentQPayloadDeliveryOperationKind::sign_transaction,
-        AgentQUsbOperationTerminalResultPolicy::signing_retained_result,
+        AgentQUsbOperationCompletionPolicy::signing_retained_response,
         AgentQUsbOperationReadSideEffectPolicy::none,
     },
     {
@@ -44,23 +44,23 @@ constexpr AgentQUsbOperationManifestEntry kUsbOperationManifest[] = {
         "sign_personal_message",
         AgentQUsbOperationHandlerSlot::sign_personal_message,
         AgentQPayloadDeliveryOperationKind::sign_personal_message,
-        AgentQUsbOperationTerminalResultPolicy::signing_retained_result,
+        AgentQUsbOperationCompletionPolicy::signing_retained_response,
         AgentQUsbOperationReadSideEffectPolicy::none,
     },
     {
         AgentQUsbOperationType::get_result,
         "get_result",
         AgentQUsbOperationHandlerSlot::get_result,
-        AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup,
-        AgentQUsbOperationTerminalResultPolicy::signing_retained_result_read,
+        AgentQPayloadDeliveryOperationKind::retained_response_read_cleanup,
+        AgentQUsbOperationCompletionPolicy::signing_retained_response_read,
         AgentQUsbOperationReadSideEffectPolicy::none,
     },
     {
         AgentQUsbOperationType::ack_result,
         "ack_result",
         AgentQUsbOperationHandlerSlot::ack_result,
-        AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup,
-        AgentQUsbOperationTerminalResultPolicy::signing_retained_result_ack,
+        AgentQPayloadDeliveryOperationKind::retained_response_read_cleanup,
+        AgentQUsbOperationCompletionPolicy::signing_retained_response_ack,
         AgentQUsbOperationReadSideEffectPolicy::none,
     },
     {
@@ -68,7 +68,7 @@ constexpr AgentQUsbOperationManifestEntry kUsbOperationManifest[] = {
         "disconnect",
         AgentQUsbOperationHandlerSlot::disconnect,
         AgentQPayloadDeliveryOperationKind::disconnect,
-        AgentQUsbOperationTerminalResultPolicy::immediate_response,
+        AgentQUsbOperationCompletionPolicy::immediate_response,
         AgentQUsbOperationReadSideEffectPolicy::none,
     },
     {
@@ -76,7 +76,7 @@ constexpr AgentQUsbOperationManifestEntry kUsbOperationManifest[] = {
         "get_capabilities",
         AgentQUsbOperationHandlerSlot::get_capabilities,
         AgentQPayloadDeliveryOperationKind::safe_read,
-        AgentQUsbOperationTerminalResultPolicy::immediate_response,
+        AgentQUsbOperationCompletionPolicy::immediate_response,
         AgentQUsbOperationReadSideEffectPolicy::none,
     },
     {
@@ -84,7 +84,7 @@ constexpr AgentQUsbOperationManifestEntry kUsbOperationManifest[] = {
         "get_accounts",
         AgentQUsbOperationHandlerSlot::get_accounts,
         AgentQPayloadDeliveryOperationKind::safe_read,
-        AgentQUsbOperationTerminalResultPolicy::immediate_response,
+        AgentQUsbOperationCompletionPolicy::immediate_response,
         AgentQUsbOperationReadSideEffectPolicy::none,
     },
     {
@@ -92,7 +92,7 @@ constexpr AgentQUsbOperationManifestEntry kUsbOperationManifest[] = {
         "policy_get",
         AgentQUsbOperationHandlerSlot::policy_get,
         AgentQPayloadDeliveryOperationKind::safe_read,
-        AgentQUsbOperationTerminalResultPolicy::immediate_response,
+        AgentQUsbOperationCompletionPolicy::immediate_response,
         AgentQUsbOperationReadSideEffectPolicy::none,
     },
     {
@@ -100,7 +100,7 @@ constexpr AgentQUsbOperationManifestEntry kUsbOperationManifest[] = {
         "get_approval_history",
         AgentQUsbOperationHandlerSlot::get_approval_history,
         AgentQPayloadDeliveryOperationKind::safe_read,
-        AgentQUsbOperationTerminalResultPolicy::immediate_response,
+        AgentQUsbOperationCompletionPolicy::immediate_response,
         AgentQUsbOperationReadSideEffectPolicy::none,
     },
     {
@@ -108,7 +108,7 @@ constexpr AgentQUsbOperationManifestEntry kUsbOperationManifest[] = {
         "policy_propose",
         AgentQUsbOperationHandlerSlot::policy_propose,
         AgentQPayloadDeliveryOperationKind::policy_propose,
-        AgentQUsbOperationTerminalResultPolicy::policy_update_result_history_marker,
+        AgentQUsbOperationCompletionPolicy::policy_update_history_marker,
         AgentQUsbOperationReadSideEffectPolicy::none,
     },
     {
@@ -116,7 +116,7 @@ constexpr AgentQUsbOperationManifestEntry kUsbOperationManifest[] = {
         "credential_prepare",
         AgentQUsbOperationHandlerSlot::credential_prepare,
         AgentQPayloadDeliveryOperationKind::safe_read,
-        AgentQUsbOperationTerminalResultPolicy::immediate_response,
+        AgentQUsbOperationCompletionPolicy::immediate_response,
         AgentQUsbOperationReadSideEffectPolicy::none,
     },
     {
@@ -124,7 +124,7 @@ constexpr AgentQUsbOperationManifestEntry kUsbOperationManifest[] = {
         "credential_propose",
         AgentQUsbOperationHandlerSlot::credential_propose,
         AgentQPayloadDeliveryOperationKind::credential_propose,
-        AgentQUsbOperationTerminalResultPolicy::credential_propose_result,
+        AgentQUsbOperationCompletionPolicy::credential_proposal_outcome,
         AgentQUsbOperationReadSideEffectPolicy::none,
     },
     {
@@ -132,7 +132,7 @@ constexpr AgentQUsbOperationManifestEntry kUsbOperationManifest[] = {
         "payload_transfer_begin",
         AgentQUsbOperationHandlerSlot::payload_transfer_begin,
         AgentQPayloadDeliveryOperationKind::payload_transfer_begin,
-        AgentQUsbOperationTerminalResultPolicy::immediate_response,
+        AgentQUsbOperationCompletionPolicy::immediate_response,
         AgentQUsbOperationReadSideEffectPolicy::none,
     },
     {
@@ -140,7 +140,7 @@ constexpr AgentQUsbOperationManifestEntry kUsbOperationManifest[] = {
         "payload_transfer_chunk",
         AgentQUsbOperationHandlerSlot::payload_transfer_chunk,
         AgentQPayloadDeliveryOperationKind::payload_transfer_chunk,
-        AgentQUsbOperationTerminalResultPolicy::immediate_response,
+        AgentQUsbOperationCompletionPolicy::immediate_response,
         AgentQUsbOperationReadSideEffectPolicy::none,
     },
     {
@@ -148,7 +148,7 @@ constexpr AgentQUsbOperationManifestEntry kUsbOperationManifest[] = {
         "payload_transfer_finish",
         AgentQUsbOperationHandlerSlot::payload_transfer_finish,
         AgentQPayloadDeliveryOperationKind::payload_transfer_finish,
-        AgentQUsbOperationTerminalResultPolicy::immediate_response,
+        AgentQUsbOperationCompletionPolicy::immediate_response,
         AgentQUsbOperationReadSideEffectPolicy::none,
     },
     {
@@ -156,7 +156,7 @@ constexpr AgentQUsbOperationManifestEntry kUsbOperationManifest[] = {
         "payload_transfer_abort",
         AgentQUsbOperationHandlerSlot::payload_transfer_abort,
         AgentQPayloadDeliveryOperationKind::payload_transfer_abort,
-        AgentQUsbOperationTerminalResultPolicy::immediate_response,
+        AgentQUsbOperationCompletionPolicy::immediate_response,
         AgentQUsbOperationReadSideEffectPolicy::none,
     },
 };
@@ -202,7 +202,7 @@ const char* usb_operation_type_wire_name(AgentQUsbOperationType operation)
     return entry != nullptr ? entry->wire_type : nullptr;
 }
 
-bool usb_operation_is_retained_result_read_cleanup(
+bool usb_operation_is_retained_response_read_cleanup(
     AgentQUsbOperationType operation)
 {
     const AgentQUsbOperationManifestEntry* entry =
@@ -210,10 +210,10 @@ bool usb_operation_is_retained_result_read_cleanup(
     if (entry == nullptr) {
         return false;
     }
-    return entry->terminal_result_policy ==
-               AgentQUsbOperationTerminalResultPolicy::signing_retained_result_read ||
-           entry->terminal_result_policy ==
-               AgentQUsbOperationTerminalResultPolicy::signing_retained_result_ack;
+    return entry->completion_policy ==
+               AgentQUsbOperationCompletionPolicy::signing_retained_response_read ||
+           entry->completion_policy ==
+               AgentQUsbOperationCompletionPolicy::signing_retained_response_ack;
 }
 
 }  // namespace agent_q

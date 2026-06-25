@@ -30,7 +30,7 @@ import {
   FORBIDDEN_SECRET_FIELD_NAMES,
   makeDeviceError,
   parseDeviceResponse,
-  SIGN_RESULT_ERROR_MESSAGES,
+  SIGNING_OUTCOME_ERROR_MESSAGES,
   SUI_DERIVATION_PATH,
 } from "@stelis/agent-q-core/protocol";
 import {
@@ -580,7 +580,7 @@ function browserAckResult(request) {
   return deviceSuccess(request, {}, "ack_result");
 }
 
-function browserTerminalSignResult(request, status) {
+function browserTerminalSigningOutcome(request, status) {
   if (status === "policy_rejected") {
     return deviceFailure(request, "policy_rejected", "get_result");
   }
@@ -664,8 +664,6 @@ test("browser provider runtime stays separated from Admin, MCP, and Node serial 
   assert.match(source, /@stelis\/agent-q-core\/provider-protocol/);
   assert.match(source, /@stelis\/agent-q-core\/protocol["']/);
   assert.match(source, /@stelis\/agent-q-core\/adapter-internal/);
-  assert.doesNotMatch(source, /@stelis\/agent-q-core\/payload-delivery-internal/);
-  assert.doesNotMatch(source, /@stelis\/agent-q-core\/protocol-recovery/);
   assert.doesNotMatch(source, /@stelis\/agent-q-core\/admin/);
   assert.doesNotMatch(source, /@stelis\/agent-q(?!-core)/);
   assert.doesNotMatch(source, /serialport/);
@@ -674,11 +672,6 @@ test("browser provider runtime stays separated from Admin, MCP, and Node serial 
   assert.doesNotMatch(source, /policy_propose/);
   assert.doesNotMatch(source, /get_approval_history/);
   assert.match(source, /requestDevice/);
-  assert.doesNotMatch(source, /serializeDeviceWireRequest/);
-  assert.doesNotMatch(source, /makeDeviceWireRequest/);
-  assert.doesNotMatch(source, /DeviceWireRequest/);
-  assert.doesNotMatch(source, /serializeRequest/);
-  assert.doesNotMatch(source, /serializeProviderProtocolRequest/);
 
   const browserTypesPath = fileURLToPath(new URL("../dist/browser.d.ts", import.meta.url));
   const types = await readFile(browserTypesPath, "utf8");
@@ -1695,7 +1688,7 @@ test("browser provider keeps serving requests after one request rejects", async 
   }
 });
 
-test("browser provider recovers a buffered signing result when the sign response is lost", async () => {
+test("browser provider recovers a buffered signing response when the signing response is lost", async () => {
   const port = new FakeBrowserSerialPort((request) => {
     if (requestKind(request) === "sign_transaction") {
       // The device signed and buffered the result, but the response is lost in transit.
@@ -1722,7 +1715,7 @@ test("browser provider recovers a buffered signing result when the sign response
     assert.equal(result.source, "live", "the buffered result is recovered, not surfaced as an error");
     const signReq = port.requests.find((r) => requestKind(r) === "sign_transaction");
     const getResultReq = port.requests.find((r) => requestKind(r) === "get_result");
-    assert.ok(getResultReq, "provider must issue a get_result after a lost sign response");
+    assert.ok(getResultReq, "provider must issue a get_result after a lost signing response");
     assert.equal(getResultReq.id, signReq.id, "get_result must target the original sign request id");
   } finally {
     if (previousNavigator === undefined) {
@@ -1734,13 +1727,13 @@ test("browser provider recovers a buffered signing result when the sign response
 });
 
 for (const status of ["user_rejected", "user_timed_out", "signing_failed", "policy_rejected"]) {
-  test(`browser provider acks a buffered ${status} sign_transaction failure when the sign response is lost`, async () => {
+  test(`browser provider acks a buffered ${status} sign_transaction failure when the signing response is lost`, async () => {
     const port = new FakeBrowserSerialPort((request) => {
       if (requestKind(request) === "sign_transaction") {
         return null;
       }
       if (requestKind(request) === "get_result") {
-        return browserTerminalSignResult(request, status);
+        return browserTerminalSigningOutcome(request, status);
       }
       if (requestKind(request) === "ack_result") {
         return browserAckResult(request);
@@ -1766,7 +1759,7 @@ for (const status of ["user_rejected", "user_timed_out", "signing_failed", "poli
       const signReq = port.requests.find((r) => requestKind(r) === "sign_transaction");
       const getResultReq = port.requests.find((r) => requestKind(r) === "get_result");
       const ackReq = port.requests.find((r) => requestKind(r) === "ack_result");
-      assert.ok(getResultReq, "provider must issue get_result after a lost sign response");
+      assert.ok(getResultReq, "provider must issue get_result after a lost signing response");
       assert.equal(getResultReq.id, signReq.id, "get_result must target the original request id");
       assert.ok(ackReq, "provider must send ack_result after recovering terminal failure");
       assert.equal(ackReq.id, signReq.id, "ack_result must target the original request id");
@@ -1781,13 +1774,13 @@ for (const status of ["user_rejected", "user_timed_out", "signing_failed", "poli
 }
 
 for (const status of ["user_rejected", "user_timed_out", "signing_failed"]) {
-  test(`browser provider acks a buffered ${status} sign_personal_message failure when the sign response is lost`, async () => {
+  test(`browser provider acks a buffered ${status} sign_personal_message failure when the signing response is lost`, async () => {
     const port = new FakeBrowserSerialPort((request) => {
       if (requestKind(request) === "sign_personal_message") {
         return null;
       }
       if (requestKind(request) === "get_result") {
-        return browserTerminalSignResult(request, status);
+        return browserTerminalSigningOutcome(request, status);
       }
       if (requestKind(request) === "ack_result") {
         return browserAckResult(request);
@@ -1813,7 +1806,7 @@ for (const status of ["user_rejected", "user_timed_out", "signing_failed"]) {
       const signReq = port.requests.find((r) => requestKind(r) === "sign_personal_message");
       const getResultReq = port.requests.find((r) => requestKind(r) === "get_result");
       const ackReq = port.requests.find((r) => requestKind(r) === "ack_result");
-      assert.ok(getResultReq, "provider must issue get_result after a lost sign response");
+      assert.ok(getResultReq, "provider must issue get_result after a lost signing response");
       assert.equal(getResultReq.id, signReq.id, "get_result must target the original request id");
       assert.ok(ackReq, "provider must send ack_result after recovering terminal failure");
       assert.equal(ackReq.id, signReq.id, "ack_result must target the original request id");
@@ -1892,9 +1885,9 @@ test("browser provider uses a caller-provided requestId for idempotent retries",
   }
 });
 
-test("provider protocol parser keeps retained recovery out of the app-facing projection", () => {
+test("provider protocol parser keeps retained recovery response exact", () => {
   assert.throws(() =>
-    parseDeviceResponse({ id: "req_ack_1", version: 1, type: "ack_result", status: "acked" }, { expectedId: "req_ack_1" }),
+    parseDeviceResponse({ id: "req_ack_1", version: 1, success: true, result: {} }, { expectedId: "req_ack_1" }),
   );
   const valid = parseDeviceResponse(browserAckResult({ id: "req_ack_1", method: "ack_result" }), {
     expectedId: "req_ack_1",
@@ -1903,10 +1896,10 @@ test("provider protocol parser keeps retained recovery out of the app-facing pro
   assert.equal(valid.success, true);
   assert.equal(valid.method, "ack_result");
   assert.deepEqual(valid.result, {});
-  // The DeviceResponse parser fails closed on the old ack wire and on any
-  // extra top-level field.
+  // The DeviceResponse parser fails closed on missing method identity and on
+  // any extra top-level field.
   assert.throws(() =>
-    parseDeviceResponse({ ...browserAckResult({ id: "req_ack_1", method: "ack_result" }), type: "ack_result" }, { expectedId: "req_ack_1" }),
+    parseDeviceResponse({ ...browserAckResult({ id: "req_ack_1", method: "ack_result" }), unexpected: "field" }, { expectedId: "req_ack_1" }),
   );
   assert.throws(() =>
     parseDeviceResponse({ ...browserAckResult({ id: "req_ack_1", method: "ack_result" }), signature: "x" }, { expectedId: "req_ack_1" }),
@@ -2116,7 +2109,7 @@ test("browser provider keeps signing recovery as one queued transaction", async 
   }
 });
 
-test("browser provider does not resolve recovered signing result before ack_result settles", async () => {
+test("browser provider does not resolve recovered signing outcome before ack_result settles", async () => {
   let releaseAck;
   let signResolved = false;
   const port = new SerializationProbePort(
@@ -2232,7 +2225,7 @@ test("browser provider abandons a stale port when writer.write hangs and recover
     assert.deepEqual(
       recoveryPort.requests.map((request) => requestKind(request)),
       ["get_result", "ack_result"],
-      "fresh recovery port must carry retained result read and cleanup only",
+      "fresh recovery port must carry retained response read and cleanup only",
     );
   } finally {
     mock.timers.reset();
@@ -2297,7 +2290,7 @@ test("browser provider does not reuse the same stale port object for recovery", 
     assert.deepEqual(
       port.requests.map((request) => requestKind(request)),
       ["connect", "sign_transaction"],
-      "same stale port object must not carry retained result read or cleanup",
+      "same stale port object must not carry retained response read or cleanup",
     );
   } finally {
     mock.timers.reset();
@@ -2370,7 +2363,7 @@ test("browser provider attempts retained recovery after post-write disconnect", 
     assert.deepEqual(
       recoveryPort.requests.map((request) => requestKind(request)),
       ["get_result", "ack_result"],
-      "post-write physical disconnect must not suppress retained-result recovery",
+      "post-write physical disconnect must not suppress retained-response recovery",
     );
     const capabilities = await provider.getCapabilities();
     assert.equal(capabilities.source, "live", "recovered physical-disconnect session must remain usable");
@@ -2517,7 +2510,7 @@ test("browser provider does not recover signing after dispose tears down the tra
       signPromise,
       (error) => error.code === "timeout" || error.code === "transport_closed",
     );
-    assert.equal(requestPortCalls, 1, "dispose must not re-prompt for retained-result recovery");
+    assert.equal(requestPortCalls, 1, "dispose must not re-prompt for retained-response recovery");
     assert.equal(recoveryPort.requests.length, 0);
   } finally {
     mock.timers.reset();
@@ -3999,7 +3992,7 @@ test("Wallet Standard signTransaction emits bounded canonical terminal errors", 
         transaction: { toJSON: async () => transactionJson },
       }),
       (error) => {
-        assert.equal(error.message, SIGN_RESULT_ERROR_MESSAGES[status]);
+        assert.equal(error.message, SIGNING_OUTCOME_ERROR_MESSAGES[status]);
         assert.doesNotMatch(error.message, /sessionId|rootEntropy|secret_should_not_leak/);
         return true;
       },
@@ -4225,7 +4218,7 @@ test("Wallet Standard signTransaction validates chain support against the connec
   assert.deepEqual(calls, []);
 });
 
-test("Wallet Standard signTransaction clears connected accounts on non-live signing results", async () => {
+test("Wallet Standard signTransaction clears connected accounts on non-live signing outcomes", async () => {
   const cases = [
     {
       signResult: { source: "session_ended", reason: "transport_unavailable" },

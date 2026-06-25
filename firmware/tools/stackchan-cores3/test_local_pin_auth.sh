@@ -779,7 +779,7 @@ int main()
         agent_q::AgentQLocalAuthWorkerResult verify_result = make_verify_result(true);
         expect(agent_q::local_pin_auth_complete_verify_job(verify_result, pin_window(411, 470), 0, 0) ==
                    agent_q::AgentQLocalPinAuthVerifyResult::verified_sui_zklogin_proposal,
-               "verified Sui zkLogin proposal returns proposal result");
+               "verified Sui zkLogin proposal returns proposal outcome");
         expect_stage(
             agent_q::AgentQLocalPinAuthPurpose::sui_zklogin_proposal,
             agent_q::AgentQLocalPinAuthStage::pin_verifying,

@@ -12,10 +12,10 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
   "${AGENT_Q_DIR}/agent_q_device_contract.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_signing_result_writer.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_signing_result_writer.h" \
-  "${AGENT_Q_DIR}/agent_q_signing_result_store.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signing_result_store.h" \
+  "${AGENT_Q_DIR}/agent_q_usb_signing_outcome_writer.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_signing_outcome_writer.h" \
+  "${AGENT_Q_DIR}/agent_q_signing_response_store.cpp" \
+  "${AGENT_Q_DIR}/agent_q_signing_response_store.h" \
   "${COMMON_ROOT}/agent_q_sign_route.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -25,7 +25,7 @@ for required in \
 done
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-signing-result-writer.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-signing-outcome-writer.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 mkdir -p "${TMP_DIR}/agent_q_common"
 mkdir -p "${TMP_DIR}/freertos"
@@ -87,10 +87,10 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 
 #include <string>
 
-#include "agent_q_usb_signing_result_writer.h"
+#include "agent_q_usb_signing_outcome_writer.h"
 #include "agent_q_device_contract.h"
 #include "agent_q_protocol_constants.h"
-#include "agent_q_signing_result_store.h"
+#include "agent_q_signing_response_store.h"
 #include "agent_q_sui_zklogin_proof_store.h"
 
 namespace {
@@ -119,9 +119,9 @@ JsonDocument parse_json(const std::string& json)
 
 JsonDocument stored_json(const char* session_id, const char* request_id)
 {
-    char stored[agent_q::kSigningResultMaxSize] = {};
+    char stored[agent_q::kSigningResponseMaxSize] = {};
     size_t stored_len = 0;
-    assert(agent_q::signing_result_find(session_id, request_id, stored, sizeof(stored), &stored_len));
+    assert(agent_q::signing_response_find(session_id, request_id, stored, sizeof(stored), &stored_len));
     JsonDocument document;
     assert(!deserializeJson(document, stored, stored_len));
     return document;
@@ -267,7 +267,7 @@ const char* user_signing_flow_terminal_reason(AgentQUserSigningTerminalResult re
 
 int main()
 {
-    agent_q::signing_result_clear_all();
+    agent_q::signing_response_clear_all();
 
     uint8_t identity[agent_q::kAgentQSignRequestIdentitySize] = {};
     identity[0] = 0xA1;
@@ -279,7 +279,7 @@ int main()
         result.signing_route = agent_q::AgentQSigningRoute::sui_sign_transaction;
         fill_native_signature(result.signature, sizeof(result.signature));
         result.signature_size = agent_q::kSuiEd25519SignatureBytes;
-        assert(agent_q::usb_signing_result_write_policy_execution(
+        assert(agent_q::usb_signing_outcome_write_policy_execution(
             "req-policy-signed",
             "session-a",
             identity,
@@ -305,7 +305,7 @@ int main()
         result.signing_route = agent_q::AgentQSigningRoute::sui_sign_transaction;
         fill_zklogin_signature(result.signature, sizeof(result.signature));
         result.signature_size = agent_q::kSuiEd25519SignatureBytes + 48;
-        assert(agent_q::usb_signing_result_write_policy_execution(
+        assert(agent_q::usb_signing_outcome_write_policy_execution(
             "req-policy-zklogin-signed",
             "session-a",
             identity,
@@ -331,7 +331,7 @@ int main()
         output.message_bytes[0] = 'h';
         output.message_bytes[1] = 'i';
         output.message_bytes_size = 2;
-        assert(agent_q::usb_signing_result_write_user_signed(
+        assert(agent_q::usb_signing_outcome_write_user_signed(
             "req-user-signed",
             "session-a",
             "user",
@@ -360,7 +360,7 @@ int main()
         output.message_bytes[0] = 'h';
         output.message_bytes[1] = 'i';
         output.message_bytes_size = 2;
-        assert(agent_q::usb_signing_result_write_user_signed(
+        assert(agent_q::usb_signing_outcome_write_user_signed(
             "req-user-zklogin-personal-message",
             "session-a",
             "user",
@@ -378,7 +378,7 @@ int main()
 
     {
         reset_capture();
-        assert(agent_q::usb_signing_result_write_user_terminal(
+        assert(agent_q::usb_signing_outcome_write_user_terminal(
             "req-user-rejected",
             "session-b",
             identity,
@@ -401,7 +401,7 @@ int main()
         result.status = agent_q::AgentQPolicySigningExecutionStatus::account_error;
         result.code = "account_unavailable";
         result.message = "Signing account is unavailable.";
-        assert(agent_q::usb_signing_result_write_policy_execution(
+        assert(agent_q::usb_signing_outcome_write_policy_execution(
             "req-policy-error",
             "session-c",
             identity,
@@ -414,7 +414,7 @@ int main()
         assert(strcmp(response["error"]["code"], "account_unavailable") == 0);
     }
 
-    printf("USB signing result writer tests passed\n");
+    printf("USB signing outcome writer tests passed\n");
     return 0;
 }
 CPP
@@ -426,8 +426,8 @@ CPP
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
   "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_signing_result_writer.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signing_result_store.cpp" \
-  -o "${TMP_DIR}/test_usb_signing_result_writer"
+  "${AGENT_Q_DIR}/agent_q_usb_signing_outcome_writer.cpp" \
+  "${AGENT_Q_DIR}/agent_q_signing_response_store.cpp" \
+  -o "${TMP_DIR}/test_usb_signing_outcome_writer"
 
-"${TMP_DIR}/test_usb_signing_result_writer"
+"${TMP_DIR}/test_usb_signing_outcome_writer"

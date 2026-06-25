@@ -55,7 +55,7 @@ void handle_usb_disconnect_request(
     if (ops.clear_active_session != nullptr) {
         ops.clear_active_session();
     }
-    if (usb_response_write_disconnect_result(id)) {
+    if (usb_response_write_disconnect_success(id)) {
         return;
     }
     writer.log_write_failure("disconnect", id);

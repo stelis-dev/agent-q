@@ -34,11 +34,11 @@ UI_EVENT_BRIDGE_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent
 USB_LINE_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_request_line_handler.cpp"
 USB_DEVICE_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_device_handlers.cpp"
 USB_DISCONNECT_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_disconnect_handler.cpp"
-USB_SIGNING_RESULT_WRITER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_signing_result_writer.cpp"
-USB_RETAINED_RESULT_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_retained_result_handlers.cpp"
+USB_SIGNING_OUTCOME_WRITER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_signing_outcome_writer.cpp"
+USB_RETAINED_RESPONSE_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_retained_response_handlers.cpp"
 USB_SESSION_READ_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_session_read_handlers.cpp"
 USB_POLICY_PROPOSE_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_policy_propose_handler.cpp"
-USB_POLICY_PROPOSE_RESULT_WRITER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_policy_propose_result_writer.cpp"
+USB_POLICY_PROPOSE_OUTCOME_WRITER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_policy_propose_outcome_writer.cpp"
 USB_SIGNING_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_signing_handlers.cpp"
 CONNECT_REVIEW_RESPONSE_FLOW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_connect_review_response_flow.cpp"
 LOCAL_SETTINGS_RESET_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_local_settings_reset_ui_flow.cpp"
@@ -179,11 +179,11 @@ expect_present "${USB_OPERATION_MANIFEST_SOURCE}" '"sign_transaction"' \
   "USB operation manifest must accept public sign_transaction messages"
 expect_absent "${USB_OPERATION_MANIFEST_SOURCE}" '"sign_transaction_user"|"sign_transaction_policy"' \
   "USB operation classifier must not accept host-selected authorization request types"
-expect_present "${USB_SIGNING_RESULT_WRITER_SOURCE}" 'usb_response_prepare_success_result|usb_response_prepare_method_error' \
-  "USB signing result writer must emit DeviceResponse envelopes through the shared response writer"
-expect_absent "${USB_SIGNING_RESULT_WRITER_SOURCE}" 'response\["type"\][[:space:]]*=[[:space:]]*"sign_result"' \
-  "USB signing response writer must emit only DeviceResponse envelopes"
-expect_absent "${USB_SERVER}" 'response\["type"\][[:space:]]*=[[:space:]]*"sign_result"|write_sign_result_signed|write_sign_result_user_terminal|write_sign_result_policy_rejected|write_sign_result_signing_failed' \
+expect_present "${USB_SIGNING_OUTCOME_WRITER_SOURCE}" 'usb_response_prepare_success_result|usb_response_prepare_method_error' \
+  "USB signing outcome writer must emit DeviceResponse envelopes through the shared response writer"
+expect_absent "${USB_SIGNING_OUTCOME_WRITER_SOURCE}" 'response\["type"\]' \
+  "USB signing outcome writer must not hand-build top-level response type fields"
+expect_absent "${USB_SERVER}" 'response\["type"\]|write_signing_' \
   "USB request server must not own public signing response JSON"
 expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" '"signing"' \
   "session-read handler must advertise shared signing capabilities"
@@ -301,18 +301,18 @@ expect_present "${USB_CONNECT_HANDLER_SOURCE}" 'handle_usb_connect_request' \
   "connect operation handler must live outside the USB server"
 expect_present "${USB_SERVER}" 'handle_get_result_request' \
   "USB request server must route get_result through an injected operation wrapper"
-expect_present "${USB_RETAINED_RESULT_HANDLERS_SOURCE}" 'handle_usb_get_result_request' \
+expect_present "${USB_RETAINED_RESPONSE_HANDLERS_SOURCE}" 'handle_usb_get_result_request' \
   "get_result operation handler must live outside the USB server"
-expect_present "${USB_RETAINED_RESULT_HANDLERS_SOURCE}" 'signing_result_find' \
-  "retained-result handler must own stored-result lookup"
+expect_present "${USB_RETAINED_RESPONSE_HANDLERS_SOURCE}" 'signing_response_find' \
+  "retained-response handler must own stored-response lookup"
 expect_present "${USB_SERVER}" 'handle_ack_result_request' \
   "USB request server must route ack_result through an injected operation wrapper"
-expect_present "${USB_RETAINED_RESULT_HANDLERS_SOURCE}" 'handle_usb_ack_result_request' \
+expect_present "${USB_RETAINED_RESPONSE_HANDLERS_SOURCE}" 'handle_usb_ack_result_request' \
   "ack_result operation handler must live outside the USB server"
-expect_present "${USB_RETAINED_RESULT_HANDLERS_SOURCE}" 'signing_result_ack' \
-  "retained-result handler must own stored-result ack"
-expect_absent "${USB_SERVER}" 'try_deliver_stored_result_by_id|ack_stored_result_by_id' \
-  "USB request server must not own retained signing-result store adapters"
+expect_present "${USB_RETAINED_RESPONSE_HANDLERS_SOURCE}" 'signing_response_ack' \
+  "retained-response handler must own stored-response ack"
+expect_absent "${USB_SERVER}" 'try_deliver_stored_response_by_id|ack_stored_response_by_id' \
+  "USB request server must not own retained signing-outcome store adapters"
 expect_present "${USB_SERVER}" 'handle_get_capabilities_request' \
   "USB request server must route get_capabilities through an operation handler"
 expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" 'handle_usb_get_capabilities_request' \
@@ -343,10 +343,10 @@ expect_present "${USB_SERVER}" 'handle_policy_propose_request' \
   "USB request server must route policy_propose through an operation handler"
 expect_present "${USB_POLICY_PROPOSE_HANDLER_SOURCE}" 'handle_usb_policy_propose_request' \
   "policy_propose operation handler must live outside the USB server"
-expect_present "${USB_POLICY_PROPOSE_RESULT_WRITER_SOURCE}" 'usb_response_write_success_result\(id,[[:space:]]*"policy_propose"' \
-  "policy_propose result writer must own policy_propose response JSON"
-expect_absent "${USB_SERVER}" 'response\["type"\][[:space:]]*=[[:space:]]*"policy_propose_result"|write_policy_propose_result_response' \
-  "USB request server must not own policy_propose_result response JSON"
+expect_present "${USB_POLICY_PROPOSE_OUTCOME_WRITER_SOURCE}" 'usb_response_write_success_result\(id,[[:space:]]*"policy_propose"' \
+  "policy_propose outcome writer must own policy_propose response JSON"
+expect_absent "${USB_SERVER}" 'response\["type"\]|usb_response_write_success_result\([^;]*"policy_propose"' \
+  "USB request server must not own policy proposal outcome response JSON"
 expect_present "${USB_SERVER}" 'handle_sign_transaction_request' \
   "USB request server must route sign_transaction through an operation handler"
 expect_present "${USB_SERVER}" 'handle_sign_personal_message_request' \
@@ -611,9 +611,9 @@ expect_present "${USB_DEVICE_HANDLERS_SOURCE}" '\{"id", "version", "method"\}' \
   "extracted get_status handler must exact-check top-level request fields"
 expect_present "${USB_DEVICE_HANDLERS_SOURCE}" '\{"id", "version", "method", "payload"\}' \
   "extracted identify_device handler must exact-check top-level request fields"
-expect_present "${USB_RETAINED_RESULT_HANDLERS_SOURCE}" '\{"id", "version", "method", "sessionId", "payload"\}' \
+expect_present "${USB_RETAINED_RESPONSE_HANDLERS_SOURCE}" '\{"id", "version", "method", "sessionId", "payload"\}' \
   "extracted get_result handler must exact-check top-level request fields"
-expect_present "${USB_RETAINED_RESULT_HANDLERS_SOURCE}" '\{"id", "version", "method", "sessionId", "payload"\}' \
+expect_present "${USB_RETAINED_RESPONSE_HANDLERS_SOURCE}" '\{"id", "version", "method", "sessionId", "payload"\}' \
   "extracted ack_result handler must exact-check top-level request fields"
 expect_present "${USB_DISCONNECT_HANDLER_SOURCE}" '\{"id", "version", "method", "sessionId"\}' \
   "extracted disconnect handler must exact-check top-level request fields"
@@ -626,7 +626,7 @@ expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" '\{"id", "version", "method
 expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" '\{"id", "version", "method", "sessionId"\}' \
   "extracted policy_get handler must exact-check top-level request fields"
 
-expect_tree_present "${CORE_SOURCE}" 'signTransaction|sign_transaction|sign_result' \
+expect_tree_present "${CORE_SOURCE}" 'signTransaction|sign_transaction|signing outcome' \
   "Agent-Q core source must expose the Sign API"
 expect_tree_present "${CORE_SOURCE}" 'signPersonalMessage|sign_personal_message|messageBytes' \
   "Agent-Q core source must expose Sui personal-message signing"

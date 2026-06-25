@@ -167,21 +167,21 @@ int main()
     expect(!agent_q::device_activity_blocks_user_signing_ingress(activity),
            "idle activity allows user signing ingress");
     expect_usb_block(activity, false, false, false, nullptr);
-    expect(agent_q::usb_operation_is_retained_result_read_cleanup(
+    expect(agent_q::usb_operation_is_retained_response_read_cleanup(
                agent_q::AgentQUsbOperationType::get_result),
-           "get_result is a retained-result read route");
-    expect(agent_q::usb_operation_is_retained_result_read_cleanup(
+           "get_result is a retained-response read route");
+    expect(agent_q::usb_operation_is_retained_response_read_cleanup(
                agent_q::AgentQUsbOperationType::ack_result),
-           "ack_result is a retained-result cleanup route");
-    expect(!agent_q::usb_operation_is_retained_result_read_cleanup(
+           "ack_result is a retained-response cleanup route");
+    expect(!agent_q::usb_operation_is_retained_response_read_cleanup(
                agent_q::AgentQUsbOperationType::sign_transaction),
-           "sign_transaction is not a retained-result route");
-    expect(!agent_q::usb_operation_is_retained_result_read_cleanup(
+           "sign_transaction is not a retained-response route");
+    expect(!agent_q::usb_operation_is_retained_response_read_cleanup(
                agent_q::AgentQUsbOperationType::policy_propose),
-           "policy_propose is not a retained-result route");
-    expect(!agent_q::usb_operation_is_retained_result_read_cleanup(
+           "policy_propose is not a retained-response route");
+    expect(!agent_q::usb_operation_is_retained_response_read_cleanup(
                agent_q::AgentQUsbOperationType::credential_propose),
-           "credential_propose is not a retained-result route");
+           "credential_propose is not a retained-response route");
 
     for (agent_q::AgentQPolicyUpdateFlowStage stage : {
              agent_q::AgentQPolicyUpdateFlowStage::reviewing,

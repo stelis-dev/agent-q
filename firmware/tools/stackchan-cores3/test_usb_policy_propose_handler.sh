@@ -48,8 +48,8 @@ for required in \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_policy_propose_handler.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_policy_propose_handler.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_policy_propose_result_writer.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_policy_propose_result_writer.h" \
+  "${AGENT_Q_DIR}/agent_q_usb_policy_propose_outcome_writer.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_policy_propose_outcome_writer.h" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_response_writer.h" \
   "${AGENT_Q_DIR}/agent_q_usb_response_writer.h" \
   "${AGENT_Q_DIR}/agent_q_policy_update_flow.h" \
@@ -89,7 +89,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include "agent_q_payload_delivery_admission.h"
 #include "agent_q_payload_delivery_store.h"
 #include "agent_q_usb_policy_propose_handler.h"
-#include "agent_q_usb_policy_propose_result_writer.h"
+#include "agent_q_usb_policy_propose_outcome_writer.h"
 #include "mbedtls/sha256.h"
 
 namespace {
@@ -438,12 +438,9 @@ bool approval_history_digest_payload(
 bool usb_response_write_json(JsonDocument& response)
 {
     g_json_write_calls += 1;
-    JsonObjectConst result =
-        response["result"].is<JsonObjectConst>()
-            ? response["result"].as<JsonObjectConst>()
-            : response.as<JsonObjectConst>();
+    JsonObjectConst result = response["result"].as<JsonObjectConst>();
     snprintf(g_last_response_id, sizeof(g_last_response_id), "%s", response["id"].as<const char*>());
-    snprintf(g_last_response_type, sizeof(g_last_response_type), "%s", response["method"] | response["type"] | "");
+    snprintf(g_last_response_type, sizeof(g_last_response_type), "%s", response["method"] | "");
     snprintf(g_last_policy_status, sizeof(g_last_policy_status), "%s", result["status"].as<const char*>());
     snprintf(g_last_policy_reason, sizeof(g_last_policy_reason), "%s", result["reasonCode"].as<const char*>());
     g_last_policy_included = !result["policy"].isNull();
@@ -618,7 +615,7 @@ int main()
             "scopes=1/1 policies=3 conditions=7",
             "Update policy",
         };
-        assert(agent_q::usb_policy_propose_result_write("req", "applied", "applied", &snapshot));
+        assert(agent_q::usb_policy_propose_outcome_write("req", "applied", "applied", &snapshot));
         assert(g_json_write_calls == 1);
         assert(strcmp(g_last_response_id, "req") == 0);
         assert(strcmp(g_last_response_type, "policy_propose") == 0);
@@ -722,7 +719,7 @@ CPP
   "${TMP_DIR}/sha256.o" \
   "${TMP_DIR}/platform_util.o" \
   "${AGENT_Q_DIR}/agent_q_usb_policy_propose_handler.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_policy_propose_result_writer.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_policy_propose_outcome_writer.cpp" \
   -o "${TMP_DIR}/test_usb_policy_propose_handler"
 
 "${TMP_DIR}/test_usb_policy_propose_handler"

@@ -19,14 +19,14 @@ import {
   validateSignTransactionParams as validateProviderSignTransactionParams,
   validateSignTransactionInput as validateProviderSignTransactionInput,
   type Account,
-  type AccountsResponse,
-  type CapabilitiesResponse,
+  type AccountsResult,
+  type CapabilitiesResult,
   type CapabilityChain,
-  type ConnectResponse,
+  type ConnectResult,
   type CredentialCapability,
-  type DisconnectResponse,
+  type DisconnectResult,
   type SignPersonalMessageParams,
-  type SignResultResponse,
+  type SigningOutcome,
   type SignTransactionParams,
   type SigningCapabilities,
 } from "./provider-protocol.js";
@@ -34,10 +34,10 @@ import { ProtocolError } from "./protocol-error.js";
 import {
   makeDeviceError,
   parseDeviceResponse,
-  SIGN_RESULT_ERROR_MESSAGES,
+  SIGNING_OUTCOME_ERROR_MESSAGES,
   type DeviceResponse,
   type DeviceMethod,
-  type SignResultErrorCode,
+  type SigningOutcomeErrorCode,
 } from "./device-contract.js";
 import {
   AGENT_Q_POLICY_SCHEMA,
@@ -65,7 +65,7 @@ import {
   POLICY_FIELD_ID_PATTERN,
   POLICY_ID_PATTERN,
   POLICY_OPERATORS,
-  POLICY_PROPOSE_RESULT_STATUSES,
+  POLICY_PROPOSAL_OUTCOME_STATUSES,
   SIGNING_HISTORY_RECORD_KINDS,
   SIGNING_HISTORY_TERMINAL_RESULTS,
   SIGN_CHAIN_PATTERN,
@@ -84,7 +84,7 @@ import {
   MAX_PROTOCOL_RESPONSE_LINE_BYTES,
   MAX_RAW_PROTOCOL_JSON_BYTES,
   MAX_SESSION_TTL_MS,
-  MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
+  MAX_SIGNING_OUTCOME_PAYLOAD_BASE64_CHARS,
   MAX_SIGNING_CAPABILITIES,
   MAX_SUI_SIGN_PERSONAL_MESSAGE_BASE64_CHARS,
   MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES,
@@ -166,7 +166,7 @@ export {
   MAX_PROTOCOL_RESPONSE_LINE_BYTES,
   MAX_RAW_PROTOCOL_JSON_BYTES,
   MAX_SESSION_TTL_MS,
-  MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
+  MAX_SIGNING_OUTCOME_PAYLOAD_BASE64_CHARS,
   MAX_SIGNING_CAPABILITIES,
   MAX_SUI_SIGN_PERSONAL_MESSAGE_BASE64_CHARS,
   MAX_SUI_SIGN_PERSONAL_MESSAGE_BYTES,
@@ -181,13 +181,13 @@ export {
   POLICY_FIELD_ID_PATTERN,
   POLICY_ID_PATTERN,
   POLICY_OPERATORS,
-  POLICY_PROPOSE_RESULT_STATUSES,
+  POLICY_PROPOSAL_OUTCOME_STATUSES,
   PROTOCOL_VERSION,
   SIGNING_HISTORY_RECORD_KINDS,
   SIGNING_HISTORY_TERMINAL_RESULTS,
   SIGN_CHAIN_PATTERN,
   SIGN_METHOD_PATTERN,
-  SIGN_RESULT_ERROR_MESSAGES,
+  SIGNING_OUTCOME_ERROR_MESSAGES,
   SUI_ADDRESS_PATTERN,
   SUI_CHAIN_ID,
   SUI_DERIVATION_PATH,
@@ -217,30 +217,28 @@ export {
   parseDeviceResponse,
 };
 export { ProtocolError };
-export type { DeviceMethod, DeviceResponse, DeviceState, ProvisioningState, SignResultErrorCode, SuiSignMethod, SuiSignTransactionNetwork };
+export type { DeviceMethod, DeviceResponse, DeviceState, ProvisioningState, SigningOutcomeErrorCode, SuiSignMethod, SuiSignTransactionNetwork };
 export type {
   Account,
-  AccountsResponse,
-  CapabilitiesResponse,
+  AccountsResult,
+  CapabilitiesResult,
   CapabilityAccount,
   CapabilityChain,
   CredentialCapability,
-  ConnectApprovedResponse,
-  ConnectRejectedResponse,
-  ConnectResponse,
-  DisconnectResponse,
+  ConnectResult,
+  DisconnectResult,
   SignPersonalMessageParams,
-  SignPersonalMessageSignedResponse,
   SignOperationType,
-  SignResultAuthorization,
-  SignResultPolicyRejectedResponse,
-  SignResultResponse,
-  SignResultSignedResponse,
-  SignResultSigningFailedResponse,
-  SignResultStatus,
-  SignResultUserRejectedResponse,
+  SigningOutcomeAuthorization,
+  SigningOutcome,
+  SignPersonalMessageSignedResult,
+  SigningOutcomePolicyRejected,
+  SigningOutcomeSigned,
+  SigningOutcomeSigningFailed,
+  SigningOutcomeStatus,
+  SigningOutcomeUserRejected,
   SignTransactionParams,
-  SignTransactionSignedResponse,
+  SignTransactionSignedResult,
   SupportedSignRoute,
   SigningCapabilities,
   SigningCapabilityEntry,
@@ -264,58 +262,9 @@ export interface DeviceStatusSnapshot {
   provisioning: ProvisioningStatus;
 }
 
-export interface GetStatusRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "get_status";
-}
-
-export interface IdentifyDeviceRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "identify_device";
-  params: {
-    code: string;
-  };
-}
-
-export interface PolicyGetRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "policy_get";
-  sessionId: string;
-}
-
-export interface GetApprovalHistoryRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "get_approval_history";
-  sessionId: string;
-  params: {
-    limit: number;
-    beforeSeq?: string;
-  };
-}
-
-export interface PolicyProposeRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "policy_propose";
-  sessionId: string;
-  params: {
-    policy: Record<string, unknown>;
-  };
-}
-
-export interface CredentialPrepareRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: typeof CREDENTIAL_PREPARE_OPERATION;
-  sessionId: string;
-  params: {
-    chain: typeof SUI_CHAIN_ID;
-    credential: typeof SUI_ZKLOGIN_CREDENTIAL;
-  };
+export interface CredentialPrepareParams {
+  chain: typeof SUI_CHAIN_ID;
+  credential: typeof SUI_ZKLOGIN_CREDENTIAL;
 }
 
 export interface ZkLoginSignatureInputsDto {
@@ -342,27 +291,12 @@ export interface CredentialProposeParams {
   inputs: ZkLoginSignatureInputsDto;
 }
 
-export interface CredentialProposeRequest {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: typeof CREDENTIAL_PROPOSE_OPERATION;
-  sessionId: string;
-  params: CredentialProposeParams;
-}
-
 export interface StatusResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "status";
   device: DeviceStatus;
   provisioning: ProvisioningStatus;
 }
 
 export interface IdentifyDeviceResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "identify_device_result";
-  status: "displayed";
   code: string;
   device: DeviceStatus;
 }
@@ -416,9 +350,6 @@ export interface PolicyDocument {
 }
 
 export interface PolicyResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "policy";
   policy: PolicyDocument;
 }
 
@@ -473,14 +404,11 @@ export type ApprovalHistoryRecord =
   | SigningApprovalHistoryRecord;
 
 export interface ApprovalHistoryResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "approval_history";
   records: ApprovalHistoryRecord[];
   hasMore: boolean;
 }
 
-export type PolicyProposeResultStatus =
+export type PolicyProposalOutcomeStatus =
   | "applied"
   | "rejected"
   | "timed_out"
@@ -489,7 +417,7 @@ export type PolicyProposeResultStatus =
   | "storage_error"
   | "consistency_error";
 
-export interface PolicyProposeResultPolicySummary {
+export interface PolicyProposalOutcomePolicySummary {
   policyHash: string;
   blockchainCount: number;
   networkCount: number;
@@ -498,20 +426,13 @@ export interface PolicyProposeResultPolicySummary {
   highestAction: ApprovalHistoryHighestAction;
 }
 
-export interface PolicyProposeResultResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "policy_propose_result";
-  status: PolicyProposeResultStatus;
+export interface PolicyProposalOutcomeResponse {
+  status: PolicyProposalOutcomeStatus;
   reasonCode: string;
-  policy?: PolicyProposeResultPolicySummary;
+  policy?: PolicyProposalOutcomePolicySummary;
 }
 
-export interface CredentialPrepareResultResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "credential_prepare_result";
-  status: "prepared";
+export interface CredentialPreparationResponse {
   chain: typeof SUI_CHAIN_ID;
   credential: typeof SUI_ZKLOGIN_CREDENTIAL;
   preparation: {
@@ -521,7 +442,7 @@ export interface CredentialPrepareResultResponse {
   };
 }
 
-export type CredentialProposeResultStatus =
+export type CredentialProposalOutcomeStatus =
   | "activated"
   | "rejected"
   | "timed_out"
@@ -530,7 +451,7 @@ export type CredentialProposeResultStatus =
   | "storage_error"
   | "consistency_error";
 
-export const CREDENTIAL_PROPOSE_RESULT_STATUSES = [
+export const CREDENTIAL_PROPOSAL_OUTCOME_STATUSES = [
   "activated",
   "rejected",
   "timed_out",
@@ -540,11 +461,8 @@ export const CREDENTIAL_PROPOSE_RESULT_STATUSES = [
   "consistency_error",
 ] as const;
 
-export interface CredentialProposeResultResponse {
-  id: string;
-  version: typeof PROTOCOL_VERSION;
-  type: "credential_propose_result";
-  status: CredentialProposeResultStatus;
+export interface CredentialProposalOutcomeResponse {
+  status: CredentialProposalOutcomeStatus;
   reasonCode: string;
   sessionEnded: boolean;
 }
@@ -634,7 +552,7 @@ export function validatePolicyProposeInput(policy: unknown): asserts policy is R
   }
 }
 
-export function validateCredentialPrepareInput(params: unknown): CredentialPrepareRequest["params"] {
+export function validateCredentialPrepareInput(params: unknown): CredentialPrepareParams {
   const value = credentialParamsObject(params, "credential_prepare params");
   requireCredentialInputKeys(value, ["chain", "credential"], "credential_prepare params");
   if (value.chain !== SUI_CHAIN_ID || value.credential !== SUI_ZKLOGIN_CREDENTIAL) {
@@ -861,7 +779,7 @@ function assertDeviceResultObject(
   response: DeviceResponse,
   method: DeviceMethod,
   label: string,
-): { id: string; result: Record<string, unknown> } {
+): Record<string, unknown> {
   const parsed = parseDeviceResponse(response, { expectedMethod: method });
   if (parsed.success === false) {
     throw new ProtocolError(parsed.error.code, parsed.error.message);
@@ -869,7 +787,7 @@ function assertDeviceResultObject(
   if (parsed.id === undefined) {
     throw new ProtocolError("invalid_response", `${label} id is required.`);
   }
-  return { id: parsed.id, result: asResultObject(parsed.result) };
+  return asResultObject(parsed.result);
 }
 
 function requireResultKeys(
@@ -886,7 +804,7 @@ function requireResultKeys(
 }
 
 export function assertStatusResponse(response: DeviceResponse): StatusResponse {
-  const { id, result } = assertDeviceResultObject(response, "get_status", "Status result");
+  const result = assertDeviceResultObject(response, "get_status", "Status result");
   requireResultKeys(result, ["device", "provisioning"], "Status result");
   requireWireDeviceStatusShape(result.device, "Status result device object");
   requireWireProvisioningStatusShape(result.provisioning, "Status result provisioning object");
@@ -895,22 +813,22 @@ export function assertStatusResponse(response: DeviceResponse): StatusResponse {
   if (device === null || provisioning === null) {
     throw new ProtocolError("invalid_response", "Status result is malformed.");
   }
-  return { id, version: PROTOCOL_VERSION, type: "status", device, provisioning };
+  return { device, provisioning };
 }
 
 export function assertIdentifyDeviceResponse(response: DeviceResponse): IdentifyDeviceResponse {
-  const { id, result } = assertDeviceResultObject(response, "identify_device", "Identify result");
+  const result = assertDeviceResultObject(response, "identify_device", "Identify result");
   requireResultKeys(result, ["code", "device"], "Identify result");
   requireWireDeviceStatusShape(result.device, "Identify result device object");
   const device = sanitizeDeviceStatus(result.device);
   if (device === null || !isIdentificationCode(result.code)) {
     throw new ProtocolError("invalid_response", "Identify result is malformed.");
   }
-  return { id, version: PROTOCOL_VERSION, type: "identify_device_result", status: "displayed", code: result.code, device };
+  return { code: result.code, device };
 }
 
-export function assertConnectResponse(response: DeviceResponse): ConnectResponse {
-  const { id, result } = assertDeviceResultObject(response, "connect", "Connect result");
+export function assertConnectResult(response: DeviceResponse): ConnectResult {
+  const result = assertDeviceResultObject(response, "connect", "Connect result");
   requireResultKeys(result, ["sessionId", "sessionTtlMs", "device"], "Connect result");
   requireWireDeviceStatusShape(result.device, "Connect result device object");
   const device = sanitizeDeviceStatus(result.device);
@@ -924,177 +842,150 @@ export function assertConnectResponse(response: DeviceResponse): ConnectResponse
   ) {
     throw new ProtocolError("invalid_response", "Connect result is malformed.");
   }
-  return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "connect_result",
-    status: "approved",
-    sessionId: result.sessionId,
-    sessionTtlMs: result.sessionTtlMs,
-    device,
-  };
+  return { sessionId: result.sessionId, sessionTtlMs: result.sessionTtlMs, device };
 }
 
-export function assertDisconnectResponse(response: DeviceResponse): DisconnectResponse {
-  const { id, result } = assertDeviceResultObject(response, "disconnect", "Disconnect result");
+export function assertDisconnectResult(response: DeviceResponse): DisconnectResult {
+  const result = assertDeviceResultObject(response, "disconnect", "Disconnect result");
   requireResultKeys(result, [], "Disconnect result");
-  return { id, version: PROTOCOL_VERSION, type: "disconnect_result", status: "disconnected" };
+  return {};
 }
 
-export function assertCapabilitiesResponse(response: DeviceResponse): CapabilitiesResponse {
-  const { id, result } = assertDeviceResultObject(response, "get_capabilities", "Capabilities result");
+export function assertCapabilitiesResult(response: DeviceResponse): CapabilitiesResult {
+  const result = assertDeviceResultObject(response, "get_capabilities", "Capabilities result");
   requireResultKeys(result, ["chains", "signing", "credentials"], "Capabilities result");
   if (!Array.isArray(result.chains)) {
     throw new ProtocolError("invalid_response", "Capabilities result is malformed.");
   }
   return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "capabilities",
     chains: result.chains as CapabilityChain[],
     ...(result.signing === undefined ? {} : { signing: result.signing as SigningCapabilities }),
     ...(result.credentials === undefined ? {} : { credentials: result.credentials as CredentialCapability[] }),
   };
 }
 
-export function assertAccountsResponse(response: DeviceResponse): AccountsResponse {
-  const { id, result } = assertDeviceResultObject(response, "get_accounts", "Accounts result");
+export function assertAccountsResult(response: DeviceResponse): AccountsResult {
+  const result = assertDeviceResultObject(response, "get_accounts", "Accounts result");
   requireResultKeys(result, ["accounts"], "Accounts result");
   if (!Array.isArray(result.accounts)) {
     throw new ProtocolError("invalid_response", "Accounts result is malformed.");
   }
-  return { id, version: PROTOCOL_VERSION, type: "accounts", accounts: result.accounts as Account[] };
+  return { accounts: result.accounts as Account[] };
 }
 
 export function assertPolicyResponse(response: DeviceResponse): PolicyResponse {
-  const { id, result } = assertDeviceResultObject(response, "policy_get", "Policy result");
+  const result = assertDeviceResultObject(response, "policy_get", "Policy result");
   requireResultKeys(result, ["policy"], "Policy result");
   const policy = sanitizeCurrentPolicyDocument(result.policy);
   if (policy === null) {
     throw new ProtocolError("invalid_response", "Policy result is malformed.");
   }
-  return { id, version: PROTOCOL_VERSION, type: "policy", policy };
+  return { policy };
 }
 
 export function assertApprovalHistoryResponse(response: DeviceResponse): ApprovalHistoryResponse {
-  const { id, result } = assertDeviceResultObject(response, "get_approval_history", "Approval history result");
+  const result = assertDeviceResultObject(response, "get_approval_history", "Approval history result");
   requireResultKeys(result, ["records", "hasMore"], "Approval history result");
   if (!Array.isArray(result.records) || result.records.length > MAX_APPROVAL_HISTORY_RECORDS || typeof result.hasMore !== "boolean") {
     throw new ProtocolError("invalid_response", "Approval history result is malformed.");
   }
   return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "approval_history",
     records: result.records.map((entry) => sanitizeApprovalHistoryRecord(entry)),
     hasMore: result.hasMore,
   };
 }
 
-export function assertPolicyProposeResultResponse(response: DeviceResponse): PolicyProposeResultResponse {
-  const { id, result } = assertDeviceResultObject(response, "policy_propose", "Policy proposal result");
-  requireResultKeys(result, ["status", "reasonCode", "policy"], "Policy proposal result");
+export function assertPolicyProposalOutcomeResponse(response: DeviceResponse): PolicyProposalOutcomeResponse {
+  const result = assertDeviceResultObject(response, "policy_propose", "Policy proposal outcome");
+  requireResultKeys(result, ["status", "reasonCode", "policy"], "Policy proposal outcome");
   if (
-    !POLICY_PROPOSE_RESULT_STATUSES.includes(result.status as PolicyProposeResultStatus) ||
+    !POLICY_PROPOSAL_OUTCOME_STATUSES.includes(result.status as PolicyProposalOutcomeStatus) ||
     typeof result.reasonCode !== "string" ||
     !APPROVAL_HISTORY_REASON_CODE_PATTERN.test(result.reasonCode)
   ) {
-    throw new ProtocolError("invalid_response", "Policy proposal result is malformed.");
+    throw new ProtocolError("invalid_response", "Policy proposal outcome is malformed.");
   }
-  const policy = sanitizePolicyProposeResultPolicy(result.policy);
+  const policy = sanitizePolicyProposalOutcomePolicy(result.policy);
   if (result.status === "invalid_policy") {
     if (policy !== undefined) {
       throw new ProtocolError("invalid_response", "Invalid policy result must not include policy metadata.");
     }
   } else if (policy === undefined) {
-    throw new ProtocolError("invalid_response", "Policy proposal result policy metadata is malformed.");
+    throw new ProtocolError("invalid_response", "Policy proposal outcome policy metadata is malformed.");
   }
   return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "policy_propose_result",
-    status: result.status as PolicyProposeResultStatus,
+    status: result.status as PolicyProposalOutcomeStatus,
     reasonCode: result.reasonCode,
     ...(policy !== undefined ? { policy } : {}),
   };
 }
 
-export function assertCredentialPrepareResultResponse(response: DeviceResponse): CredentialPrepareResultResponse {
-  const { id, result } = assertDeviceResultObject(response, "credential_prepare", "Credential prepare result");
-  requireResultKeys(result, ["chain", "credential", "preparation"], "Credential prepare result");
+export function assertCredentialPreparationResponse(response: DeviceResponse): CredentialPreparationResponse {
+  const result = assertDeviceResultObject(response, "credential_prepare", "Credential preparation response");
+  requireResultKeys(result, ["chain", "credential", "preparation"], "Credential preparation response");
   const preparation = sanitizeCredentialPreparation(result.preparation);
   if (
     result.chain !== SUI_CHAIN_ID ||
     result.credential !== SUI_ZKLOGIN_CREDENTIAL ||
     preparation === null
   ) {
-    throw new ProtocolError("invalid_response", "Credential prepare result is malformed.");
+    throw new ProtocolError("invalid_response", "Credential preparation response is malformed.");
   }
   return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "credential_prepare_result",
-    status: "prepared",
     chain: SUI_CHAIN_ID,
     credential: SUI_ZKLOGIN_CREDENTIAL,
     preparation,
   };
 }
 
-export function assertCredentialProposeResultResponse(response: DeviceResponse): CredentialProposeResultResponse {
-  const { id, result } = assertDeviceResultObject(response, "credential_propose", "Credential proposal result");
-  requireResultKeys(result, ["status", "reasonCode", "sessionEnded"], "Credential proposal result");
+export function assertCredentialProposalOutcomeResponse(response: DeviceResponse): CredentialProposalOutcomeResponse {
+  const result = assertDeviceResultObject(response, "credential_propose", "Credential proposal outcome");
+  requireResultKeys(result, ["status", "reasonCode", "sessionEnded"], "Credential proposal outcome");
   if (
-    !CREDENTIAL_PROPOSE_RESULT_STATUSES.includes(result.status as CredentialProposeResultStatus) ||
+    !CREDENTIAL_PROPOSAL_OUTCOME_STATUSES.includes(result.status as CredentialProposalOutcomeStatus) ||
     typeof result.reasonCode !== "string" ||
     !APPROVAL_HISTORY_REASON_CODE_PATTERN.test(result.reasonCode) ||
     typeof result.sessionEnded !== "boolean"
   ) {
-    throw new ProtocolError("invalid_response", "Credential proposal result is malformed.");
+    throw new ProtocolError("invalid_response", "Credential proposal outcome is malformed.");
   }
   return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "credential_propose_result",
-    status: result.status as CredentialProposeResultStatus,
+    status: result.status as CredentialProposalOutcomeStatus,
     reasonCode: result.reasonCode,
     sessionEnded: result.sessionEnded,
   };
 }
 
-export function assertSignResultResponse(response: DeviceResponse): SignResultResponse {
+export function assertSigningOutcome(response: DeviceResponse): SigningOutcome {
   const parsed = parseDeviceResponse(response);
   if (parsed.success === false) {
     throw new ProtocolError(parsed.error.code, parsed.error.message);
   }
   if (parsed.id === undefined) {
-    throw new ProtocolError("invalid_response", "Sign result id is required.");
+    throw new ProtocolError("invalid_response", "Signing outcome id is required.");
   }
   if (
     parsed.method !== "sign_transaction" &&
     parsed.method !== "sign_personal_message" &&
     parsed.method !== "get_result"
   ) {
-    throw new ProtocolError("invalid_response", "Sign result method is malformed.");
+    throw new ProtocolError("invalid_response", "Signing outcome method is malformed.");
   }
   const id = parsed.id;
   const result = asResultObject(parsed.result);
-  requireResultKeys(result, ["authorization", "chain", "method", "signature", "messageBytes"], "Sign result");
+  requireResultKeys(result, ["authorization", "chain", "method", "signature", "messageBytes"], "Signing outcome");
   if (
     (result.authorization !== "user" && result.authorization !== "policy") ||
     result.chain !== SUI_CHAIN_ID ||
     typeof result.signature !== "string"
   ) {
-    throw new ProtocolError("invalid_response", "Sign result is malformed.");
+    throw new ProtocolError("invalid_response", "Signing outcome is malformed.");
   }
   if (result.method === SUI_SIGN_TRANSACTION_METHOD) {
     if (result.messageBytes !== undefined || !isSuiTransactionSignatureEnvelopeBase64(result.signature)) {
-      throw new ProtocolError("invalid_response", "Sign result is malformed.");
+      throw new ProtocolError("invalid_response", "Signing outcome is malformed.");
     }
     return {
-      id,
-      version: PROTOCOL_VERSION,
-      type: "sign_result",
       authorization: result.authorization,
       status: "signed",
       chain: SUI_CHAIN_ID,
@@ -1104,18 +995,15 @@ export function assertSignResultResponse(response: DeviceResponse): SignResultRe
   }
   if (result.method === SUI_SIGN_PERSONAL_MESSAGE_METHOD) {
     if (result.authorization !== "user" || !isSuiPersonalMessageSignatureBase64(result.signature)) {
-      throw new ProtocolError("invalid_response", "Sign result is malformed.");
+      throw new ProtocolError("invalid_response", "Signing outcome is malformed.");
     }
     const messageBytes = validateCanonicalBase64Syntax(
       result.messageBytes,
-      MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
+      MAX_SIGNING_OUTCOME_PAYLOAD_BASE64_CHARS,
       "sui/sign_personal_message messageBytes",
       "invalid_response",
     );
     return {
-      id,
-      version: PROTOCOL_VERSION,
-      type: "sign_result",
       authorization: "user",
       status: "signed",
       chain: SUI_CHAIN_ID,
@@ -1124,10 +1012,10 @@ export function assertSignResultResponse(response: DeviceResponse): SignResultRe
       messageBytes,
     };
   }
-  throw new ProtocolError("invalid_response", "Sign result is malformed.");
+  throw new ProtocolError("invalid_response", "Signing outcome is malformed.");
 }
 
-function sanitizeCredentialPreparation(value: unknown): CredentialPrepareResultResponse["preparation"] | null {
+function sanitizeCredentialPreparation(value: unknown): CredentialPreparationResponse["preparation"] | null {
   if (!isRecord(value) || hasSecretPayloadKey(value)) {
     return null;
   }
@@ -1528,15 +1416,15 @@ export function sanitizeCurrentPolicyDocument(value: unknown): PolicyDocument | 
   };
 }
 
-function sanitizePolicyProposeResultPolicy(value: unknown): PolicyProposeResultPolicySummary | undefined {
+function sanitizePolicyProposalOutcomePolicy(value: unknown): PolicyProposalOutcomePolicySummary | undefined {
   if (value === undefined) {
     return undefined;
   }
   if (!isRecord(value)) {
-    throw new ProtocolError("invalid_response", "policy_propose_result policy metadata is malformed.");
+    throw new ProtocolError("invalid_response", "policy proposal outcome policy metadata is malformed.");
   }
   if (hasSecretPayloadKey(value)) {
-    throw new ProtocolError("invalid_response", "policy_propose_result policy metadata must not include secret material.");
+    throw new ProtocolError("invalid_response", "policy proposal outcome policy metadata must not include secret material.");
   }
   if (!hasOnlyObjectKeys(value, [
     "policyHash",
@@ -1546,7 +1434,7 @@ function sanitizePolicyProposeResultPolicy(value: unknown): PolicyProposeResultP
     "conditionCount",
     "highestAction",
   ])) {
-    throw new ProtocolError("invalid_response", "policy_propose_result policy metadata contains unsupported fields.");
+    throw new ProtocolError("invalid_response", "policy proposal outcome policy metadata contains unsupported fields.");
   }
   if (
     typeof value.policyHash !== "string" ||
@@ -1569,7 +1457,7 @@ function sanitizePolicyProposeResultPolicy(value: unknown): PolicyProposeResultP
     value.conditionCount > MAX_POLICY_TOTAL_CONDITIONS ||
     !APPROVAL_HISTORY_HIGHEST_ACTIONS.includes(value.highestAction as ApprovalHistoryHighestAction)
   ) {
-    throw new ProtocolError("invalid_response", "policy_propose_result policy metadata is malformed.");
+    throw new ProtocolError("invalid_response", "policy proposal outcome policy metadata is malformed.");
   }
   return {
     policyHash: value.policyHash,

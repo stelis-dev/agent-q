@@ -9,8 +9,8 @@ import type {
   GetApprovalHistoryResult,
   GetCapabilitiesResult,
   PolicyGetResult,
-  CredentialPrepareResult,
-  CredentialProposeResult,
+  CredentialPreparation,
+  CredentialProposalOutcome,
   IdentifyDevicesResult,
   SignPersonalMessageResult,
   SignTransactionResult,
@@ -26,8 +26,8 @@ export type {
   GetApprovalHistoryResult,
   GetCapabilitiesResult,
   PolicyGetResult,
-  CredentialPrepareResult,
-  CredentialProposeResult,
+  CredentialPreparation,
+  CredentialProposalOutcome,
   IdentifiedDevice,
   IdentifyDeviceFailure,
   IdentifyDevicesResult,
@@ -74,7 +74,7 @@ export interface AgentQDeviceClient {
     purpose?: string;
     chain: string;
     credential: string;
-  }): Promise<CredentialPrepareResult>;
+  }): Promise<CredentialPreparation>;
   credentialPropose(input: {
     deviceId?: string;
     purpose?: string;
@@ -85,7 +85,7 @@ export interface AgentQDeviceClient {
     publicKey: string;
     maxEpoch: string;
     inputs: unknown;
-  }): Promise<CredentialProposeResult>;
+  }): Promise<CredentialProposalOutcome>;
   signTransaction(input: {
     deviceId?: string;
     purpose?: string;

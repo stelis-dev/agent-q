@@ -11,12 +11,12 @@ namespace {
 AgentQUserSigningHandoffReport make_report(
     AgentQUserSigningHandoffResult result,
     AgentQUserSigningTransitionResult flow_result,
-    SuiTransactionSigningResult signing_result)
+    SuiSigningStatus signing_status)
 {
     return AgentQUserSigningHandoffReport{
         result,
         flow_result,
-        signing_result,
+        signing_status,
     };
 }
 
@@ -55,7 +55,7 @@ bool should_terminalize_signing_failure(
            consume_result == AgentQUserSigningTransitionResult::output_too_small;
 }
 
-SuiTransactionSigningResult sign_payload_for_route(
+SuiSigningStatus sign_payload_for_route(
     AgentQSigningRoute route,
     const uint8_t* payload,
     size_t payload_size,
@@ -80,7 +80,7 @@ SuiTransactionSigningResult sign_payload_for_route(
                 signature_size);
         case AgentQSigningRoute::unsupported:
         default:
-            return SuiTransactionSigningResult::invalid_input;
+            return SuiSigningStatus::invalid_input;
     }
 }
 
@@ -107,7 +107,7 @@ user_signing_execute_critical_section(
         return make_report(
             AgentQUserSigningHandoffResult::invalid_output,
             AgentQUserSigningTransitionResult::invalid_argument,
-            SuiTransactionSigningResult::invalid_input);
+            SuiSigningStatus::invalid_input);
     }
     user_signing_output_wipe(output);
 
@@ -128,13 +128,13 @@ user_signing_execute_critical_section(
             return make_report(
                 map_consume_failure(consume_result),
                 terminal_result,
-                SuiTransactionSigningResult::invalid_input);
+                SuiSigningStatus::invalid_input);
         }
         wipe_sensitive_buffer(signature, sizeof(signature));
         return make_report(
             map_consume_failure(consume_result),
             consume_result,
-            SuiTransactionSigningResult::invalid_input);
+            SuiSigningStatus::invalid_input);
     }
 
     const AgentQSigningRoute route = snapshot.signing_route;
@@ -147,13 +147,13 @@ user_signing_execute_critical_section(
         return make_report(
             AgentQUserSigningHandoffResult::signing_failed,
             terminal_result,
-            SuiTransactionSigningResult::invalid_input);
+            SuiSigningStatus::invalid_input);
     }
 
-    const SuiTransactionSigningResult signing_result =
+    const SuiSigningStatus signing_status =
         sign_payload_for_route(route, payload, payload_size, signature, &signature_size);
 
-    if (signing_result != SuiTransactionSigningResult::ok) {
+    if (signing_status != SuiSigningStatus::ok) {
         wipe_sensitive_buffer(payload, payload_size);
         free(payload);
         wipe_sensitive_buffer(signature, sizeof(signature));
@@ -162,7 +162,7 @@ user_signing_execute_critical_section(
         return make_report(
             AgentQUserSigningHandoffResult::signing_failed,
             terminal_result,
-            signing_result);
+            signing_status);
     }
 
     if (signature_size == 0 || signature_size > sizeof(output->signature)) {
@@ -174,7 +174,7 @@ user_signing_execute_critical_section(
         return make_report(
             AgentQUserSigningHandoffResult::signing_failed,
             failed_terminal_result,
-            SuiTransactionSigningResult::signature_output_too_small);
+            SuiSigningStatus::signature_output_too_small);
     }
 
     const AgentQUserSigningTransitionResult terminal_result =
@@ -186,7 +186,7 @@ user_signing_execute_critical_section(
         return make_report(
             AgentQUserSigningHandoffResult::terminal_error,
             terminal_result,
-            signing_result);
+            signing_status);
     }
     memcpy(output->signature, signature, signature_size);
     output->signature_size = signature_size;
@@ -201,7 +201,7 @@ user_signing_execute_critical_section(
     return make_report(
         AgentQUserSigningHandoffResult::ok,
         terminal_result,
-        signing_result);
+        signing_status);
 }
 
 const char* user_signing_handoff_result_name(

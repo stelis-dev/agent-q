@@ -7,10 +7,10 @@ import { ConfigStore } from "../dist/config.js";
 import { AgentQCore } from "../dist/core.js";
 import { makeDeviceRequest } from "../dist/device-contract.js";
 import { AgentQError } from "../dist/errors.js";
-import { MAX_SESSION_TTL_MS, SIGN_RESULT_ERROR_MESSAGES } from "../dist/protocol.js";
+import { MAX_SESSION_TTL_MS, SIGNING_OUTCOME_ERROR_MESSAGES } from "../dist/protocol.js";
 import {
   markRequestMayHaveReachedFirmware,
-  requestSignResultWithRecovery,
+  requestSigningOutcomeWithRecovery,
 } from "../dist/usb.js";
 
 const device = {
@@ -22,9 +22,6 @@ const device = {
 };
 
 const status = {
-  id: "req_1",
-  version: 1,
-  type: "status",
   device,
   provisioning: {
     state: "unprovisioned",
@@ -149,21 +146,13 @@ function nativePreparation() {
 
 function identifyResponse(code, identifiedDevice = device) {
   return {
-    id: "req_identify",
-    version: 1,
-    type: "identify_device_result",
-    status: "displayed",
     code,
     device: identifiedDevice,
   };
 }
 
-function approvedConnectResponse(extras = {}) {
+function connectResult(extras = {}) {
   return {
-    id: "req_connect",
-    version: 1,
-    type: "connect_result",
-    status: "approved",
     sessionId: "session_aabbccdd",
     sessionTtlMs: MAX_SESSION_TTL_MS,
     device,
@@ -190,21 +179,13 @@ function defaultDriver(overrides = {}) {
       return identifyResponse(code);
     },
     async connectDevice() {
-      return approvedConnectResponse();
+      return connectResult();
     },
     async disconnectDevice() {
-      return {
-        id: "req_disconnect",
-        version: 1,
-        type: "disconnect_result",
-        status: "disconnected",
-      };
+      return {};
     },
     async getCapabilities() {
       return {
-        id: "req_capabilities",
-        version: 1,
-        type: "capabilities",
         chains: [
           {
             id: "sui",
@@ -235,9 +216,6 @@ function defaultDriver(overrides = {}) {
     },
     async getAccounts() {
       return {
-        id: "req_accounts",
-        version: 1,
-        type: "accounts",
         accounts: [
           {
             chain: "sui",
@@ -254,17 +232,11 @@ function defaultDriver(overrides = {}) {
     },
     async policyGet() {
       return {
-        id: "req_policy",
-        version: 1,
-        type: "policy",
         policy: currentPolicyDocument(),
       };
     },
     async getApprovalHistory() {
       return {
-        id: "req_approval_history",
-        version: 1,
-        type: "approval_history",
         records: [
           {
             seq: "1",
@@ -287,9 +259,6 @@ function defaultDriver(overrides = {}) {
     },
     async policyPropose() {
       return {
-        id: "req_policy_propose",
-        version: 1,
-        type: "policy_propose_result",
         status: "applied",
         reasonCode: "device_confirmed",
         policy: currentPolicyProposeSummary(),
@@ -297,10 +266,6 @@ function defaultDriver(overrides = {}) {
     },
     async credentialPrepare() {
       return {
-        id: "req_credential_prepare",
-        version: 1,
-        type: "credential_prepare_result",
-        status: "prepared",
         chain: "sui",
         credential: "zklogin",
         preparation: nativePreparation(),
@@ -308,9 +273,6 @@ function defaultDriver(overrides = {}) {
     },
     async credentialPropose() {
       return {
-        id: "req_credential_propose",
-        version: 1,
-        type: "credential_propose_result",
         status: "activated",
         reasonCode: "device_confirmed",
         sessionEnded: true,
@@ -318,9 +280,6 @@ function defaultDriver(overrides = {}) {
     },
     async signTransaction() {
       return {
-        id: "req_sign_transaction",
-        version: 1,
-        type: "sign_result",
         authorization: "user",
         status: "signed",
         chain: "sui",
@@ -330,9 +289,6 @@ function defaultDriver(overrides = {}) {
     },
     async signPersonalMessage() {
       return {
-        id: "req_sign_personal_message",
-        version: 1,
-        type: "sign_result",
         authorization: "user",
         status: "signed",
         chain: "sui",
@@ -457,14 +413,13 @@ test("scan stores live device without selecting it", async () => {
           return {
             id: "req_sign_policy",
             version: 1,
-            type: "sign_result",
             authorization: "policy",
             status: "policy_rejected",
             policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
             ruleRef: "default",
             error: {
               code: "policy_rejected",
-              message: SIGN_RESULT_ERROR_MESSAGES.policy_rejected,
+              message: SIGNING_OUTCOME_ERROR_MESSAGES.policy_rejected,
             },
           };
         },
@@ -603,7 +558,8 @@ test("identifies devices without selecting one", async () => {
 
     const result = await core.identifyDevices();
     assert.equal(result.devices.length, 2);
-    assert.equal(result.devices.every((candidate) => candidate.status === "displayed"), true);
+    assert.equal(result.devices.every((candidate) => candidate.source === "live" && candidate.connected), true);
+    assert.equal(result.devices.every((candidate) => typeof candidate.code === "string" && candidate.device !== undefined), true);
     assert.equal(new Set(identifiedCodes).size, 2);
     assert.equal(result.activeDeviceId, null);
     assert.equal((await store.load()).activeDeviceId, null);
@@ -646,7 +602,8 @@ test("identify reports per-device errors without failing the whole request", asy
     const result = await core.identifyDevices();
     assert.equal(result.source, "live");
     assert.equal(result.devices.length, 2);
-    assert.equal(result.devices[0].status, "displayed");
+    assert.equal(result.devices[0].source, "live");
+    assert.equal(result.devices[0].device.deviceId, device.deviceId);
     assert.equal(result.devices[1].status, "error");
     assert.equal(result.devices[1].error.code, "timeout");
   });
@@ -679,7 +636,8 @@ test("identify uses one internal deadline across multiple devices", async () => 
 
     const result = await core.identifyDevices();
     assert.equal(result.devices.length, 2);
-    assert.deepEqual(result.devices.map((entry) => entry.status).sort(), ["displayed", "error"]);
+    assert.equal(result.devices.filter((entry) => entry.source === "live").length, 1);
+    assert.equal(result.devices.filter((entry) => entry.source === "error").length, 1);
     const errored = result.devices.find((entry) => entry.status === "error");
     assert.equal(errored.error.code, "timeout");
   });
@@ -695,14 +653,13 @@ test("selects default and purpose-specific active devices", async () => {
           return {
             id: "req_sign_policy",
             version: 1,
-            type: "sign_result",
             authorization: "policy",
             status: "policy_rejected",
             policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
             ruleRef: "default",
             error: {
               code: "policy_rejected",
-              message: SIGN_RESULT_ERROR_MESSAGES.policy_rejected,
+              message: SIGNING_OUTCOME_ERROR_MESSAGES.policy_rejected,
             },
           };
         },
@@ -770,7 +727,7 @@ test("connectDevice approved stores in-memory session and does not persist sessi
         async connectDevice(_portPath, _clientName, deadlineMs) {
           connectCalls += 1;
           observedDeadlineMs = deadlineMs;
-          return approvedConnectResponse();
+          return connectResult();
         },
       }),
     );
@@ -798,7 +755,7 @@ test("connectDevice reuses an active runtime session without fresh Firmware appr
       defaultDriver({
         async connectDevice() {
           connectCalls += 1;
-          return approvedConnectResponse({ sessionId: `session_${connectCalls.toString(16).padStart(2, "0")}` });
+          return connectResult({ sessionId: `session_${connectCalls.toString(16).padStart(2, "0")}` });
         },
         async getCapabilities(_portPath, sessionId) {
           capabilitiesCalls += 1;
@@ -841,7 +798,7 @@ test("connectDevice does not reuse a stale local session when the device disappe
         },
         async connectDevice() {
           connectCalls += 1;
-          return approvedConnectResponse();
+          return connectResult();
         },
       }),
     );
@@ -904,7 +861,7 @@ test("connectDevice clears a stale local session when reuse validation loses tra
       defaultDriver({
         async connectDevice() {
           connectCalls += 1;
-          return approvedConnectResponse();
+          return connectResult();
         },
         async getCapabilities() {
           if (failReuseValidation) {
@@ -937,7 +894,7 @@ test("connectDevice asks Firmware again when reuse validation reports invalid_se
       defaultDriver({
         async connectDevice() {
           connectCalls += 1;
-          return approvedConnectResponse({ sessionId: `session_${connectCalls.toString(16).padStart(2, "0")}` });
+          return connectResult({ sessionId: `session_${connectCalls.toString(16).padStart(2, "0")}` });
         },
         async getCapabilities() {
           if (invalidateExisting) {
@@ -968,7 +925,7 @@ test("connectDevice does not reapprove from advertised wire ttl while the sessio
       defaultDriver({
         async connectDevice() {
           connectCalls += 1;
-          return approvedConnectResponse({ sessionId: `session_${connectCalls.toString(16).padStart(2, "0")}` });
+          return connectResult({ sessionId: `session_${connectCalls.toString(16).padStart(2, "0")}` });
         },
         async getCapabilities() {
           capabilitiesCalls += 1;
@@ -997,13 +954,7 @@ test("connectDevice rejected does not store a session", async () => {
       store,
       defaultDriver({
         async connectDevice() {
-          return {
-            id: "req_connect",
-            version: 1,
-            type: "connect_result",
-            status: "rejected",
-            error: { code: "user_rejected", message: "Connection rejected." },
-          };
+          throw new AgentQError("user_rejected", "Connection rejected.", false);
         },
       }),
     );
@@ -1026,13 +977,7 @@ test("connectDevice refreshes lastSeenAt on rejection", async () => {
       store,
       defaultDriver({
         async connectDevice() {
-          return {
-            id: "req_connect",
-            version: 1,
-            type: "connect_result",
-            status: "rejected",
-            error: { code: "user_rejected", message: "Connection rejected." },
-          };
+          throw new AgentQError("user_rejected", "Connection rejected.", false);
         },
       }),
       () => now,
@@ -1058,8 +1003,8 @@ test("getDeviceStatus resolves by purpose", async () => {
 
     const result = await core.getDeviceStatus({ purpose: "payment" });
     assert.equal(result.source, "live");
-    assert.equal(result.protocolResponse.device.deviceId, device.deviceId);
-    assert.equal(result.protocolResponse.provisioning.state, "unprovisioned");
+    assert.equal(result.status.device.deviceId, device.deviceId);
+    assert.equal(result.status.provisioning.state, "unprovisioned");
   });
 });
 
@@ -1077,13 +1022,7 @@ test("connectDevice timeout does not store a session", async () => {
       store,
       defaultDriver({
         async connectDevice() {
-          return {
-            id: "req_connect",
-            version: 1,
-            type: "connect_result",
-            status: "rejected",
-            error: { code: "timeout", message: "Connection approval timed out." },
-          };
+          throw new AgentQError("timeout", "Connection approval timed out.", true);
         },
       }),
     );
@@ -1102,7 +1041,7 @@ test("connectDevice rejects when Firmware reports a different deviceId", async (
       store,
       defaultDriver({
         async connectDevice() {
-          return approvedConnectResponse({ device: { ...device, deviceId: secondDevice.deviceId } });
+          return connectResult({ device: { ...device, deviceId: secondDevice.deviceId } });
         },
       }),
     );
@@ -1175,8 +1114,6 @@ test("disconnectDevice clears the runtime session after Firmware confirms", asyn
           return {
             id: "req_disconnect",
             version: 1,
-            type: "disconnect_result",
-            status: "disconnected",
           };
         },
       }),
@@ -1283,7 +1220,7 @@ test("after a disconnect timeout, connectDevice contacts Firmware again instead 
       defaultDriver({
         async connectDevice() {
           connectCalls += 1;
-          return approvedConnectResponse({
+          return connectResult({
             sessionId: `session_${connectCalls.toString(16).padStart(2, "0")}`,
           });
         },
@@ -1648,7 +1585,6 @@ test("getApprovalHistory preserves blind-signing confirmation reason codes", asy
           return {
             id: "req_approval_history",
             version: 1,
-            type: "approval_history",
             records: [
               {
                 seq: "2",
@@ -1712,7 +1648,6 @@ test("getApprovalHistory validates pagination before USB live-port probing", asy
           return {
             id: "req_approval_history",
             version: 1,
-            type: "approval_history",
             records: [],
             hasMore: false,
           };
@@ -1810,7 +1745,7 @@ test("signing route identity is selected before runtime-session lookup", async (
   });
 });
 
-test("signTransaction returns Firmware's policy_rejected sign_result and keeps the session", async () => {
+test("signTransaction returns Firmware's policy_rejected signing outcome and keeps the session", async () => {
   await withStore(async (store) => {
     const core = new AgentQCore(
       store,
@@ -1819,14 +1754,13 @@ test("signTransaction returns Firmware's policy_rejected sign_result and keeps t
           return {
             id: "req_sign_policy",
             version: 1,
-            type: "sign_result",
             authorization: "policy",
             status: "policy_rejected",
             policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
             ruleRef: "default",
             error: {
               code: "policy_rejected",
-              message: SIGN_RESULT_ERROR_MESSAGES.policy_rejected,
+              message: SIGNING_OUTCOME_ERROR_MESSAGES.policy_rejected,
             },
           };
         },
@@ -1863,14 +1797,13 @@ test("signTransaction uses the internal request deadline by default", async () =
           return {
             id: "req_sign_policy",
             version: 1,
-            type: "sign_result",
             authorization: "policy",
             status: "policy_rejected",
             policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
             ruleRef: "default",
             error: {
               code: "policy_rejected",
-              message: SIGN_RESULT_ERROR_MESSAGES.policy_rejected,
+              message: SIGNING_OUTCOME_ERROR_MESSAGES.policy_rejected,
             },
           };
         },
@@ -1977,14 +1910,13 @@ test("signTransaction validates input before USB live-port probing", async () =>
           return {
             id: "req_sign_policy",
             version: 1,
-            type: "sign_result",
             authorization: "policy",
             status: "policy_rejected",
             policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
             ruleRef: "default",
             error: {
               code: "policy_rejected",
-              message: SIGN_RESULT_ERROR_MESSAGES.policy_rejected,
+              message: SIGNING_OUTCOME_ERROR_MESSAGES.policy_rejected,
             },
           };
         },
@@ -2048,7 +1980,7 @@ test("signTransaction clears the local session when get_result reports invalid_s
       defaultDriver({
         async signTransaction(_portPath, sessionId, route, params) {
           const request = signTransactionDeviceRequest(sessionId, route, params);
-          return requestSignResultWithRecovery(request, 1000, deviceRequestExecutor(async (wireRequest) => {
+          return requestSigningOutcomeWithRecovery(request, 1000, deviceRequestExecutor(async (wireRequest) => {
             if (wireKind(wireRequest) === "sign_transaction") {
               throw markRequestMayHaveReachedFirmware(new AgentQError("timeout", "Original sign timeout.", true));
             }
@@ -2085,7 +2017,7 @@ test("signTransaction returns recovered result and clears the local session when
       defaultDriver({
         async signTransaction(_portPath, sessionId, route, params) {
           const request = signTransactionDeviceRequest(sessionId, route, params);
-          return requestSignResultWithRecovery(request, 1000, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
+          return requestSigningOutcomeWithRecovery(request, 1000, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
             if (wireKind(wireRequest) === "sign_transaction") {
               throw markRequestMayHaveReachedFirmware(new AgentQError("transport_closed", "Transport closed.", true));
             }
@@ -2157,7 +2089,6 @@ test("signTransaction forwards a bounded provider signing request with internal 
           return {
             id: "req_capabilities",
             version: 1,
-            type: "capabilities",
             chains: [
               {
                 id: "sui",
@@ -2184,7 +2115,6 @@ test("signTransaction forwards a bounded provider signing request with internal 
           return {
             id: "req_sign_user",
             version: 1,
-            type: "sign_result",
             authorization: "user",
             status: "signed",
             chain: "sui",
@@ -2250,14 +2180,13 @@ test("signTransaction forwards canonical payload above the current Firmware adap
           return {
             id: "req_sign_policy",
             version: 1,
-            type: "sign_result",
             authorization: "policy",
             status: "policy_rejected",
             policyHash: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
             ruleRef: "default",
             error: {
               code: "policy_rejected",
-              message: SIGN_RESULT_ERROR_MESSAGES.policy_rejected,
+              message: SIGNING_OUTCOME_ERROR_MESSAGES.policy_rejected,
             },
           };
         },
@@ -2282,17 +2211,17 @@ test("signTransaction returns Firmware terminal outcomes without throwing", asyn
     {
       status: "user_rejected",
       code: "user_rejected",
-      message: SIGN_RESULT_ERROR_MESSAGES.user_rejected,
+      message: SIGNING_OUTCOME_ERROR_MESSAGES.user_rejected,
     },
     {
       status: "user_timed_out",
       code: "user_timed_out",
-      message: SIGN_RESULT_ERROR_MESSAGES.user_timed_out,
+      message: SIGNING_OUTCOME_ERROR_MESSAGES.user_timed_out,
     },
     {
       status: "signing_failed",
       code: "signing_failed",
-      message: SIGN_RESULT_ERROR_MESSAGES.signing_failed,
+      message: SIGNING_OUTCOME_ERROR_MESSAGES.signing_failed,
     },
   ]) {
     await withStore(async (store) => {
@@ -2303,7 +2232,6 @@ test("signTransaction returns Firmware terminal outcomes without throwing", asyn
             return {
               id: "req_sign_user",
               version: 1,
-              type: "sign_result",
               authorization: "user",
               status: terminal.status,
               error: {
@@ -2456,7 +2384,6 @@ test("signPersonalMessage forwards a bounded user signing request with internal 
           return {
             id: "req_sign_personal_message",
             version: 1,
-            type: "sign_result",
             authorization: "user",
             status: "signed",
             chain: "sui",
@@ -2602,7 +2529,7 @@ test("signPersonalMessage returns recovered result and clears the local session 
       defaultDriver({
         async signPersonalMessage(_portPath, sessionId, route, params) {
           const request = signPersonalMessageDeviceRequest(sessionId, route, params);
-          return requestSignResultWithRecovery(request, 1000, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
+          return requestSigningOutcomeWithRecovery(request, 1000, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
             if (wireKind(wireRequest) === "sign_personal_message") {
               throw markRequestMayHaveReachedFirmware(new AgentQError("transport_closed", "Transport closed.", true));
             }
@@ -2676,7 +2603,6 @@ test("policyPropose forwards a bounded proposal and returns Firmware terminal me
           return {
             id: "req_policy_propose",
             version: 1,
-            type: "policy_propose_result",
             status: "applied",
             reasonCode: "device_confirmed",
             policy: currentPolicyProposeSummary(),
@@ -2789,7 +2715,6 @@ test("policyPropose clears the local session when Firmware reports consistency_e
           return {
             id: "req_policy_propose",
             version: 1,
-            type: "policy_propose_result",
             status: "consistency_error",
             reasonCode: "consistency_error",
             policy: currentPolicyProposeSummary(),

@@ -1,7 +1,7 @@
 #include "agent_q_usb_policy_propose_handler.h"
 
 #include "agent_q_json_input.h"
-#include "agent_q_usb_policy_propose_result_writer.h"
+#include "agent_q_usb_policy_propose_outcome_writer.h"
 
 namespace agent_q {
 
@@ -73,7 +73,7 @@ void handle_usb_policy_propose_request(
             now,
             review_window);
     if (begin_result != AgentQPolicyUpdateFlowBeginResult::ok) {
-        if (!usb_policy_propose_result_write(
+        if (!usb_policy_propose_outcome_write(
                 id,
                 "invalid_policy",
                 ops.begin_result_reason(begin_result),

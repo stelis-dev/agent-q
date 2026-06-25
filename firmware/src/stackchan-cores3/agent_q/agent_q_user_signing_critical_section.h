@@ -27,7 +27,7 @@ struct AgentQUserSigningOutput {
 struct AgentQUserSigningHandoffReport {
     AgentQUserSigningHandoffResult result;
     AgentQUserSigningTransitionResult flow_result;
-    SuiTransactionSigningResult signing_result;
+    SuiSigningStatus signing_status;
 };
 
 void user_signing_output_wipe(

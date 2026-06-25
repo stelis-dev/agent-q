@@ -276,12 +276,9 @@ namespace agent_q {
 bool usb_response_write_json(JsonDocument& response)
 {
     g_json_write_calls += 1;
-    JsonObjectConst result =
-        response["result"].is<JsonObjectConst>()
-            ? response["result"].as<JsonObjectConst>()
-            : response.as<JsonObjectConst>();
+    JsonObjectConst result = response["result"].as<JsonObjectConst>();
     snprintf(g_last_response_id, sizeof(g_last_response_id), "%s", response["id"].as<const char*>());
-    snprintf(g_last_response_type, sizeof(g_last_response_type), "%s", response["method"] | response["type"] | "");
+    snprintf(g_last_response_type, sizeof(g_last_response_type), "%s", response["method"] | "");
     g_last_has_more = result["hasMore"].as<bool>();
     JsonArrayConst records = result["records"].as<JsonArrayConst>();
     g_last_record_count = records.size();

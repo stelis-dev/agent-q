@@ -16,11 +16,11 @@ constexpr AgentQDeviceMethodRow kDeviceMethods[] = {
     {"get_approval_history", AgentQDeviceSessionRule::required, AgentQDevicePayloadRule::required, "ApprovalHistoryPayload", "ApprovalHistoryResult", "active_session_approval_history_store"},
     {"sign_transaction", AgentQDeviceSessionRule::required, AgentQDevicePayloadRule::required, "SuiSignTransactionPayload", "SignTransactionResult", "active_session_account_binding_signing_authorization"},
     {"sign_personal_message", AgentQDeviceSessionRule::required, AgentQDevicePayloadRule::required, "SuiSignPersonalMessagePayload", "SignPersonalMessageResult", "active_session_account_binding_user_confirmation"},
-    {"policy_propose", AgentQDeviceSessionRule::required, AgentQDevicePayloadRule::required, "PolicyProposePayload", "PolicyProposeResult", "active_session_policy_review_auth_commit"},
-    {"credential_prepare", AgentQDeviceSessionRule::required, AgentQDevicePayloadRule::required, "CredentialPreparePayload", "CredentialPrepareResult", "active_session_credential_preparation"},
-    {"credential_propose", AgentQDeviceSessionRule::required, AgentQDevicePayloadRule::required, "CredentialProposePayload", "CredentialProposeResult", "active_session_credential_review_auth_commit"},
-    {"get_result", AgentQDeviceSessionRule::required, AgentQDevicePayloadRule::required, "RetainedResultPayload", "retained method result", "active_session_retained_result_lookup"},
-    {"ack_result", AgentQDeviceSessionRule::required, AgentQDevicePayloadRule::required, "RetainedResultPayload", "AckResult", "active_session_retained_result_cleanup"},
+    {"policy_propose", AgentQDeviceSessionRule::required, AgentQDevicePayloadRule::required, "PolicyProposePayload", "PolicyProposalOutcome", "active_session_policy_review_auth_commit"},
+    {"credential_prepare", AgentQDeviceSessionRule::required, AgentQDevicePayloadRule::required, "CredentialPreparePayload", "CredentialPreparation", "active_session_credential_preparation"},
+    {"credential_propose", AgentQDeviceSessionRule::required, AgentQDevicePayloadRule::required, "CredentialProposePayload", "CredentialProposalOutcome", "active_session_credential_review_auth_commit"},
+    {"get_result", AgentQDeviceSessionRule::required, AgentQDevicePayloadRule::required, "RetainedResponsePayload", "retained method response", "active_session_retained_response_lookup"},
+    {"ack_result", AgentQDeviceSessionRule::required, AgentQDevicePayloadRule::required, "RetainedResponsePayload", "AckResult", "active_session_retained_response_cleanup"},
 };
 
 constexpr AgentQDeviceErrorRow kDeviceErrors[] = {
@@ -29,7 +29,7 @@ constexpr AgentQDeviceErrorRow kDeviceErrors[] = {
     {"invalid_state", false, "Device state does not allow this request.", "Firmware state does not allow the method."},
     {"invalid_session", false, "Session is missing, expired, or does not match.", "Session is missing, expired, or does not match."},
     {"request_id_conflict", false, "Request id is already bound to a different request.", "Request id is already bound to a different retained request identity."},
-    {"unknown_request", false, "Requested retained result does not exist.", "Requested retained result does not exist in the current session."},
+    {"unknown_request", false, "Requested retained response does not exist.", "Requested retained response does not exist in the current session."},
     {"no_active_device", false, "No active device is configured.", "Host process has no selected active device for the requested scope."},
     {"device_not_found", true, "Requested device is not known to Agent-Q.", "Host process cannot find the requested stored device."},
     {"invalid_device_id", false, "Device id is invalid.", "Host-side device id input is invalid."},

@@ -2,16 +2,16 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
-  assertAccountsResponse,
+  assertAccountsResult,
   assertApprovalHistoryResponse,
-  assertCapabilitiesResponse,
-  assertCredentialPrepareResultResponse,
-  assertCredentialProposeResultResponse,
+  assertCapabilitiesResult,
+  assertCredentialPreparationResponse,
+  assertCredentialProposalOutcomeResponse,
   assertPolicyResponse,
-  assertPolicyProposeResultResponse,
-  assertSignResultResponse,
-  assertConnectResponse,
-  assertDisconnectResponse,
+  assertPolicyProposalOutcomeResponse,
+  assertSigningOutcome,
+  assertConnectResult,
+  assertDisconnectResult,
   assertIdentifyDeviceResponse,
   assertStatusResponse,
   createRequestId,
@@ -27,9 +27,9 @@ import {
   identifySignRoute,
   MAX_RAW_PROTOCOL_JSON_BYTES,
   MAX_SESSION_TTL_MS,
-  MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
+  MAX_SIGNING_OUTCOME_PAYLOAD_BASE64_CHARS,
   MAX_SUI_SIGN_TRANSACTION_TX_BYTES,
-  SIGN_RESULT_ERROR_MESSAGES,
+  SIGNING_OUTCOME_ERROR_MESSAGES,
   sanitizeDisplayText,
   validateApprovalHistoryInput,
   validateCredentialPrepareRequestInput,
@@ -470,82 +470,70 @@ test("Core method assertions accept DeviceResponse success envelopes", () => {
       method: "get_status",
       assertResponse: assertStatusResponse,
       result: { device: VALID_DEVICE_STATUS, provisioning: { state: "provisioned" } },
-      expectedType: "status",
     },
     {
       method: "identify_device",
       assertResponse: assertIdentifyDeviceResponse,
       result: { code: "1234", device: VALID_DEVICE_STATUS },
-      expectedType: "identify_device_result",
     },
     {
       method: "connect",
-      assertResponse: assertConnectResponse,
+      assertResponse: assertConnectResult,
       result: { sessionId: "session_abcdef0123456789", sessionTtlMs: MAX_SESSION_TTL_MS, device: VALID_DEVICE_STATUS },
-      expectedType: "connect_result",
     },
     {
       method: "disconnect",
-      assertResponse: assertDisconnectResponse,
+      assertResponse: assertDisconnectResult,
       result: {},
-      expectedType: "disconnect_result",
     },
     {
       method: "get_capabilities",
-      assertResponse: assertCapabilitiesResponse,
+      assertResponse: assertCapabilitiesResult,
       result: capabilitiesResult,
-      expectedType: "capabilities",
     },
     {
       method: "get_accounts",
-      assertResponse: assertAccountsResponse,
+      assertResponse: assertAccountsResult,
       result: { accounts: [account] },
-      expectedType: "accounts",
     },
     {
       method: "policy_get",
       assertResponse: assertPolicyResponse,
       result: { policy: policyDocument() },
-      expectedType: "policy",
     },
     {
       method: "get_approval_history",
       assertResponse: assertApprovalHistoryResponse,
       result: { records: [], hasMore: false },
-      expectedType: "approval_history",
     },
     {
       method: "policy_propose",
-      assertResponse: assertPolicyProposeResultResponse,
+      assertResponse: assertPolicyProposalOutcomeResponse,
       result: { status: "applied", reasonCode: "device_confirmed", policy: currentPolicyProposeSummary() },
-      expectedType: "policy_propose_result",
     },
     {
       method: "credential_prepare",
-      assertResponse: assertCredentialPrepareResultResponse,
+      assertResponse: assertCredentialPreparationResponse,
       result: { chain: "sui", credential: "zklogin", preparation: nativePreparation },
-      expectedType: "credential_prepare_result",
     },
     {
       method: "credential_propose",
-      assertResponse: assertCredentialProposeResultResponse,
+      assertResponse: assertCredentialProposalOutcomeResponse,
       result: { status: "activated", reasonCode: "device_confirmed", sessionEnded: false },
-      expectedType: "credential_propose_result",
     },
     {
       method: "sign_transaction",
-      assertResponse: assertSignResultResponse,
+      assertResponse: assertSigningOutcome,
       result: {
         authorization: "user",
         chain: "sui",
         method: "sign_transaction",
         signature: suiEd25519Signature(1),
       },
-      expectedType: "sign_result",
     },
     {
       method: "sign_personal_message",
-      assertResponse: assertSignResultResponse,
+      assertResponse: assertSigningOutcome,
       result: {
         authorization: "user",
         chain: "sui",
@@ -553,7 +541,6 @@ test("Core method assertions accept DeviceResponse success envelopes", () => {
         signature: suiEd25519Signature(2),
         messageBytes: CANONICAL_TX_BYTES_BASE64,
       },
-      expectedType: "sign_result",
     },
   ];
 
@@ -564,7 +551,7 @@ test("Core method assertions accept DeviceResponse success envelopes", () => {
       result: entry.result,
     });
     const parsed = entry.assertResponse(response);
-    assert.equal(parsed.type, entry.expectedType, entry.method);
+    assert.equal(Object.hasOwn(parsed, "type"), false, entry.method);
   }
 });
 
@@ -964,18 +951,6 @@ test("isSessionId and isClientName accept and reject expected inputs", () => {
 });
 
 const safeDeviceId = "a508d833-5c83-4680-88bb-18aee976881e";
-
-function statusLine(device) {
-  return JSON.stringify({
-    id: "req_1",
-    version: 1,
-    type: "status",
-    device,
-    provisioning: {
-      state: "unprovisioned",
-    },
-  });
-}
 
 test("sanitizeDisplayText strips control chars and caps length", () => {
   assert.equal(sanitizeDisplayText("a\nb\tc\r", 64), "abc");

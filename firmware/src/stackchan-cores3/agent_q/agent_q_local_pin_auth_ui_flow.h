@@ -55,7 +55,7 @@ struct AgentQLocalPinAuthUiFlowOps {
     void (*log_write_failure)(const char* response_type, const char* id);
     bool (*show_policy_update_review)();
     bool (*require_pending_policy_update_session)(const char* request_id);
-    bool (*write_policy_propose_result_with_current_policy)(
+    bool (*write_policy_propose_outcome_with_current_policy)(
         const char* request_id,
         const char* status,
         const char* reason);

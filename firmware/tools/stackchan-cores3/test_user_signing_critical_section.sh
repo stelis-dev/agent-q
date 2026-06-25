@@ -58,7 +58,7 @@ namespace {
 int failures = 0;
 int g_digest_calls = 0;
 int g_signing_calls = 0;
-bool g_signing_result_ok = true;
+bool g_signing_status_ok = true;
 std::vector<uint8_t> g_last_signed_payload;
 
 agent_q::SuiAccountDerivationResult g_account_result =
@@ -269,7 +269,7 @@ void reset_state()
     agent_q::session_clear();
     g_digest_calls = 0;
     g_signing_calls = 0;
-    g_signing_result_ok = true;
+    g_signing_status_ok = true;
     g_last_signed_payload.clear();
     g_account_result = agent_q::SuiAccountDerivationResult::ok;
     snprintf(
@@ -462,7 +462,7 @@ AgentQSuiActiveIdentity resolve_active_sui_identity()
     return identity;
 }
 
-SuiTransactionSigningResult sign_sui_ed25519_transaction_from_stored_root(
+SuiSigningStatus sign_sui_ed25519_transaction_from_stored_root(
     const uint8_t* tx_bytes,
     size_t tx_bytes_size,
     uint8_t signature_out[kSuiEd25519SignatureBytes])
@@ -473,11 +473,11 @@ SuiTransactionSigningResult sign_sui_ed25519_transaction_from_stored_root(
         memset(signature_out, 0xA5, kSuiEd25519SignatureBytes);
         signature_out[0] = kAgentQSuiSignatureSchemeFlagEd25519;
     }
-    return g_signing_result_ok ? SuiTransactionSigningResult::ok
-                               : SuiTransactionSigningResult::signing_error;
+    return g_signing_status_ok ? SuiSigningStatus::ok
+                               : SuiSigningStatus::signing_error;
 }
 
-SuiTransactionSigningResult sign_sui_transaction_from_active_identity(
+SuiSigningStatus sign_sui_transaction_from_active_identity(
     const uint8_t* tx_bytes,
     size_t tx_bytes_size,
     uint8_t signature_out[kSuiSignatureEnvelopeMaxBytes],
@@ -491,18 +491,18 @@ SuiTransactionSigningResult sign_sui_transaction_from_active_identity(
     if (signature_out != nullptr) {
         memset(signature_out, 0, kSuiSignatureEnvelopeMaxBytes);
     }
-    if (!g_signing_result_ok) {
-        return SuiTransactionSigningResult::signing_error;
+    if (!g_signing_status_ok) {
+        return SuiSigningStatus::signing_error;
     }
     if (signature_out != nullptr && signature_size_out != nullptr) {
         memset(signature_out, 0xA5, kSuiEd25519SignatureBytes);
         signature_out[0] = kAgentQSuiSignatureSchemeFlagEd25519;
         *signature_size_out = kSuiEd25519SignatureBytes;
     }
-    return SuiTransactionSigningResult::ok;
+    return SuiSigningStatus::ok;
 }
 
-SuiTransactionSigningResult sign_sui_ed25519_personal_message_from_stored_root(
+SuiSigningStatus sign_sui_ed25519_personal_message_from_stored_root(
     const uint8_t* message,
     size_t message_size,
     uint8_t signature_out[kSuiEd25519SignatureBytes])
@@ -510,10 +510,10 @@ SuiTransactionSigningResult sign_sui_ed25519_personal_message_from_stored_root(
     (void)message;
     (void)message_size;
     (void)signature_out;
-    return SuiTransactionSigningResult::signing_error;
+    return SuiSigningStatus::signing_error;
 }
 
-SuiTransactionSigningResult sign_sui_personal_message_from_active_identity(
+SuiSigningStatus sign_sui_personal_message_from_active_identity(
     const uint8_t* message,
     size_t message_size,
     uint8_t signature_out[kSuiSignatureEnvelopeMaxBytes],
@@ -524,8 +524,8 @@ SuiTransactionSigningResult sign_sui_personal_message_from_active_identity(
     if (signature_size_out != nullptr) {
         *signature_size_out = 0;
     }
-    if (!g_signing_result_ok) {
-        return SuiTransactionSigningResult::signing_error;
+    if (!g_signing_status_ok) {
+        return SuiSigningStatus::signing_error;
     }
     if (signature_out != nullptr) {
         memset(signature_out, 0xA5, kSuiEd25519SignatureBytes);
@@ -534,27 +534,27 @@ SuiTransactionSigningResult sign_sui_personal_message_from_active_identity(
     if (signature_size_out != nullptr) {
         *signature_size_out = kSuiEd25519SignatureBytes;
     }
-    return SuiTransactionSigningResult::ok;
+    return SuiSigningStatus::ok;
 }
 
-const char* sui_transaction_signing_result_to_string(SuiTransactionSigningResult result)
+const char* sui_signing_status_to_string(SuiSigningStatus result)
 {
     switch (result) {
-        case SuiTransactionSigningResult::ok:
+        case SuiSigningStatus::ok:
             return "ok";
-        case SuiTransactionSigningResult::invalid_input:
+        case SuiSigningStatus::invalid_input:
             return "invalid_input";
-        case SuiTransactionSigningResult::root_material_unavailable:
+        case SuiSigningStatus::root_material_unavailable:
             return "root_material_unavailable";
-        case SuiTransactionSigningResult::mnemonic_error:
+        case SuiSigningStatus::mnemonic_error:
             return "mnemonic_error";
-        case SuiTransactionSigningResult::signing_error:
+        case SuiSigningStatus::signing_error:
             return "signing_error";
-        case SuiTransactionSigningResult::active_identity_unavailable:
+        case SuiSigningStatus::active_identity_unavailable:
             return "active_identity_unavailable";
-        case SuiTransactionSigningResult::signature_output_too_small:
+        case SuiSigningStatus::signature_output_too_small:
             return "signature_output_too_small";
-        case SuiTransactionSigningResult::zklogin_envelope_error:
+        case SuiSigningStatus::zklogin_envelope_error:
             return "zklogin_envelope_error";
     }
     return "unknown";
@@ -614,7 +614,7 @@ int main()
            "critical section signs successfully");
     expect(report.flow_result == aq::AgentQUserSigningTransitionResult::ok,
            "successful handoff completes flow");
-    expect(report.signing_result == aq::SuiTransactionSigningResult::ok,
+    expect(report.signing_status == aq::SuiSigningStatus::ok,
            "signing service result is reported");
     expect(g_signing_calls == 1, "signing service called once");
     expect(g_last_signed_payload == expected_payload,
@@ -645,7 +645,7 @@ int main()
            "personal-message critical section signs successfully");
     expect(report.flow_result == aq::AgentQUserSigningTransitionResult::ok,
            "personal-message handoff completes flow");
-    expect(report.signing_result == aq::SuiTransactionSigningResult::ok,
+    expect(report.signing_status == aq::SuiSigningStatus::ok,
            "personal-message signing service result is reported");
     expect(g_signing_calls == 1, "personal-message signing service called once");
     expect(g_last_signed_payload == expected_message,
@@ -665,14 +665,14 @@ int main()
 
     reset_state();
     enter_critical_section("req_failure");
-    g_signing_result_ok = false;
+    g_signing_status_ok = false;
     poison_output(output);
     report = aq::user_signing_execute_critical_section(&output);
     expect(report.result == aq::AgentQUserSigningHandoffResult::signing_failed,
            "signing service failure is reported");
     expect(report.flow_result == aq::AgentQUserSigningTransitionResult::ok,
            "signing failure terminalizes flow");
-    expect(report.signing_result == aq::SuiTransactionSigningResult::signing_error,
+    expect(report.signing_status == aq::SuiSigningStatus::signing_error,
            "signing failure cause is reported");
     expect(g_signing_calls == 1, "failing signing service called once");
     snapshot = aq::user_signing_flow_snapshot();

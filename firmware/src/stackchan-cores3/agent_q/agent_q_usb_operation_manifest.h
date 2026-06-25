@@ -28,14 +28,14 @@ enum class AgentQUsbOperationHandlerSlot {
     payload_transfer_abort,
 };
 
-enum class AgentQUsbOperationTerminalResultPolicy {
+enum class AgentQUsbOperationCompletionPolicy {
     immediate_response,
-    connect_approval_result,
-    signing_retained_result,
-    signing_retained_result_read,
-    signing_retained_result_ack,
-    policy_update_result_history_marker,
-    credential_propose_result,
+    connect_approval,
+    signing_retained_response,
+    signing_retained_response_read,
+    signing_retained_response_ack,
+    policy_update_history_marker,
+    credential_proposal_outcome,
 };
 
 enum class AgentQUsbOperationReadSideEffectPolicy {
@@ -48,7 +48,7 @@ struct AgentQUsbOperationManifestEntry {
     const char* wire_type;
     AgentQUsbOperationHandlerSlot handler_slot;
     AgentQPayloadDeliveryOperationKind payload_delivery_operation;
-    AgentQUsbOperationTerminalResultPolicy terminal_result_policy;
+    AgentQUsbOperationCompletionPolicy completion_policy;
     AgentQUsbOperationReadSideEffectPolicy read_side_effect_policy;
 };
 

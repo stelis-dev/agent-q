@@ -238,11 +238,8 @@ const char* signing_authorization_mode_name(AgentQSigningAuthorizationMode mode)
 bool usb_response_write_json(JsonDocument& response)
 {
     g_write_json_calls += 1;
-    JsonObjectConst result =
-        response["result"].is<JsonObjectConst>()
-            ? response["result"].as<JsonObjectConst>()
-            : response.as<JsonObjectConst>();
-    const char* type = response["method"] | response["type"] | "";
+    JsonObjectConst result = response["result"].as<JsonObjectConst>();
+    const char* type = response["method"] | "";
     snprintf(g_last_json_type, sizeof(g_last_json_type), "%s", type);
     const char* authorization = result["signing"]["authorization"] | "";
     snprintf(g_last_json_auth, sizeof(g_last_json_auth), "%s", authorization);

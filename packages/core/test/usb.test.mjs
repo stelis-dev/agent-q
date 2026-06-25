@@ -8,7 +8,7 @@ import {
   isLikelyAgentQUsbPort,
   markRequestMayHaveReachedFirmware,
   mapErrorToUnavailableReason,
-  requestSignResultWithRecovery,
+  requestSigningOutcomeWithRecovery,
   resolveUsbCalloutPath,
   scanUsbDeviceStatuses,
   scanUsbDevices,
@@ -19,7 +19,7 @@ import {
   withSerialPortTransaction,
 } from "../dist/usb.js";
 import {
-  assertPolicyProposeResultResponse,
+  assertPolicyProposalOutcomeResponse,
   assertStatusResponse,
   consumeDeviceResponseLineChunk,
   MAX_PROTOCOL_RESPONSE_LINE_BYTES,
@@ -32,9 +32,6 @@ const SUI_SIGNATURE_BYTES = Buffer.alloc(97, 1);
 SUI_SIGNATURE_BYTES[0] = 0;
 const SUI_SIGNATURE = SUI_SIGNATURE_BYTES.toString("base64");
 const status = {
-  id: "req_1",
-  version: 1,
-  type: "status",
   device: {
     deviceId: "a508d833-5c83-4680-88bb-18aee976881e",
     state: "idle",
@@ -170,7 +167,7 @@ test("ignores terminal responses for a different in-flight request id", () => {
       tryParseMatchingResponseLine(
         policyProposeError,
         "req_policy_propose",
-        assertPolicyProposeResultResponse,
+        assertPolicyProposalOutcomeResponse,
       ),
     {
       code: "invalid_session",
@@ -414,13 +411,13 @@ class FakeSerialPort {
   }
 }
 
-test("requestSignResultWithRecovery fetches and acks a retained sign result by original id", async () => {
+test("requestSigningOutcomeWithRecovery fetches and acks a retained signing outcome by original id", async () => {
   const requests = [];
   const request = signTransactionRequest();
-  const result = await requestSignResultWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, deadlineMs, assertResponse) => {
+  const result = await requestSigningOutcomeWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, deadlineMs, assertResponse) => {
     requests.push({ request: wireRequest, deadlineMs });
     if (wireKind(wireRequest) === "sign_transaction") {
-      throw markRequestMayHaveReachedFirmware(new AgentQError("timeout", "Lost sign response.", true));
+      throw markRequestMayHaveReachedFirmware(new AgentQError("timeout", "Lost signing response.", true));
     }
     if (wireKind(wireRequest) === "get_result") {
       return assertResponse(signedTransactionResult(wireRequest.id, "get_result"));
@@ -443,13 +440,13 @@ test("requestSignResultWithRecovery fetches and acks a retained sign result by o
   assert.equal(requests[2].deadlineMs, INTERNAL_USB_DEADLINE_MS);
 });
 
-test("requestSignResultWithRecovery waits for ack_result ordering before resolving", async () => {
+test("requestSigningOutcomeWithRecovery waits for ack_result ordering before resolving", async () => {
   const request = signTransactionRequest();
   let releaseAck;
   let resolved = false;
-  const resultPromise = requestSignResultWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
+  const resultPromise = requestSigningOutcomeWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
     if (wireKind(wireRequest) === "sign_transaction") {
-      throw markRequestMayHaveReachedFirmware(new AgentQError("timeout", "Lost sign response.", true));
+      throw markRequestMayHaveReachedFirmware(new AgentQError("timeout", "Lost signing response.", true));
     }
     if (wireKind(wireRequest) === "get_result") {
       return assertResponse(signedTransactionResult(wireRequest.id, "get_result"));
@@ -476,9 +473,9 @@ test("requestSignResultWithRecovery waits for ack_result ordering before resolvi
   assert.equal(resolved, true);
 });
 
-test("requestSignResultWithRecovery ignores ack_result failure after recovery", async () => {
+test("requestSigningOutcomeWithRecovery ignores ack_result failure after recovery", async () => {
   const request = signTransactionRequest();
-  const result = await requestSignResultWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
+  const result = await requestSigningOutcomeWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
     if (wireKind(wireRequest) === "sign_transaction") {
       throw markRequestMayHaveReachedFirmware(new AgentQError("transport_closed", "Transport closed.", true));
     }
@@ -494,13 +491,13 @@ test("requestSignResultWithRecovery ignores ack_result failure after recovery", 
   assert.equal(result.status, "signed");
 });
 
-test("requestSignResultWithRecovery propagates get_result invalid_session", async () => {
+test("requestSigningOutcomeWithRecovery propagates get_result invalid_session", async () => {
   const request = signTransactionRequest();
   const original = markRequestMayHaveReachedFirmware(new AgentQError("timeout", "Original sign timeout.", true));
   const seen = [];
 
   await assert.rejects(
-    () => requestSignResultWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest) => {
+    () => requestSigningOutcomeWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest) => {
       seen.push(wireKind(wireRequest));
       if (wireKind(wireRequest) === "sign_transaction") {
         throw original;
@@ -515,9 +512,9 @@ test("requestSignResultWithRecovery propagates get_result invalid_session", asyn
   assert.deepEqual(seen, ["sign_transaction", "get_result"]);
 });
 
-test("requestSignResultWithRecovery marks recovered result when ack_result invalidates the session", async () => {
+test("requestSigningOutcomeWithRecovery marks recovered result when ack_result invalidates the session", async () => {
   const request = signTransactionRequest();
-  const result = await requestSignResultWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
+  const result = await requestSigningOutcomeWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
     if (wireKind(wireRequest) === "sign_transaction") {
       throw markRequestMayHaveReachedFirmware(new AgentQError("transport_closed", "Transport closed.", true));
     }
@@ -535,13 +532,13 @@ test("requestSignResultWithRecovery marks recovered result when ack_result inval
   assert.equal(consumeFirmwareSessionInvalidated(result), false, "metadata is consumed once");
 });
 
-test("requestSignResultWithRecovery does not recover write-before-open failures", async () => {
+test("requestSigningOutcomeWithRecovery does not recover write-before-open failures", async () => {
   const request = signTransactionRequest();
   const original = new AgentQError("port_not_found", "No port.", true);
   const seen = [];
 
   await assert.rejects(
-    () => requestSignResultWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest) => {
+    () => requestSigningOutcomeWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest) => {
       seen.push(wireKind(wireRequest));
       throw original;
     })),
@@ -550,19 +547,19 @@ test("requestSignResultWithRecovery does not recover write-before-open failures"
   assert.deepEqual(seen, ["sign_transaction"]);
 });
 
-test("requestSignResultWithRecovery preserves original sign error when get_result fails", async () => {
+test("requestSigningOutcomeWithRecovery preserves original sign error when get_result fails", async () => {
   const request = signTransactionRequest();
   const original = markRequestMayHaveReachedFirmware(new AgentQError("timeout", "Original sign timeout.", true));
   const seen = [];
 
   await assert.rejects(
-    () => requestSignResultWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest) => {
+    () => requestSigningOutcomeWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest) => {
       seen.push(wireKind(wireRequest));
       if (wireKind(wireRequest) === "sign_transaction") {
         throw original;
       }
       if (wireKind(wireRequest) === "get_result") {
-        throw new AgentQError("unknown_request", "No retained result.", false);
+        throw new AgentQError("unknown_request", "No retained response.", false);
       }
       throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
     })),
@@ -571,12 +568,12 @@ test("requestSignResultWithRecovery preserves original sign error when get_resul
   assert.deepEqual(seen, ["sign_transaction", "get_result"]);
 });
 
-test("requestSignResultWithRecovery preserves original sign error when get_result is malformed", async () => {
+test("requestSigningOutcomeWithRecovery preserves original sign error when get_result is malformed", async () => {
   const request = signTransactionRequest();
   const original = markRequestMayHaveReachedFirmware(new AgentQError("timeout", "Original sign timeout.", true));
 
   await assert.rejects(
-    () => requestSignResultWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
+    () => requestSigningOutcomeWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
       if (wireKind(wireRequest) === "sign_transaction") {
         throw original;
       }
@@ -672,7 +669,11 @@ test("node USB lease canceled after open timeout never writes and late open clos
     assert.equal(ports[0].closeCalls, 1, "late open must enter close-only cleanup");
 
     const recovered = await driver.requestStatus(portPath, 30);
-    assert.equal(recovered.type, "status", "late cleanup completion releases the portPath quarantine");
+    assert.equal(
+      recovered.device.deviceId,
+      status.device.deviceId,
+      "late cleanup completion releases the portPath quarantine",
+    );
     assert.equal(ports.length, 2);
   } finally {
     setSerialPortFactoryForTest(null);
@@ -1164,7 +1165,7 @@ test("deadlineEnforcingDriver preserves signing success metadata before its dead
   const driver = {
     async signTransaction() {
       const request = signTransactionRequest();
-      return requestSignResultWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
+      return requestSigningOutcomeWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
         if (wireKind(wireRequest) === "sign_transaction") {
           throw markRequestMayHaveReachedFirmware(new AgentQError("transport_closed", "Transport closed.", true));
         }

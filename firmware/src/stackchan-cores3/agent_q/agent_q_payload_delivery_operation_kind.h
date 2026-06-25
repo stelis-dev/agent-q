@@ -4,7 +4,7 @@ namespace agent_q {
 
 enum class AgentQPayloadDeliveryOperationKind {
     safe_read,
-    retained_result_read_cleanup,
+    retained_response_read_cleanup,
     payload_transfer_begin,
     payload_transfer_chunk,
     payload_transfer_finish,

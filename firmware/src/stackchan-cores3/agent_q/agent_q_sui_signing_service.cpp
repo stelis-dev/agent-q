@@ -116,7 +116,7 @@ bool sign_personal_message_with_seed(
     return true;
 }
 
-SuiTransactionSigningResult sign_sui_ed25519_transaction_from_mnemonic(
+SuiSigningStatus sign_sui_ed25519_transaction_from_mnemonic(
     const char* mnemonic,
     const uint8_t* tx_bytes,
     size_t tx_bytes_size,
@@ -125,7 +125,7 @@ SuiTransactionSigningResult sign_sui_ed25519_transaction_from_mnemonic(
     clear_signature_output(signature_out, kSuiEd25519SignatureBytes);
     if (mnemonic == nullptr || mnemonic[0] == '\0' || tx_bytes == nullptr || tx_bytes_size == 0 ||
         signature_out == nullptr) {
-        return SuiTransactionSigningResult::invalid_input;
+        return SuiSigningStatus::invalid_input;
     }
 
     TransactionSigningContext context{
@@ -136,13 +136,13 @@ SuiTransactionSigningResult sign_sui_ed25519_transaction_from_mnemonic(
     };
     if (!with_sui_ed25519_private_seed(mnemonic, sign_transaction_with_seed, &context)) {
         clear_signature_output(signature_out, kSuiEd25519SignatureBytes);
-        return context.attempted ? SuiTransactionSigningResult::signing_error
-                                 : SuiTransactionSigningResult::mnemonic_error;
+        return context.attempted ? SuiSigningStatus::signing_error
+                                 : SuiSigningStatus::mnemonic_error;
     }
-    return SuiTransactionSigningResult::ok;
+    return SuiSigningStatus::ok;
 }
 
-SuiTransactionSigningResult sign_sui_ed25519_personal_message_from_mnemonic(
+SuiSigningStatus sign_sui_ed25519_personal_message_from_mnemonic(
     const char* mnemonic,
     const uint8_t* message,
     size_t message_size,
@@ -151,7 +151,7 @@ SuiTransactionSigningResult sign_sui_ed25519_personal_message_from_mnemonic(
     clear_signature_output(signature_out, kSuiEd25519SignatureBytes);
     if (mnemonic == nullptr || mnemonic[0] == '\0' || message == nullptr || message_size == 0 ||
         message_size > kAgentQSuiSignPersonalMessageMaxBytes || signature_out == nullptr) {
-        return SuiTransactionSigningResult::invalid_input;
+        return SuiSigningStatus::invalid_input;
     }
 
     PersonalMessageSigningContext context{
@@ -162,19 +162,19 @@ SuiTransactionSigningResult sign_sui_ed25519_personal_message_from_mnemonic(
     };
     if (!with_sui_ed25519_private_seed(mnemonic, sign_personal_message_with_seed, &context)) {
         clear_signature_output(signature_out, kSuiEd25519SignatureBytes);
-        return context.attempted ? SuiTransactionSigningResult::signing_error
-                                 : SuiTransactionSigningResult::mnemonic_error;
+        return context.attempted ? SuiSigningStatus::signing_error
+                                 : SuiSigningStatus::mnemonic_error;
     }
-    return SuiTransactionSigningResult::ok;
+    return SuiSigningStatus::ok;
 }
 
-SuiTransactionSigningResult build_zklogin_signature_for_active_identity(
+SuiSigningStatus build_zklogin_signature_for_active_identity(
     const AgentQSuiActiveIdentity& active_identity,
     const uint8_t user_signature[kSuiEd25519SignatureBytes],
     uint8_t signature_out[kSuiSignatureEnvelopeMaxBytes],
     size_t* signature_size_out)
 {
-    const AgentQSuiZkLoginSignatureBuildResult envelope_result =
+    const AgentQSuiZkLoginSignatureBuildResult envelope_status =
         build_sui_zklogin_signature_envelope(
             active_identity.zklogin.inputs,
             active_identity.zklogin.max_epoch,
@@ -183,15 +183,15 @@ SuiTransactionSigningResult build_zklogin_signature_for_active_identity(
             signature_out,
             kSuiSignatureEnvelopeMaxBytes,
             signature_size_out);
-    if (envelope_result == AgentQSuiZkLoginSignatureBuildResult::ok) {
-        return SuiTransactionSigningResult::ok;
+    if (envelope_status == AgentQSuiZkLoginSignatureBuildResult::ok) {
+        return SuiSigningStatus::ok;
     }
-    if (envelope_result == AgentQSuiZkLoginSignatureBuildResult::output_too_small) {
-        return SuiTransactionSigningResult::signature_output_too_small;
+    if (envelope_status == AgentQSuiZkLoginSignatureBuildResult::output_too_small) {
+        return SuiSigningStatus::signature_output_too_small;
     }
-    return envelope_result == AgentQSuiZkLoginSignatureBuildResult::invalid_input
-               ? SuiTransactionSigningResult::invalid_input
-               : SuiTransactionSigningResult::zklogin_envelope_error;
+    return envelope_status == AgentQSuiZkLoginSignatureBuildResult::invalid_input
+               ? SuiSigningStatus::invalid_input
+               : SuiSigningStatus::zklogin_envelope_error;
 }
 
 }  // namespace
@@ -229,20 +229,20 @@ bool build_sui_personal_message_intent_digest(
     return true;
 }
 
-SuiTransactionSigningResult sign_sui_ed25519_transaction_from_stored_root(
+SuiSigningStatus sign_sui_ed25519_transaction_from_stored_root(
     const uint8_t* tx_bytes,
     size_t tx_bytes_size,
     uint8_t signature_out[kSuiEd25519SignatureBytes])
 {
     clear_signature_output(signature_out, kSuiEd25519SignatureBytes);
     if (tx_bytes == nullptr || tx_bytes_size == 0 || signature_out == nullptr) {
-        return SuiTransactionSigningResult::invalid_input;
+        return SuiSigningStatus::invalid_input;
     }
 
     uint8_t root_material[kRootMaterialBytes] = {};
     if (!read_root_material(root_material, sizeof(root_material))) {
         wipe_sensitive_buffer(root_material, sizeof(root_material));
-        return SuiTransactionSigningResult::root_material_unavailable;
+        return SuiSigningStatus::root_material_unavailable;
     }
 
     char mnemonic[kBip39MnemonicMaxChars] = {};
@@ -251,17 +251,17 @@ SuiTransactionSigningResult sign_sui_ed25519_transaction_from_stored_root(
     wipe_sensitive_buffer(root_material, sizeof(root_material));
     if (!mnemonic_ok) {
         wipe_sensitive_buffer(mnemonic, sizeof(mnemonic));
-        return SuiTransactionSigningResult::mnemonic_error;
+        return SuiSigningStatus::mnemonic_error;
     }
 
-    const SuiTransactionSigningResult result =
+    const SuiSigningStatus result =
         sign_sui_ed25519_transaction_from_mnemonic(
             mnemonic, tx_bytes, tx_bytes_size, signature_out);
     wipe_sensitive_buffer(mnemonic, sizeof(mnemonic));
     return result;
 }
 
-SuiTransactionSigningResult sign_sui_transaction_from_active_identity(
+SuiSigningStatus sign_sui_transaction_from_active_identity(
     const uint8_t* tx_bytes,
     size_t tx_bytes_size,
     uint8_t signature_out[kSuiSignatureEnvelopeMaxBytes],
@@ -273,47 +273,47 @@ SuiTransactionSigningResult sign_sui_transaction_from_active_identity(
     }
     if (tx_bytes == nullptr || tx_bytes_size == 0 ||
         signature_out == nullptr || signature_size_out == nullptr) {
-        return SuiTransactionSigningResult::invalid_input;
+        return SuiSigningStatus::invalid_input;
     }
 
     const AgentQSuiActiveIdentity active_identity = resolve_active_sui_identity();
     if (active_identity.kind == AgentQSuiActiveIdentityKind::native) {
-        const SuiTransactionSigningResult result =
+        const SuiSigningStatus result =
             sign_sui_ed25519_transaction_from_stored_root(
                 tx_bytes,
                 tx_bytes_size,
                 signature_out);
-        if (result == SuiTransactionSigningResult::ok) {
+        if (result == SuiSigningStatus::ok) {
             *signature_size_out = kSuiEd25519SignatureBytes;
         }
         return result;
     }
     if (active_identity.kind != AgentQSuiActiveIdentityKind::zklogin) {
-        return SuiTransactionSigningResult::active_identity_unavailable;
+        return SuiSigningStatus::active_identity_unavailable;
     }
 
     uint8_t user_signature[kSuiEd25519SignatureBytes] = {};
-    const SuiTransactionSigningResult user_signature_result =
+    const SuiSigningStatus user_signature_status =
         sign_sui_ed25519_transaction_from_stored_root(
             tx_bytes,
             tx_bytes_size,
             user_signature);
-    if (user_signature_result != SuiTransactionSigningResult::ok) {
+    if (user_signature_status != SuiSigningStatus::ok) {
         wipe_sensitive_buffer(user_signature, sizeof(user_signature));
-        return user_signature_result;
+        return user_signature_status;
     }
 
-    const SuiTransactionSigningResult envelope_result =
+    const SuiSigningStatus envelope_status =
         build_zklogin_signature_for_active_identity(
             active_identity,
             user_signature,
             signature_out,
             signature_size_out);
     wipe_sensitive_buffer(user_signature, sizeof(user_signature));
-    return envelope_result;
+    return envelope_status;
 }
 
-SuiTransactionSigningResult sign_sui_ed25519_personal_message_from_stored_root(
+SuiSigningStatus sign_sui_ed25519_personal_message_from_stored_root(
     const uint8_t* message,
     size_t message_size,
     uint8_t signature_out[kSuiEd25519SignatureBytes])
@@ -322,13 +322,13 @@ SuiTransactionSigningResult sign_sui_ed25519_personal_message_from_stored_root(
     if (message == nullptr || message_size == 0 ||
         message_size > kAgentQSuiSignPersonalMessageMaxBytes ||
         signature_out == nullptr) {
-        return SuiTransactionSigningResult::invalid_input;
+        return SuiSigningStatus::invalid_input;
     }
 
     uint8_t root_material[kRootMaterialBytes] = {};
     if (!read_root_material(root_material, sizeof(root_material))) {
         wipe_sensitive_buffer(root_material, sizeof(root_material));
-        return SuiTransactionSigningResult::root_material_unavailable;
+        return SuiSigningStatus::root_material_unavailable;
     }
 
     char mnemonic[kBip39MnemonicMaxChars] = {};
@@ -337,10 +337,10 @@ SuiTransactionSigningResult sign_sui_ed25519_personal_message_from_stored_root(
     wipe_sensitive_buffer(root_material, sizeof(root_material));
     if (!mnemonic_ok) {
         wipe_sensitive_buffer(mnemonic, sizeof(mnemonic));
-        return SuiTransactionSigningResult::mnemonic_error;
+        return SuiSigningStatus::mnemonic_error;
     }
 
-    const SuiTransactionSigningResult result =
+    const SuiSigningStatus result =
         sign_sui_ed25519_personal_message_from_mnemonic(
             mnemonic,
             message,
@@ -350,7 +350,7 @@ SuiTransactionSigningResult sign_sui_ed25519_personal_message_from_stored_root(
     return result;
 }
 
-SuiTransactionSigningResult sign_sui_personal_message_from_active_identity(
+SuiSigningStatus sign_sui_personal_message_from_active_identity(
     const uint8_t* message,
     size_t message_size,
     uint8_t signature_out[kSuiSignatureEnvelopeMaxBytes],
@@ -363,64 +363,64 @@ SuiTransactionSigningResult sign_sui_personal_message_from_active_identity(
     if (message == nullptr || message_size == 0 ||
         message_size > kAgentQSuiSignPersonalMessageMaxBytes ||
         signature_out == nullptr || signature_size_out == nullptr) {
-        return SuiTransactionSigningResult::invalid_input;
+        return SuiSigningStatus::invalid_input;
     }
 
     const AgentQSuiActiveIdentity active_identity = resolve_active_sui_identity();
     if (active_identity.kind == AgentQSuiActiveIdentityKind::native) {
-        const SuiTransactionSigningResult result =
+        const SuiSigningStatus result =
             sign_sui_ed25519_personal_message_from_stored_root(
                 message,
                 message_size,
                 signature_out);
-        if (result == SuiTransactionSigningResult::ok) {
+        if (result == SuiSigningStatus::ok) {
             *signature_size_out = kSuiEd25519SignatureBytes;
         }
         return result;
     }
     if (active_identity.kind != AgentQSuiActiveIdentityKind::zklogin) {
-        return SuiTransactionSigningResult::active_identity_unavailable;
+        return SuiSigningStatus::active_identity_unavailable;
     }
 
     uint8_t user_signature[kSuiEd25519SignatureBytes] = {};
-    const SuiTransactionSigningResult user_signature_result =
+    const SuiSigningStatus user_signature_status =
         sign_sui_ed25519_personal_message_from_stored_root(
             message,
             message_size,
             user_signature);
-    if (user_signature_result != SuiTransactionSigningResult::ok) {
+    if (user_signature_status != SuiSigningStatus::ok) {
         wipe_sensitive_buffer(user_signature, sizeof(user_signature));
-        return user_signature_result;
+        return user_signature_status;
     }
 
-    const SuiTransactionSigningResult envelope_result =
+    const SuiSigningStatus envelope_status =
         build_zklogin_signature_for_active_identity(
             active_identity,
             user_signature,
             signature_out,
             signature_size_out);
     wipe_sensitive_buffer(user_signature, sizeof(user_signature));
-    return envelope_result;
+    return envelope_status;
 }
 
-const char* sui_transaction_signing_result_to_string(SuiTransactionSigningResult result)
+const char* sui_signing_status_to_string(SuiSigningStatus result)
 {
     switch (result) {
-        case SuiTransactionSigningResult::ok:
+        case SuiSigningStatus::ok:
             return "ok";
-        case SuiTransactionSigningResult::invalid_input:
+        case SuiSigningStatus::invalid_input:
             return "invalid_input";
-        case SuiTransactionSigningResult::root_material_unavailable:
+        case SuiSigningStatus::root_material_unavailable:
             return "root_material_unavailable";
-        case SuiTransactionSigningResult::mnemonic_error:
+        case SuiSigningStatus::mnemonic_error:
             return "mnemonic_error";
-        case SuiTransactionSigningResult::signing_error:
+        case SuiSigningStatus::signing_error:
             return "signing_error";
-        case SuiTransactionSigningResult::active_identity_unavailable:
+        case SuiSigningStatus::active_identity_unavailable:
             return "active_identity_unavailable";
-        case SuiTransactionSigningResult::signature_output_too_small:
+        case SuiSigningStatus::signature_output_too_small:
             return "signature_output_too_small";
-        case SuiTransactionSigningResult::zklogin_envelope_error:
+        case SuiSigningStatus::zklogin_envelope_error:
             return "zklogin_envelope_error";
     }
     return "unknown";

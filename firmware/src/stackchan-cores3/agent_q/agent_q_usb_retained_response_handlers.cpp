@@ -1,21 +1,21 @@
-#include "agent_q_usb_retained_result_handlers.h"
+#include "agent_q_usb_retained_response_handlers.h"
 
 #include "agent_q_json_input.h"
 #include "agent_q_request_id.h"
-#include "agent_q_signing_result_store.h"
+#include "agent_q_signing_response_store.h"
 #include "agent_q_usb_response_writer.h"
 
 namespace agent_q {
 
 namespace {
 
-bool retained_result_material_ready(const AgentQUsbRetainedResultHandlerOps& ops)
+bool retained_response_material_ready(const AgentQUsbRetainedResponseHandlerOps& ops)
 {
     return ops.material_ready != nullptr && ops.material_ready();
 }
 
-bool retained_result_session_valid(
-    const AgentQUsbRetainedResultHandlerOps& ops,
+bool retained_response_session_valid(
+    const AgentQUsbRetainedResponseHandlerOps& ops,
     const char* id,
     const char* session_id,
     const AgentQUsbOperationResponseWriter& writer)
@@ -24,7 +24,7 @@ bool retained_result_session_valid(
            ops.require_active_matching_session(id, session_id, writer);
 }
 
-bool retained_result_request_fields_supported(JsonDocument& request)
+bool retained_response_request_fields_supported(JsonDocument& request)
 {
     const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId", "payload"};
     return agent_q_json_object_fields_supported(
@@ -46,23 +46,23 @@ bool retained_request_id_from_payload(JsonDocument& request, const char** retain
     return true;
 }
 
-bool deliver_stored_result_by_id(
+bool deliver_stored_response_by_id(
     const char* response_id,
     const char* session_id,
     const char* retained_request_id)
 {
-    static char stored_result[kSigningResultMaxSize];
+    static char stored_response[kSigningResponseMaxSize];
     size_t stored_len = 0;
-    if (!signing_result_find(
+    if (!signing_response_find(
             session_id,
             retained_request_id,
-            stored_result,
-            sizeof(stored_result),
+            stored_response,
+            sizeof(stored_response),
             &stored_len)) {
         return false;
     }
     JsonDocument response;
-    if (deserializeJson(response, stored_result, stored_len)) {
+    if (deserializeJson(response, stored_response, stored_len)) {
         return false;
     }
     if (response["success"] == true) {
@@ -86,14 +86,14 @@ void handle_usb_get_result_request(
     const char* id,
     JsonDocument& request,
     const AgentQUsbOperationResponseWriter& writer,
-    const AgentQUsbRetainedResultHandlerOps& ops)
+    const AgentQUsbRetainedResponseHandlerOps& ops)
 {
-    if (!retained_result_material_ready(ops)) {
+    if (!retained_response_material_ready(ops)) {
         writer.write_error(id, "invalid_state");
         return;
     }
-    if (ops.write_payload_delivery_retained_result_admission_error != nullptr &&
-        ops.write_payload_delivery_retained_result_admission_error(
+    if (ops.write_payload_delivery_retained_response_admission_error != nullptr &&
+        ops.write_payload_delivery_retained_response_admission_error(
             id,
             AgentQUsbOperationType::get_result,
             writer)) {
@@ -104,10 +104,10 @@ void handle_usb_get_result_request(
         writer.write_error(id, "invalid_session");
         return;
     }
-    if (!retained_result_session_valid(ops, id, session_id, writer)) {
+    if (!retained_response_session_valid(ops, id, session_id, writer)) {
         return;
     }
-    if (!retained_result_request_fields_supported(request)) {
+    if (!retained_response_request_fields_supported(request)) {
         writer.write_error(id, "invalid_params");
         return;
     }
@@ -116,7 +116,7 @@ void handle_usb_get_result_request(
         writer.write_error(id, "invalid_params");
         return;
     }
-    if (deliver_stored_result_by_id(id, session_id, retained_request_id)) {
+    if (deliver_stored_response_by_id(id, session_id, retained_request_id)) {
         return;
     }
     writer.write_error(id, "unknown_request");
@@ -126,14 +126,14 @@ void handle_usb_ack_result_request(
     const char* id,
     JsonDocument& request,
     const AgentQUsbOperationResponseWriter& writer,
-    const AgentQUsbRetainedResultHandlerOps& ops)
+    const AgentQUsbRetainedResponseHandlerOps& ops)
 {
-    if (!retained_result_material_ready(ops)) {
+    if (!retained_response_material_ready(ops)) {
         writer.write_error(id, "invalid_state");
         return;
     }
-    if (ops.write_payload_delivery_retained_result_admission_error != nullptr &&
-        ops.write_payload_delivery_retained_result_admission_error(
+    if (ops.write_payload_delivery_retained_response_admission_error != nullptr &&
+        ops.write_payload_delivery_retained_response_admission_error(
             id,
             AgentQUsbOperationType::ack_result,
             writer)) {
@@ -144,10 +144,10 @@ void handle_usb_ack_result_request(
         writer.write_error(id, "invalid_session");
         return;
     }
-    if (!retained_result_session_valid(ops, id, session_id, writer)) {
+    if (!retained_response_session_valid(ops, id, session_id, writer)) {
         return;
     }
-    if (!retained_result_request_fields_supported(request)) {
+    if (!retained_response_request_fields_supported(request)) {
         writer.write_error(id, "invalid_params");
         return;
     }
@@ -156,7 +156,7 @@ void handle_usb_ack_result_request(
         writer.write_error(id, "invalid_params");
         return;
     }
-    signing_result_ack(session_id, retained_request_id);
+    signing_response_ack(session_id, retained_request_id);
     if (!usb_response_write_ack_result(id)) {
         writer.log_write_failure("ack_result", id);
     }

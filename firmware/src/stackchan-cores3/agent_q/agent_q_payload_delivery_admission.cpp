@@ -25,7 +25,7 @@ AgentQPayloadDeliveryAdmissionDecision payload_delivery_admit_operation(
                     AgentQPayloadDeliveryAdmissionResult::unknown_request,
                     AgentQPayloadDeliveryAdmissionReason::missing_active_payload);
             case AgentQPayloadDeliveryOperationKind::safe_read:
-            case AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup:
+            case AgentQPayloadDeliveryOperationKind::retained_response_read_cleanup:
             case AgentQPayloadDeliveryOperationKind::payload_transfer_begin:
             case AgentQPayloadDeliveryOperationKind::sign_transaction:
             case AgentQPayloadDeliveryOperationKind::sign_personal_message:
@@ -50,12 +50,12 @@ AgentQPayloadDeliveryAdmissionDecision payload_delivery_admit_operation(
                 snapshot.state == AgentQPayloadDeliveryState::receiving
                     ? AgentQPayloadDeliveryAdmissionReason::receiving_safe_read
                     : AgentQPayloadDeliveryAdmissionReason::finalized_safe_read);
-        case AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup:
+        case AgentQPayloadDeliveryOperationKind::retained_response_read_cleanup:
             return decision(
                 AgentQPayloadDeliveryAdmissionResult::ok,
                 snapshot.state == AgentQPayloadDeliveryState::receiving
-                    ? AgentQPayloadDeliveryAdmissionReason::receiving_retained_result
-                    : AgentQPayloadDeliveryAdmissionReason::finalized_retained_result);
+                    ? AgentQPayloadDeliveryAdmissionReason::receiving_retained_response
+                    : AgentQPayloadDeliveryAdmissionReason::finalized_retained_response);
         case AgentQPayloadDeliveryOperationKind::disconnect:
             return decision(
                 AgentQPayloadDeliveryAdmissionResult::ok,
@@ -122,8 +122,8 @@ const char* payload_delivery_admission_reason_name(
             return "idle_passthrough";
         case AgentQPayloadDeliveryAdmissionReason::receiving_safe_read:
             return "receiving_safe_read";
-        case AgentQPayloadDeliveryAdmissionReason::receiving_retained_result:
-            return "receiving_retained_result";
+        case AgentQPayloadDeliveryAdmissionReason::receiving_retained_response:
+            return "receiving_retained_response";
         case AgentQPayloadDeliveryAdmissionReason::receiving_disconnect_cleanup:
             return "receiving_disconnect_cleanup";
         case AgentQPayloadDeliveryAdmissionReason::receiving_transfer_continue:
@@ -132,8 +132,8 @@ const char* payload_delivery_admission_reason_name(
             return "receiving_transfer_abort";
         case AgentQPayloadDeliveryAdmissionReason::finalized_safe_read:
             return "finalized_safe_read";
-        case AgentQPayloadDeliveryAdmissionReason::finalized_retained_result:
-            return "finalized_retained_result";
+        case AgentQPayloadDeliveryAdmissionReason::finalized_retained_response:
+            return "finalized_retained_response";
         case AgentQPayloadDeliveryAdmissionReason::finalized_disconnect_cleanup:
             return "finalized_disconnect_cleanup";
         case AgentQPayloadDeliveryAdmissionReason::finalized_transfer_abort:

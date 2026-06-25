@@ -498,7 +498,7 @@ int main()
                    1500),
                "allowed policy-update result is storable");
     }
-    expect(agent_q::approval_history_wipe(), "wipe before stored result corruption test");
+    expect(agent_q::approval_history_wipe(), "wipe before stored response corruption test");
     expect(agent_q::approval_history_append_required_policy_update(policy_update_input(), 1501),
            "append policy-update result before corruption");
     expect(replace_blob_token("applied", "approve"), "mutate stored policy-update result token");
@@ -520,11 +520,11 @@ int main()
 	    expect(!agent_q::approval_history_append_required_policy_update(
 	               policy_update_input("history_error"),
 	               1201),
-	           "policy-update history rejects top-level history error as stored result");
+	           "policy-update history rejects top-level history error as stored response");
 	    expect(!agent_q::approval_history_append_required_policy_update(
 	               policy_update_input("consistency_error"),
 	               1202),
-	           "policy-update history rejects consistency state as stored result");
+	           "policy-update history rejects consistency state as stored response");
 	    expect(!agent_q::approval_history_append_required_policy_update(
 	               policy_update_input("applied", "device_confirmed", "approve"),
 	               1203),

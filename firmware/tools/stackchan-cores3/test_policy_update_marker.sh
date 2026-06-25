@@ -227,7 +227,7 @@ int main()
     expect(agent_q::policy_update_marker_begin(
                digest,
                sizeof(digest),
-               agent_q::kAgentQPolicyMaxRules + 1,
+               agent_q::kAgentQCurrentPolicyMaxTotalPolicies + 1,
                agent_q::AgentQPolicyUpdateHighestAction::reject) == BeginResult::invalid_input,
            "overlarge rule count is rejected");
     expect(agent_q::policy_update_marker_begin(
@@ -240,7 +240,7 @@ int main()
     expect(agent_q::policy_update_marker_begin(
                digest,
                sizeof(digest),
-               agent_q::kAgentQPolicyMaxRules,
+               agent_q::kAgentQCurrentPolicyMaxTotalPolicies,
                agent_q::AgentQPolicyUpdateHighestAction::reject) == BeginResult::written,
            "max rule count marker succeeds");
     g_blob[0] = 'X';

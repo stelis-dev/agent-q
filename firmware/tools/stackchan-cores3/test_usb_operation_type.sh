@@ -72,12 +72,12 @@ void expect_payload_kind(
 
 void expect_terminal_policy(
     agent_q::AgentQUsbOperationType type,
-    agent_q::AgentQUsbOperationTerminalResultPolicy expected)
+    agent_q::AgentQUsbOperationCompletionPolicy expected)
 {
     const agent_q::AgentQUsbOperationManifestEntry* entry =
         agent_q::usb_operation_manifest_entry(type);
     assert(entry != nullptr);
-    assert(entry->terminal_result_policy == expected);
+    assert(entry->completion_policy == expected);
 }
 
 }  // namespace
@@ -114,8 +114,8 @@ int main()
 
     expect_payload_kind(Type::get_status, agent_q::AgentQPayloadDeliveryOperationKind::safe_read);
     expect_payload_kind(Type::get_capabilities, agent_q::AgentQPayloadDeliveryOperationKind::safe_read);
-    expect_payload_kind(Type::get_result, agent_q::AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup);
-    expect_payload_kind(Type::ack_result, agent_q::AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup);
+    expect_payload_kind(Type::get_result, agent_q::AgentQPayloadDeliveryOperationKind::retained_response_read_cleanup);
+    expect_payload_kind(Type::ack_result, agent_q::AgentQPayloadDeliveryOperationKind::retained_response_read_cleanup);
     expect_payload_kind(Type::connect, agent_q::AgentQPayloadDeliveryOperationKind::connect);
     expect_payload_kind(Type::policy_propose, agent_q::AgentQPayloadDeliveryOperationKind::policy_propose);
     expect_payload_kind(Type::credential_prepare, agent_q::AgentQPayloadDeliveryOperationKind::safe_read);
@@ -123,22 +123,22 @@ int main()
 
     expect_terminal_policy(
         Type::get_result,
-        agent_q::AgentQUsbOperationTerminalResultPolicy::signing_retained_result_read);
+        agent_q::AgentQUsbOperationCompletionPolicy::signing_retained_response_read);
     expect_terminal_policy(
         Type::ack_result,
-        agent_q::AgentQUsbOperationTerminalResultPolicy::signing_retained_result_ack);
+        agent_q::AgentQUsbOperationCompletionPolicy::signing_retained_response_ack);
     expect_terminal_policy(
         Type::policy_propose,
-        agent_q::AgentQUsbOperationTerminalResultPolicy::policy_update_result_history_marker);
+        agent_q::AgentQUsbOperationCompletionPolicy::policy_update_history_marker);
     expect_terminal_policy(
         Type::credential_prepare,
-        agent_q::AgentQUsbOperationTerminalResultPolicy::immediate_response);
+        agent_q::AgentQUsbOperationCompletionPolicy::immediate_response);
     expect_terminal_policy(
         Type::credential_propose,
-        agent_q::AgentQUsbOperationTerminalResultPolicy::credential_propose_result);
+        agent_q::AgentQUsbOperationCompletionPolicy::credential_proposal_outcome);
     expect_terminal_policy(
         Type::sign_transaction,
-        agent_q::AgentQUsbOperationTerminalResultPolicy::signing_retained_result);
+        agent_q::AgentQUsbOperationCompletionPolicy::signing_retained_response);
 
     const agent_q::AgentQUsbOperationManifestEntry* status_entry =
         agent_q::usb_operation_manifest_entry(Type::get_status);
@@ -146,10 +146,10 @@ int main()
     assert(status_entry->read_side_effect_policy ==
            agent_q::AgentQUsbOperationReadSideEffectPolicy::persistent_material_consistency_refresh);
 
-    assert(agent_q::usb_operation_is_retained_result_read_cleanup(Type::get_result));
-    assert(agent_q::usb_operation_is_retained_result_read_cleanup(Type::ack_result));
-    assert(!agent_q::usb_operation_is_retained_result_read_cleanup(Type::policy_propose));
-    assert(!agent_q::usb_operation_is_retained_result_read_cleanup(Type::credential_propose));
+    assert(agent_q::usb_operation_is_retained_response_read_cleanup(Type::get_result));
+    assert(agent_q::usb_operation_is_retained_response_read_cleanup(Type::ack_result));
+    assert(!agent_q::usb_operation_is_retained_response_read_cleanup(Type::policy_propose));
+    assert(!agent_q::usb_operation_is_retained_response_read_cleanup(Type::credential_propose));
 
     printf("USB operation type tests passed\n");
     return 0;

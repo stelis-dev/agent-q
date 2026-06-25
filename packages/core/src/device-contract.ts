@@ -105,7 +105,7 @@ export const DEVICE_METHOD_ROWS = [
     sessionRule: "required",
     payloadRule: "required",
     payloadSchemaOwner: "PolicyProposePayload",
-    resultSchemaOwner: "PolicyProposeResult",
+    resultSchemaOwner: "PolicyProposalOutcome",
     firmwareGate: "active_session_policy_review_auth_commit",
   },
   {
@@ -113,7 +113,7 @@ export const DEVICE_METHOD_ROWS = [
     sessionRule: "required",
     payloadRule: "required",
     payloadSchemaOwner: "CredentialPreparePayload",
-    resultSchemaOwner: "CredentialPrepareResult",
+    resultSchemaOwner: "CredentialPreparation",
     firmwareGate: "active_session_credential_preparation",
   },
   {
@@ -121,24 +121,24 @@ export const DEVICE_METHOD_ROWS = [
     sessionRule: "required",
     payloadRule: "required",
     payloadSchemaOwner: "CredentialProposePayload",
-    resultSchemaOwner: "CredentialProposeResult",
+    resultSchemaOwner: "CredentialProposalOutcome",
     firmwareGate: "active_session_credential_review_auth_commit",
   },
   {
     method: "get_result",
     sessionRule: "required",
     payloadRule: "required",
-    payloadSchemaOwner: "RetainedResultPayload",
-    resultSchemaOwner: "retained method result",
-    firmwareGate: "active_session_retained_result_lookup",
+    payloadSchemaOwner: "RetainedResponsePayload",
+    resultSchemaOwner: "retained method response",
+    firmwareGate: "active_session_retained_response_lookup",
   },
   {
     method: "ack_result",
     sessionRule: "required",
     payloadRule: "required",
-    payloadSchemaOwner: "RetainedResultPayload",
+    payloadSchemaOwner: "RetainedResponsePayload",
     resultSchemaOwner: "AckResult",
-    firmwareGate: "active_session_retained_result_cleanup",
+    firmwareGate: "active_session_retained_response_cleanup",
   },
 ] as const satisfies readonly DeviceMethodRow[];
 
@@ -174,7 +174,7 @@ export const DEVICE_ERROR_ROWS = [
   { code: "invalid_state", retryable: false, message: "Device state does not allow this request.", meaning: "Firmware state does not allow the method." },
   { code: "invalid_session", retryable: false, message: "Session is missing, expired, or does not match.", meaning: "Session is missing, expired, or does not match." },
   { code: "request_id_conflict", retryable: false, message: "Request id is already bound to a different request.", meaning: "Request id is already bound to a different retained request identity." },
-  { code: "unknown_request", retryable: false, message: "Requested retained result does not exist.", meaning: "Requested retained result does not exist in the current session." },
+  { code: "unknown_request", retryable: false, message: "Requested retained response does not exist.", meaning: "Requested retained response does not exist in the current session." },
   { code: "no_active_device", retryable: false, message: "No active device is configured.", meaning: "Host process has no selected active device for the requested scope." },
   { code: "device_not_found", retryable: true, message: "Requested device is not known to Agent-Q.", meaning: "Host process cannot find the requested stored device." },
   { code: "invalid_device_id", retryable: false, message: "Device id is invalid.", meaning: "Host-side device id input is invalid." },
@@ -247,25 +247,25 @@ export function makeUnknownDeviceError(): DeviceError {
   return makeDeviceError("unknown_error");
 }
 
-const SIGN_RESULT_STATUS_DEVICE_ERROR_CODES = {
+const SIGNING_OUTCOME_STATUS_DEVICE_ERROR_CODES = {
   user_rejected: "user_rejected",
   user_timed_out: "timeout",
   policy_rejected: "policy_rejected",
   signing_failed: "signing_failed",
 } as const satisfies Record<string, DeviceErrorCode>;
 
-export type SignResultErrorCode = keyof typeof SIGN_RESULT_STATUS_DEVICE_ERROR_CODES;
+export type SigningOutcomeErrorCode = keyof typeof SIGNING_OUTCOME_STATUS_DEVICE_ERROR_CODES;
 
-function signResultErrorMessage(code: SignResultErrorCode): string {
-  return deviceErrorRow(SIGN_RESULT_STATUS_DEVICE_ERROR_CODES[code]).message;
+function signingOutcomeErrorMessage(code: SigningOutcomeErrorCode): string {
+  return deviceErrorRow(SIGNING_OUTCOME_STATUS_DEVICE_ERROR_CODES[code]).message;
 }
 
-export const SIGN_RESULT_ERROR_MESSAGES = {
-  user_rejected: signResultErrorMessage("user_rejected"),
-  user_timed_out: signResultErrorMessage("user_timed_out"),
-  policy_rejected: signResultErrorMessage("policy_rejected"),
-  signing_failed: signResultErrorMessage("signing_failed"),
-} as const satisfies Record<SignResultErrorCode, string>;
+export const SIGNING_OUTCOME_ERROR_MESSAGES = {
+  user_rejected: signingOutcomeErrorMessage("user_rejected"),
+  user_timed_out: signingOutcomeErrorMessage("user_timed_out"),
+  policy_rejected: signingOutcomeErrorMessage("policy_rejected"),
+  signing_failed: signingOutcomeErrorMessage("signing_failed"),
+} as const satisfies Record<SigningOutcomeErrorCode, string>;
 
 export interface DeviceRequest {
   readonly id: string;

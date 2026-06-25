@@ -91,7 +91,7 @@ scan_devices
   -> disconnect_device
 ```
 
-Agents should treat every signing result as Firmware-authored device output.
+Agents should treat every signing outcome as Firmware-authored device output.
 They should not claim that a request was safe because the agent produced it, and
 they should not infer user intent from a successful signature.
 
@@ -221,7 +221,7 @@ For signing:
 - keep `method` as `"sign_transaction"` or `"sign_personal_message"`;
 - pass canonical base64 payloads;
 - handle `policy_rejected`, `user_rejected`, `user_timed_out`, and
-  `signing_failed` as terminal signing results;
+  `signing_failed` as terminal signing outcomes;
 - handle `not_connected`, `unsupported_chain`, `unsupported_method`,
   `unsupported_payload_size`, and `request_id_conflict` as request errors that
   need caller-side handling.

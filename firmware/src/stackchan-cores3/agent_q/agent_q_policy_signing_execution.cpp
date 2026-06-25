@@ -215,16 +215,16 @@ AgentQPolicySigningExecutionResult execute_policy_sign_transaction(
             "Policy signing payload is unavailable.");
     }
 
-    const SuiTransactionSigningResult signing_result =
+    const SuiSigningStatus signing_status =
         sign_sui_transaction_from_active_identity(
             policy_result.tx_bytes,
             policy_result.tx_bytes_size,
             result.signature,
             &result.signature_size);
-    if (signing_result != SuiTransactionSigningResult::ok) {
+    if (signing_status != SuiSigningStatus::ok) {
         wipe_sensitive_buffer(result.signature, sizeof(result.signature));
         result.signature_size = 0;
-        if (signing_result == SuiTransactionSigningResult::root_material_unavailable) {
+        if (signing_status == SuiSigningStatus::root_material_unavailable) {
             const bool terminal_recorded = write_policy_signing_terminal_history(
                 policy_result,
                 AgentQSigningHistoryTerminalResult::signing_failed,

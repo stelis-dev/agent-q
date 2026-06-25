@@ -531,10 +531,10 @@ function validateSignedTransactionResult(result: AgentQSuiWalletSignTransactionR
     result.method !== "sign_transaction" ||
     typeof result.signature !== "string"
   ) {
-    throw errorForSignResult("unknown");
+    throw errorForSigningOutcome("unknown");
   }
   if (!isSuiSignatureEnvelope(result.signature)) {
-    throw errorForSignResult("missing_signature");
+    throw errorForSigningOutcome("missing_signature");
   }
   return result.signature;
 }
@@ -555,15 +555,15 @@ function validateSignedPersonalMessageResult(
     result.messageBytes !== expectedMessageBytes ||
     typeof result.signature !== "string"
   ) {
-    throw errorForSignResult("unknown", message);
+    throw errorForSigningOutcome("unknown", message);
   }
   if (!isSuiSignatureEnvelope(result.signature)) {
-    throw errorForSignResult("missing_signature", message);
+    throw errorForSigningOutcome("missing_signature", message);
   }
   return result.signature;
 }
 
-function errorForSignResult(
+function errorForSigningOutcome(
   status: string,
   unknownMessage = UNKNOWN_SIGN_TRANSACTION_DAPP_ERROR_MESSAGE,
 ): Error {
@@ -706,10 +706,10 @@ export class AgentQSuiWallet implements Wallet {
     });
     if (result.source !== "live") {
       this.#clearAccounts();
-      throw errorForSignResult(result.source);
+      throw errorForSigningOutcome(result.source);
     }
     if (result.status !== "signed") {
-      throw errorForSignResult(result.status ?? "unknown");
+      throw errorForSigningOutcome(result.status ?? "unknown");
     }
     const signature = validateSignedTransactionResult(result);
     return {
@@ -732,10 +732,10 @@ export class AgentQSuiWallet implements Wallet {
     });
     if (result.source !== "live") {
       this.#clearAccounts();
-      throw errorForSignResult(result.source, UNKNOWN_SIGN_PERSONAL_MESSAGE_DAPP_ERROR_MESSAGE);
+      throw errorForSigningOutcome(result.source, UNKNOWN_SIGN_PERSONAL_MESSAGE_DAPP_ERROR_MESSAGE);
     }
     if (result.status !== "signed") {
-      throw errorForSignResult(result.status ?? "unknown", UNKNOWN_SIGN_PERSONAL_MESSAGE_DAPP_ERROR_MESSAGE);
+      throw errorForSigningOutcome(result.status ?? "unknown", UNKNOWN_SIGN_PERSONAL_MESSAGE_DAPP_ERROR_MESSAGE);
     }
     const signature = validateSignedPersonalMessageResult(result, messageBytes);
     return {

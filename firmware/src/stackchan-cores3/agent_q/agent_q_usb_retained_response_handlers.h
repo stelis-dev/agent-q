@@ -7,9 +7,9 @@
 
 namespace agent_q {
 
-struct AgentQUsbRetainedResultHandlerOps {
+struct AgentQUsbRetainedResponseHandlerOps {
     bool (*material_ready)();
-    bool (*write_payload_delivery_retained_result_admission_error)(
+    bool (*write_payload_delivery_retained_response_admission_error)(
         const char* id,
         AgentQUsbOperationType operation,
         const AgentQUsbOperationResponseWriter& writer);
@@ -23,12 +23,12 @@ void handle_usb_get_result_request(
     const char* id,
     JsonDocument& request,
     const AgentQUsbOperationResponseWriter& writer,
-    const AgentQUsbRetainedResultHandlerOps& ops);
+    const AgentQUsbRetainedResponseHandlerOps& ops);
 
 void handle_usb_ack_result_request(
     const char* id,
     JsonDocument& request,
     const AgentQUsbOperationResponseWriter& writer,
-    const AgentQUsbRetainedResultHandlerOps& ops);
+    const AgentQUsbRetainedResponseHandlerOps& ops);
 
 }  // namespace agent_q

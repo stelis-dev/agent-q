@@ -9,52 +9,52 @@ AgentQSigningRetryDeliveryResult evaluate_signing_retry_delivery(
     const char* request_id,
     const uint8_t* request_identity,
     size_t request_identity_size,
-    char* stored_result,
-    size_t stored_result_size)
+    char* stored_response,
+    size_t stored_response_size)
 {
     AgentQSigningRetryDeliveryResult result = {};
     result.status = AgentQSigningRetryDeliveryStatus::lookup_error;
     result.error_code = "internal_output_error";
 
-    const SigningResultRetryLookup lookup =
-        signing_result_find_for_retry(
+    const SigningResponseRetryLookup lookup =
+        signing_response_find_for_retry(
             session_id,
             request_id,
             request_identity,
             request_identity_size,
-            stored_result,
-            stored_result_size,
-            &result.stored_result_len);
+            stored_response,
+            stored_response_size,
+            &result.stored_response_len);
 
     switch (lookup) {
-        case SigningResultRetryLookup::not_found:
+        case SigningResponseRetryLookup::not_found:
             result.status = AgentQSigningRetryDeliveryStatus::not_found;
             result.error_code = nullptr;
-            if (stored_result != nullptr && stored_result_size > 0) {
-                memset(stored_result, 0, stored_result_size);
+            if (stored_response != nullptr && stored_response_size > 0) {
+                memset(stored_response, 0, stored_response_size);
             }
-            result.stored_result_len = 0;
+            result.stored_response_len = 0;
             return result;
-        case SigningResultRetryLookup::match:
+        case SigningResponseRetryLookup::match:
             result.status = AgentQSigningRetryDeliveryStatus::match;
             result.error_code = nullptr;
             return result;
-        case SigningResultRetryLookup::conflict:
+        case SigningResponseRetryLookup::conflict:
             result.status = AgentQSigningRetryDeliveryStatus::request_id_conflict;
             result.error_code = "request_id_conflict";
-            if (stored_result != nullptr && stored_result_size > 0) {
-                memset(stored_result, 0, stored_result_size);
+            if (stored_response != nullptr && stored_response_size > 0) {
+                memset(stored_response, 0, stored_response_size);
             }
-            result.stored_result_len = 0;
+            result.stored_response_len = 0;
             return result;
-        case SigningResultRetryLookup::invalid:
+        case SigningResponseRetryLookup::invalid:
             break;
     }
 
-    if (stored_result != nullptr && stored_result_size > 0) {
-        memset(stored_result, 0, stored_result_size);
+    if (stored_response != nullptr && stored_response_size > 0) {
+        memset(stored_response, 0, stored_response_size);
     }
-    result.stored_result_len = 0;
+    result.stored_response_len = 0;
     return result;
 }
 

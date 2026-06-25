@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "agent_q_signing_result_store.h"
+#include "agent_q_signing_response_store.h"
 
 namespace agent_q {
 
@@ -16,7 +16,7 @@ enum class AgentQSigningRetryDeliveryStatus {
 
 struct AgentQSigningRetryDeliveryResult {
     AgentQSigningRetryDeliveryStatus status;
-    size_t stored_result_len;
+    size_t stored_response_len;
     const char* error_code;
 };
 
@@ -25,7 +25,7 @@ AgentQSigningRetryDeliveryResult evaluate_signing_retry_delivery(
     const char* request_id,
     const uint8_t* request_identity,
     size_t request_identity_size,
-    char* stored_result,
-    size_t stored_result_size);
+    char* stored_response,
+    size_t stored_response_size);
 
 }  // namespace agent_q

@@ -211,7 +211,7 @@ User mode then applies the current human approval input mode and records
 required history. Policy-incomplete valid transactions return `policy_rejected`
 in policy mode. It rejects unsupported transactions and returns `signed`,
 `policy_rejected`, `user_rejected`, `user_timed_out`, or `signing_failed`
-through `sign_result` as applicable. Product-active status is tracked in
+through signing outcomes as applicable. Product-active status is tracked in
 `docs/IMPLEMENTATION_STATUS.md`; do not infer it from source paths alone.
 The target also exposes user-mode `sign_personal_message` for bounded Sui
 personal-message bytes; policy mode fails closed for that method until matching
@@ -393,7 +393,7 @@ The StackChan device-activity projection test is target-specific and host-side.
 It compiles `agent_q_device_activity_projection.cpp` and verifies active-flow
 state projection and operation-specific gates, including policy-update review
 and commit stages, local Settings entry blocking, signing ingress blocking, and
-the idle Settings menu USB exception. It also verifies the retained-result
+the idle Settings menu USB exception. It also verifies the retained-response
 read/cleanup route class for `get_result` and `ack_result`. It is not a
 hardware smoke test.
 

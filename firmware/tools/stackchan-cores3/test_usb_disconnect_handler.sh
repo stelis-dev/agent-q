@@ -180,7 +180,7 @@ void clear_session()
 
 namespace agent_q {
 
-bool usb_response_write_disconnect_result(const char* id)
+bool usb_response_write_disconnect_success(const char* id)
 {
     g_write_disconnect_calls += 1;
     g_last_id = id;

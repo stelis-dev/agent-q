@@ -170,7 +170,7 @@ Successful responses do not have a code.
 | `invalid_state` | false | Device state does not allow this request. | Firmware state does not allow the method. |
 | `invalid_session` | false | Session is missing, expired, or does not match. | Session is missing, expired, or does not match. |
 | `request_id_conflict` | false | Request id is already bound to a different request. | Request id is already bound to a different retained request identity. |
-| `unknown_request` | false | Requested retained result does not exist. | Requested retained result does not exist in the current session. |
+| `unknown_request` | false | Requested retained response does not exist. | Requested retained response does not exist in the current session. |
 | `no_active_device` | false | No active device is configured. | Host process has no selected active device for the requested scope. |
 | `device_not_found` | true | Requested device is not known to Agent-Q. | Host process cannot find the requested stored device. |
 | `invalid_device_id` | false | Device id is invalid. | Host-side device id input is invalid. |
@@ -237,11 +237,11 @@ adding one row here and then implementing that row through the same
 | `get_approval_history` | required | required | `ApprovalHistoryPayload` object: `{ limit, beforeSeq? }` | `ApprovalHistoryResult` object: records and `hasMore` | Active session and approval-history store gate. |
 | `sign_transaction` | required | required | `SuiSignTransactionPayload` object: `{ chain, network, txBytes }` after payload resolution | `SignTransactionResult` object: signature metadata for signed result | Active session, account binding, device-local signing mode, policy or device-confirmation signing gate. |
 | `sign_personal_message` | required | required | `SuiSignPersonalMessagePayload` object: `{ chain, network, message }` after payload resolution | `SignPersonalMessageResult` object: signature and message bytes for signed result | Active session, account binding, user-confirmed signing gate; policy mode fails closed. |
-| `policy_propose` | required | required | `PolicyProposePayload` object: `{ policy }` after payload resolution | `PolicyProposeResult` object: applied/rejected/timed-out/storage result and policy summary when available | Active session, policy parser, device-local policy review, local authentication, and policy-store commit gate. |
-| `credential_prepare` | required | required | `CredentialPreparePayload` object: `{ chain, credential }` | `CredentialPrepareResult` object: public key and derived address preparation | Active session and credential preparation gate. |
-| `credential_propose` | required | required | `CredentialProposePayload` object: `{ chain, credential, network, address, publicKey, maxEpoch, inputs }` after payload resolution | `CredentialProposeResult` object: activated/rejected/timed-out/storage result and session-ended flag | Active session, proof parser, device-local credential review, local authentication, and credential-store commit gate. |
-| `get_result` | required | required | `RetainedResultPayload` object: `{ retainedRequestId }` | method result object retained for `retainedRequestId` | Active session and retained-result lookup gate. |
-| `ack_result` | required | required | `RetainedResultPayload` object: `{ retainedRequestId }` | `AckResult` object: `{}` | Active session and retained-result cleanup gate. |
+| `policy_propose` | required | required | `PolicyProposePayload` object: `{ policy }` after payload resolution | `PolicyProposalOutcome` object: applied/rejected/timed-out/storage result and policy summary when available | Active session, policy parser, device-local policy review, local authentication, and policy-store commit gate. |
+| `credential_prepare` | required | required | `CredentialPreparePayload` object: `{ chain, credential }` | `CredentialPreparation` object: public key and derived address preparation | Active session and credential preparation gate. |
+| `credential_propose` | required | required | `CredentialProposePayload` object: `{ chain, credential, network, address, publicKey, maxEpoch, inputs }` after payload resolution | `CredentialProposalOutcome` object: activated/rejected/timed-out/storage result and session-ended flag | Active session, proof parser, device-local credential review, local authentication, and credential-store commit gate. |
+| `get_result` | required | required | `RetainedResponsePayload` object: `{ retainedRequestId }` | method response object retained for `retainedRequestId` | Active session and retained-response lookup gate. |
+| `ack_result` | required | required | `RetainedResponsePayload` object: `{ retainedRequestId }` | `AckResult` object: `{}` | Active session and retained-response cleanup gate. |
 
 `Session rule` values are exactly `forbidden`, `required`, or `optional`.
 `Payload rule` values are exactly `forbidden`, `required`, or `optional`.
@@ -323,9 +323,9 @@ protocol methods.
 | MCP | `get_accounts` | no payload | `get_accounts` | MCP accounts result |
 | MCP | `policy_get` | no payload | `policy_get` | MCP policy result |
 | MCP | `get_approval_history` | `ApprovalHistoryPayload` | `get_approval_history` | MCP approval-history result |
-| MCP | `sign_transaction` | `SuiSignTransactionPayload` | `sign_transaction` | MCP signing result |
-| MCP | `sign_personal_message` | `SuiSignPersonalMessagePayload` | `sign_personal_message` | MCP personal-message signing result |
-| MCP | `policy_propose` | `PolicyProposePayload` | `policy_propose` | MCP policy proposal result |
+| MCP | `sign_transaction` | `SuiSignTransactionPayload` | `sign_transaction` | MCP signing outcome |
+| MCP | `sign_personal_message` | `SuiSignPersonalMessagePayload` | `sign_personal_message` | MCP personal-message signing outcome |
+| MCP | `policy_propose` | `PolicyProposePayload` | `policy_propose` | MCP policy proposal outcome |
 | local HTTP API | `/api/connect` | `ConnectPayload` | `connect` | `{ ok: true, result }` or `{ ok: false, error }` |
 | local HTTP API | `/api/disconnect` | no payload | `disconnect` | `{ ok: true, result }` or `{ ok: false, error }` |
 | local HTTP API | `/api/get_accounts` | no payload | `get_accounts` | `{ ok: true, result }` or `{ ok: false, error }` |

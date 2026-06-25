@@ -99,10 +99,7 @@ const noOpCore = {
       source: "live",
       connected: true,
       portPath: "/dev/cu.usbmodem1",
-      protocolResponse: {
-        id: "req_status",
-        version: 1,
-        type: "status",
+      status: {
         device: {
           deviceId: "device-1",
           state: "idle",
@@ -1097,10 +1094,7 @@ const leakyCore = {
       source: "live",
       connected: true,
       portPath: "/dev/cu.usbmodem1",
-      protocolResponse: {
-        id: "req_status",
-        version: 1,
-        type: "status",
+      status: {
         device: { deviceId: "device-1", state: "idle", firmwareName: "f", hardware: "h", firmwareVersion: "0" },
         provisioning: { state: "unprovisioned" },
       },
@@ -1611,7 +1605,7 @@ test("get_device_status exposes live provisioning state", async () => {
   await withConnectedClient(async (client) => {
     const result = await client.callTool({ name: "get_device_status", arguments: {} });
     assert.equal(result.structuredContent.source, "live");
-    assert.equal(result.structuredContent.protocolResponse.provisioning.state, "unprovisioned");
+    assert.equal(result.structuredContent.status.provisioning.state, "unprovisioned");
   }, noOpCore);
 });
 
@@ -1774,10 +1768,7 @@ test("MCP boundary fails closed on an unsanitized live port path", async () => {
             source: "live",
             connected: true,
             portPath: "/dev/cu." + controlChar + "x",
-            protocolResponse: {
-              id: "req_status",
-              version: 1,
-              type: "status",
+            status: {
               device: { deviceId: "device-1", state: "idle", firmwareName: "f", hardware: "h", firmwareVersion: "0" },
               provisioning: { state: "unprovisioned" },
             },

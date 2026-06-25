@@ -1,7 +1,7 @@
 import type { AgentQCore } from "@stelis/agent-q-core";
 import { toAgentQError, toPublicError } from "@stelis/agent-q-core/adapter-internal";
 import {
-  SIGN_RESULT_ERROR_MESSAGES,
+  SIGNING_OUTCOME_ERROR_MESSAGES,
   SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
   SUI_SIGNATURE_SCHEME_FLAG_ED25519,
@@ -166,7 +166,7 @@ export async function runSuiSignCli(
     if (result.status !== "signed") {
       resultCode = await writeFailure(dependencies, {
         code: result.status,
-        message: SIGN_RESULT_ERROR_MESSAGES[result.status],
+        message: SIGNING_OUTCOME_ERROR_MESSAGES[result.status],
       });
       return resultCode;
     }
@@ -378,7 +378,7 @@ async function signWithDevice(
     }
     if (account.keyScheme !== "ed25519") {
       throw new Error(
-        "Sui CLI external signer cannot use zkLogin active accounts because this Sui CLI external signer protocol parses sign responses as native single-key signatures.",
+        "Sui CLI external signer cannot use zkLogin active accounts because this Sui CLI external signer protocol parses signature responses as native single-key signatures.",
       );
     }
 
@@ -394,7 +394,7 @@ async function signWithDevice(
       throw new Error(`The device is ${result.source} (${result.reason}).`);
     }
     if (result.status !== "signed") {
-      throw new Error(SIGN_RESULT_ERROR_MESSAGES[result.status]);
+      throw new Error(SIGNING_OUTCOME_ERROR_MESSAGES[result.status]);
     }
     if (!SUI_ED25519_SIGNATURE_BASE64_PATTERN.test(result.signature)) {
       throw new Error("The device returned an unexpected signature shape.");
@@ -421,7 +421,7 @@ function accountToPublicKeyResponse(account: {
 }): SuiExternalSignerPublicKeyResponse {
   if (account.keyScheme !== "ed25519" || account.derivationPath === undefined) {
     throw new Error(
-      "Sui CLI external signer cannot advertise zkLogin active accounts because this Sui CLI external signer protocol parses sign responses as native single-key signatures.",
+      "Sui CLI external signer cannot advertise zkLogin active accounts because this Sui CLI external signer protocol parses signature responses as native single-key signatures.",
     );
   }
   const schemePrefixedPublicKey = Buffer.from(account.publicKey, "base64");

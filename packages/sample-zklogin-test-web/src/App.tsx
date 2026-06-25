@@ -438,7 +438,7 @@ function App() {
       }
       setNotice({
         tone: response.source === "live" && response.status === "signed" ? "success" : "error",
-        title: "Sign result",
+        title: "Signing outcome",
         lines: signResultLines(response, txBytes),
       });
     });

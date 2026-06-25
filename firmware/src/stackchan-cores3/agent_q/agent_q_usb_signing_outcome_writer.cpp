@@ -1,4 +1,4 @@
-#include "agent_q_usb_signing_result_writer.h"
+#include "agent_q_usb_signing_outcome_writer.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -8,7 +8,7 @@
 #include "agent_q_protocol_constants.h"
 #include "agent_q_sign_personal_message_limits.h"
 #include "agent_q_signing_mode.h"
-#include "agent_q_signing_result_store.h"
+#include "agent_q_signing_response_store.h"
 #include "agent_q_sui_signing_service.h"
 #include "agent_q_sui_zklogin_proof_store.h"
 #include "agent_q_usb_response_writer.h"
@@ -56,27 +56,27 @@ bool buffer_signing_response_for_retry(
     if (session_id == nullptr || session_id[0] == '\0') {
         return false;
     }
-    char* serialized_result = static_cast<char*>(malloc(kSigningResultMaxSize));
-    if (serialized_result == nullptr) {
+    char* serialized_response = static_cast<char*>(malloc(kSigningResponseMaxSize));
+    if (serialized_response == nullptr) {
         return false;
     }
     const size_t serialized_len =
-        serializeJson(response, serialized_result, kSigningResultMaxSize);
+        serializeJson(response, serialized_response, kSigningResponseMaxSize);
     bool stored = false;
-    if (serialized_len != 0 && serialized_len < kSigningResultMaxSize) {
-        const SigningResultStoreOutcome outcome = signing_result_store(
+    if (serialized_len != 0 && serialized_len < kSigningResponseMaxSize) {
+        const SigningResponseStoreOutcome outcome = signing_response_store(
             session_id,
             request_id,
             request_identity,
             kAgentQSignRequestIdentitySize,
-            serialized_result,
+            serialized_response,
             serialized_len);
-        stored = outcome == SigningResultStoreOutcome::stored ||
-                 outcome == SigningResultStoreOutcome::duplicate ||
-                 outcome == SigningResultStoreOutcome::conflict;
+        stored = outcome == SigningResponseStoreOutcome::stored ||
+                 outcome == SigningResponseStoreOutcome::duplicate ||
+                 outcome == SigningResponseStoreOutcome::conflict;
     }
-    clear_heap_buffer(serialized_result, kSigningResultMaxSize);
-    free(serialized_result);
+    clear_heap_buffer(serialized_response, kSigningResponseMaxSize);
+    free(serialized_response);
     return stored;
 }
 
@@ -213,7 +213,7 @@ bool write_failed_signing_response(
 
 }  // namespace
 
-bool usb_signing_result_write_user_signed(
+bool usb_signing_outcome_write_user_signed(
     const char* id,
     const char* session_id,
     const char* authorization,
@@ -236,7 +236,7 @@ bool usb_signing_result_write_user_signed(
         signing_output.message_bytes_size);
 }
 
-bool usb_signing_result_write_user_terminal(
+bool usb_signing_outcome_write_user_terminal(
     const char* id,
     const char* session_id,
     const uint8_t* request_identity,
@@ -256,7 +256,7 @@ bool usb_signing_result_write_user_terminal(
     return buffer_and_write_response(session_id, id, request_identity, response);
 }
 
-bool usb_signing_result_write_policy_execution(
+bool usb_signing_outcome_write_policy_execution(
     const char* id,
     const char* session_id,
     const uint8_t* request_identity,

@@ -19,12 +19,12 @@ enum class AgentQPayloadDeliveryAdmissionResult {
 enum class AgentQPayloadDeliveryAdmissionReason {
     idle_passthrough,
     receiving_safe_read,
-    receiving_retained_result,
+    receiving_retained_response,
     receiving_disconnect_cleanup,
     receiving_transfer_continue,
     receiving_transfer_abort,
     finalized_safe_read,
-    finalized_retained_result,
+    finalized_retained_response,
     finalized_disconnect_cleanup,
     finalized_transfer_abort,
     blocked_incomplete_transfer,
@@ -98,13 +98,13 @@ inline bool payload_delivery_admission_allows_safe_read(
             decision.reason == AgentQPayloadDeliveryAdmissionReason::finalized_safe_read);
 }
 
-inline bool payload_delivery_admission_allows_retained_result_cleanup(
+inline bool payload_delivery_admission_allows_retained_response_cleanup(
     const AgentQPayloadDeliveryAdmissionDecision& decision)
 {
     return decision.result == AgentQPayloadDeliveryAdmissionResult::ok &&
            (decision.reason == AgentQPayloadDeliveryAdmissionReason::idle_passthrough ||
-            decision.reason == AgentQPayloadDeliveryAdmissionReason::receiving_retained_result ||
-            decision.reason == AgentQPayloadDeliveryAdmissionReason::finalized_retained_result);
+            decision.reason == AgentQPayloadDeliveryAdmissionReason::receiving_retained_response ||
+            decision.reason == AgentQPayloadDeliveryAdmissionReason::finalized_retained_response);
 }
 
 inline bool payload_delivery_admission_allows_disconnect_cleanup(

@@ -240,7 +240,7 @@ export const hostToolDefinitions = {
     name: "sign_transaction",
     title: "Sign transaction",
     description:
-      "Request a Firmware-owned transaction signature over an approved session. Agent-Q and MCP do not store keys, choose authorization, or make signing decisions; Firmware uses its local signing authorization mode to select policy authorization or user confirmation and returns sign_result.",
+      "Request a Firmware-owned transaction signature over an approved session. Agent-Q and MCP do not store keys, choose authorization, or make signing decisions; Firmware uses its local signing authorization mode to select policy authorization or user confirmation and returns signing outcome.",
     inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
@@ -272,7 +272,7 @@ export const hostToolDefinitions = {
     name: "policy_propose",
     title: "Propose policy update",
     description:
-      "Submit a bounded current-schema active-policy proposal to Agent-Q Firmware. Firmware validates the proposal, shows a device-local policy summary review, starts local PIN approval only after device-local Continue, and returns the terminal policy_propose_result. This is a request path only: Agent-Q and MCP do not store, apply, or decide policy.",
+      "Submit a bounded current-schema active-policy proposal to Agent-Q Firmware. Firmware validates the proposal, shows a device-local policy summary review, starts local PIN approval only after device-local Continue, and returns the terminal policy proposal outcome. This is a request path only: Agent-Q and MCP do not store, apply, or decide policy.",
     inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),

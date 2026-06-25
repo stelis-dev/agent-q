@@ -153,11 +153,6 @@ int main()
         "req_unknown",
         Type::unsupported);
     expect_status(
-        "{\"id\":\"req_old_type\",\"version\":1,\"type\":\"get_status\"}",
-        Status::unsupported_method,
-        "req_old_type",
-        Type::unsupported);
-    expect_status(
         "{\"id\":\"req_unknown_transfer\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"unknown\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\"}",
         Status::unsupported_method,
         "req_unknown_transfer",

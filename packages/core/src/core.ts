@@ -28,17 +28,17 @@ import {
   type Account,
   type ApprovalHistoryRecord,
   type CapabilityChain,
-  type ConnectResponse,
+  type ConnectResult,
   type CredentialCapability,
-  type CredentialPrepareResultResponse,
-  type CredentialProposeResultResponse,
+  type CredentialPreparationResponse,
+  type CredentialProposalOutcomeResponse,
   type DeviceStatusSnapshot,
   type IdentifyDeviceResponse,
   type PolicyDocument,
-  type PolicyProposeResultResponse,
+  type PolicyProposalOutcomeResponse,
   ProtocolError,
   type SignPersonalMessageParams,
-  type SignResultResponse,
+  type SigningOutcome,
   type SignTransactionParams,
   type SupportedSignRoute,
   type SigningCapabilities,
@@ -68,7 +68,7 @@ export interface LiveDeviceStatus {
   source: "live";
   connected: true;
   portPath: string;
-  protocolResponse: StatusResponse;
+  status: StatusResponse;
 }
 
 export interface CachedDeviceStatus {
@@ -105,9 +105,8 @@ export interface IdentifiedDevice {
   source: "live";
   connected: true;
   portPath: string;
-  status: "displayed";
   code: string;
-  protocolResponse: IdentifyDeviceResponse;
+  device: IdentifyDeviceResponse["device"];
 }
 
 export interface IdentifyDeviceFailure {
@@ -254,41 +253,41 @@ export type GetApprovalHistoryResult =
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: GetApprovalHistorySessionEndedReason };
 
-export type PolicyProposeResult =
+export type PolicyProposalOutcome =
   | {
       source: "live";
       deviceId: string;
-      status: PolicyProposeResultResponse["status"];
-      reasonCode: PolicyProposeResultResponse["reasonCode"];
-      policy?: PolicyProposeResultResponse["policy"];
+      status: PolicyProposalOutcomeResponse["status"];
+      reasonCode: PolicyProposalOutcomeResponse["reasonCode"];
+      policy?: PolicyProposalOutcomeResponse["policy"];
     }
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: PolicyProposeSessionEndedReason };
 
-export type CredentialPrepareResult =
+export type CredentialPreparation =
   | {
       source: "live";
       deviceId: string;
-      chain: CredentialPrepareResultResponse["chain"];
-      credential: CredentialPrepareResultResponse["credential"];
-      preparation: CredentialPrepareResultResponse["preparation"];
+      chain: CredentialPreparationResponse["chain"];
+      credential: CredentialPreparationResponse["credential"];
+      preparation: CredentialPreparationResponse["preparation"];
     }
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: GetAccountsSessionEndedReason };
 
-export type CredentialProposeResult =
+export type CredentialProposalOutcome =
   | {
       source: "live";
       deviceId: string;
-      status: CredentialProposeResultResponse["status"];
-      reasonCode: CredentialProposeResultResponse["reasonCode"];
-      sessionEnded: CredentialProposeResultResponse["sessionEnded"];
+      status: CredentialProposalOutcomeResponse["status"];
+      reasonCode: CredentialProposalOutcomeResponse["reasonCode"];
+      sessionEnded: CredentialProposalOutcomeResponse["sessionEnded"];
     }
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: GetAccountsSessionEndedReason };
 
 type SignTerminalResponse = Extract<
-  SignResultResponse,
+  SigningOutcome,
   { status: "user_rejected" | "user_timed_out" | "policy_rejected" | "signing_failed" }
 >;
 
@@ -296,14 +295,14 @@ type LiveSignedResult = {
   source: "live";
   deviceId: string;
   status: "signed";
-  authorization: Extract<SignResultResponse, { status: "signed" }>["authorization"];
-  chain: Extract<SignResultResponse, { status: "signed" }>["chain"];
-  method: Extract<SignResultResponse, { status: "signed" }>["method"];
+  authorization: Extract<SigningOutcome, { status: "signed" }>["authorization"];
+  chain: Extract<SigningOutcome, { status: "signed" }>["chain"];
+  method: Extract<SigningOutcome, { status: "signed" }>["method"];
   signature: string;
   messageBytes?: string;
 };
 
-type LiveTerminalSignResult =
+type LiveTerminalSigningOutcome =
   | {
       source: "live";
       deviceId: string;
@@ -323,13 +322,13 @@ type LiveTerminalSignResult =
 
 export type SignTransactionResult =
   | LiveSignedResult
-  | LiveTerminalSignResult
+  | LiveTerminalSigningOutcome
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: SignTransactionSessionEndedReason };
 
 export type SignPersonalMessageResult =
   | LiveSignedResult
-  | LiveTerminalSignResult
+  | LiveTerminalSigningOutcome
   | { source: "not_connected"; deviceId: string; reason: "not_connected" }
   | { source: "session_ended"; deviceId: string; reason: SignPersonalMessageSessionEndedReason };
 
@@ -356,13 +355,13 @@ export class AgentQCore {
     const devices: LiveDeviceStatus[] = [];
 
     for (const liveDevice of scanResult.devices) {
-      await this.configStore.rememberUsbStatus(liveDevice.protocolResponse, liveDevice.portPath, {
+      await this.configStore.rememberUsbStatus(liveDevice.status, liveDevice.portPath, {
         setActive: false,
       });
       devices.push(toLiveStatus(liveDevice));
     }
     this.clearRuntimeSessionsAbsentFromLiveUsbScan(
-      new Set(scanResult.devices.map((liveDevice) => liveDevice.protocolResponse.device.deviceId)),
+      new Set(scanResult.devices.map((liveDevice) => liveDevice.status.device.deviceId)),
     );
 
     const config = await this.configStore.load();
@@ -393,7 +392,7 @@ export class AgentQCore {
           source: "error",
           connected: false,
           portPath: sanitizePortHint(liveDevice.portPath),
-          deviceId: liveDevice.protocolResponse.device.deviceId,
+          deviceId: liveDevice.status.device.deviceId,
           status: "error",
           error: toPublicError("timeout", true),
         });
@@ -406,10 +405,10 @@ export class AgentQCore {
           code,
           remainingMs,
         );
-        if (response.device.deviceId !== liveDevice.protocolResponse.device.deviceId) {
+        if (response.device.deviceId !== liveDevice.status.device.deviceId) {
           throw new AgentQError(
             "handshake_failed",
-            `Identify response device id did not match status response. Expected ${liveDevice.protocolResponse.device.deviceId}, got ${response.device.deviceId}.`,
+            `Identify response device id did not match status response. Expected ${liveDevice.status.device.deviceId}, got ${response.device.deviceId}.`,
             true,
           );
         }
@@ -418,16 +417,15 @@ export class AgentQCore {
         }
 
         await this.configStore.rememberUsbStatus(
-          { device: response.device, provisioning: liveDevice.protocolResponse.provisioning },
+          { device: response.device, provisioning: liveDevice.status.provisioning },
           liveDevice.portPath,
         );
         devices.push({
           source: "live",
           connected: true,
           portPath: sanitizePortHint(liveDevice.portPath),
-          status: "displayed",
           code,
-          protocolResponse: response,
+          device: response.device,
         });
       } catch (error) {
         const agentQError = toAgentQError(error);
@@ -437,7 +435,7 @@ export class AgentQCore {
           source: "error",
           connected: false,
           portPath: sanitizePortHint(liveDevice.portPath),
-          deviceId: liveDevice.protocolResponse.device.deviceId,
+          deviceId: liveDevice.status.device.deviceId,
           status: "error",
           error: toPublicError(agentQError.code, agentQError.retryable),
         });
@@ -533,7 +531,7 @@ export class AgentQCore {
     // Record the live device before sending connect so a rejected or timed-out
     // attempt still refreshes lastSeenAt and the cached status for this device.
     await this.configStore.rememberUsbStatus(
-      matchingPort.protocolResponse,
+      matchingPort.status,
       matchingPort.portPath,
       { observedAt: this.clock() },
     );
@@ -551,7 +549,7 @@ export class AgentQCore {
           deviceId: target.deviceId,
           sessionTtlMs: existingSession.sessionTtlMs,
           connectedAt: existingSession.connectedAt,
-          device: matchingPort.protocolResponse.device,
+          device: matchingPort.status.device,
         };
       } catch (error) {
         const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
@@ -561,7 +559,7 @@ export class AgentQCore {
       }
     }
 
-    let response: ConnectResponse;
+    let response: ConnectResult;
     try {
       response = await this.usbDriver.connectDevice(
         matchingPort.portPath,
@@ -571,14 +569,6 @@ export class AgentQCore {
     } catch (error) {
       this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
       throw error;
-    }
-
-    if (response.status === "rejected") {
-      throw new AgentQError(
-        response.error.code,
-        response.error.message,
-        response.error.code === "timeout",
-      );
     }
 
     if (response.device.deviceId !== target.deviceId) {
@@ -831,7 +821,7 @@ export class AgentQCore {
     deviceId?: string;
     purpose?: string;
     policy: Record<string, unknown>;
-  }): Promise<PolicyProposeResult> {
+  }): Promise<PolicyProposalOutcome> {
     const target = await this.resolveTargetDevice(input);
     const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
     const policyUpdateDeadlineMs = INTERNAL_POLICY_UPDATE_DEADLINE_MS;
@@ -887,7 +877,7 @@ export class AgentQCore {
     purpose?: string;
     chain: string;
     credential: string;
-  }): Promise<CredentialPrepareResult> {
+  }): Promise<CredentialPreparation> {
     const target = await this.resolveTargetDevice(input);
     const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
 
@@ -946,7 +936,7 @@ export class AgentQCore {
     publicKey: string;
     maxEpoch: string;
     inputs: unknown;
-  }): Promise<CredentialProposeResult> {
+  }): Promise<CredentialProposalOutcome> {
     const target = await this.resolveTargetDevice(input);
     const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
     const deadlineMs = INTERNAL_POLICY_UPDATE_DEADLINE_MS;
@@ -1050,7 +1040,7 @@ export class AgentQCore {
         deadlineMs,
       );
       const firmwareInvalidatedSession = consumeFirmwareSessionInvalidated(response);
-      const result = toLiveSignResult(target.deviceId, response);
+      const result = toLiveSigningOutcome(target.deviceId, response);
       if (firmwareInvalidatedSession) {
         this.clearRuntimeSessionMirror(target.deviceId);
       }
@@ -1110,7 +1100,7 @@ export class AgentQCore {
         deadlineMs,
       );
       const firmwareInvalidatedSession = consumeFirmwareSessionInvalidated(response);
-      const result = toLiveSignResult(target.deviceId, response);
+      const result = toLiveSigningOutcome(target.deviceId, response);
       if (firmwareInvalidatedSession) {
         this.clearRuntimeSessionMirror(target.deviceId);
       }
@@ -1239,7 +1229,7 @@ export class AgentQCore {
   ): Promise<UsbStatusResult> {
     const scanResult = await scanUsbDeviceStatuses(this.usbDriver, deadlineMs);
     const matching = scanResult.devices.find(
-      (candidate) => candidate.protocolResponse.device.deviceId === record.deviceId,
+      (candidate) => candidate.status.device.deviceId === record.deviceId,
     );
     if (matching !== undefined) {
       return matching;
@@ -1278,12 +1268,12 @@ export class AgentQCore {
     try {
       const scanResult = await scanUsbDeviceStatuses(this.usbDriver, deadlineMs);
       const matchingDevice = scanResult.devices.find(
-        (candidate) => candidate.protocolResponse.device.deviceId === record.deviceId,
+        (candidate) => candidate.status.device.deviceId === record.deviceId,
       );
 
       if (matchingDevice !== undefined) {
         await this.configStore.rememberUsbStatus(
-          matchingDevice.protocolResponse,
+          matchingDevice.status,
           matchingDevice.portPath,
         );
         return toLiveStatus(matchingDevice);
@@ -1313,7 +1303,7 @@ function toLiveStatus(liveDevice: UsbStatusResult): LiveDeviceStatus {
     // portPath is an OS-supplied string; sanitize the copy that reaches MCP
     // output. The raw path is still used for I/O elsewhere via UsbStatusResult.
     portPath: sanitizePortHint(liveDevice.portPath),
-    protocolResponse: liveDevice.protocolResponse,
+    status: liveDevice.status,
   };
 }
 
@@ -1427,7 +1417,7 @@ function identifySignHostRoute(
   }
 }
 
-function toLiveSignResult(deviceId: string, response: SignResultResponse): LiveSignedResult | LiveTerminalSignResult {
+function toLiveSigningOutcome(deviceId: string, response: SigningOutcome): LiveSignedResult | LiveTerminalSigningOutcome {
   if (response.status === "signed") {
     return {
       source: "live",

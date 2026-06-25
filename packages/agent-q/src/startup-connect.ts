@@ -114,7 +114,7 @@ function chooseStartupConnectDeviceId(scanResult: ScanDevicesResult, requestedDe
     return requestedDeviceId;
   }
 
-  const liveDeviceIds = scanResult.devices.map((device) => device.protocolResponse.device.deviceId);
+  const liveDeviceIds = scanResult.devices.map((device) => device.status.device.deviceId);
   if (scanResult.activeDeviceId !== null && liveDeviceIds.includes(scanResult.activeDeviceId)) {
     return scanResult.activeDeviceId;
   }

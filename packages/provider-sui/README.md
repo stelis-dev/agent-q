@@ -67,8 +67,8 @@ device transport. The `./wallet-standard` subpath is runtime-separated from
 that Node transport, and the `./browser` subpath uses the core package's
 provider protocol projection for app-facing Web Serial requests. That
 projection exact-validates provider requests at runtime and does not expose
-Admin, policy read/update, approval-history, or retained-result recovery
-request/response types. Browser retained-result recovery uses the full core
+Admin, policy read/update, approval-history, or retained-response recovery
+request/response types. Browser retained-response recovery uses the full core
 protocol's low-level `get_result` / `ack_result` primitives internally; direct
 application use of those primitives is unsupported.
 
@@ -117,8 +117,8 @@ projection for the provider audience, not a security claim that the same
 application cannot import broader core or local-server APIs directly. Provider-facing
 signing uses `signTransaction` for transaction bytes and `signPersonalMessage`
 for bounded Sui personal-message bytes. `signTransaction` may internally use
-Firmware-advertised same-session payload upload when the transaction bytes do
-not fit the inline transport form; that upload primitive is not a separate dapp
+Firmware-advertised same-session payload transfer when the transaction bytes do
+not fit the inline transport form; that transfer primitive is not a separate dapp
 API. Firmware uses its device-local signing mode to select the policy or user
 authorization gate for transaction signing, and personal-message signing is
 user-mode only. Firmware records required history and signs or rejects. The

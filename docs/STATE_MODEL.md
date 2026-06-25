@@ -109,7 +109,7 @@ hardware and must be documented in each target's `SPEC.md`.
 | Layer | Examples | Owner | May gate protocol APIs? |
 |---|---|---|---:|
 | Persistent device state | provisioning state, stored root material, policy, local PIN verifier, signing authorization mode, approval history, policy-update terminal marker, Sui zkLogin proof record, active Sui identity, account availability | Firmware | Yes |
-| Volatile sensitive scratch | generated backup phrase, setup entropy, pending backup confirmation, typed PIN digits, signable payload upload bytes, finalized payload descriptors | Firmware | Yes |
+| Volatile sensitive scratch | generated backup phrase, setup entropy, pending backup confirmation, typed PIN digits, signable payload transfer bytes, finalized payload descriptors | Firmware | Yes |
 | Local PIN authorization state | connect/settings/policy-update/reset PIN entry purpose, verification stage, Firmware-owned input deadline, RAM-only lockout | Firmware | Yes |
 | Pending approval state | active Firmware-owned device-local approval request, such as physical Confirm or local PIN approval; Firmware-owned deadline; requested action | Firmware | Yes |
 | Pending policy update state | validated policy proposal summary, policy hash, review/PIN/commit stage, review deadline | Firmware | Yes |
@@ -229,12 +229,12 @@ Allowed:
   preparation material; available only while native Sui identity is active)
 - `credential_propose` (session-scoped; Sui zkLogin only; bounded proof proposal
   that requires device-local review and local PIN before persistence)
-- `payload_upload_begin`, `payload_upload_chunk`, `payload_upload_finish`, and
-  `payload_upload_abort` for same-session volatile signable payload delivery
+- `payload_transfer_begin`, `payload_transfer_chunk`, `payload_transfer_finish`, and
+  `payload_transfer_abort` for same-session volatile signable payload delivery
 - `sign_transaction` (session-scoped; unknown methods reject; Sui
   `sign_transaction` accepts inline `txBytes` or a same-session finalized
   `payloadRef`, validates the decoded transaction through the Sui adapter, and
-  returns the selected gate's bounded `sign_result` terminal status:
+  returns the selected gate's bounded `signing outcome` terminal status:
   policy mode can return `signed`, `policy_rejected`, or `signing_failed`;
   user mode can return `signed`, `user_rejected`, `user_timed_out`, or
   `signing_failed`)
@@ -359,7 +359,7 @@ live payload bytes. A same-id retry replays only when that identity matches and
 the bounded RAM result entry is still retained; a different request reusing the
 id fails with `request_id_conflict` before
 adapter, approval, policy, history, or signing work only while the original
-entry is still buffered. Stored signing results are runtime recovery state, not
+entry is still buffered. Stored signing responses are runtime recovery state, not
 persistent replay protection. They are cleared by ack, session cleanup,
 disconnect/session end, wipe, or reset, and the fixed-size store evicts the
 oldest entry when full.
@@ -460,16 +460,16 @@ Store states and ownership phases:
 
 Allowed in `receiving`:
 
-- same-session `payload_upload_chunk`;
-- same-session `payload_upload_finish`;
-- same-session `payload_upload_abort`;
+- same-session `payload_transfer_chunk`;
+- same-session `payload_transfer_finish`;
+- same-session `payload_transfer_abort`;
 - read-only session requests that do not mutate, dismiss, or leak upload state:
   `get_status`, `get_capabilities`, `get_accounts`, `policy_get`,
   `get_approval_history`, `get_result`, and `ack_result`.
 
 Rejected in `receiving`:
 
-- nested `payload_upload_begin`;
+- nested `payload_transfer_begin`;
 - `sign_transaction` using an incomplete upload;
 - `sign_personal_message`;
 - `policy_propose`;
@@ -482,7 +482,7 @@ Allowed in `finalized`:
   finalized `payloadRef`; the signing preflight must still compare the echoed
   immutable descriptor fields with the finalized descriptor before consuming
   bytes;
-- same-session `payload_upload_abort`;
+- same-session `payload_transfer_abort`;
 - read-only session requests that do not mutate, dismiss, or leak the payload.
 
 Rejected in `finalized`:
@@ -502,8 +502,8 @@ Cleanup requirements:
   signed invisibly. Unrelated sensitive-flow attempts are rejected while payload
   scratch is pending unless Firmware explicitly owns a cleanup-before-replace
   transition;
-- retained-result recovery for `(session, request id)` must not depend on the
-  finalized payload still existing. A same-id retry reaches retained-result
+- retained-response recovery for `(session, request id)` must not depend on the
+  finalized payload still existing. A same-id retry reaches retained-response
   lookup using the descriptor echo before live `payloadRef` bytes are resolved.
 
 Payload delivery request admission is owned by the Firmware operation admission

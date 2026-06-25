@@ -3,34 +3,34 @@ import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { AgentQError } from "./errors.js";
 import {
-  assertAccountsResponse,
+  assertAccountsResult,
   assertApprovalHistoryResponse,
-  assertCapabilitiesResponse,
-  assertCredentialPrepareResultResponse,
-  assertCredentialProposeResultResponse,
-  assertPolicyProposeResultResponse,
+  assertCapabilitiesResult,
+  assertCredentialPreparationResponse,
+  assertCredentialProposalOutcomeResponse,
+  assertPolicyProposalOutcomeResponse,
   assertPolicyResponse,
-  assertSignResultResponse,
-  assertConnectResponse,
-  assertDisconnectResponse,
+  assertSigningOutcome,
+  assertConnectResult,
+  assertDisconnectResult,
   assertIdentifyDeviceResponse,
   assertStatusResponse,
   consumeDeviceResponseLineChunk,
   createRequestId,
   parseJsonLine,
   ProtocolError,
-  type AccountsResponse,
+  type AccountsResult,
   type ApprovalHistoryResponse,
-  type CapabilitiesResponse,
-  type ConnectResponse,
-  type CredentialPrepareResultResponse,
+  type CapabilitiesResult,
+  type ConnectResult,
+  type CredentialPreparationResponse,
   type CredentialProposeParams,
-  type CredentialProposeResultResponse,
-  type DisconnectResponse,
+  type CredentialProposalOutcomeResponse,
+  type DisconnectResult,
   type IdentifyDeviceResponse,
-  type PolicyProposeResultResponse,
+  type PolicyProposalOutcomeResponse,
   type PolicyResponse,
-  type SignResultResponse,
+  type SigningOutcome,
   type SignPersonalMessageParams,
   type SignTransactionParams,
   type SupportedSignRoute,
@@ -85,7 +85,7 @@ export interface PortInfo {
 
 export interface UsbStatusResult {
   portPath: string;
-  protocolResponse: StatusResponse;
+  status: StatusResponse;
 }
 
 export interface UsbStatusFailure {
@@ -100,7 +100,7 @@ export interface UsbStatusScanResult {
   failures: UsbStatusFailure[];
 }
 
-export type UsbProtocolRequestExecutor = DeviceRequestExecutor;
+export type UsbDeviceRequestExecutor = DeviceRequestExecutor;
 
 type SignDeliveryRequest = DeviceRequestInput & {
   readonly id: string;
@@ -108,7 +108,7 @@ type SignDeliveryRequest = DeviceRequestInput & {
   readonly method: "sign_transaction" | "sign_personal_message";
 };
 export type PortTransactionContext = {
-  request: UsbProtocolRequestExecutor;
+  request: UsbDeviceRequestExecutor;
 };
 type SerialPortOptions = {
   path: string;
@@ -147,7 +147,7 @@ type PortQuarantine = {
 };
 type SignRecoveryOutcome =
   | { status: "not_recovered" }
-  | { status: "recovered"; result: SignResultResponse };
+  | { status: "recovered"; result: SigningOutcome };
 type AckRecoveryOutcome = "acked" | "failed" | "invalid_session";
 
 const REQUEST_MAY_HAVE_REACHED_FIRMWARE = Symbol("agent-q.requestMayHaveReachedFirmware");
@@ -187,22 +187,22 @@ export interface UsbSerialDriver {
     portPath: string,
     clientName: string,
     deadlineMs: number,
-  ): Promise<ConnectResponse>;
+  ): Promise<ConnectResult>;
   disconnectDevice(
     portPath: string,
     sessionId: string,
     deadlineMs: number,
-  ): Promise<DisconnectResponse>;
+  ): Promise<DisconnectResult>;
   getCapabilities(
     portPath: string,
     sessionId: string,
     deadlineMs: number,
-  ): Promise<CapabilitiesResponse>;
+  ): Promise<CapabilitiesResult>;
   getAccounts(
     portPath: string,
     sessionId: string,
     deadlineMs: number,
-  ): Promise<AccountsResponse>;
+  ): Promise<AccountsResult>;
   policyGet(
     portPath: string,
     sessionId: string,
@@ -219,32 +219,32 @@ export interface UsbSerialDriver {
     sessionId: string,
     policy: Record<string, unknown>,
     deadlineMs: number,
-  ): Promise<PolicyProposeResultResponse>;
+  ): Promise<PolicyProposalOutcomeResponse>;
   credentialPrepare(
     portPath: string,
     sessionId: string,
     deadlineMs: number,
-  ): Promise<CredentialPrepareResultResponse>;
+  ): Promise<CredentialPreparationResponse>;
   credentialPropose(
     portPath: string,
     sessionId: string,
     params: CredentialProposeParams,
     deadlineMs: number,
-  ): Promise<CredentialProposeResultResponse>;
+  ): Promise<CredentialProposalOutcomeResponse>;
   signTransaction(
     portPath: string,
     sessionId: string,
     route: Extract<SupportedSignRoute, { operation: "sign_transaction" }>,
     params: SignTransactionParams,
     deadlineMs: number,
-  ): Promise<SignResultResponse>;
+  ): Promise<SigningOutcome>;
   signPersonalMessage(
     portPath: string,
     sessionId: string,
     route: Extract<SupportedSignRoute, { operation: "sign_personal_message" }>,
     params: SignPersonalMessageParams,
     deadlineMs: number,
-  ): Promise<SignResultResponse>;
+  ): Promise<SigningOutcome>;
 }
 
 export class SerialPortUsbDriver implements UsbSerialDriver {
@@ -271,7 +271,7 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     portPath: string,
     clientName: string,
     deadlineMs: number,
-  ): Promise<ConnectResponse> {
+  ): Promise<ConnectResult> {
     return connectDeviceOverSerial(portPath, clientName, deadlineMs);
   }
 
@@ -279,7 +279,7 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     portPath: string,
     sessionId: string,
     deadlineMs: number,
-  ): Promise<DisconnectResponse> {
+  ): Promise<DisconnectResult> {
     return disconnectDeviceOverSerial(portPath, sessionId, deadlineMs);
   }
 
@@ -287,7 +287,7 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     portPath: string,
     sessionId: string,
     deadlineMs: number,
-  ): Promise<CapabilitiesResponse> {
+  ): Promise<CapabilitiesResult> {
     return getCapabilitiesOverSerial(portPath, sessionId, deadlineMs);
   }
 
@@ -295,7 +295,7 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     portPath: string,
     sessionId: string,
     deadlineMs: number,
-  ): Promise<AccountsResponse> {
+  ): Promise<AccountsResult> {
     return getAccountsOverSerial(portPath, sessionId, deadlineMs);
   }
 
@@ -321,7 +321,7 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     sessionId: string,
     policy: Record<string, unknown>,
     deadlineMs: number,
-  ): Promise<PolicyProposeResultResponse> {
+  ): Promise<PolicyProposalOutcomeResponse> {
     return policyProposeOverSerial(portPath, sessionId, policy, deadlineMs);
   }
 
@@ -329,7 +329,7 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     portPath: string,
     sessionId: string,
     deadlineMs: number,
-  ): Promise<CredentialPrepareResultResponse> {
+  ): Promise<CredentialPreparationResponse> {
     return credentialPrepareOverSerial(portPath, sessionId, deadlineMs);
   }
 
@@ -338,7 +338,7 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     sessionId: string,
     params: CredentialProposeParams,
     deadlineMs: number,
-  ): Promise<CredentialProposeResultResponse> {
+  ): Promise<CredentialProposalOutcomeResponse> {
     return credentialProposeOverSerial(portPath, sessionId, params, deadlineMs);
   }
 
@@ -348,7 +348,7 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     route: Extract<SupportedSignRoute, { operation: "sign_transaction" }>,
     params: SignTransactionParams,
     deadlineMs: number,
-  ): Promise<SignResultResponse> {
+  ): Promise<SigningOutcome> {
     const normalizedParams = validateSignTransactionInput(route.chain, route.method, params);
     return signTransactionOverSerial(portPath, sessionId, route, normalizedParams, deadlineMs);
   }
@@ -359,7 +359,7 @@ export class SerialPortUsbDriver implements UsbSerialDriver {
     route: Extract<SupportedSignRoute, { operation: "sign_personal_message" }>,
     params: SignPersonalMessageParams,
     deadlineMs: number,
-  ): Promise<SignResultResponse> {
+  ): Promise<SigningOutcome> {
     return signPersonalMessageOverSerial(portPath, sessionId, route, params, deadlineMs);
   }
 }
@@ -771,14 +771,14 @@ export async function scanUsbDeviceStatuses(
       // caller is therefore safe even without the AgentQCore driver wrapper; the
       // wrapper adds the same bound for Core's non-scan transport calls and the
       // overlap on this path is harmless (same timeout, whichever fires first).
-      const protocolResponse = await raceDeadline(
+      const status = await raceDeadline(
         driver.requestStatus(candidate.path, remainingMs),
         remainingMs,
         "USB status handshake exceeded the scan deadline.",
       );
       results.push({
         portPath: candidate.path,
-        protocolResponse,
+        status,
       });
     } catch (error) {
       failures.push({
@@ -885,13 +885,13 @@ async function connectDeviceOverSerial(
   portPath: string,
   clientName: string,
   deadlineMs: number,
-): Promise<ConnectResponse> {
+): Promise<ConnectResult> {
   const normalizedClientName = validateClientNameInput(clientName);
   return requestDeviceOverSerial(
     portPath,
     { method: "connect", payload: { clientName: normalizedClientName } },
     deadlineMs,
-    (response) => assertConnectResponse(response),
+    (response) => assertConnectResult(response),
   );
 }
 
@@ -899,12 +899,12 @@ async function disconnectDeviceOverSerial(
   portPath: string,
   sessionId: string,
   deadlineMs: number,
-): Promise<DisconnectResponse> {
+): Promise<DisconnectResult> {
   return requestDeviceOverSerial(
     portPath,
     { method: "disconnect", sessionId },
     deadlineMs,
-    (response) => assertDisconnectResponse(response),
+    (response) => assertDisconnectResult(response),
   );
 }
 
@@ -912,12 +912,12 @@ async function getCapabilitiesOverSerial(
   portPath: string,
   sessionId: string,
   deadlineMs: number,
-): Promise<CapabilitiesResponse> {
+): Promise<CapabilitiesResult> {
   return requestDeviceOverSerial(
     portPath,
     { method: "get_capabilities", sessionId },
     deadlineMs,
-    (response) => assertCapabilitiesResponse(response),
+    (response) => assertCapabilitiesResult(response),
   );
 }
 
@@ -925,12 +925,12 @@ async function getAccountsOverSerial(
   portPath: string,
   sessionId: string,
   deadlineMs: number,
-): Promise<AccountsResponse> {
+): Promise<AccountsResult> {
   return requestDeviceOverSerial(
     portPath,
     { method: "get_accounts", sessionId },
     deadlineMs,
-    (response) => assertAccountsResponse(response),
+    (response) => assertAccountsResult(response),
   );
 }
 
@@ -967,13 +967,13 @@ async function policyProposeOverSerial(
   sessionId: string,
   policy: Record<string, unknown>,
   deadlineMs: number,
-): Promise<PolicyProposeResultResponse> {
+): Promise<PolicyProposalOutcomeResponse> {
   validatePolicyProposeInput(policy);
   return requestDeviceOverSerial(
     portPath,
     { method: "policy_propose", sessionId, payload: { policy } },
     deadlineMs,
-    (response) => assertPolicyProposeResultResponse(response),
+    (response) => assertPolicyProposalOutcomeResponse(response),
   );
 }
 
@@ -981,7 +981,7 @@ async function credentialPrepareOverSerial(
   portPath: string,
   sessionId: string,
   deadlineMs: number,
-): Promise<CredentialPrepareResultResponse> {
+): Promise<CredentialPreparationResponse> {
   const payload = validateCredentialPrepareInput({
     chain: "sui",
     credential: "zklogin",
@@ -990,7 +990,7 @@ async function credentialPrepareOverSerial(
     portPath,
     { method: "credential_prepare", sessionId, payload },
     deadlineMs,
-    (response) => assertCredentialPrepareResultResponse(response),
+    (response) => assertCredentialPreparationResponse(response),
   );
 }
 
@@ -999,13 +999,13 @@ async function credentialProposeOverSerial(
   sessionId: string,
   params: CredentialProposeParams,
   deadlineMs: number,
-): Promise<CredentialProposeResultResponse> {
+): Promise<CredentialProposalOutcomeResponse> {
   const payload = validateCredentialProposeInput(params);
   return requestDeviceOverSerial(
     portPath,
     { method: "credential_propose", sessionId, payload },
     deadlineMs,
-    (response) => assertCredentialProposeResultResponse(response),
+    (response) => assertCredentialProposalOutcomeResponse(response),
   );
 }
 
@@ -1015,7 +1015,7 @@ async function signTransactionOverSerial(
   route: Extract<SupportedSignRoute, { operation: "sign_transaction" }>,
   params: SignTransactionParams,
   deadlineMs: number,
-): Promise<SignResultResponse> {
+): Promise<SigningOutcome> {
   return withSerialPortTransaction(portPath, deadlineWithSignTransactionDelivery(deadlineMs, params.txBytes), async (transaction) => {
     const request = makeSessionDeviceRequest({
       method: "sign_transaction",
@@ -1026,7 +1026,7 @@ async function signTransactionOverSerial(
         txBytes: params.txBytes,
       },
     });
-    return requestSignResultWithRecovery(request, deadlineMs, transaction.request);
+    return requestSigningOutcomeWithRecovery(request, deadlineMs, transaction.request);
   });
 }
 
@@ -1036,7 +1036,7 @@ async function signPersonalMessageOverSerial(
   route: Extract<SupportedSignRoute, { operation: "sign_personal_message" }>,
   params: SignPersonalMessageParams,
   deadlineMs: number,
-): Promise<SignResultResponse> {
+): Promise<SigningOutcome> {
   const normalizedParams = validateSignPersonalMessageInput(route.chain, route.method, params);
   const request = makeSessionDeviceRequest({
     method: "sign_personal_message",
@@ -1048,7 +1048,7 @@ async function signPersonalMessageOverSerial(
     },
   });
   return withSerialPortTransaction(portPath, deadlineWithSignRecovery(deadlineMs), (transaction) =>
-    requestSignResultWithRecovery(request, deadlineMs, transaction.request),
+    requestSigningOutcomeWithRecovery(request, deadlineMs, transaction.request),
   );
 }
 
@@ -1059,18 +1059,18 @@ function makeSessionDeviceRequest(input: Omit<SignDeliveryRequest, "id"> & { rea
   };
 }
 
-/** @internal Shared signing-result delivery invariant for the Node USB path. */
-export async function requestSignResultWithRecovery(
+/** @internal Shared signing-outcome delivery invariant for the Node USB path. */
+export async function requestSigningOutcomeWithRecovery(
   request: SignDeliveryRequest,
   deadlineMs: number,
-  executor: UsbProtocolRequestExecutor,
-): Promise<SignResultResponse> {
+  executor: UsbDeviceRequestExecutor,
+): Promise<SigningOutcome> {
   try {
     return await requestDevice({
       request,
       deadlineMs,
       execute: executor,
-      assertResponse: (response) => assertSignResultResponse(response),
+      assertResponse: (response) => assertSigningOutcome(response),
       digestPayload: (bytes) => sha256PayloadDigest(bytes),
       encodeChunkBase64: (bytes) => Buffer.from(bytes).toString("base64"),
       makeError: (code, message, retryable = false) => new AgentQError(code, message, retryable),
@@ -1078,10 +1078,10 @@ export async function requestSignResultWithRecovery(
       onAbortInvalidSession: markFirmwareSessionInvalidated,
     });
   } catch (error) {
-    if (!shouldAttemptSignResultRecovery(error)) {
+    if (!shouldAttemptSigningOutcomeRecovery(error)) {
       throw error;
     }
-    const recovery = await tryRecoverSignResult(request.sessionId, request.id, executor);
+    const recovery = await tryRecoverSigningOutcome(request.sessionId, request.id, executor);
     if (recovery.status === "recovered") {
       return recovery.result;
     }
@@ -1089,12 +1089,12 @@ export async function requestSignResultWithRecovery(
   }
 }
 
-async function tryRecoverSignResult(
+async function tryRecoverSigningOutcome(
   sessionId: string,
   requestId: string,
-  executor: UsbProtocolRequestExecutor,
+  executor: UsbDeviceRequestExecutor,
 ): Promise<SignRecoveryOutcome> {
-  let recovered: SignResultResponse;
+  let recovered: SigningOutcome;
   const getResultRequest: DeviceRequestInput & { readonly id: string } = {
     id: createRequestId(),
     method: "get_result",
@@ -1106,7 +1106,7 @@ async function tryRecoverSignResult(
       request: getResultRequest,
       deadlineMs: INTERNAL_USB_DEADLINE_MS,
       execute: executor,
-      assertResponse: (response) => assertSignResultResponse(response),
+      assertResponse: (response) => assertSigningOutcome(response),
       digestPayload: (bytes) => sha256PayloadDigest(bytes),
       encodeChunkBase64: (bytes) => Buffer.from(bytes).toString("base64"),
       makeError: (code, message, retryable = false) => new AgentQError(code, message, retryable),
@@ -1119,17 +1119,17 @@ async function tryRecoverSignResult(
     }
     return { status: "not_recovered" };
   }
-  const ack = await releaseRecoveredSignResult(sessionId, requestId, executor);
+  const ack = await releaseRecoveredSigningOutcome(sessionId, requestId, executor);
   if (ack === "invalid_session") {
     markFirmwareSessionInvalidated(recovered);
   }
   return { status: "recovered", result: recovered };
 }
 
-async function releaseRecoveredSignResult(
+async function releaseRecoveredSigningOutcome(
   sessionId: string,
   requestId: string,
-  executor: UsbProtocolRequestExecutor,
+  executor: UsbDeviceRequestExecutor,
 ): Promise<AckRecoveryOutcome> {
   const ackRequest: DeviceRequestInput & { readonly id: string } = {
     id: createRequestId(),
@@ -1154,7 +1154,7 @@ async function releaseRecoveredSignResult(
     if (errorCode(error) === "invalid_session") {
       return "invalid_session";
     }
-    // Best-effort cleanup: a failed ack must not turn a recovered sign_result
+    // Best-effort cleanup: a failed ack must not turn a recovered signing outcome
     // into a caller-visible failure.
     return "failed";
   }
@@ -1194,7 +1194,7 @@ function estimateBase64DecodedBytes(value: string): number {
   return Math.max(0, Math.floor(value.length / 4) * 3 - padding);
 }
 
-function shouldAttemptSignResultRecovery(error: unknown): boolean {
+function shouldAttemptSigningOutcomeRecovery(error: unknown): boolean {
   if (!requestMayHaveReachedFirmware(error)) {
     return false;
   }

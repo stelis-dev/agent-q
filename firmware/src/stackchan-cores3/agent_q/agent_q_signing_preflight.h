@@ -40,7 +40,7 @@ using AgentQSigningPreflightRetryResponder =
         const char* request_id,
         const char* method,
         const AgentQSigningRetryDeliveryResult& retry,
-        const char* stored_result,
+        const char* stored_response,
         void* context);
 
 struct AgentQSigningPreflightRuntime {
@@ -49,8 +49,8 @@ struct AgentQSigningPreflightRuntime {
     void* signing_mode_context;
     AgentQSigningPreflightRetryResponder retry_responder;
     void* retry_responder_context;
-    char* retry_stored_result;
-    size_t retry_stored_result_size;
+    char* retry_stored_response;
+    size_t retry_stored_response_size;
 };
 
 struct AgentQSignTransactionPreflightOutput {

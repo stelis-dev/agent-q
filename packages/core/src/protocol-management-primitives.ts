@@ -55,7 +55,7 @@ export const APPROVAL_HISTORY_POLICY_UPDATE_RESULTS = [
   "storage_error",
 ] as const;
 export const APPROVAL_HISTORY_HIGHEST_ACTIONS = ["reject", "sign"] as const;
-export const POLICY_PROPOSE_RESULT_STATUSES = [
+export const POLICY_PROPOSAL_OUTCOME_STATUSES = [
   "applied",
   "rejected",
   "timed_out",

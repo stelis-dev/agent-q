@@ -12,18 +12,18 @@ import {
   ProtocolError,
   createRequestId,
   validateSignTransactionParams,
-  type ConnectResponse,
-  type SignResultResponse,
+  type ConnectResult,
+  type SigningOutcome,
   type SignTransactionParams,
 } from "@stelis/agent-q-core/provider-protocol";
 import {
-  assertAccountsResponse,
-  assertCapabilitiesResponse,
-  assertConnectResponse,
-  assertDisconnectResponse,
-  assertCredentialPrepareResultResponse,
-  assertCredentialProposeResultResponse,
-  assertSignResultResponse,
+  assertAccountsResult,
+  assertCapabilitiesResult,
+  assertConnectResult,
+  assertDisconnectResult,
+  assertCredentialPreparationResponse,
+  assertCredentialProposalOutcomeResponse,
+  assertSigningOutcome,
   isClientName,
   parseJsonLine,
   parseDeviceResponse,
@@ -43,9 +43,9 @@ import type {
 } from "./wallet-standard.js";
 import type {
   CredentialPrepareInput,
-  CredentialPrepareResult,
+  CredentialPreparation,
   CredentialProposeInput,
-  CredentialProposeResult,
+  CredentialProposalOutcome,
 } from "./provider-sui.js";
 
 const DEFAULT_CLIENT_NAME = "Agent-Q Sui dapp";
@@ -78,7 +78,7 @@ type BrowserSession = {
   sessionId: string;
   sessionTtlMs: number;
   connectedAt: string;
-  device: Extract<ConnectResponse, { status: "approved" }>["device"];
+  device: ConnectResult["device"];
   epoch: number;
 };
 
@@ -129,10 +129,10 @@ type BrowserSessionSnapshot = {
 type BrowserBufferedRecoveryOutcome =
   | { status: "not_recovered" }
   | { status: "session_invalidated" }
-  | { status: "recovered"; response: SignResultResponse; ack: "acked" | "failed" | "invalid_session" }
+  | { status: "recovered"; response: SigningOutcome; ack: "acked" | "failed" | "invalid_session" }
   | { status: "recovered_error"; error: AgentQSuiBrowserProviderError; ack: "acked" | "failed" | "invalid_session" };
 type BrowserSignRecoveryOutcome =
-  | { status: "result"; response: SignResultResponse; sessionInvalidatedByAck: boolean }
+  | { status: "result"; response: SigningOutcome; sessionInvalidatedByAck: boolean }
   | { status: "session_invalidated" };
 
 const PROVIDER_REQUEST_MAY_HAVE_REACHED_FIRMWARE = Symbol("agent-q.providerRequestMayHaveReachedFirmware");
@@ -191,7 +191,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       try {
         await this.#request(
           { method: "get_capabilities", sessionId: this.#session.sessionId },
-          assertCapabilitiesResponse,
+          assertCapabilitiesResult,
         );
         return this.#connectOutput(this.#session);
       } catch (error) {
@@ -202,11 +202,11 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       }
     }
 
-    let response: ConnectResponse;
+    let response: ConnectResult;
     try {
       response = await this.#request(
-        makeConnectRequestInput(input.clientName ?? this.#clientName),
-        assertConnectResponse,
+        connectDeviceRequestInput(input.clientName ?? this.#clientName),
+        assertConnectResult,
       );
     } catch (error) {
       if (isSessionEndedError(error)) {
@@ -214,14 +214,11 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       }
       throw error;
     }
-    if (response.status === "rejected") {
-      throw new AgentQSuiBrowserProviderError(response.error.code, response.error.message);
-    }
     if (input.deviceId !== undefined && response.device.deviceId !== input.deviceId) {
       try {
         await this.#request(
           { method: "disconnect", sessionId: response.sessionId },
-          assertDisconnectResponse,
+          assertDisconnectResult,
         );
       } catch {
         // Best-effort cleanup for a session this provider will not retain.
@@ -253,7 +250,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     try {
       await this.#request(
         { method: "disconnect", sessionId: session.sessionId },
-        assertDisconnectResponse,
+        assertDisconnectResult,
       );
     } catch (error) {
       if (isSessionEndedError(error)) {
@@ -280,7 +277,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     try {
       const response = await this.#request(
         { method: "get_capabilities", sessionId: session.sessionId },
-        assertCapabilitiesResponse,
+        assertCapabilitiesResult,
       );
       return {
         source: "live",
@@ -310,7 +307,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     try {
       const response = await this.#request(
         { method: "get_accounts", sessionId: session.sessionId },
-        assertAccountsResponse,
+        assertAccountsResult,
       );
       return { source: "live", deviceId: session.deviceId, accounts: response.accounts as AgentQSuiWalletGetAccountsResult["accounts"] };
     } catch (error) {
@@ -322,7 +319,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     }
   }
 
-  async credentialPrepare(input: CredentialPrepareInput): Promise<CredentialPrepareResult> {
+  async credentialPrepare(input: CredentialPrepareInput): Promise<CredentialPreparation> {
     const session = this.#matchingSession(input.deviceId);
     if (session === null) {
       return this.#inactiveCredentialResult(input.deviceId);
@@ -340,7 +337,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     try {
       const response = await this.#request(
         request,
-        assertCredentialPrepareResultResponse,
+        assertCredentialPreparationResponse,
       );
       return {
         source: "live",
@@ -358,7 +355,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     }
   }
 
-  async credentialPropose(input: CredentialProposeInput): Promise<CredentialProposeResult> {
+  async credentialPropose(input: CredentialProposeInput): Promise<CredentialProposalOutcome> {
     const session = this.#matchingSession(input.deviceId);
     if (session === null) {
       return this.#inactiveCredentialResult(input.deviceId);
@@ -381,9 +378,9 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     try {
       const response = await this.#request(
         request,
-        assertCredentialProposeResultResponse,
+        assertCredentialProposalOutcomeResponse,
       );
-      const result: CredentialProposeResult = {
+      const result: CredentialProposalOutcome = {
         source: "live",
         deviceId: session.deviceId,
         status: response.status,
@@ -411,7 +408,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     network: "mainnet" | "testnet" | "devnet" | "localnet";
     txBytes: string;
     // Optional stable request id for idempotent retries. Reuse it only for the
-    // same signing request; while a retained result is buffered, a different
+    // same signing request; while a retained response is buffered, a different
     // request using the same id fails with request_id_conflict.
     requestId?: string;
   }): Promise<AgentQSuiWalletSignTransactionResult> {
@@ -436,7 +433,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
         this.#clearCurrentSessionIfSnapshotMatches(snapshot, "session_ended");
         return { source: "session_ended", deviceId: session.deviceId, reason: "invalid_session" };
       }
-      const result = toLiveSignResult(session.deviceId, outcome.response);
+      const result = toLiveSigningOutcome(session.deviceId, outcome.response);
       if (outcome.sessionInvalidatedByAck) {
         this.#clearCurrentSessionIfSnapshotMatches(snapshot, "session_ended");
       }
@@ -459,7 +456,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     network: "mainnet" | "testnet" | "devnet" | "localnet";
     message: string;
     // Optional stable request id for idempotent retries. Reuse it only for the
-    // same signing request; while a retained result is buffered, a different
+    // same signing request; while a retained response is buffered, a different
     // request using the same id fails with request_id_conflict.
     requestId?: string;
   }): Promise<AgentQSuiWalletSignTransactionResult> {
@@ -484,7 +481,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
         this.#clearCurrentSessionIfSnapshotMatches(snapshot, "session_ended");
         return { source: "session_ended", deviceId: session.deviceId, reason: "invalid_session" };
       }
-      const result = toLiveSignResult(session.deviceId, outcome.response);
+      const result = toLiveSigningOutcome(session.deviceId, outcome.response);
       if (outcome.sessionInvalidatedByAck) {
         this.#clearCurrentSessionIfSnapshotMatches(snapshot, "session_ended");
       }
@@ -699,7 +696,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     try {
       const response = await this.#requestDeviceQueued(
         request,
-        assertSignResultResponse,
+        assertSigningOutcome,
         generation,
         absoluteDeadlineMs,
         deadlineForProviderSigningTransaction(request),
@@ -711,7 +708,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       this.#restoreCapturedSessionAfterPhysicalDisconnect(generation, session, port);
       return { status: "result", response, sessionInvalidatedByAck: false };
     } catch (error) {
-      if (!shouldAttemptProviderSignResultRecovery(error)) {
+      if (!shouldAttemptProviderSigningOutcomeRecovery(error)) {
         throw error;
       }
       if (!this.#canAttemptRecoveryAfterTeardown(generation, session)) {
@@ -721,7 +718,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       let recovery: BrowserBufferedRecoveryOutcome;
       try {
         recoveryPort = await this.#getPort(absoluteDeadlineMs);
-        recovery = await this.#tryRecoverBufferedSignResult(
+        recovery = await this.#tryRecoverBufferedSigningOutcome(
           recoveryPort,
           request.sessionId,
           request.id,
@@ -730,7 +727,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       } catch {
         // Recovery transport setup/read failures preserve the original signing
         // delivery error. Firmware invalid_session remains visible if it is the
-        // original sign response error.
+        // original signing response error.
         throw error;
       }
       if (recovery.status === "session_invalidated") {
@@ -790,7 +787,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     });
   }
 
-  async #tryRecoverBufferedSignResult(
+  async #tryRecoverBufferedSigningOutcome(
     port: BrowserSerialPort,
     sessionId: string,
     requestId: string,
@@ -836,19 +833,19 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       if (recovered.error.code === "unknown_request") {
         return { status: "not_recovered" };
       }
-      const ack = await this.#releaseRecoveredSignResult(port, sessionId, requestId, absoluteDeadlineMs);
+      const ack = await this.#releaseRecoveredSigningOutcome(port, sessionId, requestId, absoluteDeadlineMs);
       return {
         status: "recovered_error",
         error: new AgentQSuiBrowserProviderError(recovered.error.code, recovered.error.message),
         ack,
       };
     }
-    const response = assertSignResultResponse(recovered);
-    const ack = await this.#releaseRecoveredSignResult(port, sessionId, requestId, absoluteDeadlineMs);
+    const response = assertSigningOutcome(recovered);
+    const ack = await this.#releaseRecoveredSigningOutcome(port, sessionId, requestId, absoluteDeadlineMs);
     return { status: "recovered", response, ack };
   }
 
-  async #releaseRecoveredSignResult(
+  async #releaseRecoveredSigningOutcome(
     port: BrowserSerialPort,
     sessionId: string,
     requestId: string,
@@ -885,7 +882,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       if (errorCode(error) === "invalid_session") {
         return "invalid_session";
       }
-      // Best-effort cleanup: a failed ack must not turn a recovered sign_result
+      // Best-effort cleanup: a failed ack must not turn a recovered signing outcome
       // into a caller-visible failure, but it still runs inside the queued
       // signing transaction so later requests cannot overtake cleanup.
       return "failed";
@@ -985,7 +982,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     return { source: "not_connected", deviceId: deviceId ?? this.#session?.deviceId ?? "browser", reason: "not_connected" };
   }
 
-  #inactiveCredentialResult(deviceId: string | undefined): Extract<CredentialPrepareResult, { source: "not_connected" }> {
+  #inactiveCredentialResult(deviceId: string | undefined): Extract<CredentialPreparation, { source: "not_connected" }> {
     return { source: "not_connected", deviceId: deviceId ?? this.#session?.deviceId ?? "browser", reason: "not_connected" };
   }
 
@@ -1180,7 +1177,7 @@ function providerRequestMayHaveReachedFirmware(error: unknown): boolean {
   );
 }
 
-function shouldAttemptProviderSignResultRecovery(error: unknown): boolean {
+function shouldAttemptProviderSigningOutcomeRecovery(error: unknown): boolean {
   if (!providerRequestMayHaveReachedFirmware(error)) {
     return false;
   }
@@ -1508,7 +1505,7 @@ function deadlineForProviderRequest(request: Pick<BrowserDeviceRequest, "method"
   throw new AgentQSuiBrowserProviderError("unknown_error", "Provider request deadline is not defined.");
 }
 
-function makeConnectRequestInput(clientName: string): BrowserDeviceRequest {
+function connectDeviceRequestInput(clientName: string): BrowserDeviceRequest {
   if (!isClientName(clientName)) {
     throw new AgentQSuiBrowserProviderError(
       "invalid_params",
@@ -1574,7 +1571,7 @@ function targetMatches(requestedDeviceId: string | undefined, sessionDeviceId: s
 
 function toCredentialSessionEndedResult(
   value: { source: "session_ended"; deviceId: string; reason: string },
-): Extract<CredentialPrepareResult, { source: "session_ended" }> {
+): Extract<CredentialPreparation, { source: "session_ended" }> {
   const reason = value.reason === "transport_closed" ? "transport_unavailable" : value.reason;
   if (reason === "invalid_session" || reason === "timeout" || reason === "transport_unavailable") {
     return { source: "session_ended", deviceId: value.deviceId, reason };
@@ -1594,7 +1591,7 @@ function errorCode(error: unknown): string | null {
   return null;
 }
 
-function toLiveSignResult(deviceId: string, response: SignResultResponse): AgentQSuiWalletSignTransactionResult {
+function toLiveSigningOutcome(deviceId: string, response: SigningOutcome): AgentQSuiWalletSignTransactionResult {
   if (response.status === "signed") {
     return {
       source: "live",

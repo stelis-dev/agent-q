@@ -6,8 +6,8 @@ usage() {
 Usage: firmware/tools/stackchan-cores3/test_signing_retry_response.sh
 
 Compiles the signing retry public-response mapper and verifies the JSON response
-shape for retained-result replay, conflict, lookup error, not-found, malformed
-stored result, and writer-failure outcomes. It does not require hardware.
+shape for retained-response replay, conflict, lookup error, not-found, malformed
+stored response, and writer-failure outcomes. It does not require hardware.
 EOF
 }
 
@@ -81,12 +81,12 @@ JsonDocument parse_json(const std::string& json)
 
 agent_q::AgentQSigningRetryDeliveryResult retry_result(
     agent_q::AgentQSigningRetryDeliveryStatus status,
-    size_t stored_result_len = 0,
+    size_t stored_response_len = 0,
     const char* code = nullptr)
 {
     return agent_q::AgentQSigningRetryDeliveryResult{
         status,
-        stored_result_len,
+        stored_response_len,
         code,
     };
 }
@@ -146,7 +146,7 @@ int main()
             invalid_stored,
             capture_response,
             &capture);
-        assert(result == agent_q::AgentQSigningRetryResponseResult::invalid_stored_result);
+        assert(result == agent_q::AgentQSigningRetryResponseResult::invalid_stored_response);
         assert(capture.calls == 0);
     }
 
@@ -202,7 +202,7 @@ int main()
             malformed,
             capture_response,
             &capture);
-        assert(result == agent_q::AgentQSigningRetryResponseResult::invalid_stored_result);
+        assert(result == agent_q::AgentQSigningRetryResponseResult::invalid_stored_response);
         assert(capture.calls == 0);
     }
 

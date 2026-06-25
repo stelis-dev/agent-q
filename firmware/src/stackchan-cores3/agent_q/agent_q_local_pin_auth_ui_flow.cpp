@@ -293,8 +293,8 @@ void write_policy_consistency_error(
     const char* request_id)
 {
     const bool written =
-        ops.write_policy_propose_result_with_current_policy != nullptr &&
-        ops.write_policy_propose_result_with_current_policy(
+        ops.write_policy_propose_outcome_with_current_policy != nullptr &&
+        ops.write_policy_propose_outcome_with_current_policy(
             request_id,
             "consistency_error",
             "consistency_error");

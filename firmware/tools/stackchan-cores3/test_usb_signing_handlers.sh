@@ -278,7 +278,7 @@ agent_q::AgentQSigningPreflightResult evaluate_tx_preflight(
     assert(state.admit_payload_delivery == admit_tx_payload_delivery);
     assert(runtime.read_signing_mode != nullptr);
     assert(runtime.retry_responder != nullptr);
-    assert(runtime.retry_stored_result == g_retry_buffer);
+    assert(runtime.retry_stored_response == g_retry_buffer);
     fill_tx_preflight_output(output);
     return g_tx_preflight_result;
 }
@@ -295,7 +295,7 @@ agent_q::AgentQSigningPreflightResult evaluate_pm_preflight(
     assert(state.validate_session != nullptr);
     assert(runtime.read_signing_mode != nullptr);
     assert(runtime.retry_responder != nullptr);
-    assert(runtime.retry_stored_result == g_retry_buffer);
+    assert(runtime.retry_stored_response == g_retry_buffer);
     fill_pm_preflight_output(output);
     return g_pm_preflight_result;
 }

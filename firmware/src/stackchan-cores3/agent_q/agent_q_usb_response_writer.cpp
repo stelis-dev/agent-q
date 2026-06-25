@@ -244,7 +244,7 @@ bool usb_response_write_connect_rejected(
     return usb_response_write_error(id, error_code);
 }
 
-bool usb_response_write_disconnect_result(const char* id)
+bool usb_response_write_disconnect_success(const char* id)
 {
     JsonDocument result;
     return usb_response_write_success_result(id, "disconnect", result.as<JsonObjectConst>());

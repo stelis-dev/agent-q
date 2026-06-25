@@ -65,7 +65,6 @@ const char* g_last_error_code = nullptr;
 const char* g_last_code = nullptr;
 uint32_t g_last_duration_ms = 0;
 char g_last_json_type[32] = {};
-char g_last_json_status[32] = {};
 char g_last_json_code[8] = {};
 char g_last_json_device_state[32] = {};
 char g_last_json_provisioning_state[32] = {};
@@ -88,7 +87,6 @@ void reset_state()
     g_last_code = nullptr;
     g_last_duration_ms = 0;
     g_last_json_type[0] = '\0';
-    g_last_json_status[0] = '\0';
     g_last_json_code[0] = '\0';
     g_last_json_device_state[0] = '\0';
     g_last_json_provisioning_state[0] = '\0';
@@ -112,13 +110,12 @@ void usb_response_write_device_fields(
 bool usb_response_write_json(JsonDocument& response)
 {
     g_write_json_calls += 1;
-    const char* type = response["type"] | "";
-    const char* status = response["status"] | "";
-    const char* code = response["code"] | "";
-    const char* device_state = response["device"]["state"] | "";
-    const char* provisioning_state = response["provisioning"]["state"] | "";
+    JsonObjectConst result = response["result"].as<JsonObjectConst>();
+    const char* type = response["method"] | "";
+    const char* code = result["code"] | "";
+    const char* device_state = result["device"]["state"] | "";
+    const char* provisioning_state = result["provisioning"]["state"] | "";
     snprintf(g_last_json_type, sizeof(g_last_json_type), "%s", type);
-    snprintf(g_last_json_status, sizeof(g_last_json_status), "%s", status);
     snprintf(g_last_json_code, sizeof(g_last_json_code), "%s", code);
     snprintf(g_last_json_device_state, sizeof(g_last_json_device_state), "%s", device_state);
     snprintf(
@@ -134,12 +131,10 @@ bool usb_response_write_success_result(const char* id, const char* method, JsonO
     (void)id;
     g_write_json_calls += 1;
     const char* type = method != nullptr ? method : "";
-    const char* status = result["status"] | "";
     const char* code = result["code"] | "";
     const char* device_state = result["device"]["state"] | "";
     const char* provisioning_state = result["provisioning"]["state"] | "";
     snprintf(g_last_json_type, sizeof(g_last_json_type), "%s", type);
-    snprintf(g_last_json_status, sizeof(g_last_json_status), "%s", status);
     snprintf(g_last_json_code, sizeof(g_last_json_code), "%s", code);
     snprintf(g_last_json_device_state, sizeof(g_last_json_device_state), "%s", device_state);
     snprintf(
@@ -347,7 +342,6 @@ int main()
         assert(g_show_calls == 1);
         assert(g_write_json_calls == 1);
         assert(strcmp(g_last_json_type, "identify_device") == 0);
-        assert(strcmp(g_last_json_status, "") == 0);
         assert(strcmp(g_last_json_code, "1234") == 0);
         assert(strcmp(g_last_json_device_state, "idle") == 0);
         assert(g_last_duration_ms == 1234);

@@ -12,7 +12,7 @@ import {
   SIGN_TRANSACTION_SESSION_ENDED_REASONS,
 } from "./core.js";
 import {
-  SIGN_RESULT_ERROR_MESSAGES,
+  SIGNING_OUTCOME_ERROR_MESSAGES,
 } from "./device-contract.js";
 import { PUBLIC_ERROR_MESSAGES, toPublicError } from "./public-error.js";
 import {
@@ -22,19 +22,19 @@ import {
   APPROVAL_HISTORY_RULE_REF_PATTERN,
   CREDENTIAL_PREPARE_OPERATION,
   CREDENTIAL_PROPOSE_OPERATION,
-  CREDENTIAL_PROPOSE_RESULT_STATUSES,
+  CREDENTIAL_PROPOSAL_OUTCOME_STATUSES,
   MAX_ACCOUNTS_PER_RESPONSE,
   MAX_APPROVAL_HISTORY_RECORDS,
   MAX_CAPABILITY_ACCOUNTS_PER_CHAIN,
   MAX_CAPABILITY_CHAINS,
   MAX_CREDENTIAL_CAPABILITIES,
-  MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
+  MAX_SIGNING_OUTCOME_PAYLOAD_BASE64_CHARS,
   MAX_POLICY_BLOCKCHAINS,
   MAX_POLICY_TOTAL_CONDITIONS,
   MAX_POLICY_TOTAL_NETWORKS,
   MAX_POLICY_TOTAL_POLICIES,
   POLICY_ID_PATTERN,
-  POLICY_PROPOSE_RESULT_STATUSES,
+  POLICY_PROPOSAL_OUTCOME_STATUSES,
   SIGN_CHAIN_PATTERN,
   SIGN_METHOD_PATTERN,
   SIGNING_HISTORY_TERMINAL_RESULTS,
@@ -120,18 +120,11 @@ export const deviceStatusSnapshotShape = z.object({
 }).strict();
 
 export const statusResponseShape = z.object({
-  id: requestIdShape,
-  version: z.literal(1),
-  type: z.literal("status"),
   device: deviceShape,
   provisioning: provisioningShape,
 }).strict();
 
 export const identifyResponseShape = z.object({
-  id: requestIdShape,
-  version: z.literal(1),
-  type: z.literal("identify_device_result"),
-  status: z.literal("displayed"),
   code: identificationCodeShape,
   device: deviceShape,
 }).strict();
@@ -140,16 +133,15 @@ export const liveStatusShape = z.object({
   source: z.literal("live"),
   connected: z.literal(true),
   portPath: portHintShape,
-  protocolResponse: statusResponseShape,
+  status: statusResponseShape,
 }).strict();
 
 export const identifiedDeviceShape = z.object({
   source: z.literal("live"),
   connected: z.literal(true),
   portPath: portHintShape,
-  status: z.literal("displayed"),
   code: identificationCodeShape,
-  protocolResponse: identifyResponseShape,
+  device: deviceShape,
 }).strict();
 
 export const failedIdentificationShape = z.object({
@@ -594,17 +586,17 @@ export const getApprovalHistoryToolOutputShape = z.discriminatedUnion("source", 
 ]);
 
 const signResultErrorShape = z.object({
-  code: z.enum(Object.keys(SIGN_RESULT_ERROR_MESSAGES) as [keyof typeof SIGN_RESULT_ERROR_MESSAGES, ...Array<keyof typeof SIGN_RESULT_ERROR_MESSAGES>]),
-  message: z.enum(Object.values(SIGN_RESULT_ERROR_MESSAGES) as [string, ...string[]]),
-}).strict().refine((error) => error.message === SIGN_RESULT_ERROR_MESSAGES[error.code], {
-  message: "Sign result error message must match its code.",
+  code: z.enum(Object.keys(SIGNING_OUTCOME_ERROR_MESSAGES) as [keyof typeof SIGNING_OUTCOME_ERROR_MESSAGES, ...Array<keyof typeof SIGNING_OUTCOME_ERROR_MESSAGES>]),
+  message: z.enum(Object.values(SIGNING_OUTCOME_ERROR_MESSAGES) as [string, ...string[]]),
+}).strict().refine((error) => error.message === SIGNING_OUTCOME_ERROR_MESSAGES[error.code], {
+  message: "Signing outcome error message must match its code.",
 });
 const canonicalBase64Shape = z
   .string()
   .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/);
 const personalMessageBytesShape = canonicalBase64Shape
   .min(1)
-  .max(MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS)
+  .max(MAX_SIGNING_OUTCOME_PAYLOAD_BASE64_CHARS)
   .refine((value) => {
     const decoded = Buffer.from(value, "base64");
     return (
@@ -643,7 +635,7 @@ const liveUserSignTerminalOutputShape = z.discriminatedUnion("status", [
     status: z.literal("user_rejected"),
     authorization: z.literal("user"),
     error: signResultErrorShape.refine((error) => error.code === "user_rejected", {
-      message: "User-rejected sign result error code must be user_rejected.",
+      message: "User-rejected signing outcome error code must be user_rejected.",
     }),
   }).strict(),
   z.object({
@@ -652,7 +644,7 @@ const liveUserSignTerminalOutputShape = z.discriminatedUnion("status", [
     status: z.literal("user_timed_out"),
     authorization: z.literal("user"),
     error: signResultErrorShape.refine((error) => error.code === "user_timed_out", {
-      message: "Timed-out sign result error code must be user_timed_out.",
+      message: "Timed-out signing outcome error code must be user_timed_out.",
     }),
   }).strict(),
   z.object({
@@ -661,7 +653,7 @@ const liveUserSignTerminalOutputShape = z.discriminatedUnion("status", [
     status: z.literal("signing_failed"),
     authorization: z.literal("user"),
     error: signResultErrorShape.refine((error) => error.code === "signing_failed", {
-      message: "Failed sign result error code must be signing_failed.",
+      message: "Failed signing outcome error code must be signing_failed.",
     }),
   }).strict(),
 ]);
@@ -674,7 +666,7 @@ const livePolicySignTerminalOutputShape = z.discriminatedUnion("status", [
     policyHash: z.string().regex(POLICY_ID_PATTERN),
     ruleRef: z.string().regex(APPROVAL_HISTORY_RULE_REF_PATTERN),
     error: signResultErrorShape.refine((error) => error.code === "policy_rejected", {
-      message: "Policy-rejected sign result error code must be policy_rejected.",
+      message: "Policy-rejected signing outcome error code must be policy_rejected.",
     }),
   }).strict(),
   z.object({
@@ -683,7 +675,7 @@ const livePolicySignTerminalOutputShape = z.discriminatedUnion("status", [
     status: z.literal("signing_failed"),
     authorization: z.literal("policy"),
     error: signResultErrorShape.refine((error) => error.code === "signing_failed", {
-      message: "Failed sign result error code must be signing_failed.",
+      message: "Failed signing outcome error code must be signing_failed.",
     }),
   }).strict(),
 ]);
@@ -745,13 +737,13 @@ const livePolicyProposeOutputShape = z
   .object({
     source: z.literal("live"),
     deviceId: safeDeviceIdShape,
-    status: z.enum(POLICY_PROPOSE_RESULT_STATUSES),
+    status: z.enum(POLICY_PROPOSAL_OUTCOME_STATUSES),
     reasonCode: z.string().regex(APPROVAL_HISTORY_REASON_CODE_PATTERN),
     policy: policyProposeResultPolicyShape.optional(),
   })
   .strict()
   .refine((value) => (value.status === "invalid_policy") === (value.policy === undefined), {
-    message: "invalid_policy omits policy metadata; other policy_propose_result statuses include it",
+    message: "invalid_policy omits policy metadata; other policy proposal outcome statuses include it",
   });
 const notConnectedPolicyProposeOutputShape = z.object({
   source: z.literal("not_connected"),
@@ -798,7 +790,7 @@ const liveCredentialPrepareOutputShape = z.object({
 const liveCredentialProposeOutputShape = z.object({
   source: z.literal("live"),
   deviceId: safeDeviceIdShape,
-  status: z.enum(CREDENTIAL_PROPOSE_RESULT_STATUSES),
+  status: z.enum(CREDENTIAL_PROPOSAL_OUTCOME_STATUSES),
   reasonCode: z.string().regex(APPROVAL_HISTORY_REASON_CODE_PATTERN),
   sessionEnded: z.boolean(),
 }).strict();

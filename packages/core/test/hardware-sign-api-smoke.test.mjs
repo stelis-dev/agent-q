@@ -190,7 +190,7 @@ function policyUpdateSkipReason() {
 }
 
 function scanDeviceId(device) {
-  return device?.protocolResponse?.device?.deviceId;
+  return device?.status?.device?.deviceId;
 }
 
 function selectSmokeDeviceId(devices, requestedDeviceId, envVarName, smokeName) {
@@ -373,8 +373,8 @@ async function withSmokeCore(prefix, callback) {
 }
 
 test("client hardware smoke target selection is fail-closed", () => {
-  const deviceA = { protocolResponse: { device: { deviceId: "dev-a" } } };
-  const deviceB = { protocolResponse: { device: { deviceId: "dev-b" } } };
+  const deviceA = { status: { device: { deviceId: "dev-a" } } };
+  const deviceB = { status: { device: { deviceId: "dev-b" } } };
 
   assert.equal(
     selectSmokeDeviceId([deviceA], "", "AGENTQ_HW_CLIENT_POLICY_UPDATE_DEVICE_ID", "AGENTQ_HW_CLIENT_POLICY_UPDATE"),
@@ -541,8 +541,8 @@ test(
           );
           console.log("[client-sign-transaction-user-smoke] verifying post-reconnect cleanup...");
           const recoveredDevice = await waitForRecoveredSmokeDevice(core, deviceId);
-          assert.equal(recoveredDevice.protocolResponse.device.state, "idle");
-          assert.equal(recoveredDevice.protocolResponse.provisioning.state, "provisioned");
+          assert.equal(recoveredDevice.status.device.state, "idle");
+          assert.equal(recoveredDevice.status.provisioning.state, "provisioned");
 
           await core.selectDevice({ deviceId, purpose: SIGN_TRANSACTION_USER_PURPOSE });
           console.log("[client-sign-transaction-user-smoke] approve reconnect after USB session loss...");
@@ -764,8 +764,8 @@ test(
           );
           console.log("[client-sign-personal-message-user-smoke] verifying post-reconnect cleanup...");
           const recoveredDevice = await waitForRecoveredSmokeDevice(core, deviceId);
-          assert.equal(recoveredDevice.protocolResponse.device.state, "idle");
-          assert.equal(recoveredDevice.protocolResponse.provisioning.state, "provisioned");
+          assert.equal(recoveredDevice.status.device.state, "idle");
+          assert.equal(recoveredDevice.status.provisioning.state, "provisioned");
 
           await core.selectDevice({ deviceId, purpose: SIGN_PERSONAL_MESSAGE_USER_PURPOSE });
           console.log("[client-sign-personal-message-user-smoke] approve reconnect after USB session loss...");

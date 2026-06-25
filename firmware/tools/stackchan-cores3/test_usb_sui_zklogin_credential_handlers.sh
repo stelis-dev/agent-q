@@ -26,8 +26,8 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${AGENT_Q_DIR}/agent_q_usb_sui_zklogin_credential_handlers.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_sui_zklogin_credential_handlers.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_sui_zklogin_credential_result_writer.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_sui_zklogin_credential_result_writer.h" \
+  "${AGENT_Q_DIR}/agent_q_usb_sui_zklogin_credential_outcome_writer.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_sui_zklogin_credential_outcome_writer.h" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_response_writer.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -319,11 +319,8 @@ namespace agent_q {
 bool usb_response_write_json(JsonDocument& response)
 {
     g_write_json_calls += 1;
-    JsonObjectConst result =
-        response["result"].is<JsonObjectConst>()
-            ? response["result"].as<JsonObjectConst>()
-            : response.as<JsonObjectConst>();
-    snprintf(g_last_json_type, sizeof(g_last_json_type), "%s", response["method"] | response["type"] | "");
+    JsonObjectConst result = response["result"].as<JsonObjectConst>();
+    snprintf(g_last_json_type, sizeof(g_last_json_type), "%s", response["method"] | "");
     snprintf(g_last_json_status, sizeof(g_last_json_status), "%s", result["status"] | "");
     snprintf(g_last_json_reason, sizeof(g_last_json_reason), "%s", result["reasonCode"] | "");
     snprintf(g_last_json_public_key, sizeof(g_last_json_public_key), "%s",
@@ -469,7 +466,7 @@ CPP
   -I"${AGENT_Q_DIR}" \
   "${TMP_DIR}/test.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_sui_zklogin_credential_handlers.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_sui_zklogin_credential_result_writer.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_sui_zklogin_credential_outcome_writer.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

@@ -73,24 +73,24 @@
 #include "agent_q_usb_operation_response_writer.h"
 #include "agent_q_usb_policy_propose_handler.h"
 #include "agent_q_usb_payload_transfer_handlers.h"
-#include "agent_q_usb_policy_propose_result_writer.h"
+#include "agent_q_usb_policy_propose_outcome_writer.h"
 #include "agent_q_ui_panel_cleanup.h"
 #include "agent_q_usb_operation_type.h"
 #include "agent_q_usb_line_receiver.h"
 #include "agent_q_usb_request_envelope.h"
 #include "agent_q_usb_request_line_handler.h"
-#include "agent_q_usb_retained_result_handlers.h"
+#include "agent_q_usb_retained_response_handlers.h"
 #include "agent_q_usb_session_read_handlers.h"
 #include "agent_q_usb_signing_handlers.h"
-#include "agent_q_usb_signing_result_writer.h"
+#include "agent_q_usb_signing_outcome_writer.h"
 #include "agent_q_usb_sui_zklogin_credential_handlers.h"
-#include "agent_q_usb_sui_zklogin_credential_result_writer.h"
+#include "agent_q_usb_sui_zklogin_credential_outcome_writer.h"
 #include "agent_q_usb_response_writer.h"
 #include "agent_q_ui_event_bridge.h"
 #include "agent_q_signing_retry_delivery.h"
 #include "agent_q_signing_retry_response.h"
 #include "agent_q_signing_preflight.h"
-#include "agent_q_signing_result_store.h"
+#include "agent_q_signing_response_store.h"
 #include "agent_q_usb_session_grace.h"
 #include "agent_q_usb_session_loss.h"
 #include "driver/usb_serial_jtag.h"
@@ -561,13 +561,13 @@ bool write_retry_response_json(JsonDocument& response, void*)
     return agent_q::usb_response_write_json(response);
 }
 
-static char g_signing_preflight_retry_stored_result[agent_q::kSigningResultMaxSize];
+static char g_signing_preflight_retry_stored_response[agent_q::kSigningResponseMaxSize];
 
 agent_q::AgentQSigningPreflightRetryDisposition respond_to_signing_retry(
     const char* request_id,
     const char* method,
     const agent_q::AgentQSigningRetryDeliveryResult& retry,
-    const char* stored_result,
+    const char* stored_response,
     void*)
 {
     const agent_q::AgentQSigningRetryResponseResult response_result =
@@ -575,12 +575,12 @@ agent_q::AgentQSigningPreflightRetryDisposition respond_to_signing_retry(
             request_id,
             method,
             retry,
-            stored_result,
+            stored_response,
             write_retry_response_json,
             nullptr);
     switch (response_result) {
         case agent_q::AgentQSigningRetryResponseResult::not_found:
-        case agent_q::AgentQSigningRetryResponseResult::invalid_stored_result:
+        case agent_q::AgentQSigningRetryResponseResult::invalid_stored_response:
         case agent_q::AgentQSigningRetryResponseResult::replay_write_failed:
             return agent_q::AgentQSigningPreflightRetryDisposition::continue_preflight;
         case agent_q::AgentQSigningRetryResponseResult::replayed_result:
@@ -603,29 +603,29 @@ bool write_policy_execution_response(
     const uint8_t* request_identity,
     const agent_q::AgentQPolicySigningExecutionResult& result)
 {
-    return agent_q::usb_signing_result_write_policy_execution(
+    return agent_q::usb_signing_outcome_write_policy_execution(
         id,
         agent_q::session_id(),
         request_identity,
         result);
 }
 
-bool write_policy_propose_result_with_current_policy(
+bool write_policy_propose_outcome_with_current_policy(
     const char* id,
     const char* status,
     const char* reason_code)
 {
     const agent_q::AgentQPolicyUpdateFlowSnapshot snapshot =
         agent_q::policy_update_flow_snapshot();
-    return agent_q::usb_policy_propose_result_write(id, status, reason_code, &snapshot);
+    return agent_q::usb_policy_propose_outcome_write(id, status, reason_code, &snapshot);
 }
 
 void clear_active_session()
 {
     agent_q::session_clear();
-    // Buffered signing results are session-scoped; drop them when the session
+    // Buffered signing responses are session-scoped; drop them when the session
     // ends so a new session never sees a prior session's results.
-    agent_q::signing_result_clear_all();
+    agent_q::signing_response_clear_all();
     agent_q::payload_delivery_clear_all();
 }
 
@@ -846,7 +846,7 @@ void finish_user_signing_terminal(
     const char* delivery_failed_message = "Signing failed; USB failed";
     if (result == agent_q::AgentQUserSigningTerminalResult::signed_success) {
         wrote_response = signing_output != nullptr &&
-            agent_q::usb_signing_result_write_user_signed(
+            agent_q::usb_signing_outcome_write_user_signed(
                 request_id,
                 agent_q::session_id(),
                 "user",
@@ -856,19 +856,19 @@ void finish_user_signing_terminal(
         delivery_failed_message = "Signed; USB failed";
         display_kind = wrote_response ? AgentQMessageKind::success : AgentQMessageKind::error;
     } else if (result == agent_q::AgentQUserSigningTerminalResult::rejected) {
-        wrote_response = agent_q::usb_signing_result_write_user_terminal(
+        wrote_response = agent_q::usb_signing_outcome_write_user_terminal(
             request_id, agent_q::session_id(), snapshot.request_identity, snapshot.method, result);
         display_message = wrote_response ? "Signing rejected" : "Rejected; USB failed";
         delivery_failed_message = "Rejected; USB failed";
         display_kind = wrote_response ? AgentQMessageKind::rejected : AgentQMessageKind::error;
     } else if (result == agent_q::AgentQUserSigningTerminalResult::timed_out) {
-        wrote_response = agent_q::usb_signing_result_write_user_terminal(
+        wrote_response = agent_q::usb_signing_outcome_write_user_terminal(
             request_id, agent_q::session_id(), snapshot.request_identity, snapshot.method, result);
         display_message = wrote_response ? "Signing timed out" : "Timeout; USB failed";
         delivery_failed_message = "Timeout; USB failed";
         display_kind = wrote_response ? AgentQMessageKind::timeout : AgentQMessageKind::error;
     } else if (result == agent_q::AgentQUserSigningTerminalResult::signing_failed) {
-        wrote_response = agent_q::usb_signing_result_write_user_terminal(
+        wrote_response = agent_q::usb_signing_outcome_write_user_terminal(
             request_id, agent_q::session_id(), snapshot.request_identity, snapshot.method, result);
         display_message = wrote_response ? "Signing failed" : "Failure; USB failed";
         delivery_failed_message = "Failure; USB failed";
@@ -904,7 +904,7 @@ void execute_user_signing_critical_section_and_finish(const char* request_id)
                  "user_signing signing failed: id=%s handoff=%s signing=%s",
                  request_id,
                  agent_q::user_signing_handoff_result_name(signing_report.result),
-                 agent_q::sui_transaction_signing_result_to_string(signing_report.signing_result));
+                 agent_q::sui_signing_status_to_string(signing_report.signing_status));
         finish_user_signing_terminal(request_id);
         agent_q::user_signing_output_wipe(&signing_output);
         return;
@@ -931,8 +931,8 @@ bool fill_session_random(void* output, size_t size, void*)
 bool replace_active_session()
 {
     // A newly established session must not inherit the previous session's buffered
-    // signing results, so drop them before the session id changes.
-    agent_q::signing_result_clear_all();
+    // signing responses, so drop them before the session id changes.
+    agent_q::signing_response_clear_all();
     agent_q::payload_delivery_clear_all();
     return agent_q::session_replace(fill_session_random, nullptr) ==
            agent_q::AgentQSessionStartResult::ok;
@@ -1084,7 +1084,7 @@ void clear_usb_session_state_for_host_loss()
 }
 
 // Hold the session briefly after a USB drop so a transient resume can reconnect
-// and recover its buffered signing result before the session is torn down.
+// and recover its buffered signing response before the session is torn down.
 constexpr uint32_t kUsbSessionGraceMs = 2000;
 agent_q::AgentQUsbGraceState g_usb_session_grace;
 
@@ -1383,7 +1383,7 @@ bool write_payload_delivery_safe_read_admission_error(
     return true;
 }
 
-bool write_payload_delivery_retained_result_admission_error(
+bool write_payload_delivery_retained_response_admission_error(
     const char* id,
     agent_q::AgentQUsbOperationType operation,
     const AgentQUsbOperationResponseWriter& writer)
@@ -1401,7 +1401,7 @@ bool write_payload_delivery_retained_result_admission_error(
                 entry->payload_delivery_operation,
                 nullptr,
             });
-    if (agent_q::payload_delivery_admission_allows_retained_result_cleanup(admission)) {
+    if (agent_q::payload_delivery_admission_allows_retained_response_cleanup(admission)) {
         return false;
     }
     writer.write_error(id, "busy");
@@ -1704,7 +1704,7 @@ bool disconnect_pending_policy_update_for_session(const char* id, const char* se
         }
         agent_q::policy_update_flow_clear();
         clear_active_session();
-        if (agent_q::usb_response_write_disconnect_result(id)) {
+        if (agent_q::usb_response_write_disconnect_success(id)) {
             ESP_LOGI(kTag, "disconnect canceled pending policy update review: id=%s", id);
         } else {
             agent_q::usb_response_log_write_failure("disconnect", id);
@@ -1738,7 +1738,7 @@ bool disconnect_pending_policy_update_for_session(const char* id, const char* se
     agent_q::policy_update_flow_clear();
     agent_q::protocol_pin_approval_clear();
     clear_active_session();
-    if (agent_q::usb_response_write_disconnect_result(id)) {
+    if (agent_q::usb_response_write_disconnect_success(id)) {
         ESP_LOGI(kTag, "disconnect canceled pending policy update: id=%s", id);
     } else {
         agent_q::usb_response_log_write_failure("disconnect", id);
@@ -1776,7 +1776,7 @@ bool disconnect_pending_sui_zklogin_proposal_for_session(const char* id, const c
         agent_q::sui_zklogin_proposal_flow_clear();
         agent_q::protocol_pin_approval_clear();
         clear_active_session();
-        if (agent_q::usb_response_write_disconnect_result(id)) {
+        if (agent_q::usb_response_write_disconnect_success(id)) {
             ESP_LOGI(kTag, "disconnect canceled pending Sui zkLogin proposal: id=%s", id);
         } else {
             agent_q::usb_response_log_write_failure("disconnect", id);
@@ -1813,7 +1813,7 @@ bool disconnect_pending_sui_zklogin_proposal_for_session(const char* id, const c
     agent_q::sui_zklogin_proposal_flow_clear();
     agent_q::protocol_pin_approval_clear();
     clear_active_session();
-    if (agent_q::usb_response_write_disconnect_result(id)) {
+    if (agent_q::usb_response_write_disconnect_success(id)) {
         ESP_LOGI(kTag, "disconnect canceled pending Sui zkLogin proposal: id=%s", id);
     } else {
         agent_q::usb_response_log_write_failure("disconnect", id);
@@ -1852,7 +1852,7 @@ bool disconnect_pending_user_signing_for_session(const char* id, const char* ses
     }
     consume_user_signing_terminal_if_pending();
     clear_active_session();
-    if (agent_q::usb_response_write_disconnect_result(id)) {
+    if (agent_q::usb_response_write_disconnect_success(id)) {
         ESP_LOGI(kTag, "disconnect canceled pending user_signing: id=%s", id);
     } else {
         agent_q::usb_response_log_write_failure("disconnect", id);
@@ -2416,7 +2416,7 @@ agent_q::AgentQLocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops()
         agent_q::usb_response_log_write_failure,
         show_policy_update_review,
         require_pending_policy_update_session,
-        write_policy_propose_result_with_current_policy,
+        write_policy_propose_outcome_with_current_policy,
         finish_policy_update_terminal,
         finish_policy_update_error_terminal,
         require_pending_sui_zklogin_proposal_session,
@@ -2558,14 +2558,14 @@ void clear_policy_update_terminal_state()
     agent_q::protocol_pin_approval_clear();
 }
 
-void finish_policy_propose_result_terminal(
+void finish_policy_propose_terminal(
     const char* request_id,
     agent_q::AgentQPolicyUpdateFlowTerminalResult result,
     const char* display_message,
     AgentQMessageKind display_kind,
     bool refresh_material_consistency = false)
 {
-    if (!write_policy_propose_result_with_current_policy(
+    if (!write_policy_propose_outcome_with_current_policy(
             request_id,
             agent_q::policy_update_flow_terminal_status(result),
             agent_q::policy_update_flow_terminal_reason(result))) {
@@ -2612,42 +2612,42 @@ void finish_policy_update_terminal(
 
     switch (result) {
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::applied:
-            finish_policy_propose_result_terminal(
+            finish_policy_propose_terminal(
                 request_id,
                 result,
                 "Policy updated",
                 AgentQMessageKind::success);
             return;
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::rejected:
-            finish_policy_propose_result_terminal(
+            finish_policy_propose_terminal(
                 request_id,
                 result,
                 "Policy rejected",
                 AgentQMessageKind::rejected);
             return;
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::timed_out:
-            finish_policy_propose_result_terminal(
+            finish_policy_propose_terminal(
                 request_id,
                 result,
                 "Policy timed out",
                 AgentQMessageKind::timeout);
             return;
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::ui_error:
-            finish_policy_propose_result_terminal(
+            finish_policy_propose_terminal(
                 request_id,
                 result,
                 "Display error",
                 AgentQMessageKind::error);
             return;
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::storage_error:
-            finish_policy_propose_result_terminal(
+            finish_policy_propose_terminal(
                 request_id,
                 result,
                 "Policy failed",
                 AgentQMessageKind::error);
             return;
         case agent_q::AgentQPolicyUpdateFlowTerminalResult::consistency_error:
-            finish_policy_propose_result_terminal(
+            finish_policy_propose_terminal(
                 request_id,
                 result,
                 "Policy error",
@@ -2685,14 +2685,14 @@ bool sui_zklogin_proposal_terminal_ends_session(
            result == agent_q::AgentQSuiZkLoginProposalTerminalResult::consistency_error;
 }
 
-void finish_sui_zklogin_proposal_result_terminal(
+void finish_sui_zklogin_proposal_outcome_terminal(
     const char* request_id,
     agent_q::AgentQSuiZkLoginProposalTerminalResult result,
     const char* display_message,
     AgentQMessageKind display_kind)
 {
     const bool session_ended = sui_zklogin_proposal_terminal_ends_session(result);
-    if (!agent_q::usb_sui_zklogin_credential_propose_result_write(
+    if (!agent_q::usb_sui_zklogin_credential_proposal_outcome_write(
             request_id,
             result,
             session_ended)) {
@@ -2739,49 +2739,49 @@ void finish_sui_zklogin_proposal_terminal(
 
     switch (result) {
         case agent_q::AgentQSuiZkLoginProposalTerminalResult::activated:
-            finish_sui_zklogin_proposal_result_terminal(
+            finish_sui_zklogin_proposal_outcome_terminal(
                 request_id,
                 result,
                 "zkLogin activated",
                 AgentQMessageKind::success);
             return;
         case agent_q::AgentQSuiZkLoginProposalTerminalResult::rejected:
-            finish_sui_zklogin_proposal_result_terminal(
+            finish_sui_zklogin_proposal_outcome_terminal(
                 request_id,
                 result,
                 "zkLogin rejected",
                 AgentQMessageKind::rejected);
             return;
         case agent_q::AgentQSuiZkLoginProposalTerminalResult::timed_out:
-            finish_sui_zklogin_proposal_result_terminal(
+            finish_sui_zklogin_proposal_outcome_terminal(
                 request_id,
                 result,
                 "zkLogin timed out",
                 AgentQMessageKind::timeout);
             return;
         case agent_q::AgentQSuiZkLoginProposalTerminalResult::invalid_proof:
-            finish_sui_zklogin_proposal_result_terminal(
+            finish_sui_zklogin_proposal_outcome_terminal(
                 request_id,
                 result,
                 "zkLogin invalid",
                 AgentQMessageKind::error);
             return;
         case agent_q::AgentQSuiZkLoginProposalTerminalResult::ui_error:
-            finish_sui_zklogin_proposal_result_terminal(
+            finish_sui_zklogin_proposal_outcome_terminal(
                 request_id,
                 result,
                 "Display error",
                 AgentQMessageKind::error);
             return;
         case agent_q::AgentQSuiZkLoginProposalTerminalResult::storage_error:
-            finish_sui_zklogin_proposal_result_terminal(
+            finish_sui_zklogin_proposal_outcome_terminal(
                 request_id,
                 result,
                 "zkLogin failed",
                 AgentQMessageKind::error);
             return;
         case agent_q::AgentQSuiZkLoginProposalTerminalResult::consistency_error:
-            finish_sui_zklogin_proposal_result_terminal(
+            finish_sui_zklogin_proposal_outcome_terminal(
                 request_id,
                 result,
                 "zkLogin error",
@@ -3647,11 +3647,11 @@ void handle_connect_request(
     agent_q::handle_usb_connect_request(id, request, writer, connect_handler_ops());
 }
 
-const agent_q::AgentQUsbRetainedResultHandlerOps& retained_result_handler_ops()
+const agent_q::AgentQUsbRetainedResponseHandlerOps& retained_response_handler_ops()
 {
-    static const agent_q::AgentQUsbRetainedResultHandlerOps ops = {
+    static const agent_q::AgentQUsbRetainedResponseHandlerOps ops = {
         provisioned_material_ready,
-        write_payload_delivery_retained_result_admission_error,
+        write_payload_delivery_retained_response_admission_error,
         require_active_matching_session,
     };
     return ops;
@@ -3662,7 +3662,7 @@ void handle_get_result_request(
     JsonDocument& request,
     const AgentQUsbOperationResponseWriter& writer)
 {
-    agent_q::handle_usb_get_result_request(id, request, writer, retained_result_handler_ops());
+    agent_q::handle_usb_get_result_request(id, request, writer, retained_response_handler_ops());
 }
 
 void handle_ack_result_request(
@@ -3670,7 +3670,7 @@ void handle_ack_result_request(
     JsonDocument& request,
     const AgentQUsbOperationResponseWriter& writer)
 {
-    agent_q::handle_usb_ack_result_request(id, request, writer, retained_result_handler_ops());
+    agent_q::handle_usb_ack_result_request(id, request, writer, retained_response_handler_ops());
 }
 
 void record_root_material_unreadable_for_session_read()
@@ -4227,8 +4227,8 @@ const agent_q::AgentQUsbSigningHandlerOps& usb_signing_handler_ops()
         nullptr,
         respond_to_signing_retry,
         nullptr,
-        g_signing_preflight_retry_stored_result,
-        sizeof(g_signing_preflight_retry_stored_result),
+        g_signing_preflight_retry_stored_response,
+        sizeof(g_signing_preflight_retry_stored_response),
         agent_q::evaluate_sign_transaction_preflight,
         agent_q::evaluate_sign_personal_message_preflight,
         record_signing_account_unavailable_runtime_failure,

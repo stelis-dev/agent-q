@@ -7,13 +7,13 @@
 
 namespace agent_q {
 
-bool usb_sui_zklogin_credential_prepare_result_write(
+bool usb_sui_zklogin_credential_preparation_write(
     const char* id,
     const char* address,
     const uint8_t* scheme_prefixed_public_key,
     size_t scheme_prefixed_public_key_size);
 
-bool usb_sui_zklogin_credential_propose_result_write(
+bool usb_sui_zklogin_credential_proposal_outcome_write(
     const char* id,
     AgentQSuiZkLoginProposalTerminalResult result,
     bool session_ended);

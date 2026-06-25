@@ -74,8 +74,8 @@ bool g_awaiting_choice = false;
 bool g_requires_pin = false;
 bool g_deadline_reached = false;
 bool g_replace_session_result = true;
-bool g_write_approved_result = true;
-bool g_write_rejected_result = true;
+bool g_write_approved_response = true;
+bool g_write_rejected_response = true;
 bool g_review_panel_visible = true;
 agent_q::AgentQConnectApprovalChoice g_choice_event =
     agent_q::AgentQConnectApprovalChoice::none;
@@ -119,8 +119,8 @@ void reset_harness()
     g_requires_pin = false;
     g_deadline_reached = false;
     g_replace_session_result = true;
-    g_write_approved_result = true;
-    g_write_rejected_result = true;
+    g_write_approved_response = true;
+    g_write_rejected_response = true;
     g_review_panel_visible = true;
     g_choice_event = agent_q::AgentQConnectApprovalChoice::none;
     g_snapshot = {
@@ -215,14 +215,14 @@ bool write_error(const char*, const char* code)
 bool write_approved(const char*)
 {
     ++g_write_approved_calls;
-    return g_write_approved_result;
+    return g_write_approved_response;
 }
 bool write_rejected(const char*, const char* code)
 {
     ++g_write_rejected_calls;
     snprintf(g_last_response_code, sizeof(g_last_response_code), "%s", code);
     g_last_response_message[0] = '\0';
-    return g_write_rejected_result;
+    return g_write_rejected_response;
 }
 void log_info(const char*, const char*) { ++g_log_info_calls; }
 void log_error(const char*, const char*) { ++g_log_error_calls; }
@@ -341,7 +341,7 @@ int main()
 
     reset_harness();
     g_snapshot.choice = AgentQConnectApprovalChoice::approved;
-    g_write_approved_result = false;
+    g_write_approved_response = false;
     agent_q::connect_review_response_flow_run(ops());
     expect(g_log_write_failure_calls == 1, "approved response write failure is logged");
     expect(g_show_result_calls == 1, "approved response write failure still shows terminal result");

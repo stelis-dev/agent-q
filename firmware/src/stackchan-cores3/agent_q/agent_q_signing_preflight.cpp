@@ -52,8 +52,8 @@ bool retry_allows_preflight_to_continue(
     const uint8_t* request_identity,
     const AgentQSigningPreflightRuntime& runtime)
 {
-    if (runtime.retry_stored_result == nullptr ||
-        runtime.retry_stored_result_size == 0) {
+    if (runtime.retry_stored_response == nullptr ||
+        runtime.retry_stored_response_size == 0) {
         return false;
     }
     const AgentQSigningRetryDeliveryResult retry =
@@ -62,8 +62,8 @@ bool retry_allows_preflight_to_continue(
             request_id,
             request_identity,
             kAgentQSignRequestIdentitySize,
-            runtime.retry_stored_result,
-            runtime.retry_stored_result_size);
+            runtime.retry_stored_response,
+            runtime.retry_stored_response_size);
     if (runtime.retry_responder == nullptr) {
         return retry.status == AgentQSigningRetryDeliveryStatus::not_found;
     }
@@ -71,7 +71,7 @@ bool retry_allows_preflight_to_continue(
                request_id,
                method,
                retry,
-               runtime.retry_stored_result,
+               runtime.retry_stored_response,
                runtime.retry_responder_context) ==
            AgentQSigningPreflightRetryDisposition::continue_preflight;
 }

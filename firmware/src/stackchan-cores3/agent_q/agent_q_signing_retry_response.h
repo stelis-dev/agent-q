@@ -12,7 +12,7 @@ enum class AgentQSigningRetryResponseResult {
     replay_write_failed,
     error_response,
     error_write_failed,
-    invalid_stored_result,
+    invalid_stored_response,
 };
 
 using AgentQSigningRetryResponseWriter = bool (*)(JsonDocument& response, void* context);
@@ -21,7 +21,7 @@ AgentQSigningRetryResponseResult deliver_signing_retry_response(
     const char* request_id,
     const char* method,
     const AgentQSigningRetryDeliveryResult& retry,
-    const char* stored_result,
+    const char* stored_response,
     AgentQSigningRetryResponseWriter write_response,
     void* context);
 

@@ -47,6 +47,6 @@ bool usb_response_write_connect_approved(
 bool usb_response_write_connect_rejected(
     const char* id,
     const char* error_code);
-bool usb_response_write_disconnect_result(const char* id);
+bool usb_response_write_disconnect_success(const char* id);
 
 }  // namespace agent_q

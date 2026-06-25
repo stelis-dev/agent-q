@@ -383,7 +383,7 @@ void handle_usb_get_capabilities_request(
             sui_zklogin_credential_available)) {
         return;
     }
-    writer.log_write_failure("capabilities", id);
+    writer.log_write_failure("get_capabilities", id);
 }
 
 void handle_usb_get_accounts_request(
@@ -445,7 +445,7 @@ void handle_usb_policy_get_request(
     if (write_policy_response(id, policy)) {
         return;
     }
-    writer.log_write_failure("policy", id);
+    writer.log_write_failure("policy_get", id);
 }
 
 }  // namespace agent_q

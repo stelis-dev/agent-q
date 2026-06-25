@@ -3,7 +3,7 @@
 #include <string.h>
 
 #include "agent_q_json_input.h"
-#include "agent_q_usb_sui_zklogin_credential_result_writer.h"
+#include "agent_q_usb_sui_zklogin_credential_outcome_writer.h"
 
 namespace agent_q {
 namespace {
@@ -164,7 +164,7 @@ void handle_usb_credential_prepare_request(
     if (!active_identity_allows_preparation(id, identity, writer)) {
         return;
     }
-    if (!usb_sui_zklogin_credential_prepare_result_write(
+    if (!usb_sui_zklogin_credential_preparation_write(
             id,
             identity.address,
             identity.public_key,
@@ -221,7 +221,7 @@ void handle_usb_credential_propose_request(
             now,
             request_window);
     if (begin_result != AgentQSuiZkLoginProposalBeginResult::ok) {
-        const bool written = usb_sui_zklogin_credential_propose_result_write(
+        const bool written = usb_sui_zklogin_credential_proposal_outcome_write(
             id,
             AgentQSuiZkLoginProposalTerminalResult::invalid_proof,
             false);

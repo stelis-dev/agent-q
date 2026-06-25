@@ -354,8 +354,8 @@ bool common_signing_handler_available(
         ops.admit_transaction_payload_delivery == nullptr ||
         ops.read_signing_mode == nullptr ||
         ops.retry_responder == nullptr ||
-        ops.retry_stored_result == nullptr ||
-        ops.retry_stored_result_size == 0 ||
+        ops.retry_stored_response == nullptr ||
+        ops.retry_stored_response_size == 0 ||
         ops.record_account_unavailable_runtime_failure == nullptr ||
         ops.make_user_signing_window == nullptr ||
         ops.show_user_signing_review == nullptr ||
@@ -408,8 +408,8 @@ AgentQSigningPreflightRuntime make_preflight_runtime(
         ops.read_signing_mode_context,
         ops.retry_responder,
         ops.retry_responder_context,
-        ops.retry_stored_result,
-        ops.retry_stored_result_size,
+        ops.retry_stored_response,
+        ops.retry_stored_response_size,
     };
 }
 

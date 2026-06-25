@@ -1,4 +1,4 @@
-#include "agent_q_usb_policy_propose_result_writer.h"
+#include "agent_q_usb_policy_propose_outcome_writer.h"
 
 #include <ArduinoJson.h>
 
@@ -7,7 +7,7 @@
 
 namespace agent_q {
 
-bool usb_policy_propose_result_write(
+bool usb_policy_propose_outcome_write(
     const char* id,
     const char* status,
     const char* reason_code,

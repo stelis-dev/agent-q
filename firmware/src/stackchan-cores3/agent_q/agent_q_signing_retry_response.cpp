@@ -38,7 +38,7 @@ bool write_error(
     return write_response(response, context);
 }
 
-bool stored_result_is_device_response(JsonDocument& response)
+bool stored_response_is_device_response(JsonDocument& response)
 {
     if (response["version"] != kAgentQProtocolVersion ||
         !response["success"].is<bool>()) {
@@ -57,7 +57,7 @@ AgentQSigningRetryResponseResult deliver_signing_retry_response(
     const char* request_id,
     const char* method,
     const AgentQSigningRetryDeliveryResult& retry,
-    const char* stored_result,
+    const char* stored_response,
     AgentQSigningRetryResponseWriter write_response,
     void* context)
 {
@@ -85,15 +85,15 @@ AgentQSigningRetryResponseResult deliver_signing_retry_response(
                    ? AgentQSigningRetryResponseResult::error_response
                    : AgentQSigningRetryResponseResult::error_write_failed;
     }
-    if (stored_result == nullptr || retry.stored_result_len == 0 || write_response == nullptr) {
-        return AgentQSigningRetryResponseResult::invalid_stored_result;
+    if (stored_response == nullptr || retry.stored_response_len == 0 || write_response == nullptr) {
+        return AgentQSigningRetryResponseResult::invalid_stored_response;
     }
     JsonDocument response;
-    if (deserializeJson(response, stored_result, retry.stored_result_len)) {
-        return AgentQSigningRetryResponseResult::invalid_stored_result;
+    if (deserializeJson(response, stored_response, retry.stored_response_len)) {
+        return AgentQSigningRetryResponseResult::invalid_stored_response;
     }
-    if (!stored_result_is_device_response(response)) {
-        return AgentQSigningRetryResponseResult::invalid_stored_result;
+    if (!stored_response_is_device_response(response)) {
+        return AgentQSigningRetryResponseResult::invalid_stored_response;
     }
     return write_response(response, context)
                ? AgentQSigningRetryResponseResult::replayed_result

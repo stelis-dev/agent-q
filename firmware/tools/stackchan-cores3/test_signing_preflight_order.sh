@@ -7,7 +7,7 @@ Usage: firmware/tools/stackchan-cores3/test_signing_preflight_order.sh
 
 ESP-IDF must already be active in the shell so IDF_PATH points to the ESP-IDF
 checkout. This host test composes the production route classifier, signing
-ingress, request identity, result store, and Sui preparation helpers to verify
+ingress, request identity, response store, and Sui preparation helpers to verify
 the critical signing preflight order by behavior:
 
   route -> state/session -> shallow params -> identity/replay -> preparation
@@ -57,7 +57,7 @@ for required in \
   "${AGENT_Q_DIR}/agent_q_payload_delivery_admission.cpp" \
   "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
   "${AGENT_Q_DIR}/agent_q_payload_delivery_store.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_signing_result_writer.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_signing_outcome_writer.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_preflight.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_retry_response.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_personal_message_user_ingress.cpp" \
@@ -65,7 +65,7 @@ for required in \
   "${AGENT_Q_DIR}/agent_q_signing_retry_delivery.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_transaction_user_ingress.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_transaction_user_validation.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signing_result_store.cpp" \
+  "${AGENT_Q_DIR}/agent_q_signing_response_store.cpp" \
   "${AGENT_Q_DIR}/agent_q_sui_signing_preparation.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_offline_policy_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_sign_transaction_adapter.cpp" \
@@ -116,10 +116,10 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include "agent_q_signing_preflight.h"
 #include "agent_q_sign_request_identity.h"
 #include "agent_q_signing_retry_response.h"
-#include "agent_q_signing_result_store.h"
+#include "agent_q_signing_response_store.h"
 #include "agent_q_device_contract.h"
 #include "agent_q_protocol_constants.h"
-#include "agent_q_usb_signing_result_writer.h"
+#include "agent_q_usb_signing_outcome_writer.h"
 #include "agent_q_sui_account_store.h"
 #include "agent_q_sui_signing_authority.h"
 #include "agent_q_sui_signing_preparation.h"
@@ -344,7 +344,7 @@ agent_q::AgentQSigningPreflightRetryDisposition respond_to_retry(
     const char* request_id,
     const char* method,
     const agent_q::AgentQSigningRetryDeliveryResult& retry,
-    const char* stored_result,
+    const char* stored_response,
     void*)
 {
     g_retry_status = retry.status;
@@ -353,12 +353,12 @@ agent_q::AgentQSigningPreflightRetryDisposition respond_to_retry(
             request_id,
             method,
             retry,
-            stored_result,
+            stored_response,
             capture_retry_response,
             nullptr);
     switch (response_result) {
         case agent_q::AgentQSigningRetryResponseResult::not_found:
-        case agent_q::AgentQSigningRetryResponseResult::invalid_stored_result:
+        case agent_q::AgentQSigningRetryResponseResult::invalid_stored_response:
         case agent_q::AgentQSigningRetryResponseResult::replay_write_failed:
             return agent_q::AgentQSigningPreflightRetryDisposition::continue_preflight;
         case agent_q::AgentQSigningRetryResponseResult::replayed_result:
@@ -376,7 +376,7 @@ PreflightOutcome run_transaction_preflight(
 {
     JsonDocument document = parse_json(json);
     agent_q::AgentQSignTransactionPreflightOutput output = {};
-    char retry_stored_result[agent_q::kSigningResultMaxSize] = {};
+    char retry_stored_response[agent_q::kSigningResponseMaxSize] = {};
     const agent_q::AgentQSigningPreflightResult result =
         agent_q::evaluate_sign_transaction_preflight(
             document,
@@ -387,8 +387,8 @@ PreflightOutcome run_transaction_preflight(
                 nullptr,
                 respond_to_retry,
                 nullptr,
-                retry_stored_result,
-                sizeof(retry_stored_result),
+                retry_stored_response,
+                sizeof(retry_stored_response),
             },
             &output);
     g_last_preparation_result = output.preparation_result;
@@ -410,7 +410,7 @@ void reset_counters()
     g_retry_status = agent_q::AgentQSigningRetryDeliveryStatus::not_found;
     g_retry_response_write_calls = 0;
     g_retry_response_json.clear();
-    agent_q::signing_result_clear_all();
+    agent_q::signing_response_clear_all();
 }
 
 void expect_case(
@@ -455,24 +455,24 @@ void expect_contains(const char* label, const std::string& value, const char* ex
     }
 }
 
-void expect_no_stored_result(const char* label, const char* session_id, const char* request_id)
+void expect_no_stored_response(const char* label, const char* session_id, const char* request_id)
 {
-    char stored[agent_q::kSigningResultMaxSize] = {};
+    char stored[agent_q::kSigningResponseMaxSize] = {};
     size_t stored_len = 0;
-    if (agent_q::signing_result_find(
+    if (agent_q::signing_response_find(
             session_id,
             request_id,
             stored,
             sizeof(stored),
             &stored_len)) {
-        fprintf(stderr, "%s: unexpected stored signing result\n", label);
+        fprintf(stderr, "%s: unexpected stored signing response\n", label);
         ++g_failures;
     }
 }
 
 void store_identity_for(
     const std::string& json,
-    const char* stored_result)
+    const char* stored_response)
 {
     JsonDocument document = parse_json(json);
     const agent_q::AgentQSignRouteClassification classification =
@@ -494,13 +494,13 @@ void store_identity_for(
         ingress.params.tx_bytes_base64,
         identity,
         sizeof(identity)));
-    assert(agent_q::signing_result_store(
+    assert(agent_q::signing_response_store(
                ingress.session.session_id,
                ingress.envelope.request_id,
                identity,
                sizeof(identity),
-               stored_result,
-               strlen(stored_result)) == agent_q::SigningResultStoreOutcome::stored);
+               stored_response,
+               strlen(stored_response)) == agent_q::SigningResponseStoreOutcome::stored);
     g_session_calls = 0;
 }
 
@@ -846,7 +846,7 @@ int main(int argc, char** argv)
         "\"result\":{\"authorization\":\"user\",\"chain\":\"sui\","
         "\"method\":\"sign_transaction\",\"signature\":\"sig\"}}");
     expect_case(
-        "invalid current request shape cannot replay a stored result",
+        "invalid current request shape cannot replay a stored response",
         run_transaction_preflight(
             request_json(
                 "req_sign_1",
@@ -930,7 +930,7 @@ int main(int argc, char** argv)
         1,
         1,
         0);
-    expect_no_stored_result(
+    expect_no_stored_response(
         "malformed prepared payload",
         "session_aaaaaaaaaaaaaaaa",
         "req_sign_malformed");
@@ -971,7 +971,7 @@ CPP
   "${AGENT_Q_DIR}/agent_q_payload_delivery_admission.cpp" \
   "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
   "${AGENT_Q_DIR}/agent_q_payload_delivery_store.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_signing_result_writer.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_signing_outcome_writer.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_preflight.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_retry_response.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_personal_message_user_ingress.cpp" \
@@ -979,7 +979,7 @@ CPP
   "${AGENT_Q_DIR}/agent_q_signing_retry_delivery.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_transaction_user_ingress.cpp" \
   "${AGENT_Q_DIR}/agent_q_sign_transaction_user_validation.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signing_result_store.cpp" \
+  "${AGENT_Q_DIR}/agent_q_signing_response_store.cpp" \
   "${AGENT_Q_DIR}/agent_q_sui_signing_preparation.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_offline_policy_facts.cpp" \
   "${COMMON_SUI_DIR}/agent_q_sui_sign_transaction_adapter.cpp" \

@@ -26,7 +26,7 @@ USB_OPERATION_MANIFEST_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_operation_mani
 USB_DEVICE_HANDLER_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_device_handlers.cpp"
 USB_SESSION_READ_HANDLER_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_session_read_handlers.cpp"
 USB_APPROVAL_HISTORY_HANDLER_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_approval_history_handler.cpp"
-USB_RETAINED_RESULT_HANDLER_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_retained_result_handlers.cpp"
+USB_RETAINED_RESPONSE_HANDLER_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_retained_response_handlers.cpp"
 USB_DISCONNECT_HANDLER_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_disconnect_handler.cpp"
 USB_CONNECT_HANDLER_HEADER="${TARGET_ROOT}/agent_q/agent_q_usb_connect_handler.h"
 USB_DEVICE_HANDLER_HEADER="${TARGET_ROOT}/agent_q/agent_q_usb_device_handlers.h"
@@ -58,7 +58,7 @@ for required in \
   "${USB_DEVICE_HANDLER_SOURCE}" \
   "${USB_SESSION_READ_HANDLER_SOURCE}" \
   "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" \
-  "${USB_RETAINED_RESULT_HANDLER_SOURCE}" \
+  "${USB_RETAINED_RESPONSE_HANDLER_SOURCE}" \
   "${USB_DISCONNECT_HANDLER_SOURCE}" \
   "${USB_REQUEST_SERVER_SOURCE}" \
   "${TARGET_ROOT}/agent_q/agent_q_session.cpp" \
@@ -259,29 +259,29 @@ expect_manifest_operation_wiring \
   'AgentQPayloadDeliveryOperationKind::safe_read' \
   "get_approval_history manifest entry must bind USB operation to safe-read payload admission"
 expect_request_server_wiring \
-  'write_payload_delivery_retained_result_admission_error' \
-  "retained result production ops must use payload delivery retained-result admission"
+  'write_payload_delivery_retained_response_admission_error' \
+  "retained response production ops must use payload delivery retained-response admission"
 expect_request_server_wiring \
-  'payload_delivery_admission_allows_retained_result_cleanup' \
-  "retained result production ops must consume the payload delivery retained-result predicate"
+  'payload_delivery_admission_allows_retained_response_cleanup' \
+  "retained response production ops must consume the payload delivery retained-response predicate"
 expect_source_wiring \
-  "${USB_RETAINED_RESULT_HANDLER_SOURCE}" \
+  "${USB_RETAINED_RESPONSE_HANDLER_SOURCE}" \
   'AgentQUsbOperationType::get_result' \
-  "get_result handler must pass its own USB operation to retained-result admission"
+  "get_result handler must pass its own USB operation to retained-response admission"
 expect_source_wiring \
-  "${USB_RETAINED_RESULT_HANDLER_SOURCE}" \
+  "${USB_RETAINED_RESPONSE_HANDLER_SOURCE}" \
   'AgentQUsbOperationType::ack_result' \
-  "ack_result handler must pass its own USB operation to retained-result admission"
+  "ack_result handler must pass its own USB operation to retained-response admission"
 expect_manifest_operation_wiring \
   'AgentQUsbOperationType::get_result' \
   'AgentQUsbOperationHandlerSlot::get_result' \
-  'AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup' \
-  "get_result manifest entry must bind USB operation to retained-result payload admission"
+  'AgentQPayloadDeliveryOperationKind::retained_response_read_cleanup' \
+  "get_result manifest entry must bind USB operation to retained-response payload admission"
 expect_manifest_operation_wiring \
   'AgentQUsbOperationType::ack_result' \
   'AgentQUsbOperationHandlerSlot::ack_result' \
-  'AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup' \
-  "ack_result manifest entry must bind USB operation to retained-result payload admission"
+  'AgentQPayloadDeliveryOperationKind::retained_response_read_cleanup' \
+  "ack_result manifest entry must bind USB operation to retained-response payload admission"
 expect_request_server_wiring \
   'payload_delivery_admission_allows_disconnect_cleanup' \
   "disconnect production ops must consume the payload delivery disconnect predicate"
@@ -719,17 +719,17 @@ void test_admission_matrix()
            "receiving safe read is exposed through contract predicate");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup,
+                   agent_q::AgentQPayloadDeliveryOperationKind::retained_response_read_cleanup,
                    "session_abcdef",
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
-           "receiving allows retained result read/cleanup");
-    expect(agent_q::payload_delivery_admission_allows_retained_result_cleanup(
+           "receiving allows retained response read/cleanup");
+    expect(agent_q::payload_delivery_admission_allows_retained_response_cleanup(
                agent_q::payload_delivery_admit_operation(
                    agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                       agent_q::AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup,
+                       agent_q::AgentQPayloadDeliveryOperationKind::retained_response_read_cleanup,
                        "session_abcdef",
                    })),
-           "receiving retained-result cleanup is exposed through contract predicate");
+           "receiving retained-response cleanup is exposed through contract predicate");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    agent_q::AgentQPayloadDeliveryOperationKind::disconnect,
@@ -807,10 +807,10 @@ void test_admission_matrix()
            "finalized inline signing block is exposed through sensitive-flow predicate");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup,
+                   agent_q::AgentQPayloadDeliveryOperationKind::retained_response_read_cleanup,
                    "session_abcdef",
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
-           "finalized allows retained result read/cleanup");
+           "finalized allows retained response read/cleanup");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    agent_q::AgentQPayloadDeliveryOperationKind::disconnect,
