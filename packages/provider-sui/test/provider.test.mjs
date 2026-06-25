@@ -61,6 +61,8 @@ function makeZkLoginSignature(byteLength = 145) {
 const SUI_SIGNATURE = makeEd25519Signature(1);
 const ZKLOGIN_SIGNATURE = makeZkLoginSignature();
 const PERSONAL_MESSAGE_BYTES = Buffer.from("Agent-Q personal message").toString("base64");
+const APP_WEB_SIZED_TRANSACTION_BYTES = Buffer.alloc(656, 1).toString("base64");
+const APP_WEB_SIZED_PERSONAL_MESSAGE_BYTES = Buffer.alloc(518, 1).toString("base64");
 
 function assertNoSecretFields(value) {
   const text = JSON.stringify(value).toLowerCase();
@@ -836,6 +838,55 @@ test("browser provider runtime defers Web Serial port selection until connectDev
       "disconnect",
     ]);
     assert.equal(port.requests.some((request) => requestKind(request) === "policy_get" || requestKind(request) === "policy_propose"), false);
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider sends app-web-sized signing payloads through the current request path", async () => {
+  assert.equal(Buffer.from(APP_WEB_SIZED_TRANSACTION_BYTES, "base64").length, 656);
+  assert.equal(APP_WEB_SIZED_TRANSACTION_BYTES.length, 876);
+  assert.equal(Buffer.from(APP_WEB_SIZED_PERSONAL_MESSAGE_BYTES, "base64").length, 518);
+  assert.equal(APP_WEB_SIZED_PERSONAL_MESSAGE_BYTES.length, 692);
+
+  const port = new FakeBrowserSerialPort(createFakeBrowserDeviceResponse);
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { serial: { requestPort: async () => port } },
+    });
+    const provider = createAgentQSuiBrowserProvider();
+    assert.equal((await provider.connectDevice()).source, "connected");
+
+    const transactionResult = await provider.signTransaction({
+      chain: "sui",
+      method: "sign_transaction",
+      network: "devnet",
+      txBytes: APP_WEB_SIZED_TRANSACTION_BYTES,
+    });
+    assert.deepEqual(transactionResult, validSignedTransactionResult());
+
+    const personalMessageResult = await provider.signPersonalMessage({
+      chain: "sui",
+      method: "sign_personal_message",
+      network: "devnet",
+      message: APP_WEB_SIZED_PERSONAL_MESSAGE_BYTES,
+    });
+    assert.deepEqual(personalMessageResult, validSignedPersonalMessageResult(APP_WEB_SIZED_PERSONAL_MESSAGE_BYTES));
+
+    assert.deepEqual(port.requests.map((request) => requestKind(request)), [
+      "connect",
+      "sign_transaction",
+      "sign_personal_message",
+    ]);
+    assert.equal(port.requests[1].payload.txBytes, APP_WEB_SIZED_TRANSACTION_BYTES);
+    assert.equal(port.requests[2].payload.message, APP_WEB_SIZED_PERSONAL_MESSAGE_BYTES);
+    assert.equal(port.requests.some((request) => requestKind(request) === "payload_transfer"), false);
   } finally {
     if (previousNavigator === undefined) {
       delete globalThis.navigator;

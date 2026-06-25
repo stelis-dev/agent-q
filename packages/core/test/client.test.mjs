@@ -424,8 +424,12 @@ test("package self-reference resolves only core entrypoints", async () => {
   assert.equal(root.createDefaultAgentQDeviceClient, undefined);
   assert.equal(typeof adapterInternal.hostSuccessOutputSchemas, "object");
   assert.equal(adapterInternal.requestDevice, undefined);
+  assert.deepEqual(Object.keys(deviceRequest).sort(), ["requestDevice"]);
   assert.equal(typeof device.createDefaultAgentQDeviceClient, "function");
   assert.equal(typeof deviceRequest.requestDevice, "function");
+  assert.equal(deviceRequest.serializePayloadTransferRequest, undefined);
+  assert.equal(deviceRequest.serializeDeviceRequest, undefined);
+  assert.equal(deviceRequest.makeDeviceRequest, undefined);
   assert.equal(typeof protocol.parseDeviceResponse, "function");
   assert.equal(typeof protocol.assertConnectResult, "function");
   assert.equal(typeof protocol.assertSigningOutcome, "function");
@@ -472,11 +476,29 @@ test("device-request-internal declaration exposes requestDevice without payload-
   const deviceRequestTypesPath = fileURLToPath(new URL("../dist/device-request-internal.d.ts", import.meta.url));
   const transportTypesPath = fileURLToPath(new URL("../dist/device-request-transport.d.ts", import.meta.url));
   const adapterTypes = await readFile(typesPath, "utf8");
-  const types = `${await readFile(deviceRequestTypesPath, "utf8")}\n${await readFile(transportTypesPath, "utf8")}`;
-  assert.match(types, /requestDevice/);
-  assert.match(types, /requestLine:\s*string/);
-  assert.match(types, /DeviceRequestInput/);
-  assert.match(types, /DeviceRequestExecutor/);
+  const deviceRequestTypes = await readFile(deviceRequestTypesPath, "utf8");
+  const transportTypes = await readFile(transportTypesPath, "utf8");
+  assert.match(deviceRequestTypes, /requestDevice/);
+  assert.match(deviceRequestTypes, /type DeviceRequestInput/);
+  assert.match(deviceRequestTypes, /type DeviceRequestExecutor/);
+  assert.match(transportTypes, /requestLine:\s*string/);
+  assert.match(transportTypes, /DeviceRequestInput/);
+  assert.match(transportTypes, /DeviceRequestExecutor/);
+  for (const forbidden of [
+    "serializePayloadTransferRequest",
+    "makePayloadTransferBeginRequest",
+    "makePayloadTransferChunkRequest",
+    "makePayloadTransferFinishRequest",
+    "makePayloadTransferAbortRequest",
+    "serializeDeviceRequest",
+    "makeDeviceRequest",
+    "parseDeviceResponse",
+    "DeviceWireRequest",
+    "ProtocolResponse",
+    "payload_upload",
+  ]) {
+    assert.equal(deviceRequestTypes.includes(forbidden), false, `${forbidden} must not be exported by device-request-internal`);
+  }
   assert.doesNotMatch(adapterTypes, /requestDevice/);
 });
 

@@ -11,6 +11,7 @@ import {
   PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES,
   ProtocolError,
   createRequestId,
+  validateSignPersonalMessageParams,
   validateSignTransactionParams,
   type ConnectResult,
   type SigningOutcome,
@@ -465,14 +466,18 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       return this.#inactiveResult(input.deviceId);
     }
     const snapshot = this.#sessionSnapshot(session);
+    const params = validateSignPersonalMessageParams({
+      network: input.network,
+      message: input.message,
+    });
     const signRequest: BrowserSignRequest = {
       id: input.requestId ?? createRequestId(),
       method: input.method,
       sessionId: session.sessionId,
       payload: {
         chain: input.chain,
-        network: input.network,
-        message: input.message,
+        network: params.network,
+        message: params.message,
       },
     };
     try {
