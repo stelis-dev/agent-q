@@ -77,11 +77,10 @@ proof-clear path.
   `createDefaultAgentQDeviceClient` facade for provider/app code that should not
   see policy proposal or server management methods.
 - `@stelis/agent-q-core/protocol` exposes the shared protocol builders,
-  parsers, constants, and response types. It also exposes low-level
-  `get_result` / `ack_result` and payload-transfer wire primitives for official
-  transport and provider implementations. Direct application use is
-  unsupported; those primitives are not a signing API and do not authorize,
-  replay, create, or execute signing requests.
+  parsers, constants, and response types. It does not expose payload-transfer
+  wire primitives as an application API; official transports route device
+  requests through `requestDevice`, which owns direct delivery, staged payload
+  transfer, and retained-response recovery internally.
 - `@stelis/agent-q-core/provider-protocol` exposes the browser-safe provider
   protocol projection used by official dapp-facing adapters. It includes
   provider request builders, an exact provider request serializer, provider

@@ -68,9 +68,9 @@ that Node transport, and the `./browser` subpath uses the core package's
 provider protocol projection for app-facing Web Serial requests. That
 projection exact-validates provider requests at runtime and does not expose
 Admin, policy read/update, approval-history, or retained-response recovery
-request/response types. Browser retained-response recovery uses the full core
-protocol's low-level `get_result` / `ack_result` primitives internally; direct
-application use of those primitives is unsupported.
+request/response types. Browser retained-response recovery goes through the
+core request-device transport internally; direct application use of retained
+response operations is unsupported.
 
 This package narrows the dapp-facing API it presents. That is not a security
 boundary against an application that imports

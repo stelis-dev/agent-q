@@ -229,8 +229,8 @@ Allowed:
   preparation material; available only while native Sui identity is active)
 - `credential_propose` (session-scoped; Sui zkLogin only; bounded proof proposal
   that requires device-local review and local PIN before persistence)
-- `payload_transfer_begin`, `payload_transfer_chunk`, `payload_transfer_finish`, and
-  `payload_transfer_abort` for same-session volatile signable payload delivery
+- `payload_transfer` with `begin`, `chunk`, `finish`, and `abort` actions for
+  same-session volatile signable payload delivery
 - `sign_transaction` (session-scoped; unknown methods reject; Sui
   `sign_transaction` accepts inline `txBytes` or a same-session finalized
   `payloadRef`, validates the decoded transaction through the Sui adapter, and
@@ -351,13 +351,12 @@ replay, approval, policy, history, adapter, or signing work. For a supported
 route, state/session checks occur before method-parameter validation and
 chain-adapter decoding. After shallow method-parameter validation, Firmware
 computes a form-discriminated internal signing-request identity from the selected
-route and validated method parameters. For staged transaction signing, that identity
-uses the request's descriptor echo (`payloadKind`, `sizeBytes`,
-`payloadDigest`) and not the live `payloadRef` handle; a fresh staged request
-must still match the same-session finalized descriptor before Firmware consumes
-live payload bytes. A same-id retry replays only when that identity matches and
-the bounded RAM result entry is still retained; a different request reusing the
-id fails with `request_id_conflict` before
+route and validated method parameters. For staged transaction signing, Firmware
+first resolves the same-session internal `payloadRef` to method payload bytes;
+the identity is derived from the resolved payload and selected route, not from
+the live `payloadRef` handle alone. A same-id retry replays only when that
+identity matches and the bounded RAM result entry is still retained; a different
+request reusing the id fails with `request_id_conflict` before
 adapter, approval, policy, history, or signing work only while the original
 entry is still buffered. Stored signing responses are runtime recovery state, not
 persistent replay protection. They are cleared by ack, session cleanup,
@@ -460,16 +459,16 @@ Store states and ownership phases:
 
 Allowed in `receiving`:
 
-- same-session `payload_transfer_chunk`;
-- same-session `payload_transfer_finish`;
-- same-session `payload_transfer_abort`;
+- same-session `payload_transfer` with action `chunk`;
+- same-session `payload_transfer` with action `finish`;
+- same-session `payload_transfer` with action `abort`;
 - read-only session requests that do not mutate, dismiss, or leak upload state:
   `get_status`, `get_capabilities`, `get_accounts`, `policy_get`,
   `get_approval_history`, `get_result`, and `ack_result`.
 
 Rejected in `receiving`:
 
-- nested `payload_transfer_begin`;
+- nested `payload_transfer` with action `begin`;
 - `sign_transaction` using an incomplete upload;
 - `sign_personal_message`;
 - `policy_propose`;
@@ -479,10 +478,9 @@ Rejected in `receiving`:
 Allowed in `finalized`:
 
 - same-session `sign_transaction` whose shallow payload source matches the
-  finalized `payloadRef`; the signing preflight must still compare the echoed
-  immutable descriptor fields with the finalized descriptor before consuming
-  bytes;
-- same-session `payload_transfer_abort`;
+  finalized `payloadRef`; the payload store must validate the reference,
+  session, and finalized state before Firmware consumes bytes;
+- same-session `payload_transfer` with action `abort`;
 - read-only session requests that do not mutate, dismiss, or leak the payload.
 
 Rejected in `finalized`:
@@ -502,16 +500,15 @@ Cleanup requirements:
   signed invisibly. Unrelated sensitive-flow attempts are rejected while payload
   scratch is pending unless Firmware explicitly owns a cleanup-before-replace
   transition;
-- retained-response recovery for `(session, request id)` must not depend on the
-  finalized payload still existing. A same-id retry reaches retained-response
-  lookup using the descriptor echo before live `payloadRef` bytes are resolved.
+- retained-response recovery for `(session, request id)` uses `get_result` and
+  `ack_result` and must not depend on the finalized payload still existing.
 
 Payload delivery request admission is owned by the Firmware operation admission
 matrix, not by the display/device-state projection. The projection treats
 receiving and finalized payload scratch as `busy` for ordinary USB requests.
 A matching same-session staged signing request is a request-aware admission
 exception that enters through the payload-aware operation path and still must
-pass preflight descriptor matching before consuming bytes. Unrelated sensitive
+resolve the finalized payload before method validation. Unrelated sensitive
 operations must be rejected unless Firmware first owns an explicit cleanup
 transition.
 
