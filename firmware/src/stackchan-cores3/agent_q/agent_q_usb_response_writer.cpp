@@ -221,7 +221,6 @@ void usb_response_log_write_failure(const char* response_type, const char* id)
 bool usb_response_write_ack_result(const char* id)
 {
     JsonDocument result;
-    result["status"] = "acked";
     return usb_response_write_success_result(id, "ack_result", result.as<JsonObjectConst>());
 }
 
@@ -248,7 +247,6 @@ bool usb_response_write_connect_rejected(
 bool usb_response_write_disconnect_result(const char* id)
 {
     JsonDocument result;
-    result["status"] = "disconnected";
     return usb_response_write_success_result(id, "disconnect", result.as<JsonObjectConst>());
 }
 

@@ -230,7 +230,7 @@ adding one row here and then implementing that row through the same
 | `get_status` | forbidden | forbidden | no payload | `StatusResult` object: device status and provisioning status | Firmware status/material consistency refresh gate. |
 | `identify_device` | forbidden | required | `IdentifyDevicePayload` object: `{ code }` | `IdentifyDeviceResult` object: displayed code and device status | Firmware identification display gate. |
 | `connect` | forbidden | required | `ConnectPayload` object: `{ clientName }` | `ConnectResult` object: session id, session TTL, and device status | Provisioned material, active policy, local authentication verifier, and Firmware-owned device-local approval gate. |
-| `disconnect` | required | forbidden | no payload | `DisconnectResult` object: `{ status: "disconnected" }` | Active session cleanup gate. |
+| `disconnect` | required | forbidden | no payload | `DisconnectResult` object: `{}` | Active session cleanup gate. |
 | `get_capabilities` | required | forbidden | no payload | `CapabilitiesResult` object: chains, accounts, methods, signing state, and credential support | Active session and provisioned material gate. |
 | `get_accounts` | required | forbidden | no payload | `AccountsResult` object: public accounts | Active session and account-material gate. |
 | `policy_get` | required | forbidden | no payload | `PolicyGetResult` object: active policy document | Active session and policy-store gate. |
@@ -241,7 +241,7 @@ adding one row here and then implementing that row through the same
 | `credential_prepare` | required | required | `CredentialPreparePayload` object: `{ chain, credential }` | `CredentialPrepareResult` object: public key and derived address preparation | Active session and credential preparation gate. |
 | `credential_propose` | required | required | `CredentialProposePayload` object: `{ chain, credential, network, address, publicKey, maxEpoch, inputs }` after payload resolution | `CredentialProposeResult` object: activated/rejected/timed-out/storage result and session-ended flag | Active session, proof parser, device-local credential review, local authentication, and credential-store commit gate. |
 | `get_result` | required | required | `RetainedResultPayload` object: `{ retainedRequestId }` | method result object retained for `retainedRequestId` | Active session and retained-result lookup gate. |
-| `ack_result` | required | required | `RetainedResultPayload` object: `{ retainedRequestId }` | `AckResult` object: `{ status: "acked" }` | Active session and retained-result cleanup gate. |
+| `ack_result` | required | required | `RetainedResultPayload` object: `{ retainedRequestId }` | `AckResult` object: `{}` | Active session and retained-result cleanup gate. |
 
 `Session rule` values are exactly `forbidden`, `required`, or `optional`.
 `Payload rule` values are exactly `forbidden`, `required`, or `optional`.
@@ -295,7 +295,7 @@ method handlers never receive the action object.
 | `begin` | `id`, `version`, `type: "payload_transfer"`, `action: "begin"`, `sessionId`, `totalBytes`, `payloadDigest` | `{ transferId, receivedBytes, chunkMaxBytes }` |
 | `chunk` | `id`, `version`, `type: "payload_transfer"`, `action: "chunk"`, `sessionId`, `transferId`, `offsetBytes`, `chunk` | `{ receivedBytes }` |
 | `finish` | `id`, `version`, `type: "payload_transfer"`, `action: "finish"`, `sessionId`, `transferId` | `{ payloadRef }` |
-| `abort` | `id`, `version`, `type: "payload_transfer"`, `action: "abort"`, `sessionId`, `transferId` | `{ status: "aborted" }` |
+| `abort` | `id`, `version`, `type: "payload_transfer"`, `action: "abort"`, `sessionId`, `transferId` | `{}` |
 
 `payloadDigest` is the SHA-256 digest of the raw payload bytes received by the
 payload store. It is transport metadata only. The method request that consumes a

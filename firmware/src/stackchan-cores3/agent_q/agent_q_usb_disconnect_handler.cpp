@@ -58,7 +58,7 @@ void handle_usb_disconnect_request(
     if (usb_response_write_disconnect_result(id)) {
         return;
     }
-    writer.log_write_failure("disconnect_result", id);
+    writer.log_write_failure("disconnect", id);
 }
 
 }  // namespace agent_q

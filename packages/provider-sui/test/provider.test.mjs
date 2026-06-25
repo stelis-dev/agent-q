@@ -487,9 +487,7 @@ function createFakeBrowserDeviceResponse(request) {
         device,
       });
     case "disconnect":
-      return deviceSuccess(request, {
-        status: "disconnected",
-      });
+      return deviceSuccess(request, {});
     case "get_capabilities":
       return deviceSuccess(request, {
         chains: [
@@ -540,7 +538,6 @@ function createFakeBrowserDeviceResponse(request) {
       });
     case "credential_prepare":
       return deviceSuccess(request, {
-        status: "prepared",
         chain: "sui",
         credential: "zklogin",
         preparation: {
@@ -580,7 +577,7 @@ function browserSignedPersonalMessageResult(request, messageBytes = PERSONAL_MES
 }
 
 function browserAckResult(request) {
-  return deviceSuccess(request, { status: "acked" }, "ack_result");
+  return deviceSuccess(request, {}, "ack_result");
 }
 
 function browserTerminalSignResult(request, status) {
@@ -1257,7 +1254,7 @@ test("browser provider aborts active payload transfer after progress mismatch", 
         id: request.id,
         version: 1,
         success: true,
-        result: { status: "aborted" },
+        result: {},
       };
     }
     return createFakeBrowserDeviceResponse(request);
@@ -1905,7 +1902,7 @@ test("provider protocol parser keeps retained recovery out of the app-facing pro
   });
   assert.equal(valid.success, true);
   assert.equal(valid.method, "ack_result");
-  assert.deepEqual(valid.result, { status: "acked" });
+  assert.deepEqual(valid.result, {});
   // The DeviceResponse parser fails closed on the old ack wire and on any
   // extra top-level field.
   assert.throws(() =>

@@ -169,7 +169,7 @@ void handle_usb_credential_prepare_request(
             identity.address,
             identity.public_key,
             identity.public_key_size)) {
-        writer.log_write_failure("credential_prepare_result", id);
+        writer.log_write_failure("credential_prepare", id);
     }
 }
 
@@ -226,7 +226,7 @@ void handle_usb_credential_propose_request(
             AgentQSuiZkLoginProposalTerminalResult::invalid_proof,
             false);
         if (!written) {
-            writer.log_write_failure("credential_propose_result", id);
+            writer.log_write_failure("credential_propose", id);
         }
         return;
     }

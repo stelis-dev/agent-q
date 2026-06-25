@@ -299,7 +299,7 @@ void write_policy_consistency_error(
             "consistency_error",
             "consistency_error");
     if (!written && ops.log_write_failure != nullptr) {
-        ops.log_write_failure("policy_propose_result", request_id);
+        ops.log_write_failure("policy_propose", request_id);
     }
 }
 
@@ -1970,7 +1970,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
                     ops.write_connect_approved != nullptr &&
                     ops.write_connect_approved(request_id);
                 if (!written && ops.log_write_failure != nullptr) {
-                    ops.log_write_failure("connect_result", request_id);
+                    ops.log_write_failure("connect", request_id);
                 }
             }
             protocol_pin_approval_clear();

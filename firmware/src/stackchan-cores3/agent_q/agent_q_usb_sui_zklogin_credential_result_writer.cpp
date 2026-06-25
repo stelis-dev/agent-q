@@ -35,7 +35,6 @@ bool usb_sui_zklogin_credential_prepare_result_write(
     }
 
     JsonDocument result;
-    result["status"] = "prepared";
     result["chain"] = "sui";
     result["credential"] = "zklogin";
     JsonObject preparation = result["preparation"].to<JsonObject>();

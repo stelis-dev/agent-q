@@ -272,9 +272,7 @@ function abortResponse(request) {
     id: request.id,
     version: 1,
     success: true,
-    result: {
-      status: "aborted",
-    },
+    result: {},
   };
 }
 

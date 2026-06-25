@@ -79,9 +79,7 @@ export interface PayloadTransferFinishResult {
   payloadRef: string;
 }
 
-export interface PayloadTransferAbortResult {
-  status: "aborted";
-}
+export type PayloadTransferAbortResult = Record<string, never>;
 
 export interface PayloadTransferSuccessResponse<TResult = unknown> {
   id?: string;
@@ -274,11 +272,8 @@ export function sanitizePayloadTransferFinishResult(value: unknown): PayloadTran
 
 export function sanitizePayloadTransferAbortResult(value: unknown): PayloadTransferAbortResult {
   const result = asRecord(value, "payload_transfer abort result");
-  requireOnlyKeys(result, ["status"], "payload_transfer abort result");
-  if (result.status !== "aborted") {
-    throw new ProtocolError("invalid_response", "payload_transfer abort result is malformed.");
-  }
-  return { status: "aborted" };
+  requireOnlyKeys(result, [], "payload_transfer abort result");
+  return {};
 }
 
 export function parsePayloadTransferResponse<TResult>(

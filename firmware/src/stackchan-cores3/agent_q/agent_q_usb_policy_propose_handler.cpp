@@ -78,7 +78,7 @@ void handle_usb_policy_propose_request(
                 "invalid_policy",
                 ops.begin_result_reason(begin_result),
                 nullptr)) {
-            writer.log_write_failure("policy_propose_result", id);
+            writer.log_write_failure("policy_propose", id);
         }
         return;
     }

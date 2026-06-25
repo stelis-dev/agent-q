@@ -900,10 +900,10 @@ export function assertStatusResponse(response: DeviceResponse): StatusResponse {
 
 export function assertIdentifyDeviceResponse(response: DeviceResponse): IdentifyDeviceResponse {
   const { id, result } = assertDeviceResultObject(response, "identify_device", "Identify result");
-  requireResultKeys(result, ["status", "code", "device"], "Identify result");
+  requireResultKeys(result, ["code", "device"], "Identify result");
   requireWireDeviceStatusShape(result.device, "Identify result device object");
   const device = sanitizeDeviceStatus(result.device);
-  if (device === null || result.status !== "displayed" || !isIdentificationCode(result.code)) {
+  if (device === null || !isIdentificationCode(result.code)) {
     throw new ProtocolError("invalid_response", "Identify result is malformed.");
   }
   return { id, version: PROTOCOL_VERSION, type: "identify_device_result", status: "displayed", code: result.code, device };
@@ -937,10 +937,7 @@ export function assertConnectResponse(response: DeviceResponse): ConnectResponse
 
 export function assertDisconnectResponse(response: DeviceResponse): DisconnectResponse {
   const { id, result } = assertDeviceResultObject(response, "disconnect", "Disconnect result");
-  requireResultKeys(result, ["status"], "Disconnect result");
-  if (result.status !== "disconnected") {
-    throw new ProtocolError("invalid_response", "Disconnect result is malformed.");
-  }
+  requireResultKeys(result, [], "Disconnect result");
   return { id, version: PROTOCOL_VERSION, type: "disconnect_result", status: "disconnected" };
 }
 
@@ -1024,10 +1021,9 @@ export function assertPolicyProposeResultResponse(response: DeviceResponse): Pol
 
 export function assertCredentialPrepareResultResponse(response: DeviceResponse): CredentialPrepareResultResponse {
   const { id, result } = assertDeviceResultObject(response, "credential_prepare", "Credential prepare result");
-  requireResultKeys(result, ["status", "chain", "credential", "preparation"], "Credential prepare result");
+  requireResultKeys(result, ["chain", "credential", "preparation"], "Credential prepare result");
   const preparation = sanitizeCredentialPreparation(result.preparation);
   if (
-    result.status !== "prepared" ||
     result.chain !== SUI_CHAIN_ID ||
     result.credential !== SUI_ZKLOGIN_CREDENTIAL ||
     preparation === null

@@ -1173,7 +1173,7 @@ function assertAckResultDeviceResponse(response: DeviceResponse): void {
     throw new ProtocolError("invalid_response", "Ack result must be an object.");
   }
   const keys = Object.keys(parsed.result);
-  if (keys.length !== 1 || keys[0] !== "status" || parsed.result.status !== "acked") {
+  if (keys.length !== 0) {
     throw new ProtocolError("invalid_response", "Ack result is malformed.");
   }
 }

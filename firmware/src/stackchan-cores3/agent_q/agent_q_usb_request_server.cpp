@@ -1707,7 +1707,7 @@ bool disconnect_pending_policy_update_for_session(const char* id, const char* se
         if (agent_q::usb_response_write_disconnect_result(id)) {
             ESP_LOGI(kTag, "disconnect canceled pending policy update review: id=%s", id);
         } else {
-            agent_q::usb_response_log_write_failure("disconnect_result", id);
+            agent_q::usb_response_log_write_failure("disconnect", id);
         }
         return true;
     }
@@ -1741,7 +1741,7 @@ bool disconnect_pending_policy_update_for_session(const char* id, const char* se
     if (agent_q::usb_response_write_disconnect_result(id)) {
         ESP_LOGI(kTag, "disconnect canceled pending policy update: id=%s", id);
     } else {
-        agent_q::usb_response_log_write_failure("disconnect_result", id);
+        agent_q::usb_response_log_write_failure("disconnect", id);
     }
     return true;
 }
@@ -1779,7 +1779,7 @@ bool disconnect_pending_sui_zklogin_proposal_for_session(const char* id, const c
         if (agent_q::usb_response_write_disconnect_result(id)) {
             ESP_LOGI(kTag, "disconnect canceled pending Sui zkLogin proposal: id=%s", id);
         } else {
-            agent_q::usb_response_log_write_failure("disconnect_result", id);
+            agent_q::usb_response_log_write_failure("disconnect", id);
         }
         return true;
     }
@@ -1816,7 +1816,7 @@ bool disconnect_pending_sui_zklogin_proposal_for_session(const char* id, const c
     if (agent_q::usb_response_write_disconnect_result(id)) {
         ESP_LOGI(kTag, "disconnect canceled pending Sui zkLogin proposal: id=%s", id);
     } else {
-        agent_q::usb_response_log_write_failure("disconnect_result", id);
+        agent_q::usb_response_log_write_failure("disconnect", id);
     }
     return true;
 }
@@ -1855,7 +1855,7 @@ bool disconnect_pending_user_signing_for_session(const char* id, const char* ses
     if (agent_q::usb_response_write_disconnect_result(id)) {
         ESP_LOGI(kTag, "disconnect canceled pending user_signing: id=%s", id);
     } else {
-        agent_q::usb_response_log_write_failure("disconnect_result", id);
+        agent_q::usb_response_log_write_failure("disconnect", id);
     }
     agent_q::avatar_overlay_show_message(
         "Signing canceled",
@@ -2569,7 +2569,7 @@ void finish_policy_propose_result_terminal(
             request_id,
             agent_q::policy_update_flow_terminal_status(result),
             agent_q::policy_update_flow_terminal_reason(result))) {
-        agent_q::usb_response_log_write_failure("policy_propose_result", request_id);
+        agent_q::usb_response_log_write_failure("policy_propose", request_id);
     }
     clear_policy_update_terminal_state();
     if (refresh_material_consistency) {
@@ -2696,7 +2696,7 @@ void finish_sui_zklogin_proposal_result_terminal(
             request_id,
             result,
             session_ended)) {
-        agent_q::usb_response_log_write_failure("credential_propose_result", request_id);
+        agent_q::usb_response_log_write_failure("credential_propose", request_id);
     }
     clear_sui_zklogin_proposal_terminal_state();
     if (session_ended) {

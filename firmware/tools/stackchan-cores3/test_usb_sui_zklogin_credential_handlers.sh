@@ -388,7 +388,7 @@ int main()
         assert(g_resolve_identity_calls == 1);
         assert(g_write_json_calls == 1);
         assert(strcmp(g_last_json_type, "credential_prepare") == 0);
-        assert(strcmp(g_last_json_status, "prepared") == 0);
+        assert(strcmp(g_last_json_status, "") == 0);
         assert(strcmp(g_last_json_public_key, "scheme-key-base64") == 0);
         assert(strcmp(g_last_json_address, g_identity.address) == 0);
     }

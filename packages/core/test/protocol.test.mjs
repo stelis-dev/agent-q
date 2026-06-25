@@ -393,12 +393,10 @@ test("parsePayloadTransferResponse accepts and exact-validates payload transfer 
     id: "req_payload_abort",
     version: 1,
     success: true,
-    result: {
-      status: "aborted",
-    },
+    result: {},
   }, "req_payload_abort", sanitizePayloadTransferAbortResult);
   assert.equal(abort.success, true);
-  assert.equal(abort.result.status, "aborted");
+  assert.deepEqual(abort.result, {});
 
   assert.throws(
     () => parsePayloadTransferResponse({
@@ -477,7 +475,7 @@ test("Core method assertions accept DeviceResponse success envelopes", () => {
     {
       method: "identify_device",
       assertResponse: assertIdentifyDeviceResponse,
-      result: { status: "displayed", code: "1234", device: VALID_DEVICE_STATUS },
+      result: { code: "1234", device: VALID_DEVICE_STATUS },
       expectedType: "identify_device_result",
     },
     {
@@ -489,7 +487,7 @@ test("Core method assertions accept DeviceResponse success envelopes", () => {
     {
       method: "disconnect",
       assertResponse: assertDisconnectResponse,
-      result: { status: "disconnected" },
+      result: {},
       expectedType: "disconnect_result",
     },
     {
@@ -525,7 +523,7 @@ test("Core method assertions accept DeviceResponse success envelopes", () => {
     {
       method: "credential_prepare",
       assertResponse: assertCredentialPrepareResultResponse,
-      result: { status: "prepared", chain: "sui", credential: "zklogin", preparation: nativePreparation },
+      result: { chain: "sui", credential: "zklogin", preparation: nativePreparation },
       expectedType: "credential_prepare_result",
     },
     {

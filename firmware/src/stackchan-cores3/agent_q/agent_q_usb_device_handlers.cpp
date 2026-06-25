@@ -16,13 +16,12 @@ bool write_status_response(const char* id, const AgentQUsbDeviceResponseInfo& in
     return usb_response_write_success_result(id, "get_status", result.as<JsonObjectConst>());
 }
 
-bool write_identify_device_result(
+bool write_identify_device_method_result(
     const char* id,
     const char* code,
     const AgentQUsbDeviceResponseInfo& info)
 {
     JsonDocument result;
-    result["status"] = "displayed";
     result["code"] = code;
     usb_response_write_device_fields(result["device"].to<JsonObject>(), info);
     return usb_response_write_success_result(id, "identify_device", result.as<JsonObjectConst>());
@@ -105,10 +104,10 @@ void handle_usb_identify_device_request(
         ops.show_identification_code(code, ops.identify_display_ms);
     }
     if (ops.device_response_info != nullptr &&
-        write_identify_device_result(id, code, ops.device_response_info())) {
+        write_identify_device_method_result(id, code, ops.device_response_info())) {
         return;
     }
-    writer.log_write_failure("identify_device_result", id);
+    writer.log_write_failure("identify_device", id);
 }
 
 }  // namespace agent_q

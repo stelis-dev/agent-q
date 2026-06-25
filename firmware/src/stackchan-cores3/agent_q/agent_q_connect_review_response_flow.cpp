@@ -160,7 +160,7 @@ void send_connect_terminal_response_if_needed(
         if (ops.write_approved != nullptr && ops.write_approved(request_id)) {
             log_info(ops, "connect approved", request_id);
         } else {
-            log_write_failure(ops, "connect_result", request_id);
+            log_write_failure(ops, "connect", request_id);
         }
         show_result_and_clear_review(ops, "Connected", AgentQMessageKind::success);
         return;
@@ -170,7 +170,7 @@ void send_connect_terminal_response_if_needed(
         ops.write_rejected(request_id, "user_rejected")) {
         log_info(ops, "connect rejected", request_id);
     } else {
-        log_write_failure(ops, "connect_result", request_id);
+        log_write_failure(ops, "connect", request_id);
     }
     show_result_and_clear_review(
         ops,

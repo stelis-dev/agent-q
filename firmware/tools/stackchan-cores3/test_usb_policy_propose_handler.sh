@@ -178,7 +178,7 @@ bool write_error(const char* id, const char* code)
 
 void log_write_failure(const char* response_type, const char* id)
 {
-    assert(strcmp(response_type, "policy_propose_result") == 0);
+    assert(strcmp(response_type, "policy_propose") == 0);
     g_log_write_failure_calls += 1;
     g_last_id = id;
 }

@@ -290,9 +290,7 @@ function ackResult(id) {
     version: 1,
     success: true,
     method: "ack_result",
-    result: {
-      status: "acked",
-    },
+    result: {},
   };
 }
 
@@ -931,9 +929,7 @@ test("node USB aborts a transferred payload when the method request fails", asyn
             id: request.id,
             version: 1,
             success: true,
-            result: {
-              status: "aborted",
-            },
+            result: {},
           },
         };
       }
@@ -1096,9 +1092,7 @@ test("node USB aborts active payload transfer after progress mismatch", async ()
             id: request.id,
             version: 1,
             success: true,
-            result: {
-              status: "aborted",
-            },
+            result: {},
           },
         };
       }

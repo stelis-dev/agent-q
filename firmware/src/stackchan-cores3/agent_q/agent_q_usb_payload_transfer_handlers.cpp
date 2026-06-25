@@ -205,7 +205,7 @@ void write_begin_result(
     if (!write_size_string(result, "receivedBytes", output.received_bytes) ||
         !write_size_string(result, "chunkMaxBytes", output.chunk_max_bytes) ||
         !usb_response_write_json(response)) {
-        writer.log_write_failure("payload_transfer_begin_result", id);
+        writer.log_write_failure("payload_transfer_begin", id);
     }
 }
 
@@ -221,7 +221,7 @@ void write_chunk_result(
     JsonObject result = response["result"].to<JsonObject>();
     if (!write_size_string(result, "receivedBytes", received_bytes) ||
         !usb_response_write_json(response)) {
-        writer.log_write_failure("payload_transfer_chunk_result", id);
+        writer.log_write_failure("payload_transfer_chunk", id);
     }
 }
 
@@ -237,7 +237,7 @@ void write_finish_result(
     JsonObject result = response["result"].to<JsonObject>();
     result["payloadRef"] = output.descriptor.payload_ref;
     if (!usb_response_write_json(response)) {
-        writer.log_write_failure("payload_transfer_finish_result", id);
+        writer.log_write_failure("payload_transfer_finish", id);
     }
 }
 
@@ -247,9 +247,9 @@ void write_abort_result(const char* id, const AgentQUsbOperationResponseWriter& 
     response["id"] = id;
     response["version"] = kAgentQProtocolVersion;
     response["success"] = true;
-    response["result"]["status"] = "aborted";
+    response["result"].to<JsonObject>();
     if (!usb_response_write_json(response)) {
-        writer.log_write_failure("payload_transfer_abort_result", id);
+        writer.log_write_failure("payload_transfer_abort", id);
     }
 }
 

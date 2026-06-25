@@ -557,7 +557,7 @@ int main()
         agent_q::handle_usb_payload_transfer_abort_request("req_abort", doc, make_writer(), make_ops());
         assert(g_error_calls == 0);
         assert(strcmp(response_type(), "") == 0);
-        assert(strcmp(response_status(), "aborted") == 0);
+        assert(strcmp(response_status(), "") == 0);
     }
 
     {

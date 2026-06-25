@@ -347,7 +347,7 @@ int main()
         assert(g_show_calls == 1);
         assert(g_write_json_calls == 1);
         assert(strcmp(g_last_json_type, "identify_device") == 0);
-        assert(strcmp(g_last_json_status, "displayed") == 0);
+        assert(strcmp(g_last_json_status, "") == 0);
         assert(strcmp(g_last_json_code, "1234") == 0);
         assert(strcmp(g_last_json_device_state, "idle") == 0);
         assert(g_last_duration_ms == 1234);
