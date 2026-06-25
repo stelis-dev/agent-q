@@ -209,8 +209,7 @@ bool busy()
 }
 
 agent_q::AgentQPayloadDeliveryAdmissionDecision admit_tx_payload_delivery(
-    const agent_q::AgentQPayloadDeliverySignTransactionAdmissionInput&,
-    void*)
+    const agent_q::AgentQPayloadDeliveryOperationAdmissionInput&)
 {
     return {
         agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
@@ -460,7 +459,6 @@ agent_q::AgentQUsbSigningHandlerOps make_ops()
         validate_session,
         nullptr,
         admit_tx_payload_delivery,
-        nullptr,
         read_mode,
         nullptr,
         retry_responder,

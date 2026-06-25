@@ -57,10 +57,6 @@ for required in \
   "${AGENT_Q_DIR}/agent_q_payload_delivery_admission.cpp" \
   "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
   "${AGENT_Q_DIR}/agent_q_payload_delivery_store.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_payload_transfer_handlers.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_payload_transfer_handlers.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_signing_handlers.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_signing_handlers.h" \
   "${AGENT_Q_DIR}/agent_q_usb_signing_result_writer.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_preflight.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_retry_response.cpp" \
@@ -128,8 +124,6 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include "agent_q_sui_signing_authority.h"
 #include "agent_q_sui_signing_preparation.h"
 #include "agent_q_sui_zklogin_proof_store.h"
-#include "agent_q_usb_payload_transfer_handlers.h"
-#include "agent_q_usb_signing_handlers.h"
 
 extern "C" {
 #include "byte_conversions.h"
@@ -144,28 +138,6 @@ int g_binding_calls = 0;
 agent_q::AgentQSuiActiveIdentityKind g_active_identity_kind =
     agent_q::AgentQSuiActiveIdentityKind::native;
 char g_zklogin_network[agent_q::kAgentQSuiNetworkBufferSize] = "devnet";
-int g_transfer_error_calls = 0;
-int g_handler_preflight_calls = 0;
-int g_handler_begin_transaction_calls = 0;
-int g_handler_clear_prepared_calls = 0;
-int g_handler_waiting_calls = 0;
-int g_handler_policy_evaluation_calls = 0;
-int g_handler_policy_execution_calls = 0;
-int g_handler_policy_response_calls = 0;
-int g_handler_notice_calls = 0;
-int g_handler_event_sequence = 0;
-int g_handler_policy_evaluation_event = 0;
-int g_handler_policy_execution_event = 0;
-int g_handler_policy_response_event = 0;
-int g_handler_last_clear_prepared_event = 0;
-char g_transfer_response_type[64] = {};
-char g_transfer_response_transfer_id[agent_q::kAgentQPayloadDeliveryTransferIdSize] = {};
-char g_transfer_response_payload_ref[agent_q::kAgentQPayloadDeliveryPayloadRefSize] = {};
-char g_transfer_response_received_bytes[32] = {};
-char g_transfer_response_payload_digest[96] = {};
-char g_transfer_response_size_bytes[32] = {};
-char g_transfer_response_error_code[48] = {};
-char g_handler_last_waiting_id[64] = {};
 
 agent_q::AgentQSessionValidationResult g_session_result =
     agent_q::AgentQSessionValidationResult::ok;
@@ -179,7 +151,6 @@ agent_q::AgentQSuiSigningPreparationResult g_last_preparation_result =
     agent_q::AgentQSuiSigningPreparationResult::ok;
 int g_retry_response_write_calls = 0;
 std::string g_retry_response_json;
-char g_handler_retry_stored_result[agent_q::kSigningResultMaxSize] = {};
 
 enum class PreflightOutcome {
     ok_prepared,
@@ -253,45 +224,6 @@ JsonDocument parse_json(const std::string& json)
     return document;
 }
 
-std::string payload_transfer_begin_json(
-    const char* request_id,
-    const char* session_id,
-    size_t size_bytes,
-    const char* payload_digest)
-{
-    return std::string("{\"id\":\"") + request_id +
-           "\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"begin\"," +
-           "\"sessionId\":\"" + session_id + "\"," +
-           "\"totalBytes\":\"" + std::to_string(size_bytes) +
-           "\",\"payloadDigest\":\"" + payload_digest + "\"}";
-}
-
-std::string payload_transfer_chunk_json(
-    const char* request_id,
-    const char* session_id,
-    const char* transfer_id,
-    size_t offset_bytes,
-    const char* chunk_base64)
-{
-    return std::string("{\"id\":\"") + request_id +
-           "\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"chunk\"," +
-           "\"sessionId\":\"" + session_id + "\"," +
-           "\"transferId\":\"" + transfer_id + "\"," +
-           "\"offsetBytes\":\"" + std::to_string(offset_bytes) +
-           "\",\"chunk\":\"" + chunk_base64 + "\"}";
-}
-
-std::string payload_transfer_finish_json(
-    const char* request_id,
-    const char* session_id,
-    const char* transfer_id)
-{
-    return std::string("{\"id\":\"") + request_id +
-           "\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"finish\"," +
-           "\"sessionId\":\"" + session_id + "\"," +
-           "\"transferId\":\"" + transfer_id + "\"}";
-}
-
 std::string request_json(
     const char* request_id,
     const char* session_id,
@@ -308,26 +240,6 @@ std::string request_json(
            "\",\"txBytes\":\"" + tx_bytes + "\"}}";
 }
 
-std::string staged_request_json(
-    const char* request_id,
-    const char* session_id,
-    const char* chain,
-    const char* method,
-    const char* network,
-    const char* payload_ref,
-    size_t size_bytes,
-    const char* payload_digest)
-{
-    (void)method;
-    (void)size_bytes;
-    (void)payload_digest;
-    return std::string("{\"id\":\"") + request_id +
-           "\",\"version\":1,\"method\":\"sign_transaction\"," +
-           "\"sessionId\":\"" + session_id + "\"," +
-           "\"payload\":{\"chain\":\"" + chain + "\",\"network\":\"" + network +
-           "\",\"payloadRef\":\"" + payload_ref + "\"}}";
-}
-
 agent_q::AgentQSessionValidationResult validate_session(
     const char* session_id,
     void*)
@@ -339,70 +251,10 @@ agent_q::AgentQSessionValidationResult validate_session(
     return g_session_result;
 }
 
-bool transfer_material_ready()
-{
-    return true;
-}
-
-bool transfer_not_busy(const char*, const agent_q::AgentQUsbOperationResponseWriter&)
-{
-    return false;
-}
-
-bool transfer_require_active_matching_session(
-    const char*,
-    const char* session_id,
-    const agent_q::AgentQUsbOperationResponseWriter&)
-{
-    return session_id != nullptr && strcmp(session_id, "session_aaaaaaaaaaaaaaaa") == 0;
-}
-
-agent_q::AgentQTimeoutWindow transfer_timeout_window_for_size(size_t)
-{
-    return agent_q::timeout_window_from_deadline(0, 100000);
-}
-
-agent_q::AgentQTimeoutTick current_tick()
-{
-    return 0;
-}
-
-bool transfer_write_error(const char*, const char* code){
-    ++g_transfer_error_calls;
-    snprintf(g_transfer_response_error_code, sizeof(g_transfer_response_error_code), "%s", code);
-    return true;
-}
-
-void transfer_log_write_failure(const char*, const char*)
-{
-    ++g_transfer_error_calls;
-    snprintf(g_transfer_response_error_code, sizeof(g_transfer_response_error_code), "%s", "write_failed");
-}
-
-agent_q::AgentQUsbOperationResponseWriter transfer_writer()
-{
-    return agent_q::AgentQUsbOperationResponseWriter{
-        transfer_write_error,
-        transfer_log_write_failure,
-    };
-}
-
-agent_q::AgentQUsbPayloadTransferHandlerOps transfer_ops()
-{
-    return agent_q::AgentQUsbPayloadTransferHandlerOps{
-        transfer_material_ready,
-        transfer_not_busy,
-        transfer_require_active_matching_session,
-        current_tick,
-        transfer_timeout_window_for_size,
-    };
-}
-
 agent_q::AgentQPayloadDeliveryAdmissionDecision admit_payload_delivery(
-    const agent_q::AgentQPayloadDeliverySignTransactionAdmissionInput& input,
-    void* context)
+    const agent_q::AgentQPayloadDeliveryOperationAdmissionInput& input)
 {
-    return agent_q::payload_delivery_admit_sign_transaction(input, context);
+    return agent_q::payload_delivery_admit_operation(input);
 }
 
 agent_q::AgentQSignTransactionUserIngressState state(bool material_ready, bool busy)
@@ -414,7 +266,6 @@ agent_q::AgentQSignTransactionUserIngressState state(bool material_ready, bool b
         validate_session,
         nullptr,
         admit_payload_delivery,
-        nullptr,
     };
 }
 
@@ -441,8 +292,6 @@ PreflightOutcome preflight_result_outcome(
                     return PreflightOutcome::ingress_invalid_session;
                 case agent_q::AgentQSignTransactionUserIngressResult::invalid_tx_bytes:
                     return PreflightOutcome::ingress_invalid_tx_bytes;
-                case agent_q::AgentQSignTransactionUserIngressResult::invalid_payload_ref:
-                    return PreflightOutcome::payload_unavailable;
                 default:
                     return PreflightOutcome::identity_error;
             }
@@ -548,216 +397,6 @@ PreflightOutcome run_transaction_preflight(
     return outcome;
 }
 
-agent_q::AgentQSigningPreflightResult evaluate_transaction_preflight_for_handler(
-    JsonDocument& request,
-    const agent_q::AgentQSignTransactionUserIngressState& state,
-    const agent_q::AgentQSigningPreflightRuntime& runtime,
-    agent_q::AgentQSignTransactionPreflightOutput* output)
-{
-    ++g_handler_preflight_calls;
-    return agent_q::evaluate_sign_transaction_preflight(request, state, runtime, output);
-}
-
-bool handler_material_ready()
-{
-    return true;
-}
-
-bool handler_not_busy()
-{
-    return false;
-}
-
-agent_q::AgentQSignTransactionPolicyRuntimeResult handler_evaluate_policy(
-    const agent_q::AgentQSuiPreparedSignTransaction& prepared)
-{
-    ++g_handler_policy_evaluation_calls;
-    g_handler_policy_evaluation_event = ++g_handler_event_sequence;
-    assert(prepared.route == agent_q::AgentQSupportedSignRoute::sui_sign_transaction);
-    assert(prepared.tx_bytes != nullptr);
-    assert(prepared.tx_bytes_size > 0);
-    assert(prepared.payload_digest[0] != '\0');
-    agent_q::AgentQSignTransactionPolicyRuntimeResult result = {};
-    result.status = agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_authorized;
-    result.code = "policy_signed";
-    result.message = "Policy authorized signing.";
-    snprintf(result.chain, sizeof(result.chain), "%s", "sui");
-    snprintf(result.method, sizeof(result.method), "%s", "sign_transaction");
-    result.tx_bytes = prepared.tx_bytes;
-    result.tx_bytes_size = prepared.tx_bytes_size;
-    return result;
-}
-
-agent_q::AgentQPolicySigningExecutionResult handler_execute_policy(
-    const agent_q::AgentQSignTransactionPolicyRuntimeResult& policy_result)
-{
-    ++g_handler_policy_execution_calls;
-    g_handler_policy_execution_event = ++g_handler_event_sequence;
-    assert(policy_result.tx_bytes != nullptr);
-    assert(policy_result.tx_bytes_size > 0);
-    agent_q::AgentQPolicySigningExecutionResult result = {};
-    result.status = agent_q::AgentQPolicySigningExecutionStatus::signed_success;
-    result.signing_route = agent_q::AgentQSigningRoute::sui_sign_transaction;
-    result.code = "policy_signed";
-    result.message = "Policy authorized signing.";
-    result.signature[0] = agent_q::kAgentQSuiSignatureSchemeFlagEd25519;
-    for (size_t index = 1; index < agent_q::kSuiEd25519SignatureBytes; ++index) {
-        result.signature[index] = static_cast<uint8_t>(index + 1U);
-    }
-    result.signature_size = agent_q::kSuiEd25519SignatureBytes;
-    return result;
-}
-
-bool handler_write_policy_response(
-    const char* id,
-    const uint8_t* request_identity,
-    const agent_q::AgentQPolicySigningExecutionResult& result)
-{
-    ++g_handler_policy_response_calls;
-    g_handler_policy_response_event = ++g_handler_event_sequence;
-    return agent_q::usb_signing_result_write_policy_execution(
-        id,
-        "session_aaaaaaaaaaaaaaaa",
-        request_identity,
-        result);
-}
-
-void handler_clear_policy_execution(agent_q::AgentQPolicySigningExecutionResult* result)
-{
-    if (result != nullptr) {
-        memset(result, 0, sizeof(*result));
-    }
-}
-
-void handler_clear_policy_runtime(agent_q::AgentQSignTransactionPolicyRuntimeResult* result)
-{
-    if (result != nullptr) {
-        memset(result, 0, sizeof(*result));
-    }
-}
-
-agent_q::AgentQTimeoutWindow handler_user_signing_window(agent_q::AgentQTimeoutTick now)
-{
-    return agent_q::AgentQTimeoutWindow{now, static_cast<agent_q::AgentQTimeoutTick>(now + 999)};
-}
-
-agent_q::AgentQUserSigningFlowBeginResult handler_begin_transaction_user_signing(
-    agent_q::AgentQTimeoutTick now,
-    const agent_q::AgentQUserSigningTransactionBeginInput& input)
-{
-    ++g_handler_begin_transaction_calls;
-    assert(now == 0);
-    assert(input.request_id != nullptr);
-    assert(strcmp(input.request_id, "req_usb_full_staged_1") == 0);
-    assert(input.request_identity != nullptr);
-    assert(input.session_id != nullptr);
-    assert(strcmp(input.session_id, "session_aaaaaaaaaaaaaaaa") == 0);
-    assert(input.route == agent_q::AgentQSigningRoute::sui_sign_transaction);
-    assert(input.prepared != nullptr);
-    assert(input.prepared->tx_bytes != nullptr);
-    assert(input.prepared->tx_bytes_size > 0);
-    assert(agent_q::timeout_window_valid(input.request_window));
-    return agent_q::AgentQUserSigningFlowBeginResult::ok;
-}
-
-agent_q::AgentQUserSigningFlowBeginResult handler_begin_personal_message_user_signing(
-    agent_q::AgentQTimeoutTick,
-    const agent_q::AgentQUserSigningPersonalMessageBeginInput&)
-{
-    return agent_q::AgentQUserSigningFlowBeginResult::ok;
-}
-
-void handler_clear_prepared_transaction(agent_q::AgentQSuiPreparedSignTransaction* prepared)
-{
-    ++g_handler_clear_prepared_calls;
-    g_handler_last_clear_prepared_event = ++g_handler_event_sequence;
-    agent_q::clear_prepared_sui_sign_transaction(prepared);
-}
-
-void handler_clear_prepared_personal_message(agent_q::AgentQSuiPreparedPersonalMessage* prepared)
-{
-    agent_q::clear_prepared_sui_sign_personal_message(prepared);
-}
-
-bool handler_show_review()
-{
-    return true;
-}
-
-void handler_noop()
-{
-}
-
-void handler_record_waiting(const char* id, agent_q::AgentQSigningRoute route)
-{
-    ++g_handler_waiting_calls;
-    snprintf(g_handler_last_waiting_id, sizeof(g_handler_last_waiting_id), "%s", id);
-    assert(route == agent_q::AgentQSigningRoute::sui_sign_transaction);
-}
-
-void handler_show_notice(const char*, agent_q::AgentQUsbSigningNoticeKind)
-{
-    ++g_handler_notice_calls;
-}
-
-void handler_log_policy_rejected(const char*, const char*, const char*, const char*)
-{
-}
-
-void handler_log_policy_failed(const char*, const char*, const char*)
-{
-}
-
-void handler_log_policy_signed(const char*, const char*, const char*, const char*)
-{
-}
-
-void handler_log_write_failure(const char*, const char*)
-{
-}
-
-agent_q::AgentQUsbSigningHandlerOps signing_handler_ops()
-{
-    return agent_q::AgentQUsbSigningHandlerOps{
-        handler_material_ready,
-        handler_not_busy,
-        handler_not_busy,
-        current_tick,
-        validate_session,
-        nullptr,
-        admit_payload_delivery,
-        nullptr,
-        read_signing_mode,
-        nullptr,
-        respond_to_retry,
-        nullptr,
-        g_handler_retry_stored_result,
-        sizeof(g_handler_retry_stored_result),
-        evaluate_transaction_preflight_for_handler,
-        nullptr,
-        handler_noop,
-        handler_evaluate_policy,
-        handler_execute_policy,
-        handler_write_policy_response,
-        handler_clear_policy_execution,
-        handler_clear_policy_runtime,
-        handler_user_signing_window,
-        handler_begin_transaction_user_signing,
-        handler_begin_personal_message_user_signing,
-        handler_clear_prepared_transaction,
-        handler_clear_prepared_personal_message,
-        handler_show_review,
-        handler_noop,
-        handler_noop,
-        handler_record_waiting,
-        handler_show_notice,
-        handler_log_policy_rejected,
-        handler_log_policy_failed,
-        handler_log_policy_signed,
-        handler_log_write_failure,
-    };
-}
-
 void reset_counters()
 {
     g_session_calls = 0;
@@ -771,29 +410,6 @@ void reset_counters()
     g_retry_status = agent_q::AgentQSigningRetryDeliveryStatus::not_found;
     g_retry_response_write_calls = 0;
     g_retry_response_json.clear();
-    g_transfer_error_calls = 0;
-    g_transfer_response_type[0] = '\0';
-    g_transfer_response_transfer_id[0] = '\0';
-    g_transfer_response_payload_ref[0] = '\0';
-    g_transfer_response_received_bytes[0] = '\0';
-    g_transfer_response_payload_digest[0] = '\0';
-    g_transfer_response_size_bytes[0] = '\0';
-    g_transfer_response_error_code[0] = '\0';
-    g_handler_preflight_calls = 0;
-    g_handler_begin_transaction_calls = 0;
-    g_handler_clear_prepared_calls = 0;
-    g_handler_waiting_calls = 0;
-    g_handler_policy_evaluation_calls = 0;
-    g_handler_policy_execution_calls = 0;
-    g_handler_policy_response_calls = 0;
-    g_handler_notice_calls = 0;
-    g_handler_event_sequence = 0;
-    g_handler_policy_evaluation_event = 0;
-    g_handler_policy_execution_event = 0;
-    g_handler_policy_response_event = 0;
-    g_handler_last_clear_prepared_event = 0;
-    g_handler_last_waiting_id[0] = '\0';
-    memset(g_handler_retry_stored_result, 0, sizeof(g_handler_retry_stored_result));
     agent_q::signing_result_clear_all();
 }
 
@@ -888,159 +504,6 @@ void store_identity_for(
     g_session_calls = 0;
 }
 
-void store_staged_identity_for(
-    const std::string& json,
-    const char* stored_result)
-{
-    JsonDocument document = parse_json(json);
-    const agent_q::AgentQSignRouteClassification classification =
-        agent_q::classify_sign_route(
-            agent_q::AgentQSignOperation::sign_transaction,
-            document["payload"]["chain"].as<const char*>(),
-            document["method"].as<const char*>());
-    assert(classification.result == agent_q::AgentQSignRouteResult::ok);
-    agent_q::AgentQSignTransactionUserIngressOutput ingress = {};
-    assert(agent_q::evaluate_sign_transaction_user_ingress(
-               document,
-               classification.route,
-               state(true, false),
-               &ingress) == agent_q::AgentQSignTransactionUserIngressResult::ok);
-    assert(ingress.params.payload_form == agent_q::AgentQSignTransactionPayloadForm::staged_payload_ref);
-    agent_q::AgentQPayloadDeliveryView view = {};
-    assert(agent_q::payload_delivery_resolve_finalized(
-               0,
-               ingress.session.session_id,
-               ingress.params.payload_ref,
-               &view) == agent_q::AgentQPayloadDeliveryResult::ok);
-    uint8_t identity[agent_q::kAgentQSignRequestIdentitySize] = {};
-    assert(agent_q::sign_request_identity_for_payload_descriptor(
-        classification.route,
-        ingress.params.network,
-        agent_q::kAgentQPayloadDeliveryPayloadKindTransaction,
-        view.descriptor.size_bytes,
-        view.descriptor.payload_digest,
-        identity,
-        sizeof(identity)));
-    assert(agent_q::signing_result_store(
-               ingress.session.session_id,
-               ingress.envelope.request_id,
-               identity,
-               sizeof(identity),
-               stored_result,
-               strlen(stored_result)) == agent_q::SigningResultStoreOutcome::stored);
-    g_session_calls = 0;
-}
-
-std::string stage_payload(const std::vector<uint8_t>& payload, const char* payload_digest)
-{
-    agent_q::payload_delivery_store_reset();
-    agent_q::AgentQPayloadDeliveryBeginOutput begin = {};
-    const agent_q::AgentQPayloadDeliveryResult begin_result =
-        agent_q::payload_delivery_begin(0,
-            agent_q::AgentQPayloadDeliveryBeginInput{
-                "session_aaaaaaaaaaaaaaaa",
-                payload.size(),
-                payload_digest,
-                agent_q::AgentQPayloadDeliveryLimits{4096, 128 * 1024},
-                agent_q::timeout_window_from_deadline(0, 100000),
-            },
-            &begin);
-    assert(begin_result == agent_q::AgentQPayloadDeliveryResult::ok);
-    size_t received = 0;
-    const agent_q::AgentQPayloadDeliveryResult chunk_result =
-        agent_q::payload_delivery_append_chunk(0,
-            agent_q::AgentQPayloadDeliveryChunkInput{
-                "session_aaaaaaaaaaaaaaaa",
-                begin.transfer_id,
-                0,
-                payload.data(),
-                payload.size(),
-            },
-            &received);
-    assert(chunk_result == agent_q::AgentQPayloadDeliveryResult::ok);
-    assert(received == payload.size());
-    agent_q::AgentQPayloadDeliveryFinishOutput finish = {};
-    const agent_q::AgentQPayloadDeliveryResult finish_result =
-        agent_q::payload_delivery_finish(0,
-            agent_q::AgentQPayloadDeliveryFinishInput{
-                "session_aaaaaaaaaaaaaaaa",
-                begin.transfer_id,
-            },
-            &finish);
-    assert(finish_result == agent_q::AgentQPayloadDeliveryResult::ok);
-    return finish.descriptor.payload_ref;
-}
-
-std::string stage_payload_through_usb_handlers(
-    const std::vector<uint8_t>& payload,
-    const std::string& payload_base64,
-    const char* payload_digest)
-{
-    (void)payload_base64;
-    agent_q::payload_delivery_store_reset();
-    JsonDocument begin_doc = parse_json(
-        payload_transfer_begin_json(
-            "req_transfer_begin",
-            "session_aaaaaaaaaaaaaaaa",
-            payload.size(),
-            payload_digest));
-    agent_q::handle_usb_payload_transfer_begin_request(
-        "req_transfer_begin",
-        begin_doc,
-        transfer_writer(),
-        transfer_ops());
-    assert(g_transfer_error_calls == 0);
-    assert(strcmp(g_transfer_response_type, "") == 0);
-    assert(g_transfer_response_transfer_id[0] != '\0');
-    const std::string transfer_id = g_transfer_response_transfer_id;
-
-    size_t offset = 0;
-    while (offset < payload.size()) {
-        const size_t next_size = std::min(
-            agent_q::kAgentQPayloadDeliveryDefaultChunkMaxBytes,
-            payload.size() - offset);
-        const std::vector<uint8_t> chunk(
-            payload.begin() + static_cast<std::ptrdiff_t>(offset),
-            payload.begin() + static_cast<std::ptrdiff_t>(offset + next_size));
-        const size_t next_offset = offset + next_size;
-        JsonDocument chunk_doc = parse_json(
-            payload_transfer_chunk_json(
-                "req_transfer_chunk",
-                "session_aaaaaaaaaaaaaaaa",
-                transfer_id.c_str(),
-                offset,
-                base64(chunk).c_str()));
-        agent_q::handle_usb_payload_transfer_chunk_request(
-            "req_transfer_chunk",
-            chunk_doc,
-            transfer_writer(),
-            transfer_ops());
-        assert(g_transfer_error_calls == 0);
-        assert(strcmp(g_transfer_response_type, "") == 0);
-        assert(strcmp(
-                   g_transfer_response_received_bytes,
-                   std::to_string(next_offset).c_str()) == 0);
-        offset = next_offset;
-    }
-
-    JsonDocument finish_doc = parse_json(
-        payload_transfer_finish_json(
-            "req_transfer_finish",
-            "session_aaaaaaaaaaaaaaaa",
-            transfer_id.c_str()));
-    agent_q::handle_usb_payload_transfer_finish_request(
-        "req_transfer_finish",
-        finish_doc,
-        transfer_writer(),
-        transfer_ops());
-    assert(g_transfer_error_calls == 0);
-    assert(strcmp(g_transfer_response_type, "") == 0);
-    assert(strcmp(g_transfer_response_size_bytes, "") == 0);
-    assert(strcmp(g_transfer_response_payload_digest, "") == 0);
-    assert(g_transfer_response_payload_ref[0] != '\0');
-    return g_transfer_response_payload_ref;
-}
-
 }  // namespace
 
 namespace agent_q {
@@ -1081,12 +544,7 @@ const char* user_signing_flow_terminal_reason(AgentQUserSigningTerminalResult)
 
 bool usb_response_write_json(JsonDocument& response)
 {
-    snprintf(g_transfer_response_type, sizeof(g_transfer_response_type), "%s", response["method"] | response["type"] | "");
-    snprintf(g_transfer_response_transfer_id, sizeof(g_transfer_response_transfer_id), "%s", response["result"]["transferId"] | "");
-    snprintf(g_transfer_response_payload_ref, sizeof(g_transfer_response_payload_ref), "%s", response["result"]["payloadRef"] | "");
-    snprintf(g_transfer_response_received_bytes, sizeof(g_transfer_response_received_bytes), "%s", response["result"]["receivedBytes"] | "");
-    snprintf(g_transfer_response_payload_digest, sizeof(g_transfer_response_payload_digest), "%s", response["payloadDigest"] | "");
-    snprintf(g_transfer_response_size_bytes, sizeof(g_transfer_response_size_bytes), "%s", response["sizeBytes"] | "");
+    (void)response;
     return true;
 }
 
@@ -1149,7 +607,7 @@ bool usb_response_write_method_error(
 bool usb_response_write_error(const char* id, const char* code)
 {
     (void)id;
-    snprintf(g_transfer_response_error_code, sizeof(g_transfer_response_error_code), "%s", code);
+    (void)code;
     return true;
 }
 
@@ -1247,9 +705,6 @@ int main(int argc, char** argv)
             "sign_transaction",
             "devnet",
             valid_b64.c_str());
-    const char* staged_digest =
-        "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
-
     reset_counters();
     expect_case(
         "unsupported chain stops before state/session",
@@ -1454,407 +909,6 @@ int main(int argc, char** argv)
         0,
         0);
 
-    const std::string staged_ref = stage_payload(valid, staged_digest);
-    const std::string staged_request =
-        staged_request_json(
-            "req_staged_1",
-            "session_aaaaaaaaaaaaaaaa",
-            "sui",
-            "sign_transaction",
-            "devnet",
-            staged_ref.c_str(),
-            valid.size(),
-            staged_digest);
-    reset_counters();
-    expect_case(
-        "finalized payload blocks unrelated inline signing",
-        run_transaction_preflight(valid_request, true, false),
-        PreflightOutcome::ingress_busy,
-        1,
-        0,
-        0);
-
-    reset_counters();
-    g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::zklogin;
-    snprintf(g_zklogin_network, sizeof(g_zklogin_network), "%s", "testnet");
-    expect_case(
-        "fresh staged zkLogin network mismatch fails before taking finalized payload",
-        run_transaction_preflight(staged_request, true, false),
-        PreflightOutcome::network_mismatch,
-        1,
-        0,
-        0);
-    reset_counters();
-    g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::zklogin;
-    snprintf(g_zklogin_network, sizeof(g_zklogin_network), "%s", "devnet");
-    expect_case(
-        "matching staged request still consumes after network mismatch rejection",
-        run_transaction_preflight(staged_request, true, false),
-        PreflightOutcome::ok_prepared,
-        1,
-        0,
-        1);
-
-    const std::string staged_ref_for_retry = stage_payload(valid, staged_digest);
-    const std::string staged_request_for_retry =
-        staged_request_json(
-            "req_staged_1",
-            "session_aaaaaaaaaaaaaaaa",
-            "sui",
-            "sign_transaction",
-            "devnet",
-            staged_ref_for_retry.c_str(),
-            valid.size(),
-            staged_digest);
-    reset_counters();
-    store_staged_identity_for(
-        staged_request_for_retry,
-        "{\"version\":1,\"success\":true,\"method\":\"sign_transaction\","
-        "\"result\":{\"authorization\":\"user\",\"chain\":\"sui\","
-        "\"method\":\"sign_transaction\",\"signature\":\"sig\"}}");
-    expect_case(
-        "staged matching retry replays from store descriptor identity",
-        run_transaction_preflight(staged_request_for_retry, true, false),
-        PreflightOutcome::replay_match,
-        1,
-        0,
-        0);
-    expect_contains("staged matching retry response", g_retry_response_json, "\"success\":true");
-    expect_contains("staged matching retry response", g_retry_response_json, "\"signature\":\"sig\"");
-
-    reset_counters();
-    const std::string fresh_staged_ref = stage_payload(valid, staged_digest);
-    const std::string fresh_staged_request =
-        staged_request_json(
-            "req_staged_fresh",
-            "session_aaaaaaaaaaaaaaaa",
-            "sui",
-            "sign_transaction",
-            "devnet",
-            fresh_staged_ref.c_str(),
-            valid.size(),
-            staged_digest);
-    expect_case(
-        "fresh staged request reaches preparation with store descriptor identity",
-        run_transaction_preflight(fresh_staged_request, true, false),
-        PreflightOutcome::ok_prepared,
-        1,
-        1,
-        1);
-
-    reset_counters();
-    const std::string ref_swap_ref = stage_payload(valid, staged_digest);
-    const std::string ref_independent_original =
-        staged_request_json(
-            "req_staged_ref_independent",
-            "session_aaaaaaaaaaaaaaaa",
-            "sui",
-            "sign_transaction",
-            "devnet",
-            ref_swap_ref.c_str(),
-            valid.size(),
-            staged_digest);
-    const std::string ref_independent_retry =
-        staged_request_json(
-            "req_staged_ref_independent",
-            "session_aaaaaaaaaaaaaaaa",
-            "sui",
-            "sign_transaction",
-            "devnet",
-            "payload_ffffffffffffffff",
-            valid.size(),
-            staged_digest);
-    store_staged_identity_for(
-        ref_independent_original,
-        "{\"version\":1,\"success\":true,\"method\":\"sign_transaction\","
-        "\"result\":{\"authorization\":\"user\",\"chain\":\"sui\","
-        "\"method\":\"sign_transaction\",\"signature\":\"sig\"}}");
-    expect_case(
-        "staged retry with wrong payloadRef fails before retained replay",
-        run_transaction_preflight(ref_independent_retry, true, false),
-        PreflightOutcome::payload_unavailable,
-        1,
-        1,
-        0);
-
-    reset_counters();
-    const std::string conflict_ref = stage_payload(valid, staged_digest);
-    const std::string conflict_original =
-        staged_request_json(
-            "req_staged_1",
-            "session_aaaaaaaaaaaaaaaa",
-            "sui",
-            "sign_transaction",
-            "devnet",
-            conflict_ref.c_str(),
-            valid.size(),
-            staged_digest);
-    store_staged_identity_for(
-        conflict_original,
-        "{\"version\":1,\"success\":true,\"method\":\"sign_transaction\","
-        "\"result\":{\"authorization\":\"user\",\"chain\":\"sui\","
-        "\"method\":\"sign_transaction\",\"signature\":\"sig\"}}");
-    expect_case(
-        "staged descriptor conflict comes from store descriptor identity",
-        run_transaction_preflight(
-            staged_request_json(
-                "req_staged_1",
-                "session_aaaaaaaaaaaaaaaa",
-                "sui",
-                "sign_transaction",
-                "testnet",
-                conflict_ref.c_str(),
-                valid.size(),
-                staged_digest),
-            true,
-            false),
-        PreflightOutcome::replay_conflict,
-        1,
-        1,
-        0);
-    expect_contains("staged descriptor conflict response", g_retry_response_json, "request_id_conflict");
-
-    reset_counters();
-    expect_case(
-        "missing staged payloadRef fails before taking finalized payload",
-        run_transaction_preflight(
-            staged_request_json(
-                "req_staged_mismatch",
-                "session_aaaaaaaaaaaaaaaa",
-                "sui",
-                "sign_transaction",
-                "devnet",
-                "payload_eeeeeeeeeeeeeeee",
-                valid.size(),
-                staged_digest),
-            true,
-            false),
-        PreflightOutcome::payload_unavailable,
-        1,
-        0,
-        0);
-    const std::string mismatch_ref = stage_payload(valid, staged_digest);
-    reset_counters();
-    expect_case(
-        "matching staged request still consumes after mismatch rejection",
-        run_transaction_preflight(
-            staged_request_json(
-                "req_staged_after_mismatch",
-                "session_aaaaaaaaaaaaaaaa",
-                "sui",
-                "sign_transaction",
-                "devnet",
-                mismatch_ref.c_str(),
-                valid.size(),
-                staged_digest),
-            true,
-            false),
-        PreflightOutcome::ok_prepared,
-        1,
-        0,
-        1);
-
-    const std::string usb_staged_ref =
-        stage_payload_through_usb_handlers(valid, valid_b64, staged_digest);
-    const std::string usb_staged_request =
-        staged_request_json(
-            "req_usb_staged_1",
-            "session_aaaaaaaaaaaaaaaa",
-            "sui",
-            "sign_transaction",
-            "devnet",
-            usb_staged_ref.c_str(),
-            valid.size(),
-            staged_digest);
-    reset_counters();
-    expect_case(
-        "USB transfer handlers produce finalized payload consumed by production preflight",
-        run_transaction_preflight(usb_staged_request, true, false),
-        PreflightOutcome::ok_prepared,
-        1,
-        0,
-        1);
-
-    const std::string full_handler_staged_ref =
-        stage_payload_through_usb_handlers(valid, valid_b64, staged_digest);
-    const std::string full_handler_staged_request =
-        staged_request_json(
-            "req_usb_full_staged_1",
-            "session_aaaaaaaaaaaaaaaa",
-            "sui",
-            "sign_transaction",
-            "devnet",
-            full_handler_staged_ref.c_str(),
-            valid.size(),
-            staged_digest);
-    reset_counters();
-    {
-        JsonDocument full_handler_doc = parse_json(full_handler_staged_request);
-        agent_q::handle_usb_sign_transaction_request(
-            "req_usb_full_staged_1",
-            full_handler_doc,
-            transfer_writer(),
-            signing_handler_ops());
-    }
-    if (g_transfer_error_calls != 0 ||
-        g_handler_preflight_calls != 1 ||
-        g_handler_begin_transaction_calls != 1 ||
-        g_handler_clear_prepared_calls != 2 ||
-        g_handler_waiting_calls != 1 ||
-        strcmp(g_handler_last_waiting_id, "req_usb_full_staged_1") != 0 ||
-        g_handler_policy_evaluation_calls != 0 ||
-        g_handler_policy_execution_calls != 0 ||
-        g_handler_policy_response_calls != 0) {
-        fprintf(stderr,
-                "USB staged signing handler path failed: errors/preflight/begin/clear/waiting/policy = "
-                "%d/%d/%d/%d/%d/%d/%d/%d\n",
-                g_transfer_error_calls,
-                g_handler_preflight_calls,
-                g_handler_begin_transaction_calls,
-                g_handler_clear_prepared_calls,
-                g_handler_waiting_calls,
-                g_handler_policy_evaluation_calls,
-                g_handler_policy_execution_calls,
-                g_handler_policy_response_calls);
-        ++g_failures;
-    }
-    if (agent_q::payload_delivery_advance_and_snapshot(0).state !=
-        agent_q::AgentQPayloadDeliveryState::idle) {
-        fprintf(stderr, "USB staged signing handler path left payload delivery non-idle\n");
-        ++g_failures;
-    }
-
-    const std::string full_handler_policy_staged_ref =
-        stage_payload_through_usb_handlers(valid, valid_b64, staged_digest);
-    const std::string full_handler_policy_staged_request =
-        staged_request_json(
-            "req_usb_full_staged_policy_1",
-            "session_aaaaaaaaaaaaaaaa",
-            "sui",
-            "sign_transaction",
-            "devnet",
-            full_handler_policy_staged_ref.c_str(),
-            valid.size(),
-            staged_digest);
-    reset_counters();
-    g_signing_mode = agent_q::AgentQSigningAuthorizationMode::policy;
-    {
-        JsonDocument full_handler_doc = parse_json(full_handler_policy_staged_request);
-        agent_q::handle_usb_sign_transaction_request(
-            "req_usb_full_staged_policy_1",
-            full_handler_doc,
-            transfer_writer(),
-            signing_handler_ops());
-    }
-    if (g_transfer_error_calls != 0 ||
-        g_handler_preflight_calls != 1 ||
-        g_handler_begin_transaction_calls != 0 ||
-        g_handler_waiting_calls != 0 ||
-        g_handler_policy_evaluation_calls != 1 ||
-        g_handler_policy_execution_calls != 1 ||
-        g_handler_policy_response_calls != 1 ||
-        g_handler_clear_prepared_calls != 2 ||
-        !(g_handler_policy_evaluation_event > 0 &&
-          g_handler_policy_evaluation_event < g_handler_policy_execution_event &&
-          g_handler_policy_execution_event < g_handler_policy_response_event &&
-          g_handler_policy_response_event < g_handler_last_clear_prepared_event)) {
-        fprintf(stderr,
-                "USB staged policy signing handler path failed: errors/preflight/begin/waiting/policy/clear/events = "
-                "%d/%d/%d/%d/%d/%d/%d/%d/%d/%d/%d/%d\n",
-                g_transfer_error_calls,
-                g_handler_preflight_calls,
-                g_handler_begin_transaction_calls,
-                g_handler_waiting_calls,
-                g_handler_policy_evaluation_calls,
-                g_handler_policy_execution_calls,
-                g_handler_policy_response_calls,
-                g_handler_clear_prepared_calls,
-                g_handler_policy_evaluation_event,
-                g_handler_policy_execution_event,
-                g_handler_policy_response_event,
-                g_handler_last_clear_prepared_event);
-        ++g_failures;
-    }
-    if (agent_q::payload_delivery_advance_and_snapshot(0).state !=
-        agent_q::AgentQPayloadDeliveryState::idle) {
-        fprintf(stderr, "USB staged policy signing handler path left payload delivery non-idle\n");
-        ++g_failures;
-    }
-    {
-        char stored[agent_q::kSigningResultMaxSize] = {};
-        size_t stored_len = 0;
-        if (!agent_q::signing_result_find(
-                "session_aaaaaaaaaaaaaaaa",
-                "req_usb_full_staged_policy_1",
-                stored,
-                sizeof(stored),
-                &stored_len)) {
-            fprintf(stderr, "USB staged policy signing handler path did not buffer terminal result\n");
-            ++g_failures;
-        } else {
-            const std::string stored_json(stored, stored_len);
-            expect_contains("USB staged policy buffered result", stored_json, "\"success\":true");
-            expect_contains("USB staged policy buffered result", stored_json, "\"authorization\":\"policy\"");
-            expect_contains("USB staged policy buffered result", stored_json, "\"method\":\"sign_transaction\"");
-        }
-    }
-
-    std::vector<uint8_t> max_synthetic_payload(
-        agent_q::kAgentQPayloadDeliveryDefaultMaxBytes);
-    for (size_t index = 0; index < max_synthetic_payload.size(); ++index) {
-        max_synthetic_payload[index] = static_cast<uint8_t>((index * 37U + 11U) & 0xffU);
-    }
-    const std::string max_staged_ref =
-        stage_payload_through_usb_handlers(max_synthetic_payload, "", staged_digest);
-    const std::string max_staged_request =
-        staged_request_json(
-            "req_usb_max_staged_1",
-            "session_aaaaaaaaaaaaaaaa",
-            "sui",
-            "sign_transaction",
-            "devnet",
-            max_staged_ref.c_str(),
-            max_synthetic_payload.size(),
-            staged_digest);
-    reset_counters();
-    {
-        JsonDocument max_handler_doc = parse_json(max_staged_request);
-        agent_q::handle_usb_sign_transaction_request(
-            "req_usb_max_staged_1",
-            max_handler_doc,
-            transfer_writer(),
-            signing_handler_ops());
-    }
-    if (g_transfer_error_calls != 1 ||
-        g_handler_preflight_calls != 1 ||
-        g_handler_begin_transaction_calls != 0 ||
-        g_handler_policy_evaluation_calls != 0 ||
-        g_handler_policy_execution_calls != 0 ||
-        g_handler_policy_response_calls != 0 ||
-        (strcmp(g_transfer_response_error_code, "malformed_transaction") != 0 &&
-         strcmp(g_transfer_response_error_code, "unsupported_transaction") != 0)) {
-        fprintf(stderr,
-                "USB max staged payload fail-closed path failed: errors/code/preflight/begin/policy = "
-                "%d/%s/%d/%d/%d/%d/%d\n",
-                g_transfer_error_calls,
-                g_transfer_response_error_code,
-                g_handler_preflight_calls,
-                g_handler_begin_transaction_calls,
-                g_handler_policy_evaluation_calls,
-                g_handler_policy_execution_calls,
-                g_handler_policy_response_calls);
-        ++g_failures;
-    }
-    if (agent_q::payload_delivery_advance_and_snapshot(0).state !=
-        agent_q::AgentQPayloadDeliveryState::idle) {
-        fprintf(stderr, "USB max staged payload fail-closed path left payload delivery non-idle\n");
-        ++g_failures;
-    }
-    expect_no_stored_result(
-        "USB max staged payload fail-closed path",
-        "session_aaaaaaaaaaaaaaaa",
-        "req_usb_max_staged_1");
-
     reset_counters();
     const std::vector<uint8_t> malformed_tx(
         agent_q::kAgentQSuiSignTransactionInlineTxBytesMaxBytes,
@@ -1917,8 +971,6 @@ CPP
   "${AGENT_Q_DIR}/agent_q_payload_delivery_admission.cpp" \
   "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
   "${AGENT_Q_DIR}/agent_q_payload_delivery_store.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_payload_transfer_handlers.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_signing_handlers.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_signing_result_writer.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_preflight.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_retry_response.cpp" \

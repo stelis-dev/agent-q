@@ -314,6 +314,9 @@ export function parseDeviceRequest(value: unknown): DeviceRequest {
   const row = deviceMethodRow(record.method);
   const hasSessionId = Object.prototype.hasOwnProperty.call(record, "sessionId");
   const hasPayload = Object.prototype.hasOwnProperty.call(record, "payload");
+  if (hasPayload && record.payload === undefined) {
+    throw new ProtocolError("invalid_params", "Device request payload must not be undefined.");
+  }
   validateSessionRule(row.sessionRule, hasSessionId, record.sessionId);
   validatePayloadRule(row.payloadRule, hasPayload);
 

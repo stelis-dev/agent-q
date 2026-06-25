@@ -35,25 +35,11 @@ bool request_params_fields_supported(JsonObjectConst params)
     for (JsonPairConst pair : params) {
         if (!agent_q_json_string_equals(pair.key(), "network") &&
             !agent_q_json_string_equals(pair.key(), "chain") &&
-            !agent_q_json_string_equals(pair.key(), "txBytes") &&
-            !agent_q_json_string_equals(pair.key(), "payloadRef")) {
+            !agent_q_json_string_equals(pair.key(), "txBytes")) {
             return false;
         }
     }
     return true;
-}
-
-bool object_has_key(JsonObjectConst object, const char* key)
-{
-    if (key == nullptr) {
-        return false;
-    }
-    for (JsonPairConst pair : object) {
-        if (agent_q_json_string_equals(pair.key(), key)) {
-            return true;
-        }
-    }
-    return false;
 }
 
 }  // namespace
@@ -172,39 +158,16 @@ AgentQSignTransactionUserValidationResult validate_sign_transaction_user_params(
         return AgentQSignTransactionUserValidationResult::invalid_network;
     }
 
-    const bool has_tx_bytes = object_has_key(params, "txBytes");
-    const bool has_payload_ref = object_has_key(params, "payloadRef");
-    if (has_tx_bytes == has_payload_ref) {
+    const char* tx_bytes_base64 = nullptr;
+    if (!agent_q_json_value_c_string(params["txBytes"], &tx_bytes_base64) ||
+        !validate_canonical_base64_syntax(
+            tx_bytes_base64,
+            kAgentQSuiSignTransactionTxBytesMaxBase64Size,
+            &output->tx_bytes_decoded_size)) {
         memset(output, 0, sizeof(*output));
-        return AgentQSignTransactionUserValidationResult::invalid_params_shape;
+        return AgentQSignTransactionUserValidationResult::invalid_tx_bytes;
     }
-
-    if (has_tx_bytes) {
-        const char* tx_bytes_base64 = nullptr;
-        if (!agent_q_json_value_c_string(params["txBytes"], &tx_bytes_base64) ||
-            !validate_canonical_base64_syntax(
-                tx_bytes_base64,
-                kAgentQSignRequestBase64MaxSize,
-                &output->tx_bytes_decoded_size)) {
-            memset(output, 0, sizeof(*output));
-            return AgentQSignTransactionUserValidationResult::invalid_tx_bytes;
-        }
-        output->payload_form = AgentQSignTransactionPayloadForm::inline_tx_bytes;
-        output->tx_bytes_base64 = tx_bytes_base64;
-        return AgentQSignTransactionUserValidationResult::ok;
-    }
-
-    const char* payload_ref = nullptr;
-    if (!agent_q_json_value_c_string(params["payloadRef"], &payload_ref) ||
-        !payload_delivery_payload_ref_format_valid(payload_ref) ||
-        !copy_nonempty_c_string(
-            payload_ref,
-            output->payload_ref,
-            sizeof(output->payload_ref))) {
-        memset(output, 0, sizeof(*output));
-        return AgentQSignTransactionUserValidationResult::invalid_payload_descriptor;
-    }
-    output->payload_form = AgentQSignTransactionPayloadForm::staged_payload_ref;
+    output->tx_bytes_base64 = tx_bytes_base64;
 
     return AgentQSignTransactionUserValidationResult::ok;
 }
@@ -231,10 +194,6 @@ const char* sign_transaction_user_validation_result_name(
             return "invalid_network";
         case AgentQSignTransactionUserValidationResult::invalid_tx_bytes:
             return "invalid_tx_bytes";
-        case AgentQSignTransactionUserValidationResult::invalid_payload_ref:
-            return "invalid_payload_ref";
-        case AgentQSignTransactionUserValidationResult::invalid_payload_descriptor:
-            return "invalid_payload_descriptor";
     }
     return "unknown";
 }

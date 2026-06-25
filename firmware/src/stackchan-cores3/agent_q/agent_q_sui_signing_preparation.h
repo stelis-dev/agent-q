@@ -61,14 +61,6 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction(
     size_t decoded_tx_size,
     AgentQSuiPreparedSignTransaction* out);
 
-AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_from_owned_bytes(
-    AgentQSupportedSignRoute route,
-    const char* network,
-    uint8_t* tx_bytes,
-    size_t tx_bytes_size,
-    const char* payload_digest,
-    AgentQSuiPreparedSignTransaction* out);
-
 AgentQSuiSigningPreparationResult prepare_sui_sign_personal_message(
     AgentQSupportedSignRoute route,
     const char* network,

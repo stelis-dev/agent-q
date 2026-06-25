@@ -8,10 +8,13 @@ namespace agent_q {
 
 void handle_usb_request_line(
     const char* line,
+    AgentQTimeoutTick now_tick,
     const AgentQUsbOperationResponseWriter& response_writer,
-    const AgentQUsbOperationHandlers& handlers)
+    const AgentQUsbOperationHandlers& handlers,
+    AgentQUsbPayloadRefResolver resolve_payload_ref)
 {
     JsonDocument request;
+    JsonDocument resolved_payload;
     AgentQUsbRequestEnvelope envelope = {};
     const AgentQUsbRequestEnvelopeParseStatus envelope_status =
         parse_usb_request_envelope(line, request, &envelope);
@@ -23,6 +26,16 @@ void handle_usb_request_line(
                 envelope.id,
                 usb_request_envelope_error_code(envelope_status));
         }
+        return;
+    }
+
+    if (resolve_payload_ref != nullptr &&
+        !resolve_payload_ref(
+            request,
+            resolved_payload,
+            now_tick,
+            envelope,
+            method_writer)) {
         return;
     }
 

@@ -4,7 +4,6 @@
 
 #include "agent_q_json_input.h"
 #include "agent_q_payload_delivery_admission.h"
-#include "agent_q_payload_delivery_store.h"
 #include "agent_q_sign_transaction_limits.h"
 #include "agent_q_sui_signing_authority.h"
 
@@ -129,76 +128,6 @@ AgentQSigningPreflightResult evaluate_common_post_ingress_preflight(
         signing_mode);
 }
 
-AgentQSigningPreflightResult evaluate_staged_post_ingress_preflight(
-    AgentQSupportedSignRoute route,
-    const char* request_id,
-    const char* session_id,
-    const char* network,
-    const char* payload_kind,
-    size_t payload_size_bytes,
-    const char* payload_digest,
-    const AgentQSigningPreflightRuntime& runtime,
-    uint8_t* request_identity,
-    size_t request_identity_size,
-    AgentQSigningAuthorizationMode* signing_mode)
-{
-    if (!sign_request_identity_for_payload_descriptor(
-            route,
-            network,
-            payload_kind,
-            payload_size_bytes,
-            payload_digest,
-            request_identity,
-            request_identity_size)) {
-        return AgentQSigningPreflightResult::identity_error;
-    }
-
-    return evaluate_post_identity_preflight(
-        route,
-        request_id,
-        session_id,
-        runtime,
-        request_identity,
-        signing_mode);
-}
-
-bool staged_descriptor_matches_request(
-    const AgentQPayloadDeliveryDescriptor& descriptor,
-    const AgentQSignTransactionUserParams& params)
-{
-    (void)params;
-    return descriptor.size_bytes > 0 &&
-           descriptor.payload_digest[0] != '\0';
-}
-
-AgentQSuiSigningPreparationResult payload_take_result_to_preparation_result(
-    AgentQPayloadDeliveryResult result)
-{
-    switch (result) {
-        case AgentQPayloadDeliveryResult::payload_too_large:
-            return AgentQSuiSigningPreparationResult::payload_too_large;
-        case AgentQPayloadDeliveryResult::ok:
-            return AgentQSuiSigningPreparationResult::ok;
-        case AgentQPayloadDeliveryResult::invalid_session:
-        case AgentQPayloadDeliveryResult::invalid_payload_ref:
-        case AgentQPayloadDeliveryResult::not_found:
-            return AgentQSuiSigningPreparationResult::payload_unavailable;
-        case AgentQPayloadDeliveryResult::invalid_argument:
-        case AgentQPayloadDeliveryResult::invalid_state:
-        case AgentQPayloadDeliveryResult::invalid_payload_digest:
-        case AgentQPayloadDeliveryResult::invalid_transfer_id:
-        case AgentQPayloadDeliveryResult::allocation_failed:
-        case AgentQPayloadDeliveryResult::chunk_too_large:
-        case AgentQPayloadDeliveryResult::offset_mismatch:
-        case AgentQPayloadDeliveryResult::payload_overflow:
-        case AgentQPayloadDeliveryResult::size_mismatch:
-        case AgentQPayloadDeliveryResult::digest_mismatch:
-        case AgentQPayloadDeliveryResult::digest_error:
-        default:
-            return AgentQSuiSigningPreparationResult::invalid_params;
-    }
-}
-
 AgentQSignTransactionUserIngressResult map_payload_delivery_admission_result(
     const AgentQPayloadDeliveryAdmissionDecision& decision)
 {
@@ -207,11 +136,8 @@ AgentQSignTransactionUserIngressResult map_payload_delivery_admission_result(
             return AgentQSignTransactionUserIngressResult::ok;
         case AgentQPayloadDeliveryAdmissionResult::busy:
             return AgentQSignTransactionUserIngressResult::busy;
-        case AgentQPayloadDeliveryAdmissionResult::invalid_session:
-            return AgentQSignTransactionUserIngressResult::invalid_session;
-        case AgentQPayloadDeliveryAdmissionResult::invalid_payload_ref:
         case AgentQPayloadDeliveryAdmissionResult::unknown_request:
-            return AgentQSignTransactionUserIngressResult::invalid_payload_ref;
+            return AgentQSignTransactionUserIngressResult::invalid_params_shape;
     }
     return AgentQSignTransactionUserIngressResult::invalid_params_shape;
 }
@@ -223,17 +149,13 @@ AgentQSignTransactionUserIngressResult admit_transaction_payload_after_network_g
     if (state.admit_payload_delivery == nullptr) {
         return AgentQSignTransactionUserIngressResult::ok;
     }
-    const bool staged =
-        ingress.params.payload_form == AgentQSignTransactionPayloadForm::staged_payload_ref;
     const AgentQPayloadDeliveryAdmissionDecision admission =
         state.admit_payload_delivery(
-            AgentQPayloadDeliverySignTransactionAdmissionInput{
+            AgentQPayloadDeliveryOperationAdmissionInput{
                 state.now_tick,
+                AgentQPayloadDeliveryOperationKind::sign_transaction,
                 ingress.session.session_id,
-                staged,
-                staged ? ingress.params.payload_ref : nullptr,
-            },
-            state.payload_delivery_admission_context);
+            });
     return map_payload_delivery_admission_result(admission);
 }
 
@@ -299,22 +221,17 @@ AgentQSigningPreflightResult evaluate_sign_transaction_preflight(
         return AgentQSigningPreflightResult::transaction_ingress_error;
     }
 
-    const bool staged =
-        output->ingress.params.payload_form ==
-        AgentQSignTransactionPayloadForm::staged_payload_ref;
     const AgentQSigningPreflightResult common_result =
-        staged
-            ? AgentQSigningPreflightResult::ok
-            : evaluate_common_post_ingress_preflight(
-                  classification.route,
-                  output->ingress.envelope.request_id,
-                  output->ingress.session.session_id,
-                  output->ingress.params.network,
-                  output->ingress.params.tx_bytes_base64,
-                  runtime,
-                  output->request_identity,
-                  sizeof(output->request_identity),
-                  &output->signing_mode);
+        evaluate_common_post_ingress_preflight(
+            classification.route,
+            output->ingress.envelope.request_id,
+            output->ingress.session.session_id,
+            output->ingress.params.network,
+            output->ingress.params.tx_bytes_base64,
+            runtime,
+            output->request_identity,
+            sizeof(output->request_identity),
+            &output->signing_mode);
     if (common_result != AgentQSigningPreflightResult::ok) {
         return common_result;
     }
@@ -331,77 +248,19 @@ AgentQSigningPreflightResult evaluate_sign_transaction_preflight(
         return AgentQSigningPreflightResult::transaction_ingress_error;
     }
 
-    if (staged) {
-        AgentQPayloadDeliveryView view = {};
-        const AgentQPayloadDeliveryResult resolve_result =
-            payload_delivery_resolve_finalized(
-                runtime.now_tick,
-                output->ingress.session.session_id,
-                output->ingress.params.payload_ref,
-                &view);
-        if (resolve_result != AgentQPayloadDeliveryResult::ok) {
-            output->preparation_result =
-                payload_take_result_to_preparation_result(resolve_result);
-            return AgentQSigningPreflightResult::transaction_preparation_error;
-        }
-        if (!staged_descriptor_matches_request(
-                view.descriptor,
-                output->ingress.params)) {
-            output->preparation_result =
-                AgentQSuiSigningPreparationResult::invalid_argument;
-            return AgentQSigningPreflightResult::transaction_preparation_error;
-        }
-        const AgentQSigningPreflightResult staged_common_result =
-            evaluate_staged_post_ingress_preflight(
-                classification.route,
-                output->ingress.envelope.request_id,
-                output->ingress.session.session_id,
-                output->ingress.params.network,
-                kAgentQPayloadDeliveryPayloadKindTransaction,
-                view.descriptor.size_bytes,
-                view.descriptor.payload_digest,
-                runtime,
-                output->request_identity,
-                sizeof(output->request_identity),
-                &output->signing_mode);
-        if (staged_common_result != AgentQSigningPreflightResult::ok) {
-            return staged_common_result;
-        }
-        AgentQPayloadDeliveryOwnedPayload payload = {};
-        const AgentQPayloadDeliveryResult take_result =
-            payload_delivery_take_finalized(
-                runtime.now_tick,
-                output->ingress.session.session_id,
-                output->ingress.params.payload_ref,
-                &payload);
-        if (take_result != AgentQPayloadDeliveryResult::ok) {
-            output->preparation_result =
-                payload_take_result_to_preparation_result(take_result);
-            return AgentQSigningPreflightResult::transaction_preparation_error;
-        }
+    if (output->ingress.params.tx_bytes_decoded_size >
+        kAgentQSuiSignTransactionInlineTxBytesMaxBytes) {
         output->preparation_result =
-            prepare_sui_sign_transaction_from_owned_bytes(
-                classification.route,
-                output->ingress.params.network,
-                payload.bytes,
-                payload.size_bytes,
-                payload.descriptor.payload_digest,
-                &output->prepared);
-    } else {
-        if (output->ingress.params.tx_bytes_decoded_size >
-            kAgentQSuiSignTransactionInlineTxBytesMaxBytes) {
-            output->preparation_result =
-                AgentQSuiSigningPreparationResult::payload_too_large;
-            return AgentQSigningPreflightResult::transaction_preparation_error;
-        }
-        output->preparation_result =
-            prepare_sui_sign_transaction(
-                classification.route,
-                output->ingress.params.network,
-                output->ingress.params.tx_bytes_base64,
-                output->ingress.params.tx_bytes_decoded_size,
-                &output->prepared);
+            AgentQSuiSigningPreparationResult::payload_too_large;
+        return AgentQSigningPreflightResult::transaction_preparation_error;
     }
+    output->preparation_result =
+        prepare_sui_sign_transaction(
+            classification.route,
+            output->ingress.params.network,
+            output->ingress.params.tx_bytes_base64,
+            output->ingress.params.tx_bytes_decoded_size,
+            &output->prepared);
     if (output->preparation_result != AgentQSuiSigningPreparationResult::ok) {
         clear_prepared_sui_sign_transaction(&output->prepared);
         return AgentQSigningPreflightResult::transaction_preparation_error;

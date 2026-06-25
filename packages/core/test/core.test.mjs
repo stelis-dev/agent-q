@@ -5,8 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { ConfigStore } from "../dist/config.js";
 import { AgentQCore } from "../dist/core.js";
+import { makeDeviceRequest } from "../dist/device-contract.js";
 import { AgentQError } from "../dist/errors.js";
-import { makeSignPersonalMessageRequest, makeSignTransactionRequest } from "../dist/provider-protocol.js";
 import { MAX_SESSION_TTL_MS, SIGN_RESULT_ERROR_MESSAGES } from "../dist/protocol.js";
 import {
   markRequestMayHaveReachedFirmware,
@@ -49,6 +49,58 @@ function suiEd25519Signature(fill = 1) {
   const bytes = Buffer.alloc(97, fill);
   bytes[0] = 0;
   return bytes.toString("base64");
+}
+
+function signTransactionDeviceRequest(sessionId, route, params) {
+  return makeDeviceRequest({
+    method: "sign_transaction",
+    sessionId,
+    payload: {
+      chain: route.chain,
+      network: params.network,
+      txBytes: params.txBytes,
+    },
+  });
+}
+
+function signPersonalMessageDeviceRequest(sessionId, route, params) {
+  return makeDeviceRequest({
+    method: "sign_personal_message",
+    sessionId,
+    payload: {
+      chain: route.chain,
+      network: params.network,
+      message: params.message,
+    },
+  });
+}
+
+function signedDeviceResult(id, responseMethod, signMethod, signature, extras = {}) {
+  return {
+    id,
+    version: 1,
+    success: true,
+    method: responseMethod,
+    result: {
+      authorization: "user",
+      chain: "sui",
+      method: signMethod,
+      signature,
+      ...extras,
+    },
+  };
+}
+
+function wireKind(request) {
+  if (request.type === "payload_transfer") {
+    return `${request.type}:${request.action}`;
+  }
+  return request.method ?? request.type;
+}
+
+function deviceRequestExecutor(handler) {
+  return async (requestLine, _expectedId, _requestLabel, deadlineMs, assertResponse) =>
+    handler(JSON.parse(requestLine.trim()), deadlineMs, assertResponse);
 }
 
 function currentPolicyDocument(policies = []) {
@@ -1995,16 +2047,16 @@ test("signTransaction clears the local session when get_result reports invalid_s
       store,
       defaultDriver({
         async signTransaction(_portPath, sessionId, route, params) {
-          const request = makeSignTransactionRequest(sessionId, route.chain, route.method, params);
-          return requestSignResultWithRecovery(request, 1000, async (wireRequest) => {
-            if (wireRequest.type === "sign_transaction") {
+          const request = signTransactionDeviceRequest(sessionId, route, params);
+          return requestSignResultWithRecovery(request, 1000, deviceRequestExecutor(async (wireRequest) => {
+            if (wireKind(wireRequest) === "sign_transaction") {
               throw markRequestMayHaveReachedFirmware(new AgentQError("timeout", "Original sign timeout.", true));
             }
-            if (wireRequest.type === "get_result") {
+            if (wireKind(wireRequest) === "get_result") {
               throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
             }
-            throw new Error(`unexpected request: ${wireRequest.type}`);
-          });
+            throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
+          }));
         },
       }),
     );
@@ -2032,28 +2084,24 @@ test("signTransaction returns recovered result and clears the local session when
       store,
       defaultDriver({
         async signTransaction(_portPath, sessionId, route, params) {
-          const request = makeSignTransactionRequest(sessionId, route.chain, route.method, params);
-          return requestSignResultWithRecovery(request, 1000, async (wireRequest, _deadlineMs, assertResponse) => {
-            if (wireRequest.type === "sign_transaction") {
+          const request = signTransactionDeviceRequest(sessionId, route, params);
+          return requestSignResultWithRecovery(request, 1000, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
+            if (wireKind(wireRequest) === "sign_transaction") {
               throw markRequestMayHaveReachedFirmware(new AgentQError("transport_closed", "Transport closed.", true));
             }
-            if (wireRequest.type === "get_result") {
-              return assertResponse({
-                id: wireRequest.id,
-                version: 1,
-                type: "sign_result",
-                authorization: "user",
-                status: "signed",
-                chain: "sui",
-                method: "sign_transaction",
+            if (wireKind(wireRequest) === "get_result") {
+              return assertResponse(signedDeviceResult(
+                wireRequest.id,
+                "get_result",
+                "sign_transaction",
                 signature,
-              });
+              ));
             }
-            if (wireRequest.type === "ack_result") {
+            if (wireKind(wireRequest) === "ack_result") {
               throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
             }
-            throw new Error(`unexpected request: ${wireRequest.type}`);
-          });
+            throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
+          }));
         },
       }),
     );
@@ -2553,29 +2601,25 @@ test("signPersonalMessage returns recovered result and clears the local session 
       store,
       defaultDriver({
         async signPersonalMessage(_portPath, sessionId, route, params) {
-          const request = makeSignPersonalMessageRequest(sessionId, route.chain, route.method, params);
-          return requestSignResultWithRecovery(request, 1000, async (wireRequest, _deadlineMs, assertResponse) => {
-            if (wireRequest.type === "sign_personal_message") {
+          const request = signPersonalMessageDeviceRequest(sessionId, route, params);
+          return requestSignResultWithRecovery(request, 1000, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
+            if (wireKind(wireRequest) === "sign_personal_message") {
               throw markRequestMayHaveReachedFirmware(new AgentQError("transport_closed", "Transport closed.", true));
             }
-            if (wireRequest.type === "get_result") {
-              return assertResponse({
-                id: wireRequest.id,
-                version: 1,
-                type: "sign_result",
-                authorization: "user",
-                status: "signed",
-                chain: "sui",
-                method: "sign_personal_message",
+            if (wireKind(wireRequest) === "get_result") {
+              return assertResponse(signedDeviceResult(
+                wireRequest.id,
+                "get_result",
+                "sign_personal_message",
                 signature,
-                messageBytes,
-              });
+                { messageBytes },
+              ));
             }
-            if (wireRequest.type === "ack_result") {
+            if (wireKind(wireRequest) === "ack_result") {
               throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
             }
-            throw new Error(`unexpected request: ${wireRequest.type}`);
-          });
+            throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
+          }));
         },
       }),
     );
@@ -2696,19 +2740,6 @@ test("policyPropose validates proposals before live-port probing", async () => {
 
     await assert.rejects(
       () => core.policyPropose({ policy: { privateKey: "must-not-forward" } }),
-      { code: "invalid_params" },
-    );
-    assert.equal(listPortsCalls, 0);
-    assert.equal(requestStatusCalls, 0);
-    assert.equal(proposeCalls, 0);
-
-    await assert.rejects(
-      () => core.policyPropose({
-        policy: {
-          ...currentPolicyDocument(),
-          padding: "x".repeat(20000),
-        },
-      }),
       { code: "invalid_params" },
     );
     assert.equal(listPortsCalls, 0);

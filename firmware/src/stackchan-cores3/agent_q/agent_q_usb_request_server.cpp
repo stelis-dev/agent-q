@@ -1,6 +1,7 @@
 #include "agent_q_usb_request_server.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <ArduinoJson.h>
@@ -370,6 +371,109 @@ void apply_panel_cleanup_plan(
 agent_q::AgentQTimeoutTick current_timeout_tick()
 {
     return static_cast<agent_q::AgentQTimeoutTick>(xTaskGetTickCount());
+}
+
+bool payload_ref_wrapper(JsonDocument& request, const char** payload_ref)
+{
+    if (payload_ref != nullptr) {
+        *payload_ref = nullptr;
+    }
+    JsonObjectConst payload = request["payload"].as<JsonObjectConst>();
+    if (payload.isNull()) {
+        return false;
+    }
+    const char* const payload_ref_fields[] = {"payloadRef"};
+    if (!agent_q::agent_q_json_object_fields_supported(payload, payload_ref_fields, 1)) {
+        return false;
+    }
+    const char* ref = nullptr;
+    if (!agent_q::agent_q_json_value_c_string(payload["payloadRef"], &ref)) {
+        return false;
+    }
+    if (payload_ref != nullptr) {
+        *payload_ref = ref;
+    }
+    return true;
+}
+
+const char* payload_resolver_error_code(agent_q::AgentQPayloadDeliveryResult result)
+{
+    switch (result) {
+        case agent_q::AgentQPayloadDeliveryResult::invalid_session:
+            return "invalid_session";
+        case agent_q::AgentQPayloadDeliveryResult::payload_too_large:
+            return "payload_too_large";
+        case agent_q::AgentQPayloadDeliveryResult::allocation_failed:
+        case agent_q::AgentQPayloadDeliveryResult::digest_error:
+            return "internal_output_error";
+        case agent_q::AgentQPayloadDeliveryResult::invalid_argument:
+            return "invalid_params";
+        case agent_q::AgentQPayloadDeliveryResult::invalid_payload_ref:
+        case agent_q::AgentQPayloadDeliveryResult::invalid_state:
+        case agent_q::AgentQPayloadDeliveryResult::not_found:
+            return "payload_unavailable";
+        case agent_q::AgentQPayloadDeliveryResult::ok:
+        case agent_q::AgentQPayloadDeliveryResult::invalid_payload_digest:
+        case agent_q::AgentQPayloadDeliveryResult::invalid_transfer_id:
+        case agent_q::AgentQPayloadDeliveryResult::chunk_too_large:
+        case agent_q::AgentQPayloadDeliveryResult::offset_mismatch:
+        case agent_q::AgentQPayloadDeliveryResult::payload_overflow:
+        case agent_q::AgentQPayloadDeliveryResult::size_mismatch:
+        case agent_q::AgentQPayloadDeliveryResult::digest_mismatch:
+        default:
+            return "invalid_params";
+    }
+}
+
+void wipe_and_free_owned_payload(agent_q::AgentQPayloadDeliveryOwnedPayload& payload)
+{
+    if (payload.bytes != nullptr) {
+        agent_q::wipe_sensitive_buffer(payload.bytes, payload.size_bytes);
+        free(payload.bytes);
+    }
+    payload.bytes = nullptr;
+    payload.size_bytes = 0;
+}
+
+bool resolve_request_payload_ref(
+    JsonDocument& request,
+    JsonDocument& resolved_payload,
+    agent_q::AgentQTimeoutTick now_tick,
+    const agent_q::AgentQUsbRequestEnvelope& envelope,
+    const agent_q::AgentQUsbOperationResponseWriter& writer)
+{
+    const char* payload_ref = nullptr;
+    if (!payload_ref_wrapper(request, &payload_ref)) {
+        return true;
+    }
+
+    const char* session_id = nullptr;
+    if (!agent_q::agent_q_json_value_c_string(request["sessionId"], &session_id)) {
+        writer.write_error(envelope.id, "invalid_session");
+        return false;
+    }
+
+    agent_q::AgentQPayloadDeliveryOwnedPayload owned_payload = {};
+    const agent_q::AgentQPayloadDeliveryResult take_result =
+        agent_q::payload_delivery_take_finalized(
+            now_tick,
+            session_id,
+            payload_ref,
+            &owned_payload);
+    if (take_result != agent_q::AgentQPayloadDeliveryResult::ok) {
+        writer.write_error(envelope.id, payload_resolver_error_code(take_result));
+        return false;
+    }
+
+    const DeserializationError parse_error =
+        deserializeJson(resolved_payload, owned_payload.bytes, owned_payload.size_bytes);
+    wipe_and_free_owned_payload(owned_payload);
+    if (parse_error || resolved_payload.as<JsonObjectConst>().isNull()) {
+        writer.write_error(envelope.id, "invalid_params");
+        return false;
+    }
+    request["payload"].set(resolved_payload.as<JsonObjectConst>());
+    return true;
 }
 
 agent_q::AgentQDeviceActivityProjection current_device_activity()
@@ -1159,8 +1263,6 @@ bool unrelated_user_signing_ingress_busy()
                 current_timeout_tick(),
                 entry->payload_delivery_operation,
                 nullptr,
-                false,
-                nullptr,
             });
     return user_signing_ingress_busy() ||
            agent_q::payload_delivery_admission_blocks_sensitive_flow(admission);
@@ -1182,8 +1284,6 @@ bool write_payload_delivery_operation_busy(
             agent_q::AgentQPayloadDeliveryOperationAdmissionInput{
                 current_timeout_tick(),
                 entry->payload_delivery_operation,
-                nullptr,
-                false,
                 nullptr,
             });
     if (!agent_q::payload_delivery_admission_blocks_sensitive_flow(admission)) {
@@ -1250,8 +1350,6 @@ bool write_payload_delivery_disconnect_admission_error(
                 current_timeout_tick(),
                 entry->payload_delivery_operation,
                 nullptr,
-                false,
-                nullptr,
             });
     if (agent_q::payload_delivery_admission_allows_disconnect_cleanup(admission)) {
         return false;
@@ -1277,8 +1375,6 @@ bool write_payload_delivery_safe_read_admission_error(
                 current_timeout_tick(),
                 entry->payload_delivery_operation,
                 nullptr,
-                false,
-                nullptr,
             });
     if (agent_q::payload_delivery_admission_allows_safe_read(admission)) {
         return false;
@@ -1303,8 +1399,6 @@ bool write_payload_delivery_retained_result_admission_error(
             agent_q::AgentQPayloadDeliveryOperationAdmissionInput{
                 current_timeout_tick(),
                 entry->payload_delivery_operation,
-                nullptr,
-                false,
                 nullptr,
             });
     if (agent_q::payload_delivery_admission_allows_retained_result_cleanup(admission)) {
@@ -4128,8 +4222,7 @@ const agent_q::AgentQUsbSigningHandlerOps& usb_signing_handler_ops()
         current_timeout_tick,
         validate_session_for_user_signing,
         nullptr,
-        agent_q::payload_delivery_admit_sign_transaction,
-        nullptr,
+        agent_q::payload_delivery_admit_operation,
         read_signing_mode_for_preflight,
         nullptr,
         respond_to_signing_retry,
@@ -4208,8 +4301,10 @@ void handle_line(const char* line)
 {
     agent_q::handle_usb_request_line(
         line,
+        current_timeout_tick(),
         usb_operation_response_writer(),
-        usb_operation_handlers());
+        usb_operation_handlers(),
+        resolve_request_payload_ref);
 }
 
 void write_usb_line_error(const char* code)

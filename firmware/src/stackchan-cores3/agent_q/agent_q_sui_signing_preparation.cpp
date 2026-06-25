@@ -38,12 +38,13 @@ bool copy_network(const char* input, char* output, size_t output_size)
 AgentQSuiSigningPreparationResult validate_encoded_payload_size(
     const char* base64,
     size_t caller_decoded_size,
+    size_t max_base64_size,
     size_t max_decoded_size)
 {
     size_t actual_decoded_size = 0;
     if (!validate_canonical_base64_syntax(
             base64,
-            kAgentQSignRequestBase64MaxSize,
+            max_base64_size,
             &actual_decoded_size)) {
         return AgentQSuiSigningPreparationResult::invalid_params;
     }
@@ -54,11 +55,6 @@ AgentQSuiSigningPreparationResult validate_encoded_payload_size(
         return AgentQSuiSigningPreparationResult::invalid_params;
     }
     return AgentQSuiSigningPreparationResult::ok;
-}
-
-bool digest_string_present(const char* value)
-{
-    return value != nullptr && value[0] != '\0';
 }
 
 void prepare_policy_condition_facts(AgentQSuiPreparedSignTransaction* out)
@@ -112,7 +108,6 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_owned_common(
     const char* network,
     uint8_t* tx_bytes,
     size_t tx_bytes_size,
-    const char* known_payload_digest,
     AgentQSuiPreparedSignTransaction* out)
 {
     if (out == nullptr) {
@@ -144,17 +139,11 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_owned_common(
         clear_prepared_sui_sign_transaction(out);
         return AgentQSuiSigningPreparationResult::invalid_argument;
     }
-    if (digest_string_present(known_payload_digest)) {
-        if (strlen(known_payload_digest) + 1 > sizeof(out->payload_digest)) {
-            clear_prepared_sui_sign_transaction(out);
-            return AgentQSuiSigningPreparationResult::digest_error;
-        }
-        memcpy(out->payload_digest, known_payload_digest, strlen(known_payload_digest) + 1);
-    } else if (!approval_history_digest_payload(
-                   out->tx_bytes,
-                   out->tx_bytes_size,
-                   out->payload_digest,
-                   sizeof(out->payload_digest))) {
+    if (!approval_history_digest_payload(
+            out->tx_bytes,
+            out->tx_bytes_size,
+            out->payload_digest,
+            sizeof(out->payload_digest))) {
         clear_prepared_sui_sign_transaction(out);
         return AgentQSuiSigningPreparationResult::digest_error;
     }
@@ -240,6 +229,7 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction(
         validate_encoded_payload_size(
             tx_bytes_base64,
             decoded_tx_size,
+            kAgentQSuiSignTransactionTxBytesMaxBase64Size,
             kAgentQSuiSignTransactionTxBytesMaxBytes);
     if (size_result != AgentQSuiSigningPreparationResult::ok) {
         return size_result;
@@ -263,24 +253,6 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_transaction(
         network,
         tx_bytes,
         decoded_tx_size,
-        nullptr,
-        out);
-}
-
-AgentQSuiSigningPreparationResult prepare_sui_sign_transaction_from_owned_bytes(
-    AgentQSupportedSignRoute route,
-    const char* network,
-    uint8_t* tx_bytes,
-    size_t tx_bytes_size,
-    const char* payload_digest,
-    AgentQSuiPreparedSignTransaction* out)
-{
-    return prepare_sui_sign_transaction_owned_common(
-        route,
-        network,
-        tx_bytes,
-        tx_bytes_size,
-        payload_digest,
         out);
 }
 
@@ -307,6 +279,7 @@ AgentQSuiSigningPreparationResult prepare_sui_sign_personal_message(
         validate_encoded_payload_size(
             message_base64,
             decoded_message_size,
+            kAgentQSuiSignPersonalMessageMaxBase64Size,
             kAgentQSuiSignPersonalMessageMaxBytes);
     if (size_result != AgentQSuiSigningPreparationResult::ok) {
         return size_result;

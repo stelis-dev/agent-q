@@ -9,8 +9,6 @@ namespace agent_q {
 
 constexpr size_t kAgentQPayloadDeliveryTransferIdSize = 82;   // "transfer_" + 72 chars + NUL.
 constexpr size_t kAgentQPayloadDeliveryPayloadRefSize = 81; // "payload_" + 72 chars + NUL.
-constexpr size_t kAgentQPayloadDeliveryPayloadKindSize = 16;
-constexpr const char* kAgentQPayloadDeliveryPayloadKindTransaction = "transaction";
 
 bool payload_delivery_transfer_id_format_valid(const char* value);
 bool payload_delivery_payload_ref_format_valid(const char* value);

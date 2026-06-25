@@ -411,16 +411,12 @@ void expect_admission(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    operation,
                    "session_abcdef",
-                   false,
-                   nullptr,
                }) == expected,
            label);
 }
 
 void expect_admission_decision(
     agent_q::AgentQPayloadDeliveryOperationKind operation,
-    bool staged_payload_ref,
-    const char* payload_ref,
     agent_q::AgentQPayloadDeliveryAdmissionResult expected_result,
     agent_q::AgentQPayloadDeliveryAdmissionReason expected_reason,
     const char* label)
@@ -430,8 +426,6 @@ void expect_admission_decision(
             agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                 operation,
                 "session_abcdef",
-                staged_payload_ref,
-                payload_ref,
             });
     expect(decision.result == expected_result, label);
     if (decision.reason != expected_reason) {
@@ -672,50 +666,31 @@ void test_admission_matrix()
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_begin,
                    "session_abcdef",
-                   false,
-                   nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
            "idle allows transfer begin");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    agent_q::AgentQPayloadDeliveryOperationKind::sign_transaction,
                    "session_abcdef",
-                   false,
-                   nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
            "idle allows inline sign transaction");
     expect_admission_decision(
         agent_q::AgentQPayloadDeliveryOperationKind::sign_transaction,
-        false,
-        nullptr,
         agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
         agent_q::AgentQPayloadDeliveryAdmissionReason::idle_passthrough,
         "idle inline sign transaction is passthrough");
     expect_admission_decision(
-        agent_q::AgentQPayloadDeliveryOperationKind::sign_transaction,
-        true,
-        "payload_unknown",
-        agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
-        agent_q::AgentQPayloadDeliveryAdmissionReason::idle_passthrough,
-        "idle staged sign transaction reaches retained lookup before live resolve");
-    expect_admission_decision(
         agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_chunk,
-        false,
-        nullptr,
         agent_q::AgentQPayloadDeliveryAdmissionResult::unknown_request,
         agent_q::AgentQPayloadDeliveryAdmissionReason::missing_active_payload,
         "idle rejects transfer chunk before store lookup");
     expect_admission_decision(
         agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_finish,
-        false,
-        nullptr,
         agent_q::AgentQPayloadDeliveryAdmissionResult::unknown_request,
         agent_q::AgentQPayloadDeliveryAdmissionReason::missing_active_payload,
         "idle rejects transfer finish before store lookup");
     expect_admission_decision(
         agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_abort,
-        false,
-        nullptr,
         agent_q::AgentQPayloadDeliveryAdmissionResult::unknown_request,
         agent_q::AgentQPayloadDeliveryAdmissionReason::missing_active_payload,
         "idle rejects transfer abort before store lookup");
@@ -728,14 +703,10 @@ void test_admission_matrix()
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    agent_q::AgentQPayloadDeliveryOperationKind::safe_read,
                    "session_abcdef",
-                   false,
-                   nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
            "receiving allows safe reads");
     expect_admission_decision(
         agent_q::AgentQPayloadDeliveryOperationKind::safe_read,
-        false,
-        nullptr,
         agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
         agent_q::AgentQPayloadDeliveryAdmissionReason::receiving_safe_read,
         "receiving safe read has explicit exception reason");
@@ -744,16 +715,12 @@ void test_admission_matrix()
                    agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                        agent_q::AgentQPayloadDeliveryOperationKind::safe_read,
                        "session_abcdef",
-                       false,
-                       nullptr,
                    })),
            "receiving safe read is exposed through contract predicate");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    agent_q::AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup,
                    "session_abcdef",
-                   false,
-                   nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
            "receiving allows retained result read/cleanup");
     expect(agent_q::payload_delivery_admission_allows_retained_result_cleanup(
@@ -761,16 +728,12 @@ void test_admission_matrix()
                    agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                        agent_q::AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup,
                        "session_abcdef",
-                       false,
-                       nullptr,
                    })),
            "receiving retained-result cleanup is exposed through contract predicate");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    agent_q::AgentQPayloadDeliveryOperationKind::disconnect,
                    "session_abcdef",
-                   false,
-                   nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
            "receiving allows disconnect cleanup");
     expect(agent_q::payload_delivery_admission_allows_disconnect_cleanup(
@@ -778,55 +741,35 @@ void test_admission_matrix()
                    agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                        agent_q::AgentQPayloadDeliveryOperationKind::disconnect,
                        "session_abcdef",
-                       false,
-                       nullptr,
                    })),
            "receiving disconnect cleanup is exposed through contract predicate");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_begin,
                    "session_abcdef",
-                   false,
-                   nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
            "receiving blocks nested transfer begin");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_chunk,
                    "session_abcdef",
-                   false,
-                   nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
            "receiving allows transfer chunk");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_finish,
                    "session_abcdef",
-                   false,
-                   nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
            "receiving allows transfer finish");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_abort,
                    "session_abcdef",
-                   false,
-                   nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
            "receiving allows transfer abort");
     expect_sensitive_operations_blocked("receiving");
-    expect(agent_q::payload_delivery_admit_sign_transaction(
-               agent_q::AgentQPayloadDeliverySignTransactionAdmissionInput{0,
-                   "session_abcdef",
-                   false,
-                   nullptr,
-               },
-               nullptr) == agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
-           "receiving blocks inline sign transaction");
     expect_admission_decision(
         agent_q::AgentQPayloadDeliveryOperationKind::sign_transaction,
-        false,
-        nullptr,
         agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
         agent_q::AgentQPayloadDeliveryAdmissionReason::blocked_incomplete_transfer,
         "receiving blocks signing because transfer is incomplete");
@@ -835,8 +778,6 @@ void test_admission_matrix()
                    agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                        agent_q::AgentQPayloadDeliveryOperationKind::sign_transaction,
                        "session_abcdef",
-                       false,
-                       nullptr,
                    })),
            "receiving signing block is exposed through sensitive-flow predicate");
 
@@ -850,123 +791,57 @@ void test_admission_matrix()
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    agent_q::AgentQPayloadDeliveryOperationKind::safe_read,
                    "session_abcdef",
-                   false,
-                   nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
            "finalized allows safe reads");
     expect_admission_decision(
         agent_q::AgentQPayloadDeliveryOperationKind::sign_transaction,
-        false,
-        nullptr,
         agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
-        agent_q::AgentQPayloadDeliveryAdmissionReason::blocked_pending_finalized_payload,
-        "finalized blocks inline signing because payload is pending");
+        agent_q::AgentQPayloadDeliveryAdmissionReason::blocked_unrelated_sensitive_flow,
+        "finalized blocks direct signing while payload is pending");
     expect(agent_q::payload_delivery_admission_blocks_sensitive_flow(
                agent_q::payload_delivery_admit_operation(
                    agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                        agent_q::AgentQPayloadDeliveryOperationKind::sign_transaction,
                        "session_abcdef",
-                       false,
-                       nullptr,
                    })),
            "finalized inline signing block is exposed through sensitive-flow predicate");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    agent_q::AgentQPayloadDeliveryOperationKind::retained_result_read_cleanup,
                    "session_abcdef",
-                   false,
-                   nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
            "finalized allows retained result read/cleanup");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    agent_q::AgentQPayloadDeliveryOperationKind::disconnect,
                    "session_abcdef",
-                   false,
-                   nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
            "finalized allows disconnect cleanup");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_begin,
                    "session_abcdef",
-                   false,
-                   nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
            "finalized blocks nested transfer begin");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_chunk,
                    "session_abcdef",
-                   false,
-                   nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
            "finalized blocks transfer chunk");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_finish,
                    "session_abcdef",
-                   false,
-                   nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
            "finalized blocks transfer finish");
     expect(agent_q::payload_delivery_admit_operation(
                agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                    agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_abort,
                    "session_abcdef",
-                   false,
-                   nullptr,
                }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
            "finalized allows transfer abort");
     expect_sensitive_operations_blocked("finalized");
-    expect(agent_q::payload_delivery_admit_sign_transaction(
-               agent_q::AgentQPayloadDeliverySignTransactionAdmissionInput{0,
-                   "session_abcdef",
-                   false,
-                   nullptr,
-               },
-               nullptr) == agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
-           "finalized blocks inline sign transaction");
-    expect(agent_q::payload_delivery_admit_sign_transaction(
-               agent_q::AgentQPayloadDeliverySignTransactionAdmissionInput{0,
-                   "session_other",
-                   true,
-                   finish.descriptor.payload_ref,
-               },
-               nullptr) == agent_q::AgentQPayloadDeliveryAdmissionResult::invalid_session,
-           "finalized rejects different session consumer");
-    expect(agent_q::payload_delivery_admit_sign_transaction(
-               agent_q::AgentQPayloadDeliverySignTransactionAdmissionInput{0,
-                   "session_abcdef",
-                   true,
-                   "payload_unknown",
-               },
-               nullptr) == agent_q::AgentQPayloadDeliveryAdmissionResult::invalid_payload_ref,
-           "finalized rejects mismatched payloadRef consumer");
-    expect(agent_q::payload_delivery_admit_sign_transaction(
-               agent_q::AgentQPayloadDeliverySignTransactionAdmissionInput{0,
-                   "session_abcdef",
-                   true,
-                   finish.descriptor.payload_ref,
-               },
-               nullptr) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
-           "finalized allows matching staged sign transaction");
-    expect_admission_decision(
-        agent_q::AgentQPayloadDeliveryOperationKind::sign_transaction,
-        true,
-        finish.descriptor.payload_ref,
-        agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
-        agent_q::AgentQPayloadDeliveryAdmissionReason::finalized_matching_staged_consumer,
-        "finalized matching staged consumer has explicit authority reason");
-    expect(agent_q::payload_delivery_admission_allows_staged_consumer(
-               agent_q::payload_delivery_admit_sign_transaction(
-                   agent_q::AgentQPayloadDeliverySignTransactionAdmissionInput{0,
-                       "session_abcdef",
-                       true,
-                       finish.descriptor.payload_ref,
-                   },
-                   nullptr)),
-           "finalized matching staged consumer is exposed through contract predicate");
 }
 
 void test_guards_and_cleanup()
@@ -1225,17 +1100,15 @@ void test_timeout_operation_boundaries()
                agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
                &finish) == agent_q::AgentQPayloadDeliveryResult::ok,
            "finish before expired admission succeeds");
-    const agent_q::AgentQPayloadDeliveryAdmissionDecision expired_consumer =
-        agent_q::payload_delivery_admit_sign_transaction(
-            agent_q::AgentQPayloadDeliverySignTransactionAdmissionInput{
+    const agent_q::AgentQPayloadDeliveryAdmissionDecision expired_admission =
+        agent_q::payload_delivery_admit_operation(
+            agent_q::AgentQPayloadDeliveryOperationAdmissionInput{
                 50,
+                agent_q::AgentQPayloadDeliveryOperationKind::sign_transaction,
                 "session_abcdef",
-                true,
-                finish.descriptor.payload_ref,
-            },
-            nullptr);
-    expect(!agent_q::payload_delivery_admission_allows_staged_consumer(expired_consumer),
-           "expired finalized payload is not admitted as a staged consumer");
+            });
+    expect(expired_admission.result == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
+           "expired finalized payload is cleared before sign transaction admission");
     expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
            "expired admission boundary leaves store idle");
 }

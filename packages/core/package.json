@@ -24,10 +24,6 @@
       "types": "./dist/adapter-internal.d.ts",
       "import": "./dist/adapter-internal.js"
     },
-    "./payload-delivery-internal": {
-      "types": "./dist/payload-delivery-internal.d.ts",
-      "import": "./dist/payload-delivery-internal.js"
-    },
     "./protocol": {
       "types": "./dist/protocol.d.ts",
       "import": "./dist/protocol.js"

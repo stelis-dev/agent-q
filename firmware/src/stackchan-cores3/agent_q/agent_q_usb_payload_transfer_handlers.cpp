@@ -163,8 +163,6 @@ bool write_operation_admission_error(
                 now_tick,
                 operation,
                 nullptr,
-                false,
-                nullptr,
             });
     if (payload_delivery_admission_allowed(admission)) {
         return false;
@@ -172,12 +170,6 @@ bool write_operation_admission_error(
     switch (admission.result) {
         case AgentQPayloadDeliveryAdmissionResult::busy:
             writer.write_error(id, "busy");
-            return true;
-        case AgentQPayloadDeliveryAdmissionResult::invalid_session:
-            writer.write_error(id, "invalid_session");
-            return true;
-        case AgentQPayloadDeliveryAdmissionResult::invalid_payload_ref:
-            writer.write_error(id, "invalid_params");
             return true;
         case AgentQPayloadDeliveryAdmissionResult::unknown_request:
             writer.write_error(id, "unknown_request");

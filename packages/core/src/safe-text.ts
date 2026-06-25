@@ -1,6 +1,6 @@
 // Single source of truth (SoT) for string-policy validation and sanitization
 // at every Agent-Q trust boundary:
-//   - wire ingress   (protocol.ts parseProtocolResponse): device-supplied text
+//   - wire ingress   (protocol.ts DeviceResponse assertions): device-supplied text
 //   - disk ingress   (config.ts load): the stored, possibly hand-edited registry
 //   - MCP egress      (mcp.ts output schemas): the untrusted client/agent surface
 //   - MCP input + request building (mcp.ts input schemas, protocol.ts make*)

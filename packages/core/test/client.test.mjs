@@ -393,7 +393,6 @@ test("package metadata exposes the current core entrypoints", async () => {
     "./adapter-internal",
     "./device",
     "./package.json",
-    "./payload-delivery-internal",
     "./protocol",
     "./provider-protocol",
   ]);
@@ -405,11 +404,8 @@ test("package metadata exposes the current core entrypoints", async () => {
     types: "./dist/device.d.ts",
     import: "./dist/device.js",
   });
-  assert.deepEqual(packageJson.exports["./payload-delivery-internal"], {
-    types: "./dist/payload-delivery-internal.d.ts",
-    import: "./dist/payload-delivery-internal.js",
-  });
   assert.equal(packageJson.exports["./usb"], undefined);
+  assert.equal(packageJson.exports["./payload-delivery-internal"], undefined);
   assert.equal(packageJson.bin, undefined);
   assert.equal(packageJson.exports["./mcp"], undefined);
   assert.equal(packageJson.exports["./provider"], undefined);
@@ -419,24 +415,26 @@ test("package self-reference resolves only core entrypoints", async () => {
   const root = await import("@stelis/agent-q-core");
   const adapterInternal = await import("@stelis/agent-q-core/adapter-internal");
   const device = await import("@stelis/agent-q-core/device");
-  const payloadDeliveryInternal = await import("@stelis/agent-q-core/payload-delivery-internal");
   const protocol = await import("@stelis/agent-q-core/protocol");
   const providerProtocol = await import("@stelis/agent-q-core/provider-protocol");
   assert.equal(typeof root.createDefaultAgentQCore, "function");
   assert.equal(root.createDefaultAgentQDeviceClient, undefined);
   assert.equal(typeof adapterInternal.hostSuccessOutputSchemas, "object");
+  assert.equal(typeof adapterInternal.requestDevice, "function");
   assert.equal(typeof device.createDefaultAgentQDeviceClient, "function");
-  assert.equal(typeof payloadDeliveryInternal.withUploadedSignablePayload, "function");
-  assert.equal(typeof protocol.makeGetStatusRequest, "function");
-  assert.equal(typeof protocol.makeSignTransactionRequest, "function");
-  assert.equal(typeof protocol.makeGetResultRequest, "function");
-  assert.equal(typeof protocol.makeAckResultRequest, "function");
-  assert.equal(typeof protocol.assertAckResultResponse, "function");
-  assert.equal(typeof protocol.makePayloadUploadBeginRequest, "function");
-  assert.equal(typeof protocol.makePayloadUploadChunkRequest, "function");
-  assert.equal(typeof protocol.makePayloadUploadFinishRequest, "function");
-  assert.equal(typeof protocol.makePayloadUploadAbortRequest, "function");
-  assert.equal(typeof protocol.makeStagedSignTransactionRequest, "function");
+  assert.equal(protocol.makeGetStatusRequest, undefined);
+  assert.equal(protocol.makeSignTransactionRequest, undefined);
+  assert.equal(protocol.makeSignPersonalMessageRequest, undefined);
+  assert.equal(protocol.serializeRequest, undefined);
+  assert.equal(protocol.makeGetResultRequest, undefined);
+  assert.equal(protocol.makeAckResultRequest, undefined);
+  assert.equal(protocol.assertAckResultResponse, undefined);
+  assert.equal(protocol.makePayloadTransferBeginRequest, undefined);
+  assert.equal(protocol.makePayloadTransferChunkRequest, undefined);
+  assert.equal(protocol.makePayloadTransferFinishRequest, undefined);
+  assert.equal(protocol.makePayloadTransferAbortRequest, undefined);
+  assert.equal(protocol.serializePayloadTransferRequest, undefined);
+  assert.equal(protocol.PayloadTransferRequest, undefined);
   await assert.rejects(() => import("@stelis/agent-q-core/protocol-recovery"), {
     code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
   });
@@ -446,11 +444,10 @@ test("package self-reference resolves only core entrypoints", async () => {
   assert.equal(providerProtocol.makeGetResultRequest, undefined);
   assert.equal(providerProtocol.makeAckResultRequest, undefined);
   assert.equal(providerProtocol.assertAckResultResponse, undefined);
-  assert.equal(providerProtocol.makePayloadUploadBeginRequest, undefined);
-  assert.equal(providerProtocol.makePayloadUploadChunkRequest, undefined);
-  assert.equal(providerProtocol.makePayloadUploadFinishRequest, undefined);
-  assert.equal(providerProtocol.makePayloadUploadAbortRequest, undefined);
-  assert.equal(providerProtocol.makeStagedSignTransactionRequest, undefined);
+  assert.equal(providerProtocol.makePayloadTransferBeginRequest, undefined);
+  assert.equal(providerProtocol.makePayloadTransferChunkRequest, undefined);
+  assert.equal(providerProtocol.makePayloadTransferFinishRequest, undefined);
+  assert.equal(providerProtocol.makePayloadTransferAbortRequest, undefined);
   assert.equal(providerProtocol.makeGetStatusRequest, undefined);
   assert.equal(providerProtocol.makePolicyGetRequest, undefined);
   assert.equal(providerProtocol.makePolicyProposeRequest, undefined);
@@ -462,15 +459,15 @@ test("package self-reference resolves only core entrypoints", async () => {
   assert.equal(providerProtocol.MAX_APPROVAL_HISTORY_RECORDS, undefined);
   assert.equal(providerProtocol.POLICY_PROPOSE_RESULT_STATUSES, undefined);
   assert.equal(providerProtocol.serializeRequest, undefined);
-  assert.equal(typeof providerProtocol.serializeProviderProtocolRequest, "function");
+  assert.equal(providerProtocol.serializeProviderProtocolRequest, undefined);
   assert.equal(providerProtocol.INTERNAL_CONNECT_DEADLINE_MS, 185000);
   assert.equal(providerProtocol.INTERNAL_SIGN_TRANSACTION_DEADLINE_MS, 185000);
   assert.equal(providerProtocol.INTERNAL_SIGN_PERSONAL_MESSAGE_DEADLINE_MS, 185000);
-  assert.equal(typeof providerProtocol.makeConnectRequest, "function");
-  assert.equal(typeof providerProtocol.makeGetCapabilitiesRequest, "function");
-  assert.equal(typeof providerProtocol.makeGetAccountsRequest, "function");
-  assert.equal(typeof providerProtocol.makeSignTransactionRequest, "function");
-  assert.equal(typeof providerProtocol.makeSignPersonalMessageRequest, "function");
+  assert.equal(providerProtocol.makeConnectRequest, undefined);
+  assert.equal(providerProtocol.makeGetCapabilitiesRequest, undefined);
+  assert.equal(providerProtocol.makeGetAccountsRequest, undefined);
+  assert.equal(providerProtocol.makeSignTransactionRequest, undefined);
+  assert.equal(providerProtocol.makeSignPersonalMessageRequest, undefined);
   assert.equal(typeof root.SerialPortUsbDriver, "function");
   for (const subpath of ["config", "core", "errors", "agent-q-output-schema", "public-error", "safe-text", "usb"]) {
     await assert.rejects(() => import(`@stelis/agent-q-core/${subpath}`), {
@@ -488,9 +485,16 @@ test("package self-reference resolves only core entrypoints", async () => {
 test("provider-protocol declaration stays type-bounded to provider requests", async () => {
   const typesPath = fileURLToPath(new URL("../dist/provider-protocol.d.ts", import.meta.url));
   const types = await readFile(typesPath, "utf8");
-  assert.match(types, /serializeProviderProtocolRequest\(request: ProviderProtocolRequest\): string/);
+  assert.doesNotMatch(types, /serializeProviderProtocolRequest/);
   assert.doesNotMatch(types, /serializeRequest/);
   assert.doesNotMatch(types, /\bProtocolRequest\b/);
+  assert.doesNotMatch(types, /\bProviderProtocolRequest\b/);
+  assert.doesNotMatch(types, /makeConnectRequest/);
+  assert.doesNotMatch(types, /makeDisconnectRequest/);
+  assert.doesNotMatch(types, /makeGetCapabilitiesRequest/);
+  assert.doesNotMatch(types, /makeGetAccountsRequest/);
+  assert.doesNotMatch(types, /makeSignTransactionRequest/);
+  assert.doesNotMatch(types, /makeSignPersonalMessageRequest/);
   assert.doesNotMatch(types, /PolicyGetRequest/);
   assert.doesNotMatch(types, /PolicyProposeRequest/);
   assert.doesNotMatch(types, /CredentialPrepareRequest/);
@@ -508,15 +512,30 @@ test("provider-protocol declaration stays type-bounded to provider requests", as
   assert.doesNotMatch(types, /AckResultResponse/);
   assert.doesNotMatch(types, /protocol-recovery/);
   assert.doesNotMatch(types, /protocol-payload-delivery/);
-  assert.doesNotMatch(types, /makePayloadUploadBeginRequest/);
-  assert.doesNotMatch(types, /makePayloadUploadChunkRequest/);
-  assert.doesNotMatch(types, /makePayloadUploadFinishRequest/);
-  assert.doesNotMatch(types, /makePayloadUploadAbortRequest/);
-  assert.doesNotMatch(types, /makeStagedSignTransactionRequest/);
+  assert.doesNotMatch(types, /makePayloadTransferBeginRequest/);
+  assert.doesNotMatch(types, /makePayloadTransferChunkRequest/);
+  assert.doesNotMatch(types, /makePayloadTransferFinishRequest/);
+  assert.doesNotMatch(types, /makePayloadTransferAbortRequest/);
   assert.doesNotMatch(types, /PayloadUploadRequest/);
+  assert.doesNotMatch(types, /PayloadTransferRequest/);
   assert.doesNotMatch(types, /get_result/);
   assert.doesNotMatch(types, /ack_result/);
-  assert.doesNotMatch(types, /payload_upload_/);
+  assert.doesNotMatch(types, /payload_transfer/);
+});
+
+test("adapter-internal declaration exposes requestDevice without payload-transfer wire primitives", async () => {
+  const typesPath = fileURLToPath(new URL("../dist/adapter-internal.d.ts", import.meta.url));
+  const transportTypesPath = fileURLToPath(new URL("../dist/device-request-transport.d.ts", import.meta.url));
+  const types = `${await readFile(typesPath, "utf8")}\n${await readFile(transportTypesPath, "utf8")}`;
+  assert.match(types, /requestDevice/);
+  assert.match(types, /requestLine:\s*string/);
+  assert.doesNotMatch(types, /DeviceWireRequest/);
+  assert.doesNotMatch(types, /serializeDeviceWireRequest/);
+  assert.doesNotMatch(types, /makeDeviceWireRequest/);
+  assert.doesNotMatch(types, /PayloadTransferRequest/);
+  assert.doesNotMatch(types, /serializePayloadTransferRequest/);
+  assert.doesNotMatch(types, /protocol-payload-delivery/);
+  assert.doesNotMatch(types, /payload_transfer/);
 });
 
 test("client internals keep signing and recovery helper ownership separated", async () => {
@@ -525,8 +544,8 @@ test("client internals keep signing and recovery helper ownership separated", as
   const usbSource = await readFile(fileURLToPath(new URL("../src/usb.ts", import.meta.url)), "utf8");
   const providerProtocolSource = await readFile(fileURLToPath(new URL("../src/provider-protocol.ts", import.meta.url)), "utf8");
 
-  assert.match(protocolSource, /export \{\s+identifySignRoute,\s+makeSignPersonalMessageRequest,\s+makeSignTransactionRequest,\s+\} from "\.\/provider-protocol\.js";/);
-  assert.match(protocolSource, /from "\.\/protocol-recovery\.js";/);
+  assert.match(protocolSource, /export \{\s+identifySignRoute\s+\} from "\.\/provider-protocol\.js";/);
+  assert.doesNotMatch(protocolSource, /from "\.\/protocol-recovery\.js";/);
   assert.doesNotMatch(protocolSource, /identifyProviderSignRoute/);
   assert.doesNotMatch(protocolSource, /makeProviderSignTransactionRequest/);
   assert.doesNotMatch(protocolSource, /makeProviderSignPersonalMessageRequest/);
@@ -553,122 +572,15 @@ test("serial transport keeps HUPCL disabled across short-lived USB requests", as
   assert.match(usbSource, /hupcl:\s*false/);
 });
 
-test("provider-protocol serializer rejects non-provider requests at runtime", async () => {
+test("provider-protocol does not expose request wire serializers or builders", async () => {
   const providerProtocol = await import("@stelis/agent-q-core/provider-protocol");
-  const blockedRequests = [
-    {
-      id: "req_policy_get",
-      version: 1,
-      type: "policy_get",
-      sessionId: "session_abcdef0123456789",
-    },
-    {
-      id: "req_policy_propose",
-      version: 1,
-      type: "policy_propose",
-      sessionId: "session_abcdef0123456789",
-      params: { policy: {} },
-    },
-    {
-      id: "req_history",
-      version: 1,
-      type: "get_approval_history",
-      sessionId: "session_abcdef0123456789",
-      params: { limit: 1 },
-    },
-  ];
-  for (const request of blockedRequests) {
-    assert.throws(
-      () => providerProtocol.serializeProviderProtocolRequest(request),
-      { code: "invalid_method" },
-      `${request.type} must not serialize through provider-protocol`,
-    );
-  }
-});
-
-test("provider-protocol serializer exact-validates provider requests at runtime", async () => {
-  const providerProtocol = await import("@stelis/agent-q-core/provider-protocol");
-  const requestId = "req_1234567890abcdef12345678";
-  const sessionId = "session_abcdef0123456789";
-
-  const validRequest = providerProtocol.makeSignTransactionRequest(
-    sessionId,
-    "sui",
-    "sign_transaction",
-    { network: "testnet", txBytes: "AQID" },
-    requestId,
-  );
-  assert.equal(
-    providerProtocol.serializeProviderProtocolRequest(validRequest),
-    `${JSON.stringify(validRequest)}\n`,
-  );
-
-  const forgedRequests = [
-    {
-      id: requestId,
-      version: 1,
-      type: "connect",
-      params: { clientName: "Agent-Q Browser" },
-      policy_get: true,
-    },
-    {
-      id: requestId,
-      version: 1,
-      type: "connect",
-      params: { clientName: "Agent-Q Browser", sessionId: "session_should_not_pass" },
-    },
-    {
-      id: requestId,
-      version: 1,
-      type: "get_accounts",
-      sessionId,
-      timeoutMs: 30000,
-    },
-    {
-      id: requestId,
-      version: 1,
-      type: "sign_transaction",
-      sessionId,
-      chain: "sui",
-      method: "sign_transaction",
-      params: { network: "testnet", txBytes: "AQID" },
-      timeoutMs: 30000,
-    },
-    {
-      id: requestId,
-      version: 1,
-      type: "sign_transaction",
-      sessionId,
-      chain: "sui",
-      method: "sign_transaction",
-      params: { network: "testnet", txBytes: "AQID", authorization: "policy" },
-    },
-    {
-      id: requestId,
-      version: 1,
-      type: "sign_transaction",
-      sessionId,
-      chain: "evm",
-      method: "sign_transaction",
-      params: { network: "testnet", txBytes: "AQID" },
-    },
-    {
-      id: requestId,
-      version: 1,
-      type: "sign_personal_message",
-      sessionId,
-      chain: "sui",
-      method: "sign_personal_message",
-      params: { network: "testnet", message: "AQID", txBytes: "AQID" },
-    },
-  ];
-  for (const request of forgedRequests) {
-    assert.throws(
-      () => providerProtocol.serializeProviderProtocolRequest(request),
-      /unsupported|Invalid|invalid|must/,
-      `${request.type} forged provider request must not serialize`,
-    );
-  }
+  assert.equal(providerProtocol.serializeProviderProtocolRequest, undefined);
+  assert.equal(providerProtocol.makeConnectRequest, undefined);
+  assert.equal(providerProtocol.makeDisconnectRequest, undefined);
+  assert.equal(providerProtocol.makeGetCapabilitiesRequest, undefined);
+  assert.equal(providerProtocol.makeGetAccountsRequest, undefined);
+  assert.equal(providerProtocol.makeSignTransactionRequest, undefined);
+  assert.equal(providerProtocol.makeSignPersonalMessageRequest, undefined);
 });
 
 test("adapter output schema keeps signing method result shapes exact", () => {

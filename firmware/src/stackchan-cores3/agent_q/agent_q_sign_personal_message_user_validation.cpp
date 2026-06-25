@@ -162,7 +162,7 @@ validate_sign_personal_message_user_params(
     if (!agent_q_json_value_c_string(params["message"], &message_base64) ||
         !validate_canonical_base64_syntax(
             message_base64,
-            kAgentQSignRequestBase64MaxSize,
+            kAgentQSuiSignPersonalMessageMaxBase64Size,
             &output->message_decoded_size)) {
         memset(output, 0, sizeof(*output));
         return AgentQSignPersonalMessageUserValidationResult::invalid_message;

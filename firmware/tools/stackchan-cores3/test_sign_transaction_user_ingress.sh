@@ -73,13 +73,6 @@ struct SessionCheck {
     int calls;
 };
 
-struct PayloadAdmissionCheck {
-    agent_q::AgentQPayloadDeliveryAdmissionResult result;
-    bool expected_staged_payload_ref;
-    const char* expected_payload_ref;
-    int calls;
-};
-
 agent_q::AgentQPayloadDeliveryAdmissionDecision payload_admission_decision(
     agent_q::AgentQPayloadDeliveryAdmissionResult result)
 {
@@ -93,16 +86,6 @@ agent_q::AgentQPayloadDeliveryAdmissionDecision payload_admission_decision(
             return {
                 result,
                 agent_q::AgentQPayloadDeliveryAdmissionReason::blocked_pending_finalized_payload,
-            };
-        case agent_q::AgentQPayloadDeliveryAdmissionResult::invalid_session:
-            return {
-                result,
-                agent_q::AgentQPayloadDeliveryAdmissionReason::invalid_consumer_session,
-            };
-        case agent_q::AgentQPayloadDeliveryAdmissionResult::invalid_payload_ref:
-            return {
-                result,
-                agent_q::AgentQPayloadDeliveryAdmissionReason::invalid_consumer_payload_ref,
             };
         case agent_q::AgentQPayloadDeliveryAdmissionResult::unknown_request:
             return {
@@ -179,33 +162,19 @@ agent_q::AgentQSessionValidationResult validate_session(
 }
 
 agent_q::AgentQPayloadDeliveryAdmissionDecision admit_payload_delivery(
-    const agent_q::AgentQPayloadDeliverySignTransactionAdmissionInput& input,
-    void* context)
+    const agent_q::AgentQPayloadDeliveryOperationAdmissionInput& input)
 {
-    PayloadAdmissionCheck* check = static_cast<PayloadAdmissionCheck*>(context);
-    if (check == nullptr) {
-        return payload_admission_decision(agent_q::AgentQPayloadDeliveryAdmissionResult::ok);
-    }
-    ++check->calls;
-    if (input.staged_payload_ref != check->expected_staged_payload_ref) {
-        fprintf(stderr, "payload admission got unexpected payload form\n");
+    if (input.operation != agent_q::AgentQPayloadDeliveryOperationKind::sign_transaction) {
+        fprintf(stderr, "payload admission got unexpected operation\n");
         ++failures;
     }
-    if (check->expected_payload_ref != nullptr &&
-        (input.payload_ref == nullptr ||
-         strcmp(input.payload_ref, check->expected_payload_ref) != 0)) {
-        fprintf(stderr, "payload admission got unexpected payloadRef: %s\n",
-                input.payload_ref == nullptr ? "(null)" : input.payload_ref);
-        ++failures;
-    }
-    return payload_admission_decision(check->result);
+    return payload_admission_decision(agent_q::AgentQPayloadDeliveryAdmissionResult::ok);
 }
 
 agent_q::AgentQSignTransactionUserIngressState state(
     bool material_ready,
     bool busy,
-    SessionCheck* check,
-    PayloadAdmissionCheck* payload_check = nullptr)
+    SessionCheck* check)
 {
     return agent_q::AgentQSignTransactionUserIngressState{
         0,
@@ -214,7 +183,6 @@ agent_q::AgentQSignTransactionUserIngressState state(
         validate_session,
         check,
         admit_payload_delivery,
-        payload_check,
     };
 }
 
@@ -242,15 +210,6 @@ void expect_ingress(
         if (check->calls != *expected_session_calls) {
             fprintf(stderr, "%s: expected session callback calls %d, got %d\n",
                     label, *expected_session_calls, check->calls);
-            ++failures;
-        }
-    }
-    if (input_state.payload_delivery_admission_context != nullptr) {
-        const PayloadAdmissionCheck* check =
-            static_cast<const PayloadAdmissionCheck*>(
-                input_state.payload_delivery_admission_context);
-        if (check->calls != 0) {
-            fprintf(stderr, "%s: payload delivery admission should be owned by preflight\n", label);
             ++failures;
         }
     }
@@ -432,49 +391,27 @@ int main()
 
     {
         SessionCheck session{"session_aaaaaaaaaaaaaaaa", SessionResult::ok, 0};
-        PayloadAdmissionCheck payload{
-            agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
-            false,
-            nullptr,
-            0,
-        };
         int calls = 1;
         expect_ingress(
             "inline request leaves payload admission to preflight",
             valid_request(),
-            state(true, false, &session, &payload),
+            state(true, false, &session),
             IngressResult::ok,
             &calls,
             true);
-        if (payload.calls != 0) {
-            fprintf(stderr, "inline payload admission expected zero calls, got %d\n",
-                    payload.calls);
-            ++failures;
-        }
     }
 
     {
         SessionCheck session{"session_aaaaaaaaaaaaaaaa", SessionResult::ok, 0};
-        PayloadAdmissionCheck payload{
-            agent_q::AgentQPayloadDeliveryAdmissionResult::invalid_payload_ref,
-            true,
-            "payload_aaaaaaaa",
-            0,
-        };
         int calls = 1;
         expect_ingress(
-            "staged request leaves payload admission to preflight",
+            "payloadRef is not a sign_transaction method parameter",
             request_with_session_and_params(
                 "session_aaaaaaaaaaaaaaaa",
                 "{\"network\":\"devnet\",\"payloadRef\":\"payload_aaaaaaaa\"}"),
-            state(true, false, &session, &payload),
-            IngressResult::ok,
+            state(true, false, &session),
+            IngressResult::unsupported_field,
             &calls);
-        if (payload.calls != 0) {
-            fprintf(stderr, "staged payload admission expected zero calls, got %d\n",
-                    payload.calls);
-            ++failures;
-        }
     }
 
     {

@@ -211,7 +211,7 @@ void expect_error(
     const char* expected_code)
 {
     reset_state();
-    agent_q::handle_usb_request_line(line, make_writer(), make_handlers());
+    agent_q::handle_usb_request_line(line, 100, make_writer(), make_handlers());
     assert(g_handler_calls == 0);
     assert(g_write_error_calls == 1);
     if (expected_id == nullptr) {
@@ -233,7 +233,7 @@ void expect_handler(
     const char* expected_id)
 {
     reset_state();
-    agent_q::handle_usb_request_line(line, make_writer(), make_handlers());
+    agent_q::handle_usb_request_line(line, 100, make_writer(), make_handlers());
     assert(g_handler_calls == 1);
     assert(g_last_handler == expected_handler);
     assert(strcmp(g_last_id, expected_id) == 0);

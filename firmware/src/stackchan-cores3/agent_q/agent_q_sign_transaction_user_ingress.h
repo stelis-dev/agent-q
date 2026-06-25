@@ -20,8 +20,6 @@ enum class AgentQSignTransactionUserIngressResult {
     unsupported_method,
     invalid_network,
     invalid_tx_bytes,
-    invalid_payload_ref,
-    invalid_payload_descriptor,
 };
 
 using AgentQSignTransactionUserSessionValidateFn =
@@ -33,8 +31,7 @@ struct AgentQSignTransactionUserIngressState {
     bool busy;
     AgentQSignTransactionUserSessionValidateFn validate_session;
     void* session_context;
-    AgentQPayloadDeliverySignTransactionAdmissionFn admit_payload_delivery = nullptr;
-    void* payload_delivery_admission_context = nullptr;
+    AgentQPayloadDeliveryOperationAdmissionFn admit_payload_delivery = nullptr;
 };
 
 struct AgentQSignTransactionUserIngressOutput {

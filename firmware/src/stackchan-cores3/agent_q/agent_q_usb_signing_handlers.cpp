@@ -74,10 +74,7 @@ CommonSignatureIngressError common_signature_ingress_error(
         case AgentQSignTransactionUserIngressResult::invalid_network:
             return CommonSignatureIngressError::invalid_network;
         case AgentQSignTransactionUserIngressResult::invalid_tx_bytes:
-        case AgentQSignTransactionUserIngressResult::invalid_payload_descriptor:
             return CommonSignatureIngressError::payload_invalid;
-        case AgentQSignTransactionUserIngressResult::invalid_payload_ref:
-            return CommonSignatureIngressError::payload_unavailable;
         case AgentQSignTransactionUserIngressResult::ok:
         default:
             return CommonSignatureIngressError::ok;
@@ -641,7 +638,6 @@ void handle_usb_sign_transaction_request(
                 ops.validate_session,
                 ops.validate_session_context,
                 ops.admit_transaction_payload_delivery,
-                ops.transaction_payload_delivery_admission_context,
             },
             make_preflight_runtime(ops, now_tick),
             &preflight);

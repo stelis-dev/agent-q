@@ -13,11 +13,12 @@ export const INTERNAL_POLICY_UPDATE_DEADLINE_MS = INTERNAL_LOCAL_PIN_INTERACTION
 export const INTERNAL_SIGN_TRANSACTION_DEADLINE_MS = INTERNAL_LOCAL_PIN_INTERACTION_DEADLINE_MS;
 export const INTERNAL_SIGN_PERSONAL_MESSAGE_DEADLINE_MS = INTERNAL_LOCAL_PIN_INTERACTION_DEADLINE_MS;
 export const INTERNAL_CONNECT_DEADLINE_MS = INTERNAL_LOCAL_PIN_INTERACTION_DEADLINE_MS;
-// Minimum usable staged-payload chunk size for current host/provider deadline
-// estimates. Firmware may advertise a larger per-chunk limit, but smaller
-// limits would make the advertised payload maximum impossible to guarantee
-// within the transaction deadline chosen before capability exchange completes.
+// Minimum usable payload transfer chunk size for current host deadline
+// estimates. Firmware may return a larger per-chunk limit, but smaller limits
+// would make the bounded transfer maximum impossible to guarantee within the
+// transaction deadline chosen before the transfer starts.
 export const PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES = 2048;
+export const PAYLOAD_TRANSFER_MAX_BYTES = 128 * 1024;
 
 export const DEFAULT_AGENT_Q_USB_BAUD_RATE = 115200;
 export const AGENT_Q_USB_VENDOR_ID = "303a";

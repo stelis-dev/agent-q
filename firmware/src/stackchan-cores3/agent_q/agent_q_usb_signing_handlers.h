@@ -40,8 +40,7 @@ struct AgentQUsbSigningHandlerOps {
     AgentQTimeoutTick (*current_tick)();
     AgentQSessionValidationResult (*validate_session)(const char* session_id, void* context);
     void* validate_session_context;
-    AgentQPayloadDeliverySignTransactionAdmissionFn admit_transaction_payload_delivery;
-    void* transaction_payload_delivery_admission_context;
+    AgentQPayloadDeliveryOperationAdmissionFn admit_transaction_payload_delivery;
     AgentQSigningModeReadFn read_signing_mode;
     void* read_signing_mode_context;
     AgentQSigningPreflightRetryResponder retry_responder;

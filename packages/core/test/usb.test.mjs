@@ -21,10 +21,10 @@ import {
 import {
   assertPolicyProposeResultResponse,
   assertStatusResponse,
-  consumeProtocolResponseChunk,
-  makeSignTransactionRequest,
+  consumeDeviceResponseLineChunk,
   MAX_PROTOCOL_RESPONSE_LINE_BYTES,
 } from "../dist/protocol.js";
+import { makeDeviceFailureResponse, makeDeviceRequest } from "../dist/device-contract.js";
 import { PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES } from "../dist/provider-protocol.js";
 import { AgentQError } from "../dist/errors.js";
 
@@ -46,6 +46,19 @@ const status = {
     state: "unprovisioned",
   },
 };
+
+function statusResult(id) {
+  return {
+    id,
+    version: 1,
+    success: true,
+    method: "get_status",
+    result: {
+      device: status.device,
+      provisioning: status.provisioning,
+    },
+  };
+}
 
 test("prefilters likely usb ports before handshake", async () => {
   const requestedPorts = [];
@@ -131,33 +144,22 @@ test("surfaces id-less Firmware error responses for the in-flight request", () =
   assert.throws(
     () =>
       tryParseMatchingResponseLine(
-        JSON.stringify({
-          version: 1,
-          type: "error",
-          error: {
-            code: "invalid_json",
-            message: "Invalid JSON.",
-          },
-        }),
+        JSON.stringify(makeDeviceFailureResponse({ code: "invalid_request" })),
         "req_1",
         assertStatusResponse,
       ),
     {
-      code: "invalid_json",
+      code: "invalid_request",
     },
   );
 });
 
 test("ignores terminal responses for a different in-flight request id", () => {
-  const policyProposeError = JSON.stringify({
+  const policyProposeError = JSON.stringify(makeDeviceFailureResponse({
     id: "req_policy_propose",
-    version: 1,
-    type: "error",
-    error: {
-      code: "invalid_session",
-      message: "Policy update session is unknown or already ended.",
-    },
-  });
+    method: "policy_propose",
+    code: "invalid_session",
+  }));
 
   assert.equal(
     tryParseMatchingResponseLine(policyProposeError, "req_disconnect", assertStatusResponse),
@@ -178,7 +180,7 @@ test("ignores terminal responses for a different in-flight request id", () => {
 
 test("rejects oversized protocol response lines before parsing", () => {
   assert.throws(
-    () => consumeProtocolResponseChunk("", `${"x".repeat(MAX_PROTOCOL_RESPONSE_LINE_BYTES + 1)}\n`),
+    () => consumeDeviceResponseLineChunk("", `${"x".repeat(MAX_PROTOCOL_RESPONSE_LINE_BYTES + 1)}\n`),
     {
       code: "protocol_error",
     },
@@ -229,63 +231,81 @@ test("scan surfaces a port-enumeration error instead of silently reporting no de
   );
 });
 
-function signedTransactionResult(id) {
+function signedTransactionResult(id, responseMethod = "sign_transaction") {
   return {
     id,
     version: 1,
-    type: "sign_result",
-    authorization: "user",
-    status: "signed",
-    chain: "sui",
-    method: "sign_transaction",
-    signature: SUI_SIGNATURE,
+    success: true,
+    method: responseMethod,
+    result: {
+      authorization: "user",
+      chain: "sui",
+      method: "sign_transaction",
+      signature: SUI_SIGNATURE,
+    },
   };
 }
 
-function capabilitiesResult(id, { payload = false, payloadCapability = null } = {}) {
+function capabilitiesResult(id) {
   return {
     id,
     version: 1,
-    type: "capabilities",
-    chains: [
-      {
-        id: "sui",
-        accounts: [{ keyScheme: "ed25519", derivationPath: "m/44'/784'/0'/0'/0'" }],
-        methods: [],
-      },
-    ],
-    signing: {
-      authorization: "user",
-      methods: [
+    success: true,
+    method: "get_capabilities",
+    result: {
+      chains: [
         {
-          chain: "sui",
-          method: "sign_transaction",
-          ...(payload
-            ? {
-              payload: {
-                kind: "transaction",
-                inlineMaxBytes: "384",
-                chunkMaxBytes: "2048",
-                payloadMaxBytes: "131072",
-                ...(payloadCapability ?? {}),
-              },
-            }
-            : {}),
+          id: "sui",
+          accounts: [{ keyScheme: "ed25519", derivationPath: "m/44'/784'/0'/0'/0'" }],
+          methods: [],
         },
-        { chain: "sui", method: "sign_personal_message" },
       ],
+      signing: {
+        authorization: "user",
+        methods: [
+          { chain: "sui", method: "sign_transaction" },
+          { chain: "sui", method: "sign_personal_message" },
+        ],
+      },
     },
   };
 }
 
 function signTransactionRequest() {
-  return makeSignTransactionRequest(
-    "session_abcdef",
-    "sui",
-    "sign_transaction",
-    { network: "mainnet", txBytes: "AQID" },
-    "req_sign",
-  );
+  return makeDeviceRequest({
+    id: "req_sign",
+    method: "sign_transaction",
+    sessionId: "session_abcdef",
+    payload: {
+      chain: "sui",
+      network: "mainnet",
+      txBytes: "AQID",
+    },
+  });
+}
+
+function ackResult(id) {
+  return {
+    id,
+    version: 1,
+    success: true,
+    method: "ack_result",
+    result: {
+      status: "acked",
+    },
+  };
+}
+
+function wireKind(request) {
+  if (request.type === "payload_transfer") {
+    return `${request.type}:${request.action}`;
+  }
+  return request.method ?? request.type;
+}
+
+function deviceRequestExecutor(handler) {
+  return async (requestLine, _expectedId, _requestLabel, deadlineMs, assertResponse) =>
+    handler(JSON.parse(requestLine.trim()), deadlineMs, assertResponse);
 }
 
 function waitMs(ms) {
@@ -399,28 +419,28 @@ class FakeSerialPort {
 test("requestSignResultWithRecovery fetches and acks a retained sign result by original id", async () => {
   const requests = [];
   const request = signTransactionRequest();
-  const result = await requestSignResultWithRecovery(request, 1234, async (wireRequest, deadlineMs, assertResponse) => {
+  const result = await requestSignResultWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, deadlineMs, assertResponse) => {
     requests.push({ request: wireRequest, deadlineMs });
-    if (wireRequest.type === "sign_transaction") {
+    if (wireKind(wireRequest) === "sign_transaction") {
       throw markRequestMayHaveReachedFirmware(new AgentQError("timeout", "Lost sign response.", true));
     }
-    if (wireRequest.type === "get_result") {
-      return assertResponse(signedTransactionResult(wireRequest.id));
+    if (wireKind(wireRequest) === "get_result") {
+      return assertResponse(signedTransactionResult(wireRequest.id, "get_result"));
     }
-    if (wireRequest.type === "ack_result") {
-      return assertResponse({ id: wireRequest.id, version: 1, type: "ack_result", status: "acked" });
+    if (wireKind(wireRequest) === "ack_result") {
+      return assertResponse(ackResult(wireRequest.id));
     }
-    throw new Error(`unexpected request: ${wireRequest.type}`);
-  });
+    throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
+  }));
 
   assert.equal(result.status, "signed");
-  assert.deepEqual(requests.map((entry) => entry.request.type), [
+  assert.deepEqual(requests.map((entry) => wireKind(entry.request)), [
     "sign_transaction",
     "get_result",
     "ack_result",
   ]);
-  assert.equal(requests[1].request.id, request.id);
-  assert.equal(requests[2].request.id, request.id);
+  assert.equal(requests[1].request.payload.retainedRequestId, request.id);
+  assert.equal(requests[2].request.payload.retainedRequestId, request.id);
   assert.equal(requests[1].deadlineMs, INTERNAL_USB_DEADLINE_MS);
   assert.equal(requests[2].deadlineMs, INTERNAL_USB_DEADLINE_MS);
 });
@@ -429,21 +449,21 @@ test("requestSignResultWithRecovery waits for ack_result ordering before resolvi
   const request = signTransactionRequest();
   let releaseAck;
   let resolved = false;
-  const resultPromise = requestSignResultWithRecovery(request, 1234, async (wireRequest, _deadlineMs, assertResponse) => {
-    if (wireRequest.type === "sign_transaction") {
+  const resultPromise = requestSignResultWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
+    if (wireKind(wireRequest) === "sign_transaction") {
       throw markRequestMayHaveReachedFirmware(new AgentQError("timeout", "Lost sign response.", true));
     }
-    if (wireRequest.type === "get_result") {
-      return assertResponse(signedTransactionResult(wireRequest.id));
+    if (wireKind(wireRequest) === "get_result") {
+      return assertResponse(signedTransactionResult(wireRequest.id, "get_result"));
     }
-    if (wireRequest.type === "ack_result") {
+    if (wireKind(wireRequest) === "ack_result") {
       await new Promise((resolve) => {
         releaseAck = resolve;
       });
-      return assertResponse({ id: wireRequest.id, version: 1, type: "ack_result", status: "acked" });
+      return assertResponse(ackResult(wireRequest.id));
     }
-    throw new Error(`unexpected request: ${wireRequest.type}`);
-  });
+    throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
+  }));
   resultPromise.then(() => {
     resolved = true;
   }, () => {
@@ -460,18 +480,18 @@ test("requestSignResultWithRecovery waits for ack_result ordering before resolvi
 
 test("requestSignResultWithRecovery ignores ack_result failure after recovery", async () => {
   const request = signTransactionRequest();
-  const result = await requestSignResultWithRecovery(request, 1234, async (wireRequest, _deadlineMs, assertResponse) => {
-    if (wireRequest.type === "sign_transaction") {
+  const result = await requestSignResultWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
+    if (wireKind(wireRequest) === "sign_transaction") {
       throw markRequestMayHaveReachedFirmware(new AgentQError("transport_closed", "Transport closed.", true));
     }
-    if (wireRequest.type === "get_result") {
-      return assertResponse(signedTransactionResult(wireRequest.id));
+    if (wireKind(wireRequest) === "get_result") {
+      return assertResponse(signedTransactionResult(wireRequest.id, "get_result"));
     }
-    if (wireRequest.type === "ack_result") {
+    if (wireKind(wireRequest) === "ack_result") {
       throw new AgentQError("transport_closed", "Ack failed.", true);
     }
-    throw new Error(`unexpected request: ${wireRequest.type}`);
-  });
+    throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
+  }));
 
   assert.equal(result.status, "signed");
 });
@@ -482,16 +502,16 @@ test("requestSignResultWithRecovery propagates get_result invalid_session", asyn
   const seen = [];
 
   await assert.rejects(
-    () => requestSignResultWithRecovery(request, 1234, async (wireRequest) => {
-      seen.push(wireRequest.type);
-      if (wireRequest.type === "sign_transaction") {
+    () => requestSignResultWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest) => {
+      seen.push(wireKind(wireRequest));
+      if (wireKind(wireRequest) === "sign_transaction") {
         throw original;
       }
-      if (wireRequest.type === "get_result") {
+      if (wireKind(wireRequest) === "get_result") {
         throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
       }
-      throw new Error(`unexpected request: ${wireRequest.type}`);
-    }),
+      throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
+    })),
     (error) => error instanceof AgentQError && error.code === "invalid_session",
   );
   assert.deepEqual(seen, ["sign_transaction", "get_result"]);
@@ -499,18 +519,18 @@ test("requestSignResultWithRecovery propagates get_result invalid_session", asyn
 
 test("requestSignResultWithRecovery marks recovered result when ack_result invalidates the session", async () => {
   const request = signTransactionRequest();
-  const result = await requestSignResultWithRecovery(request, 1234, async (wireRequest, _deadlineMs, assertResponse) => {
-    if (wireRequest.type === "sign_transaction") {
+  const result = await requestSignResultWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
+    if (wireKind(wireRequest) === "sign_transaction") {
       throw markRequestMayHaveReachedFirmware(new AgentQError("transport_closed", "Transport closed.", true));
     }
-    if (wireRequest.type === "get_result") {
-      return assertResponse(signedTransactionResult(wireRequest.id));
+    if (wireKind(wireRequest) === "get_result") {
+      return assertResponse(signedTransactionResult(wireRequest.id, "get_result"));
     }
-    if (wireRequest.type === "ack_result") {
+    if (wireKind(wireRequest) === "ack_result") {
       throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
     }
-    throw new Error(`unexpected request: ${wireRequest.type}`);
-  });
+    throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
+  }));
 
   assert.equal(result.status, "signed");
   assert.equal(consumeFirmwareSessionInvalidated(result), true);
@@ -523,10 +543,10 @@ test("requestSignResultWithRecovery does not recover write-before-open failures"
   const seen = [];
 
   await assert.rejects(
-    () => requestSignResultWithRecovery(request, 1234, async (wireRequest) => {
-      seen.push(wireRequest.type);
+    () => requestSignResultWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest) => {
+      seen.push(wireKind(wireRequest));
       throw original;
-    }),
+    })),
     (error) => error === original,
   );
   assert.deepEqual(seen, ["sign_transaction"]);
@@ -538,16 +558,16 @@ test("requestSignResultWithRecovery preserves original sign error when get_resul
   const seen = [];
 
   await assert.rejects(
-    () => requestSignResultWithRecovery(request, 1234, async (wireRequest) => {
-      seen.push(wireRequest.type);
-      if (wireRequest.type === "sign_transaction") {
+    () => requestSignResultWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest) => {
+      seen.push(wireKind(wireRequest));
+      if (wireKind(wireRequest) === "sign_transaction") {
         throw original;
       }
-      if (wireRequest.type === "get_result") {
+      if (wireKind(wireRequest) === "get_result") {
         throw new AgentQError("unknown_request", "No retained result.", false);
       }
-      throw new Error(`unexpected request: ${wireRequest.type}`);
-    }),
+      throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
+    })),
     (error) => error === original,
   );
   assert.deepEqual(seen, ["sign_transaction", "get_result"]);
@@ -558,15 +578,15 @@ test("requestSignResultWithRecovery preserves original sign error when get_resul
   const original = markRequestMayHaveReachedFirmware(new AgentQError("timeout", "Original sign timeout.", true));
 
   await assert.rejects(
-    () => requestSignResultWithRecovery(request, 1234, async (wireRequest, _deadlineMs, assertResponse) => {
-      if (wireRequest.type === "sign_transaction") {
+    () => requestSignResultWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
+      if (wireKind(wireRequest) === "sign_transaction") {
         throw original;
       }
-      if (wireRequest.type === "get_result") {
-        return assertResponse({ id: wireRequest.id, version: 1, type: "ack_result", status: "acked" });
+      if (wireKind(wireRequest) === "get_result") {
+        return assertResponse(ackResult(wireRequest.id));
       }
-      throw new Error(`unexpected request: ${wireRequest.type}`);
-    }),
+      throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
+    })),
     (error) => error === original,
   );
 });
@@ -626,10 +646,7 @@ test("node USB lease canceled after open timeout never writes and late open clos
       ? new FakeSerialPort({ open: "pending" })
       : new FakeSerialPort({
         write: (request) => ({
-          response: {
-            ...status,
-            id: request.id,
-          },
+          response: statusResult(request.id),
         }),
       });
     ports.push(port);
@@ -690,20 +707,20 @@ test("node USB write-started failure is recovery eligible", async () => {
   const seen = [];
   setSerialPortFactoryForTest(() => new FakeSerialPort({
     write: (request) => {
-      seen.push(request.type);
-      if (request.type === "sign_transaction") {
+      seen.push(wireKind(request));
+      if (wireKind(request) === "sign_transaction") {
         return { error: new Error("write failed after start") };
       }
-      if (request.type === "get_result") {
-        return { response: signedTransactionResult(request.id) };
+      if (wireKind(request) === "get_result") {
+        return { response: signedTransactionResult(request.id, "get_result") };
       }
-      if (request.type === "ack_result") {
-        return { response: { id: request.id, version: 1, type: "ack_result", status: "acked" } };
+      if (wireKind(request) === "ack_result") {
+        return { response: ackResult(request.id) };
       }
-      if (request.type === "get_capabilities") {
+      if (wireKind(request) === "get_capabilities") {
         return { response: capabilitiesResult(request.id) };
       }
-      return { response: status };
+      return { response: statusResult(request.id) };
     },
   }));
   try {
@@ -716,7 +733,7 @@ test("node USB write-started failure is recovery eligible", async () => {
       100,
     );
     assert.equal(result.status, "signed");
-    assert.deepEqual(seen, ["get_capabilities", "sign_transaction", "get_result", "ack_result"]);
+    assert.deepEqual(seen, ["sign_transaction", "get_result", "ack_result"]);
   } finally {
     setSerialPortFactoryForTest(null);
   }
@@ -746,41 +763,43 @@ test("node USB validates sign_transaction params before serial I/O", async () =>
   }
 });
 
-test("node USB uploads a synthetic large transaction payload before staged signing", async () => {
-  const payload = Buffer.alloc(128 * 1024);
+test("node USB transfers a synthetic large method payload before signing", async () => {
+  const payload = Buffer.alloc(24 * 1024);
   for (let index = 0; index < payload.length; index += 1) {
     payload[index] = (index * 31 + 17) & 0xff;
   }
-  const payloadDigest = `sha256:${createHash("sha256").update(payload).digest("hex")}`;
+  const txBytes = payload.toString("base64");
+  const transferredPayload = Buffer.from(JSON.stringify({
+    chain: "sui",
+    network: "mainnet",
+    txBytes,
+  }), "utf8");
+  const payloadDigest = `sha256:${createHash("sha256").update(transferredPayload).digest("hex")}`;
   const chunkMaxBytes = 2048;
   const seen = [];
   const chunks = [];
   let receivedBytes = 0;
   setSerialPortFactoryForTest(() => new FakeSerialPort({
     write: (request) => {
-      seen.push(request.type);
-      if (request.type === "get_capabilities") {
-        return { response: capabilitiesResult(request.id, { payload: true }) };
-      }
-      if (request.type === "payload_upload_begin") {
-        assert.equal(request.chain, "sui");
-        assert.equal(request.method, "sign_transaction");
-        assert.equal(request.payloadKind, "transaction");
-        assert.equal(request.sizeBytes, String(payload.length));
+      seen.push(wireKind(request));
+      if (wireKind(request) === "payload_transfer:begin") {
+        assert.equal(request.totalBytes, String(transferredPayload.length));
         assert.equal(request.payloadDigest, payloadDigest);
         return {
           response: {
             id: request.id,
             version: 1,
-            type: "payload_upload_begin_result",
-            uploadId: "upload_synthetic_0001",
-            receivedBytes: "0",
-            chunkMaxBytes: String(chunkMaxBytes),
+            success: true,
+            result: {
+              transferId: "transfer_synthetic_0001",
+              receivedBytes: "0",
+              chunkMaxBytes: String(chunkMaxBytes),
+            },
           },
         };
       }
-      if (request.type === "payload_upload_chunk") {
-        assert.equal(request.uploadId, "upload_synthetic_0001");
+      if (wireKind(request) === "payload_transfer:chunk") {
+        assert.equal(request.transferId, "transfer_synthetic_0001");
         assert.equal(request.offsetBytes, String(receivedBytes));
         const chunk = Buffer.from(request.chunk, "base64");
         chunks.push(chunk);
@@ -789,39 +808,34 @@ test("node USB uploads a synthetic large transaction payload before staged signi
           response: {
             id: request.id,
             version: 1,
-            type: "payload_upload_chunk_result",
-            receivedBytes: String(receivedBytes),
+            success: true,
+            result: {
+              receivedBytes: String(receivedBytes),
+            },
           },
         };
       }
-      if (request.type === "payload_upload_finish") {
-        assert.equal(request.uploadId, "upload_synthetic_0001");
-        assert.equal(receivedBytes, payload.length);
+      if (wireKind(request) === "payload_transfer:finish") {
+        assert.equal(request.transferId, "transfer_synthetic_0001");
+        assert.equal(receivedBytes, transferredPayload.length);
         return {
           response: {
             id: request.id,
             version: 1,
-            type: "payload_upload_finish_result",
-            payloadRef: "payload_synthetic_0001",
-            chain: "sui",
-            method: "sign_transaction",
-            payloadKind: "transaction",
-            sizeBytes: String(payload.length),
-            payloadDigest,
+            success: true,
+            result: {
+              payloadRef: "payload_synthetic_0001",
+            },
           },
         };
       }
-      if (request.type === "sign_transaction") {
-        assert.deepEqual(request.params, {
-          network: "mainnet",
+      if (wireKind(request) === "sign_transaction") {
+        assert.deepEqual(request.payload, {
           payloadRef: "payload_synthetic_0001",
-          payloadKind: "transaction",
-          sizeBytes: String(payload.length),
-          payloadDigest,
         });
         return { response: signedTransactionResult(request.id) };
       }
-      return { response: status };
+      return { response: statusResult(request.id) };
     },
   }));
   try {
@@ -830,81 +844,96 @@ test("node USB uploads a synthetic large transaction payload before staged signi
       "/dev/cu.agentq-staged-sign",
       "session_abcdef",
       { operation: "sign_transaction", chain: "sui", method: "sign_transaction" },
-      { network: "mainnet", txBytes: payload.toString("base64") },
+      { network: "mainnet", txBytes },
       1000,
     );
     assert.equal(result.status, "signed");
-    assert.equal(seen[0], "get_capabilities");
-    assert.equal(seen[1], "payload_upload_begin");
-    assert.equal(seen.at(-2), "payload_upload_finish");
+    assert.equal(seen[0], "payload_transfer:begin");
+    assert.equal(seen.at(-2), "payload_transfer:finish");
     assert.equal(seen.at(-1), "sign_transaction");
     assert.equal(
-      seen.filter((type) => type === "payload_upload_chunk").length,
-      Math.ceil(payload.length / chunkMaxBytes),
+      seen.filter((type) => type === "payload_transfer:chunk").length,
+      Math.ceil(transferredPayload.length / chunkMaxBytes),
     );
-    assert.deepEqual(Buffer.concat(chunks), payload);
+    assert.deepEqual(Buffer.concat(chunks), transferredPayload);
   } finally {
     setSerialPortFactoryForTest(null);
   }
 });
 
-test("node USB aborts finalized staged payload by payloadRef after descriptor mismatch", async () => {
-  const payload = Buffer.alloc(PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES + 1, 0x44);
+test("node USB aborts a transferred payload when the method request fails", async () => {
+  const payload = Buffer.alloc(8 * 1024, 0x44);
   const seen = [];
   let receivedBytes = 0;
   let abortRequest = null;
   setSerialPortFactoryForTest(() => new FakeSerialPort({
     write: (request) => {
-      seen.push(request.type);
-      if (request.type === "get_capabilities") {
-        return { response: capabilitiesResult(request.id, { payload: true }) };
-      }
-      if (request.type === "payload_upload_begin") {
+      seen.push(wireKind(request));
+      if (wireKind(request) === "payload_transfer:begin") {
         return {
           response: {
             id: request.id,
             version: 1,
-            type: "payload_upload_begin_result",
-            uploadId: "upload_descriptor_mismatch",
-            receivedBytes: "0",
-            chunkMaxBytes: String(payload.length),
+            success: true,
+            result: {
+              transferId: "transfer_method_failure",
+              receivedBytes: "0",
+              chunkMaxBytes: String(payload.length * 2),
+            },
           },
         };
       }
-      if (request.type === "payload_upload_chunk") {
+      if (wireKind(request) === "payload_transfer:chunk") {
         receivedBytes += Buffer.from(request.chunk, "base64").length;
         return {
           response: {
             id: request.id,
             version: 1,
-            type: "payload_upload_chunk_result",
-            receivedBytes: String(receivedBytes),
+            success: true,
+            result: {
+              receivedBytes: String(receivedBytes),
+            },
           },
         };
       }
-      if (request.type === "payload_upload_finish") {
+      if (wireKind(request) === "payload_transfer:finish") {
         return {
           response: {
             id: request.id,
             version: 1,
-            type: "payload_upload_finish_result",
-            payloadRef: "payload_descriptor_mismatch",
-            chain: "sui",
-            method: "sign_transaction",
-            payloadKind: "transaction",
-            sizeBytes: String(payload.length),
-            payloadDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            success: true,
+            result: {
+              payloadRef: "payload_method_failure",
+            },
           },
         };
       }
-      if (request.type === "payload_upload_abort") {
+      if (wireKind(request) === "sign_transaction") {
+        assert.deepEqual(request.payload, { payloadRef: "payload_method_failure" });
+        return {
+          response: {
+            id: request.id,
+            version: 1,
+            success: false,
+            method: "sign_transaction",
+            error: {
+              code: "invalid_session",
+              message: "Session is missing, expired, or does not match.",
+              retryable: false,
+            },
+          },
+        };
+      }
+      if (wireKind(request) === "payload_transfer:abort") {
         abortRequest = request;
         return {
           response: {
             id: request.id,
             version: 1,
-            type: "payload_upload_abort_result",
-            status: "aborted",
+            success: true,
+            result: {
+              status: "aborted",
+            },
           },
         };
       }
@@ -915,75 +944,91 @@ test("node USB aborts finalized staged payload by payloadRef after descriptor mi
     const driver = new SerialPortUsbDriver();
     await assert.rejects(
       () => driver.signTransaction(
-        "/dev/cu.agentq-descriptor-mismatch",
+        "/dev/cu.agentq-method-failure",
         "session_abcdef",
         { operation: "sign_transaction", chain: "sui", method: "sign_transaction" },
         { network: "mainnet", txBytes: payload.toString("base64") },
         1000,
       ),
-      (error) => error instanceof AgentQError && error.code === "protocol_error",
+      (error) => error instanceof AgentQError && error.code === "invalid_session",
     );
-    assert.equal(seen.at(-1), "payload_upload_abort");
-    assert.equal(abortRequest.payloadRef, "payload_descriptor_mismatch");
-    assert.equal("uploadId" in abortRequest, false);
+    assert.equal(seen.at(-1), "payload_transfer:abort");
+    assert.equal(abortRequest.transferId, "transfer_method_failure");
   } finally {
     setSerialPortFactoryForTest(null);
   }
 });
 
-test("node USB preserves staged failure and marks session invalidated when abort reports invalid_session", async () => {
-  const payload = Buffer.alloc(PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES + 1, 0x45);
+test("node USB preserves transfer failure and marks session invalidated when abort reports invalid_session", async () => {
+  const payload = Buffer.alloc(8 * 1024, 0x45);
   let receivedBytes = 0;
   setSerialPortFactoryForTest(() => new FakeSerialPort({
     write: (request) => {
-      if (request.type === "get_capabilities") {
-        return { response: capabilitiesResult(request.id, { payload: true }) };
-      }
-      if (request.type === "payload_upload_begin") {
+      if (wireKind(request) === "payload_transfer:begin") {
         return {
           response: {
             id: request.id,
             version: 1,
-            type: "payload_upload_begin_result",
-            uploadId: "upload_abort_invalid_session",
-            receivedBytes: "0",
-            chunkMaxBytes: String(payload.length),
+            success: true,
+            result: {
+              transferId: "transfer_abort_invalid_session",
+              receivedBytes: "0",
+              chunkMaxBytes: String(payload.length * 2),
+            },
           },
         };
       }
-      if (request.type === "payload_upload_chunk") {
+      if (wireKind(request) === "payload_transfer:chunk") {
         receivedBytes += Buffer.from(request.chunk, "base64").length;
         return {
           response: {
             id: request.id,
             version: 1,
-            type: "payload_upload_chunk_result",
-            receivedBytes: String(receivedBytes),
+            success: true,
+            result: {
+              receivedBytes: String(receivedBytes),
+            },
           },
         };
       }
-      if (request.type === "payload_upload_finish") {
+      if (wireKind(request) === "payload_transfer:finish") {
         return {
           response: {
             id: request.id,
             version: 1,
-            type: "payload_upload_finish_result",
-            payloadRef: "payload_abort_invalid_session",
-            chain: "sui",
+            success: true,
+            result: {
+              payloadRef: "payload_abort_invalid_session",
+            },
+          },
+        };
+      }
+      if (wireKind(request) === "sign_transaction") {
+        return {
+          response: {
+            id: request.id,
+            version: 1,
+            success: false,
             method: "sign_transaction",
-            payloadKind: "transaction",
-            sizeBytes: String(payload.length),
-            payloadDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            error: {
+              code: "invalid_response",
+              message: "Device response is malformed.",
+              retryable: true,
+            },
           },
         };
       }
-      if (request.type === "payload_upload_abort") {
+      if (wireKind(request) === "payload_transfer:abort") {
         return {
           response: {
             id: request.id,
             version: 1,
-            type: "error",
-            error: { code: "invalid_session", message: "Session is unknown or already ended." },
+            success: false,
+            error: {
+              code: "invalid_session",
+              message: "Session is missing, expired, or does not match.",
+              retryable: false,
+            },
           },
         };
       }
@@ -1005,7 +1050,7 @@ test("node USB preserves staged failure and marks session invalidated when abort
       thrown = error;
     }
     assert.ok(thrown instanceof AgentQError);
-    assert.equal(thrown.code, "protocol_error");
+    assert.equal(thrown.code, "invalid_response");
     assert.equal(consumeFirmwareSessionInvalidated(thrown), true);
     assert.equal(consumeFirmwareSessionInvalidated(thrown), false);
   } finally {
@@ -1013,44 +1058,47 @@ test("node USB preserves staged failure and marks session invalidated when abort
   }
 });
 
-test("node USB aborts active staged upload by uploadId after progress mismatch", async () => {
-  const payload = Buffer.alloc(PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES + 1, 0x61);
+test("node USB aborts active payload transfer after progress mismatch", async () => {
+  const payload = Buffer.alloc(8 * 1024, 0x61);
   let abortRequest = null;
   setSerialPortFactoryForTest(() => new FakeSerialPort({
     write: (request) => {
-      if (request.type === "get_capabilities") {
-        return { response: capabilitiesResult(request.id, { payload: true }) };
-      }
-      if (request.type === "payload_upload_begin") {
+      if (wireKind(request) === "payload_transfer:begin") {
         return {
           response: {
             id: request.id,
             version: 1,
-            type: "payload_upload_begin_result",
-            uploadId: "upload_progress_mismatch",
-            receivedBytes: "0",
-            chunkMaxBytes: String(payload.length),
+            success: true,
+            result: {
+              transferId: "transfer_progress_mismatch",
+              receivedBytes: "0",
+              chunkMaxBytes: String(payload.length * 2),
+            },
           },
         };
       }
-      if (request.type === "payload_upload_chunk") {
+      if (wireKind(request) === "payload_transfer:chunk") {
         return {
           response: {
             id: request.id,
             version: 1,
-            type: "payload_upload_chunk_result",
-            receivedBytes: "1",
+            success: true,
+            result: {
+              receivedBytes: "1",
+            },
           },
         };
       }
-      if (request.type === "payload_upload_abort") {
+      if (wireKind(request) === "payload_transfer:abort") {
         abortRequest = request;
         return {
           response: {
             id: request.id,
             version: 1,
-            type: "payload_upload_abort_result",
-            status: "aborted",
+            success: true,
+            result: {
+              status: "aborted",
+            },
           },
         };
       }
@@ -1067,65 +1115,20 @@ test("node USB aborts active staged upload by uploadId after progress mismatch",
         { network: "mainnet", txBytes: payload.toString("base64") },
         1000,
       ),
-      (error) => error instanceof AgentQError && error.code === "protocol_error",
+      (error) => error instanceof AgentQError && error.code === "invalid_response",
     );
-    assert.equal(abortRequest.uploadId, "upload_progress_mismatch");
-    assert.equal("payloadRef" in abortRequest, false);
+    assert.equal(abortRequest.transferId, "transfer_progress_mismatch");
   } finally {
     setSerialPortFactoryForTest(null);
   }
 });
 
-test("node USB rejects chunk capabilities below the staged deadline lower bound before upload", async () => {
-  const payload = Buffer.alloc(PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES + 1, 0x5a);
-  const advertisedChunkMaxBytes = PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES - 1;
+test("node USB rejects payloads above the common transfer max before upload", async () => {
+  const payload = Buffer.alloc(100 * 1024, 0x33);
   const seen = [];
   setSerialPortFactoryForTest(() => new FakeSerialPort({
     write: (request) => {
-      seen.push(request.type);
-      if (request.type === "get_capabilities") {
-        return {
-          response: capabilitiesResult(request.id, {
-            payload: true,
-            payloadCapability: { chunkMaxBytes: String(advertisedChunkMaxBytes) },
-          }),
-        };
-      }
-      return { response: signedTransactionResult(request.id) };
-    },
-  }));
-  try {
-    const driver = new SerialPortUsbDriver();
-    await assert.rejects(
-      () => driver.signTransaction(
-        "/dev/cu.agentq-small-chunk-capability",
-        "session_abcdef",
-        { operation: "sign_transaction", chain: "sui", method: "sign_transaction" },
-        { network: "mainnet", txBytes: payload.toString("base64") },
-        1000,
-      ),
-      (error) => error instanceof AgentQError && error.code === "protocol_error",
-    );
-    assert.deepEqual(seen, ["get_capabilities"]);
-  } finally {
-    setSerialPortFactoryForTest(null);
-  }
-});
-
-test("node USB rejects payloads above advertised payload max before upload", async () => {
-  const payload = Buffer.alloc(PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES + 1, 0x33);
-  const seen = [];
-  setSerialPortFactoryForTest(() => new FakeSerialPort({
-    write: (request) => {
-      seen.push(request.type);
-      if (request.type === "get_capabilities") {
-        return {
-          response: capabilitiesResult(request.id, {
-            payload: true,
-            payloadCapability: { payloadMaxBytes: String(PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES) },
-          }),
-        };
-      }
+      seen.push(wireKind(request));
       return { response: signedTransactionResult(request.id) };
     },
   }));
@@ -1139,9 +1142,9 @@ test("node USB rejects payloads above advertised payload max before upload", asy
         { network: "mainnet", txBytes: payload.toString("base64") },
         1000,
       ),
-      (error) => error instanceof AgentQError && error.code === "unsupported_payload_size",
+      (error) => error instanceof AgentQError && error.code === "payload_too_large",
     );
-    assert.deepEqual(seen, ["get_capabilities"]);
+    assert.deepEqual(seen, []);
   } finally {
     setSerialPortFactoryForTest(null);
   }
@@ -1167,18 +1170,18 @@ test("deadlineEnforcingDriver preserves signing success metadata before its dead
   const driver = {
     async signTransaction() {
       const request = signTransactionRequest();
-      return requestSignResultWithRecovery(request, 1234, async (wireRequest, _deadlineMs, assertResponse) => {
-        if (wireRequest.type === "sign_transaction") {
+      return requestSignResultWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
+        if (wireKind(wireRequest) === "sign_transaction") {
           throw markRequestMayHaveReachedFirmware(new AgentQError("transport_closed", "Transport closed.", true));
         }
-        if (wireRequest.type === "get_result") {
-          return assertResponse(signedTransactionResult(wireRequest.id));
+        if (wireKind(wireRequest) === "get_result") {
+          return assertResponse(signedTransactionResult(wireRequest.id, "get_result"));
         }
-        if (wireRequest.type === "ack_result") {
+        if (wireKind(wireRequest) === "ack_result") {
           throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
         }
-        throw new Error(`unexpected request: ${wireRequest.type}`);
-      });
+        throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
+      }));
     },
   };
   const bounded = deadlineEnforcingDriver(driver);

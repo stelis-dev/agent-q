@@ -220,36 +220,6 @@ void expect_params(
     }
 }
 
-void expect_staged_params(
-    const char* label,
-    const std::string& json,
-    agent_q::AgentQSignTransactionUserValidationResult expected,
-    const char* expected_network = nullptr,
-    const char* expected_payload_ref = nullptr)
-{
-    JsonDocument document = parse_json(label, json);
-    agent_q::AgentQSignTransactionUserParams output = {};
-    memset(&output, 0xA5, sizeof(output));
-    const agent_q::AgentQSignTransactionUserValidationResult actual =
-        agent_q::validate_sign_transaction_user_params(document, agent_q::AgentQSupportedSignRoute::sui_sign_transaction, &output);
-    if (actual != expected) {
-        fprintf(stderr, "%s: expected staged params result %d, got %d\n",
-                label, static_cast<int>(expected), static_cast<int>(actual));
-        ++failures;
-        return;
-    }
-    if (actual != agent_q::AgentQSignTransactionUserValidationResult::ok) {
-        return;
-    }
-    if (expected_network == nullptr ||
-        expected_payload_ref == nullptr ||
-        strcmp(output.network, expected_network) != 0 ||
-        strcmp(output.payload_ref, expected_payload_ref) != 0) {
-        fprintf(stderr, "%s: staged params output fields did not match\n", label);
-        ++failures;
-    }
-}
-
 }  // namespace
 
 namespace agent_q {
@@ -454,7 +424,7 @@ int main()
     expect_params(
         "txBytes missing",
         valid_request_with_params("{\"network\":\"devnet\"}"),
-        Result::invalid_params_shape);
+        Result::invalid_tx_bytes);
     expect_params(
         "txBytes invalid base64",
         valid_request_with_params("{\"network\":\"devnet\",\"txBytes\":\"AA!A\"}"),
@@ -477,30 +447,11 @@ int main()
         387,
         "devnet",
         above_adapter_capacity.c_str());
-    expect_staged_params(
-        "valid staged params",
+    expect_params(
+        "payloadRef is not a method parameter",
         valid_request_with_params(std::string("{\"network\":\"devnet\","
                                   "\"payloadRef\":\"payload_abcdef0123456789\"}")),
-        Result::ok,
-        "devnet",
-        "payload_abcdef0123456789");
-    expect_staged_params(
-        "staged params reject descriptor echo",
-        valid_request_with_params(std::string("{\"network\":\"devnet\","
-                                  "\"payloadRef\":\"payload_abcdef0123456789\","
-                                  "\"payloadKind\":\"transaction\","
-                                  "\"sizeBytes\":\"00037\","
-                                  "\"payloadDigest\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}")),
         Result::unsupported_field);
-    expect_staged_params(
-        "staged params malformed payloadRef",
-        valid_request_with_params("{\"network\":\"devnet\","
-                                  "\"payloadRef\":\"payload_abc/def\"}"),
-        Result::invalid_payload_descriptor);
-    expect_staged_params(
-        "staged params missing payload source",
-        valid_request_with_params("{\"network\":\"devnet\"}"),
-        Result::invalid_params_shape);
     expect_params(
         "inline params reject descriptor echo",
         valid_request_with_params(std::string("{\"network\":\"devnet\","
@@ -513,9 +464,7 @@ int main()
         strcmp(agent_q::sign_transaction_user_validation_result_name(Result::unsupported_method),
                "unsupported_method") != 0 ||
         strcmp(agent_q::sign_transaction_user_validation_result_name(Result::invalid_tx_bytes),
-               "invalid_tx_bytes") != 0 ||
-        strcmp(agent_q::sign_transaction_user_validation_result_name(Result::invalid_payload_descriptor),
-               "invalid_payload_descriptor") != 0) {
+               "invalid_tx_bytes") != 0) {
         fprintf(stderr, "result names did not match\n");
         ++failures;
     }

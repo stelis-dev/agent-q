@@ -134,7 +134,7 @@ export function createRequestId(): string {
   return `req_${hexLower(randomBytesPortable(12))}`;
 }
 
-export function consumeProtocolResponseChunk(
+export function consumeDeviceResponseLineChunk(
   buffer: string,
   chunk: string,
   maxLineBytes = MAX_PROTOCOL_RESPONSE_LINE_BYTES,
@@ -146,11 +146,11 @@ export function consumeProtocolResponseChunk(
 
   for (const line of lines) {
     if (utf8ByteLength(line) > maxLineBytes) {
-      throw new ProtocolError("protocol_error", "Protocol response line exceeds maximum length.");
+      throw new ProtocolError("protocol_error", "Device response line exceeds maximum length.");
     }
   }
   if (utf8ByteLength(nextBuffer) > maxLineBytes) {
-    throw new ProtocolError("protocol_error", "Protocol response line exceeds maximum length.");
+    throw new ProtocolError("protocol_error", "Device response line exceeds maximum length.");
   }
 
   return { buffer: nextBuffer, lines };

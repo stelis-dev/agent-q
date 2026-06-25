@@ -14,46 +14,29 @@ import {
   type ProvisioningState,
 } from "./safe-text.js";
 import {
-  makeConnectRequest as makeProviderConnectRequest,
-  makeDisconnectRequest as makeProviderDisconnectRequest,
-  makeGetAccountsRequest as makeProviderGetAccountsRequest,
-  makeGetCapabilitiesRequest as makeProviderGetCapabilitiesRequest,
-  parseProviderProtocolResponse as parseProviderProtocolResponseCore,
   validateSignPersonalMessageParams as validateProviderSignPersonalMessageParams,
   validateSignPersonalMessageInput as validateProviderSignPersonalMessageInput,
   validateSignTransactionParams as validateProviderSignTransactionParams,
   validateSignTransactionInput as validateProviderSignTransactionInput,
+  type Account,
   type AccountsResponse,
   type CapabilitiesResponse,
-  type ConnectRequest,
+  type CapabilityChain,
   type ConnectResponse,
-  type DisconnectRequest,
+  type CredentialCapability,
   type DisconnectResponse,
-  type GetAccountsRequest,
-  type GetCapabilitiesRequest,
-  type ProtocolErrorResponse,
   type SignPersonalMessageParams,
-  type SignPersonalMessageRequest,
   type SignResultResponse,
   type SignTransactionParams,
-  type SignTransactionRequest,
+  type SigningCapabilities,
 } from "./provider-protocol.js";
-import {
-  sanitizeAckResultResponse,
-  type AckResultRequest,
-  type AckResultResponse,
-  type GetResultRequest,
-} from "./protocol-recovery.js";
-import {
-  isPayloadUploadResponseType,
-  sanitizePayloadUploadResponse,
-  type PayloadUploadRequest,
-  type PayloadUploadResponse,
-  type StagedSignTransactionRequest,
-} from "./protocol-payload-delivery.js";
 import { ProtocolError } from "./protocol-error.js";
 import {
+  makeDeviceError,
+  parseDeviceResponse,
   SIGN_RESULT_ERROR_MESSAGES,
+  type DeviceResponse,
+  type DeviceMethod,
   type SignResultErrorCode,
 } from "./device-contract.js";
 import {
@@ -128,7 +111,7 @@ import {
   SUI_ZKLOGIN_CREDENTIAL,
   SUI_ZKLOGIN_PROOF_POINT_DECIMAL_PATTERN,
   UNSUPPORTED_METHOD_MESSAGE,
-  consumeProtocolResponseChunk,
+  consumeDeviceResponseLineChunk,
   createRequestId,
   decodeCanonicalBase64,
   hasOnlyObjectKeys,
@@ -142,6 +125,7 @@ import {
   isSuiTransactionSignatureEnvelopeBase64,
   randomBytesPortable,
   utf8ByteLength,
+  validateCanonicalBase64Syntax,
   type SuiSignMethod,
   type SuiSignTransactionNetwork,
 } from "./protocol-primitives.js";
@@ -221,7 +205,7 @@ export {
   SUI_ZKLOGIN_PROOF_POINT_DECIMAL_PATTERN,
   UINT_DECIMAL_STRING_PATTERN,
   UNSUPPORTED_METHOD_MESSAGE,
-  consumeProtocolResponseChunk,
+  consumeDeviceResponseLineChunk,
   createRequestId,
   isUint64DecimalString,
   isUint256DecimalString,
@@ -229,9 +213,11 @@ export {
   isSuiAddressForPublicKey,
   isSuiAddressForSchemePrefixedPublicKey,
   isSuiTransactionSignatureEnvelopeBase64,
+  makeDeviceError,
+  parseDeviceResponse,
 };
 export { ProtocolError };
-export type { DeviceState, ProvisioningState, SignResultErrorCode, SuiSignMethod, SuiSignTransactionNetwork };
+export type { DeviceMethod, DeviceResponse, DeviceState, ProvisioningState, SignResultErrorCode, SuiSignMethod, SuiSignTransactionNetwork };
 export type {
   Account,
   AccountsResponse,
@@ -241,15 +227,9 @@ export type {
   CredentialCapability,
   ConnectApprovedResponse,
   ConnectRejectedResponse,
-  ConnectRequest,
   ConnectResponse,
-  DisconnectRequest,
   DisconnectResponse,
-  GetAccountsRequest,
-  GetCapabilitiesRequest,
-  ProtocolErrorResponse,
   SignPersonalMessageParams,
-  SignPersonalMessageRequest,
   SignPersonalMessageSignedResponse,
   SignOperationType,
   SignResultAuthorization,
@@ -260,62 +240,12 @@ export type {
   SignResultStatus,
   SignResultUserRejectedResponse,
   SignTransactionParams,
-  SignTransactionRequest,
   SignTransactionSignedResponse,
   SupportedSignRoute,
   SigningCapabilities,
   SigningCapabilityEntry,
 } from "./provider-protocol.js";
-export type {
-  AckResultRequest,
-  AckResultResponse,
-  GetResultRequest,
-} from "./protocol-recovery.js";
-export type {
-  PayloadDeliveryCapability,
-  PayloadDeliveryCapabilityLimits,
-  PayloadUploadAbortRequest,
-  PayloadUploadAbortResultResponse,
-  PayloadUploadBeginRequest,
-  PayloadUploadBeginResultResponse,
-  PayloadUploadChunkRequest,
-  PayloadUploadChunkResultResponse,
-  PayloadUploadFinishRequest,
-  PayloadUploadFinishResultResponse,
-  PayloadUploadRequest,
-  PayloadUploadResponse,
-  StagedSignTransactionParams,
-  StagedSignTransactionRequest,
-} from "./protocol-payload-delivery.js";
-export {
-  assertAckResultResponse,
-  makeAckResultRequest,
-  makeGetResultRequest,
-} from "./protocol-recovery.js";
-export {
-  PAYLOAD_REF_PATTERN,
-  PAYLOAD_UPLOAD_ID_PATTERN,
-  SIGNABLE_PAYLOAD_KIND_TRANSACTION,
-  makePayloadUploadAbortRequest,
-  makePayloadUploadBeginRequest,
-  makePayloadUploadChunkRequest,
-  makePayloadUploadFinishRequest,
-  makeStagedSignTransactionRequest,
-  normalizePayloadUploadRequest,
-  normalizeStagedSignTransactionParams,
-  payloadDeliveryCapabilityLimits,
-  sanitizePayloadDeliveryCapability,
-  sanitizePayloadUploadResponse,
-} from "./protocol-payload-delivery.js";
-// Signing request builders and route identification are owned by
-// provider-protocol because provider adapters and the full protocol share the
-// same top-level signing methods. The full protocol entrypoint re-exports the
-// same current-route builders instead of wrapping or reclassifying the route.
-export {
-  identifySignRoute,
-  makeSignPersonalMessageRequest,
-  makeSignTransactionRequest,
-} from "./provider-protocol.js";
+export { identifySignRoute } from "./provider-protocol.js";
 
 export interface DeviceStatus {
   deviceId: string;
@@ -419,25 +349,6 @@ export interface CredentialProposeRequest {
   sessionId: string;
   params: CredentialProposeParams;
 }
-
-export type ProtocolRequest =
-  | GetStatusRequest
-  | IdentifyDeviceRequest
-  | ConnectRequest
-  | DisconnectRequest
-  | GetCapabilitiesRequest
-  | GetAccountsRequest
-  | GetResultRequest
-  | AckResultRequest
-  | PayloadUploadRequest
-  | PolicyGetRequest
-  | GetApprovalHistoryRequest
-  | PolicyProposeRequest
-  | CredentialPrepareRequest
-  | CredentialProposeRequest
-  | StagedSignTransactionRequest
-  | SignTransactionRequest
-  | SignPersonalMessageRequest;
 
 export interface StatusResponse {
   id: string;
@@ -638,179 +549,39 @@ export interface CredentialProposeResultResponse {
   sessionEnded: boolean;
 }
 
-export type ProtocolResponse =
-  | StatusResponse
-  | IdentifyDeviceResponse
-  | ConnectResponse
-  | DisconnectResponse
-  | AckResultResponse
-  | PayloadUploadResponse
-  | CapabilitiesResponse
-  | AccountsResponse
-  | PolicyResponse
-  | ApprovalHistoryResponse
-  | PolicyProposeResultResponse
-  | CredentialPrepareResultResponse
-  | CredentialProposeResultResponse
-  | SignResultResponse
-  | ProtocolErrorResponse;
-
-export function makeGetStatusRequest(id = createRequestId()): GetStatusRequest {
-  validateRequestId(id);
-  return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "get_status",
-  };
-}
-
-export function makeIdentifyDeviceRequest(code: string, id = createRequestId()): IdentifyDeviceRequest {
-  validateRequestId(id);
-  if (!isIdentificationCode(code)) {
-    throw new ProtocolError("invalid_code", "Invalid identification code.");
-  }
-  return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "identify_device",
-    params: {
-      code,
-    },
-  };
-}
-
 export function createIdentificationCode(): string {
   const bytes = randomBytesPortable(2);
   return ((((bytes[0] ?? 0) << 8) | (bytes[1] ?? 0)) % 10000).toString().padStart(4, "0");
-}
-
-export const makeConnectRequest = makeProviderConnectRequest;
-export const makeDisconnectRequest = makeProviderDisconnectRequest;
-export const makeGetCapabilitiesRequest = makeProviderGetCapabilitiesRequest;
-export const makeGetAccountsRequest = makeProviderGetAccountsRequest;
-
-export function makePolicyGetRequest(sessionId: string, id = createRequestId()): PolicyGetRequest {
-  validateRequestId(id);
-  if (!isSessionId(sessionId)) {
-    throw new ProtocolError("invalid_session", "Invalid sessionId.");
-  }
-  return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "policy_get",
-    sessionId,
-  };
-}
-
-export function makeGetApprovalHistoryRequest(
-  sessionId: string,
-  params: { limit?: number; beforeSeq?: string } = {},
-  id = createRequestId(),
-): GetApprovalHistoryRequest {
-  validateRequestId(id);
-  if (!isSessionId(sessionId)) {
-    throw new ProtocolError("invalid_session", "Invalid sessionId.");
-  }
-  const normalizedParams = validateApprovalHistoryInput(params);
-  return {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "get_approval_history",
-    sessionId,
-    params: normalizedParams,
-  };
-}
-
-export function makePolicyProposeRequest(
-  sessionId: string,
-  policy: Record<string, unknown>,
-  id = createRequestId(),
-): PolicyProposeRequest {
-  validateRequestId(id);
-  if (!isSessionId(sessionId)) {
-    throw new ProtocolError("invalid_session", "Invalid sessionId.");
-  }
-  validatePolicyProposeInput(policy);
-  const request: PolicyProposeRequest = {
-    id,
-    version: PROTOCOL_VERSION,
-    type: "policy_propose",
-    sessionId,
-    params: {
-      policy,
-    },
-  };
-  if (utf8ByteLength(JSON.stringify(request)) > MAX_POLICY_UPDATE_REQUEST_JSON_BYTES) {
-    throw new ProtocolError("invalid_params", "policy_propose request is too large for the runtime.");
-  }
-  return request;
-}
-
-export function makeCredentialPrepareRequest(
-  sessionId: string,
-  params: unknown,
-  id = createRequestId(),
-): CredentialPrepareRequest {
-  validateRequestId(id);
-  if (!isSessionId(sessionId)) {
-    throw new ProtocolError("invalid_session", "Invalid sessionId.");
-  }
-  const normalizedParams = validateCredentialPrepareInput(params);
-  const request: CredentialPrepareRequest = {
-    id,
-    version: PROTOCOL_VERSION,
-    type: CREDENTIAL_PREPARE_OPERATION,
-    sessionId,
-    params: normalizedParams,
-  };
-  if (utf8ByteLength(JSON.stringify(request)) > MAX_RAW_PROTOCOL_JSON_BYTES) {
-    throw new ProtocolError("invalid_params", "credential_prepare request is too large for the runtime.");
-  }
-  return request;
-}
-
-export function makeCredentialProposeRequest(
-  sessionId: string,
-  params: unknown,
-  id = createRequestId(),
-): CredentialProposeRequest {
-  validateRequestId(id);
-  if (!isSessionId(sessionId)) {
-    throw new ProtocolError("invalid_session", "Invalid sessionId.");
-  }
-  const normalizedParams = validateCredentialProposeInput(params);
-  const request: CredentialProposeRequest = {
-    id,
-    version: PROTOCOL_VERSION,
-    type: CREDENTIAL_PROPOSE_OPERATION,
-    sessionId,
-    params: normalizedParams,
-  };
-  if (utf8ByteLength(JSON.stringify(request)) > MAX_POLICY_UPDATE_REQUEST_JSON_BYTES) {
-    throw new ProtocolError("invalid_params", "credential_propose request is too large for the runtime.");
-  }
-  return request;
 }
 
 export function validatePolicyProposeRequestInput(
   sessionId: string,
   policy: Record<string, unknown>,
 ): void {
-  makePolicyProposeRequest(sessionId, policy, "req_000000000000000000000000");
+  if (!isSessionId(sessionId)) {
+    throw new ProtocolError("invalid_session", "Invalid sessionId.");
+  }
+  validatePolicyProposeInput(policy);
 }
 
 export function validateCredentialPrepareRequestInput(
   sessionId: string,
   params: unknown,
 ): void {
-  makeCredentialPrepareRequest(sessionId, params, "req_000000000000000000000000");
+  if (!isSessionId(sessionId)) {
+    throw new ProtocolError("invalid_session", "Invalid sessionId.");
+  }
+  validateCredentialPrepareInput(params);
 }
 
 export function validateCredentialProposeRequestInput(
   sessionId: string,
   params: unknown,
 ): void {
-  makeCredentialProposeRequest(sessionId, params, "req_000000000000000000000000");
+  if (!isSessionId(sessionId)) {
+    throw new ProtocolError("invalid_session", "Invalid sessionId.");
+  }
+  validateCredentialProposeInput(params);
 }
 
 export function validateSignRequestInput(
@@ -1071,10 +842,6 @@ export function validateApprovalHistoryInput(
   return params.beforeSeq === undefined ? { limit } : { limit, beforeSeq: params.beforeSeq };
 }
 
-export function serializeRequest(request: ProtocolRequest): string {
-  return `${JSON.stringify(request)}\n`;
-}
-
 export function parseJsonLine(line: string): unknown {
   try {
     return JSON.parse(line);
@@ -1083,358 +850,285 @@ export function parseJsonLine(line: string): unknown {
   }
 }
 
-export function parseProtocolResponse(line: string, expectedId?: string): ProtocolResponse {
-  const value = parseJsonLine(line);
-  if (!isRecord(value)) {
-    throw new ProtocolError("protocol_error", "Protocol response must be an object.");
+function asResultObject(value: unknown): Record<string, unknown> {
+  if (!isRecord(value) || Array.isArray(value)) {
+    throw new ProtocolError("invalid_response", "Device result must be an object.");
   }
+  return value;
+}
 
-  if (value.version !== PROTOCOL_VERSION) {
-    throw new ProtocolError("incompatible_version", "Unsupported protocol response version.");
+function assertDeviceResultObject(
+  response: DeviceResponse,
+  method: DeviceMethod,
+  label: string,
+): { id: string; result: Record<string, unknown> } {
+  const parsed = parseDeviceResponse(response, { expectedMethod: method });
+  if (parsed.success === false) {
+    throw new ProtocolError(parsed.error.code, parsed.error.message);
   }
-
-  if (expectedId !== undefined && value.id !== expectedId) {
-    throw new ProtocolError("protocol_error", "Protocol response id does not match request id.");
+  if (parsed.id === undefined) {
+    throw new ProtocolError("invalid_response", `${label} id is required.`);
   }
+  return { id: parsed.id, result: asResultObject(parsed.result) };
+}
 
-  if (isProviderProtocolResponseType(value.type)) {
-    return parseProviderProtocolResponse(line, expectedId);
+function requireResultKeys(
+  result: Record<string, unknown>,
+  keys: readonly string[],
+  label: string,
+): void {
+  if (hasSecretPayloadKey(result)) {
+    throw new ProtocolError("invalid_response", `${label} must not include secret material.`);
   }
-
-  if (value.type === "ack_result") {
-    return sanitizeAckResultResponse(value);
+  if (!hasOnlyObjectKeys(result, keys)) {
+    throw new ProtocolError("invalid_response", `${label} contains unsupported fields.`);
   }
+}
 
-  if (isPayloadUploadResponseType(value.type)) {
-    return sanitizePayloadUploadResponse(value);
+export function assertStatusResponse(response: DeviceResponse): StatusResponse {
+  const { id, result } = assertDeviceResultObject(response, "get_status", "Status result");
+  requireResultKeys(result, ["device", "provisioning"], "Status result");
+  requireWireDeviceStatusShape(result.device, "Status result device object");
+  requireWireProvisioningStatusShape(result.provisioning, "Status result provisioning object");
+  const device = sanitizeDeviceStatus(result.device);
+  const provisioning = sanitizeProvisioningStatus(result.provisioning);
+  if (device === null || provisioning === null) {
+    throw new ProtocolError("invalid_response", "Status result is malformed.");
   }
+  return { id, version: PROTOCOL_VERSION, type: "status", device, provisioning };
+}
 
-  if (value.type === "status") {
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "device", "provisioning"])) {
-      throw new ProtocolError("protocol_error", "Status response contains unsupported fields.");
+export function assertIdentifyDeviceResponse(response: DeviceResponse): IdentifyDeviceResponse {
+  const { id, result } = assertDeviceResultObject(response, "identify_device", "Identify result");
+  requireResultKeys(result, ["status", "code", "device"], "Identify result");
+  requireWireDeviceStatusShape(result.device, "Identify result device object");
+  const device = sanitizeDeviceStatus(result.device);
+  if (device === null || result.status !== "displayed" || !isIdentificationCode(result.code)) {
+    throw new ProtocolError("invalid_response", "Identify result is malformed.");
+  }
+  return { id, version: PROTOCOL_VERSION, type: "identify_device_result", status: "displayed", code: result.code, device };
+}
+
+export function assertConnectResponse(response: DeviceResponse): ConnectResponse {
+  const { id, result } = assertDeviceResultObject(response, "connect", "Connect result");
+  requireResultKeys(result, ["sessionId", "sessionTtlMs", "device"], "Connect result");
+  requireWireDeviceStatusShape(result.device, "Connect result device object");
+  const device = sanitizeDeviceStatus(result.device);
+  if (
+    device === null ||
+    !isSessionId(result.sessionId) ||
+    typeof result.sessionTtlMs !== "number" ||
+    !Number.isInteger(result.sessionTtlMs) ||
+    result.sessionTtlMs <= 0 ||
+    result.sessionTtlMs > MAX_SESSION_TTL_MS
+  ) {
+    throw new ProtocolError("invalid_response", "Connect result is malformed.");
+  }
+  return {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "connect_result",
+    status: "approved",
+    sessionId: result.sessionId,
+    sessionTtlMs: result.sessionTtlMs,
+    device,
+  };
+}
+
+export function assertDisconnectResponse(response: DeviceResponse): DisconnectResponse {
+  const { id, result } = assertDeviceResultObject(response, "disconnect", "Disconnect result");
+  requireResultKeys(result, ["status"], "Disconnect result");
+  if (result.status !== "disconnected") {
+    throw new ProtocolError("invalid_response", "Disconnect result is malformed.");
+  }
+  return { id, version: PROTOCOL_VERSION, type: "disconnect_result", status: "disconnected" };
+}
+
+export function assertCapabilitiesResponse(response: DeviceResponse): CapabilitiesResponse {
+  const { id, result } = assertDeviceResultObject(response, "get_capabilities", "Capabilities result");
+  requireResultKeys(result, ["chains", "signing", "credentials"], "Capabilities result");
+  if (!Array.isArray(result.chains)) {
+    throw new ProtocolError("invalid_response", "Capabilities result is malformed.");
+  }
+  return {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "capabilities",
+    chains: result.chains as CapabilityChain[],
+    ...(result.signing === undefined ? {} : { signing: result.signing as SigningCapabilities }),
+    ...(result.credentials === undefined ? {} : { credentials: result.credentials as CredentialCapability[] }),
+  };
+}
+
+export function assertAccountsResponse(response: DeviceResponse): AccountsResponse {
+  const { id, result } = assertDeviceResultObject(response, "get_accounts", "Accounts result");
+  requireResultKeys(result, ["accounts"], "Accounts result");
+  if (!Array.isArray(result.accounts)) {
+    throw new ProtocolError("invalid_response", "Accounts result is malformed.");
+  }
+  return { id, version: PROTOCOL_VERSION, type: "accounts", accounts: result.accounts as Account[] };
+}
+
+export function assertPolicyResponse(response: DeviceResponse): PolicyResponse {
+  const { id, result } = assertDeviceResultObject(response, "policy_get", "Policy result");
+  requireResultKeys(result, ["policy"], "Policy result");
+  const policy = sanitizeCurrentPolicyDocument(result.policy);
+  if (policy === null) {
+    throw new ProtocolError("invalid_response", "Policy result is malformed.");
+  }
+  return { id, version: PROTOCOL_VERSION, type: "policy", policy };
+}
+
+export function assertApprovalHistoryResponse(response: DeviceResponse): ApprovalHistoryResponse {
+  const { id, result } = assertDeviceResultObject(response, "get_approval_history", "Approval history result");
+  requireResultKeys(result, ["records", "hasMore"], "Approval history result");
+  if (!Array.isArray(result.records) || result.records.length > MAX_APPROVAL_HISTORY_RECORDS || typeof result.hasMore !== "boolean") {
+    throw new ProtocolError("invalid_response", "Approval history result is malformed.");
+  }
+  return {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "approval_history",
+    records: result.records.map((entry) => sanitizeApprovalHistoryRecord(entry)),
+    hasMore: result.hasMore,
+  };
+}
+
+export function assertPolicyProposeResultResponse(response: DeviceResponse): PolicyProposeResultResponse {
+  const { id, result } = assertDeviceResultObject(response, "policy_propose", "Policy proposal result");
+  requireResultKeys(result, ["status", "reasonCode", "policy"], "Policy proposal result");
+  if (
+    !POLICY_PROPOSE_RESULT_STATUSES.includes(result.status as PolicyProposeResultStatus) ||
+    typeof result.reasonCode !== "string" ||
+    !APPROVAL_HISTORY_REASON_CODE_PATTERN.test(result.reasonCode)
+  ) {
+    throw new ProtocolError("invalid_response", "Policy proposal result is malformed.");
+  }
+  const policy = sanitizePolicyProposeResultPolicy(result.policy);
+  if (result.status === "invalid_policy") {
+    if (policy !== undefined) {
+      throw new ProtocolError("invalid_response", "Invalid policy result must not include policy metadata.");
     }
-    requireWireDeviceStatusShape(value.device, "Status response device object");
-    requireWireProvisioningStatusShape(value.provisioning, "Status response provisioning object");
-    const device = sanitizeDeviceStatus(value.device);
-    if (device === null) {
-      throw new ProtocolError("protocol_error", "Status response device object is malformed.");
-    }
-    const provisioning = sanitizeProvisioningStatus(value.provisioning);
-    if (provisioning === null) {
-      throw new ProtocolError("protocol_error", "Status response provisioning object is malformed.");
-    }
-    if (typeof value.id !== "string") {
-      throw new ProtocolError("protocol_error", "Status response id is malformed.");
-    }
+  } else if (policy === undefined) {
+    throw new ProtocolError("invalid_response", "Policy proposal result policy metadata is malformed.");
+  }
+  return {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "policy_propose_result",
+    status: result.status as PolicyProposeResultStatus,
+    reasonCode: result.reasonCode,
+    ...(policy !== undefined ? { policy } : {}),
+  };
+}
 
+export function assertCredentialPrepareResultResponse(response: DeviceResponse): CredentialPrepareResultResponse {
+  const { id, result } = assertDeviceResultObject(response, "credential_prepare", "Credential prepare result");
+  requireResultKeys(result, ["status", "chain", "credential", "preparation"], "Credential prepare result");
+  const preparation = sanitizeCredentialPreparation(result.preparation);
+  if (
+    result.status !== "prepared" ||
+    result.chain !== SUI_CHAIN_ID ||
+    result.credential !== SUI_ZKLOGIN_CREDENTIAL ||
+    preparation === null
+  ) {
+    throw new ProtocolError("invalid_response", "Credential prepare result is malformed.");
+  }
+  return {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "credential_prepare_result",
+    status: "prepared",
+    chain: SUI_CHAIN_ID,
+    credential: SUI_ZKLOGIN_CREDENTIAL,
+    preparation,
+  };
+}
+
+export function assertCredentialProposeResultResponse(response: DeviceResponse): CredentialProposeResultResponse {
+  const { id, result } = assertDeviceResultObject(response, "credential_propose", "Credential proposal result");
+  requireResultKeys(result, ["status", "reasonCode", "sessionEnded"], "Credential proposal result");
+  if (
+    !CREDENTIAL_PROPOSE_RESULT_STATUSES.includes(result.status as CredentialProposeResultStatus) ||
+    typeof result.reasonCode !== "string" ||
+    !APPROVAL_HISTORY_REASON_CODE_PATTERN.test(result.reasonCode) ||
+    typeof result.sessionEnded !== "boolean"
+  ) {
+    throw new ProtocolError("invalid_response", "Credential proposal result is malformed.");
+  }
+  return {
+    id,
+    version: PROTOCOL_VERSION,
+    type: "credential_propose_result",
+    status: result.status as CredentialProposeResultStatus,
+    reasonCode: result.reasonCode,
+    sessionEnded: result.sessionEnded,
+  };
+}
+
+export function assertSignResultResponse(response: DeviceResponse): SignResultResponse {
+  const parsed = parseDeviceResponse(response);
+  if (parsed.success === false) {
+    throw new ProtocolError(parsed.error.code, parsed.error.message);
+  }
+  if (parsed.id === undefined) {
+    throw new ProtocolError("invalid_response", "Sign result id is required.");
+  }
+  if (
+    parsed.method !== "sign_transaction" &&
+    parsed.method !== "sign_personal_message" &&
+    parsed.method !== "get_result"
+  ) {
+    throw new ProtocolError("invalid_response", "Sign result method is malformed.");
+  }
+  const id = parsed.id;
+  const result = asResultObject(parsed.result);
+  requireResultKeys(result, ["authorization", "chain", "method", "signature", "messageBytes"], "Sign result");
+  if (
+    (result.authorization !== "user" && result.authorization !== "policy") ||
+    result.chain !== SUI_CHAIN_ID ||
+    typeof result.signature !== "string"
+  ) {
+    throw new ProtocolError("invalid_response", "Sign result is malformed.");
+  }
+  if (result.method === SUI_SIGN_TRANSACTION_METHOD) {
+    if (result.messageBytes !== undefined || !isSuiTransactionSignatureEnvelopeBase64(result.signature)) {
+      throw new ProtocolError("invalid_response", "Sign result is malformed.");
+    }
     return {
-      id: value.id,
+      id,
       version: PROTOCOL_VERSION,
-      type: "status",
-      device,
-      provisioning,
-    };
-  }
-
-  if (value.type === "identify_device_result") {
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "status", "code", "device"])) {
-      throw new ProtocolError("protocol_error", "Identify response contains unsupported fields.");
-    }
-    requireWireDeviceStatusShape(value.device, "Identify response device object");
-    const device = sanitizeDeviceStatus(value.device);
-    if (device === null) {
-      throw new ProtocolError("protocol_error", "Identify response device object is malformed.");
-    }
-    if (typeof value.id !== "string" || value.status !== "displayed" || !isIdentificationCode(value.code)) {
-      throw new ProtocolError("protocol_error", "Identify response is malformed.");
-    }
-
-    return {
-      id: value.id,
-      version: PROTOCOL_VERSION,
-      type: "identify_device_result",
-      status: "displayed",
-      code: value.code,
-      device,
-    };
-  }
-
-  if (value.type === "policy") {
-    if (typeof value.id !== "string") {
-      throw new ProtocolError("protocol_error", "Policy response id is malformed.");
-    }
-    if (hasSecretPayloadKey(value)) {
-      throw new ProtocolError("protocol_error", "Policy response must not include secret material.");
-    }
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "policy"])) {
-      throw new ProtocolError("protocol_error", "Policy response contains unsupported fields.");
-    }
-    const policy = sanitizeCurrentPolicyDocument(value.policy);
-    if (policy === null) {
-      throw new ProtocolError("protocol_error", "Policy response policy object is malformed.");
-    }
-    return {
-      id: value.id,
-      version: PROTOCOL_VERSION,
-      type: "policy",
-      policy,
-    };
-  }
-
-  if (value.type === "approval_history") {
-    if (typeof value.id !== "string") {
-      throw new ProtocolError("protocol_error", "Approval history response id is malformed.");
-    }
-    if (hasSecretPayloadKey(value)) {
-      throw new ProtocolError("protocol_error", "Approval history response must not include secret material.");
-    }
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "records", "hasMore"])) {
-      throw new ProtocolError("protocol_error", "Approval history response contains unsupported fields.");
-    }
-    if (!Array.isArray(value.records) || value.records.length > MAX_APPROVAL_HISTORY_RECORDS) {
-      throw new ProtocolError("protocol_error", "Approval history response records are malformed.");
-    }
-    if (typeof value.hasMore !== "boolean") {
-      throw new ProtocolError("protocol_error", "Approval history response hasMore is malformed.");
-    }
-    return {
-      id: value.id,
-      version: PROTOCOL_VERSION,
-      type: "approval_history",
-      records: value.records.map((entry) => sanitizeApprovalHistoryRecord(entry)),
-      hasMore: value.hasMore,
-    };
-  }
-
-  if (value.type === "policy_propose_result") {
-    if (typeof value.id !== "string") {
-      throw new ProtocolError("protocol_error", "policy_propose_result id is malformed.");
-    }
-    if (hasSecretPayloadKey(value)) {
-      throw new ProtocolError("protocol_error", "policy_propose_result must not include secret material.");
-    }
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "status", "reasonCode", "policy"])) {
-      throw new ProtocolError("protocol_error", "policy_propose_result contains unsupported fields.");
-    }
-    if (
-      !POLICY_PROPOSE_RESULT_STATUSES.includes(value.status as PolicyProposeResultStatus) ||
-      typeof value.reasonCode !== "string" ||
-      !APPROVAL_HISTORY_REASON_CODE_PATTERN.test(value.reasonCode)
-    ) {
-      throw new ProtocolError("protocol_error", "policy_propose_result is malformed.");
-    }
-    const policy = sanitizePolicyProposeResultPolicy(value.policy);
-    if (value.status === "invalid_policy") {
-      if (policy !== undefined) {
-        throw new ProtocolError("protocol_error", "Invalid policy result must not include policy metadata.");
-      }
-    } else if (policy === undefined) {
-      throw new ProtocolError("protocol_error", "policy_propose_result policy metadata is malformed.");
-    }
-    return {
-      id: value.id,
-      version: PROTOCOL_VERSION,
-      type: "policy_propose_result",
-      status: value.status as PolicyProposeResultStatus,
-      reasonCode: value.reasonCode,
-      ...(policy !== undefined ? { policy } : {}),
-    };
-  }
-
-  if (value.type === "credential_prepare_result") {
-    if (typeof value.id !== "string") {
-      throw new ProtocolError("protocol_error", "credential_prepare_result id is malformed.");
-    }
-    if (hasSecretPayloadKey(value)) {
-      throw new ProtocolError("protocol_error", "credential_prepare_result must not include secret material.");
-    }
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "status", "chain", "credential", "preparation"])) {
-      throw new ProtocolError("protocol_error", "credential_prepare_result contains unsupported fields.");
-    }
-    const preparation = sanitizeCredentialPreparation(value.preparation);
-    if (
-      value.status !== "prepared" ||
-      value.chain !== SUI_CHAIN_ID ||
-      value.credential !== SUI_ZKLOGIN_CREDENTIAL ||
-      preparation === null
-    ) {
-      throw new ProtocolError("protocol_error", "credential_prepare_result is malformed.");
-    }
-    return {
-      id: value.id,
-      version: PROTOCOL_VERSION,
-      type: "credential_prepare_result",
-      status: "prepared",
+      type: "sign_result",
+      authorization: result.authorization,
+      status: "signed",
       chain: SUI_CHAIN_ID,
-      credential: SUI_ZKLOGIN_CREDENTIAL,
-      preparation,
+      method: SUI_SIGN_TRANSACTION_METHOD,
+      signature: result.signature,
     };
   }
-
-  if (value.type === "credential_propose_result") {
-    if (typeof value.id !== "string") {
-      throw new ProtocolError("protocol_error", "credential_propose_result id is malformed.");
+  if (result.method === SUI_SIGN_PERSONAL_MESSAGE_METHOD) {
+    if (result.authorization !== "user" || !isSuiPersonalMessageSignatureBase64(result.signature)) {
+      throw new ProtocolError("invalid_response", "Sign result is malformed.");
     }
-    if (hasSecretPayloadKey(value)) {
-      throw new ProtocolError("protocol_error", "credential_propose_result must not include secret material.");
-    }
-    if (!hasOnlyObjectKeys(value, ["id", "version", "type", "status", "reasonCode", "sessionEnded"])) {
-      throw new ProtocolError("protocol_error", "credential_propose_result contains unsupported fields.");
-    }
-    if (
-      !CREDENTIAL_PROPOSE_RESULT_STATUSES.includes(value.status as CredentialProposeResultStatus) ||
-      typeof value.reasonCode !== "string" ||
-      !APPROVAL_HISTORY_REASON_CODE_PATTERN.test(value.reasonCode) ||
-      typeof value.sessionEnded !== "boolean"
-    ) {
-      throw new ProtocolError("protocol_error", "credential_propose_result is malformed.");
-    }
+    const messageBytes = validateCanonicalBase64Syntax(
+      result.messageBytes,
+      MAX_SIGN_RESULT_PAYLOAD_BASE64_CHARS,
+      "sui/sign_personal_message messageBytes",
+      "invalid_response",
+    );
     return {
-      id: value.id,
+      id,
       version: PROTOCOL_VERSION,
-      type: "credential_propose_result",
-      status: value.status as CredentialProposeResultStatus,
-      reasonCode: value.reasonCode,
-      sessionEnded: value.sessionEnded,
+      type: "sign_result",
+      authorization: "user",
+      status: "signed",
+      chain: SUI_CHAIN_ID,
+      method: SUI_SIGN_PERSONAL_MESSAGE_METHOD,
+      signature: result.signature,
+      messageBytes,
     };
   }
-
-  throw new ProtocolError("protocol_error", "Protocol response type is unsupported.");
-}
-
-export function parseProviderProtocolResponse(line: string, expectedId?: string): ProtocolResponse {
-  return parseProviderProtocolResponseCore(line, expectedId) as ProtocolResponse;
-}
-
-function isProviderProtocolResponseType(value: unknown): boolean {
-  return (
-    value === "error" ||
-    value === "connect_result" ||
-    value === "disconnect_result" ||
-    value === "capabilities" ||
-    value === "accounts" ||
-    value === "sign_result"
-  );
-}
-
-export function assertStatusResponse(response: ProtocolResponse): StatusResponse {
-  if (response.type === "error") {
-    throw new ProtocolError(response.error.code, response.error.message);
-  }
-  if (response.type !== "status") {
-    throw new ProtocolError("protocol_error", "Protocol response type is not status.");
-  }
-  return response;
-}
-
-export function assertIdentifyDeviceResponse(response: ProtocolResponse): IdentifyDeviceResponse {
-  if (response.type === "error") {
-    throw new ProtocolError(response.error.code, response.error.message);
-  }
-  if (response.type !== "identify_device_result") {
-    throw new ProtocolError("protocol_error", "Protocol response type is not identify_device_result.");
-  }
-  return response;
-}
-
-export function assertConnectResponse(response: ProtocolResponse): ConnectResponse {
-  if (response.type === "error") {
-    throw new ProtocolError(response.error.code, response.error.message);
-  }
-  if (response.type !== "connect_result") {
-    throw new ProtocolError("protocol_error", "Protocol response type is not connect_result.");
-  }
-  return response;
-}
-
-export function assertDisconnectResponse(response: ProtocolResponse): DisconnectResponse {
-  if (response.type === "error") {
-    throw new ProtocolError(response.error.code, response.error.message);
-  }
-  if (response.type !== "disconnect_result") {
-    throw new ProtocolError("protocol_error", "Protocol response type is not disconnect_result.");
-  }
-  return response;
-}
-
-export function assertCapabilitiesResponse(response: ProtocolResponse): CapabilitiesResponse {
-  if (response.type === "error") {
-    throw new ProtocolError(response.error.code, response.error.message);
-  }
-  if (response.type !== "capabilities") {
-    throw new ProtocolError("protocol_error", "Protocol response type is not capabilities.");
-  }
-  return response;
-}
-
-export function assertAccountsResponse(response: ProtocolResponse): AccountsResponse {
-  if (response.type === "error") {
-    throw new ProtocolError(response.error.code, response.error.message);
-  }
-  if (response.type !== "accounts") {
-    throw new ProtocolError("protocol_error", "Protocol response type is not accounts.");
-  }
-  return response;
-}
-
-export function assertPolicyResponse(response: ProtocolResponse): PolicyResponse {
-  if (response.type === "error") {
-    throw new ProtocolError(response.error.code, response.error.message);
-  }
-  if (response.type !== "policy") {
-    throw new ProtocolError("protocol_error", "Protocol response type is not policy.");
-  }
-  return response;
-}
-
-export function assertApprovalHistoryResponse(response: ProtocolResponse): ApprovalHistoryResponse {
-  if (response.type === "error") {
-    throw new ProtocolError(response.error.code, response.error.message);
-  }
-  if (response.type !== "approval_history") {
-    throw new ProtocolError("protocol_error", "Protocol response type is not approval_history.");
-  }
-  return response;
-}
-
-export function assertPolicyProposeResultResponse(response: ProtocolResponse): PolicyProposeResultResponse {
-  if (response.type === "error") {
-    throw new ProtocolError(response.error.code, response.error.message);
-  }
-  if (response.type !== "policy_propose_result") {
-    throw new ProtocolError("protocol_error", "Protocol response type is not policy_propose_result.");
-  }
-  return response;
-}
-
-export function assertCredentialPrepareResultResponse(response: ProtocolResponse): CredentialPrepareResultResponse {
-  if (response.type === "error") {
-    throw new ProtocolError(response.error.code, response.error.message);
-  }
-  if (response.type !== "credential_prepare_result") {
-    throw new ProtocolError("protocol_error", "Protocol response type is not credential_prepare_result.");
-  }
-  return response;
-}
-
-export function assertCredentialProposeResultResponse(response: ProtocolResponse): CredentialProposeResultResponse {
-  if (response.type === "error") {
-    throw new ProtocolError(response.error.code, response.error.message);
-  }
-  if (response.type !== "credential_propose_result") {
-    throw new ProtocolError("protocol_error", "Protocol response type is not credential_propose_result.");
-  }
-  return response;
-}
-
-export function assertSignResultResponse(response: ProtocolResponse): SignResultResponse {
-  if (response.type === "error") {
-    throw new ProtocolError(response.error.code, response.error.message);
-  }
-  if (response.type !== "sign_result") {
-    throw new ProtocolError("protocol_error", "Protocol response type is not sign_result.");
-  }
-  return response;
+  throw new ProtocolError("invalid_response", "Sign result is malformed.");
 }
 
 function sanitizeCredentialPreparation(value: unknown): CredentialPrepareResultResponse["preparation"] | null {

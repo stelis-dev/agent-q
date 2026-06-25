@@ -53,6 +53,10 @@ test("validates DeviceRequest session and payload rules from the method table", 
     { code: "invalid_params" },
   );
   assert.throws(
+    () => parseDeviceRequest({ id: "req_undefined_payload", version: 1, method: "connect", payload: undefined }),
+    { code: "invalid_params" },
+  );
+  assert.throws(
     () => parseDeviceRequest({ id: "req_extra_payload", version: 1, method: "disconnect", sessionId: "session_abc123", payload: {} }),
     { code: "invalid_request" },
   );

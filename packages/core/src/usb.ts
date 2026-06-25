@@ -15,25 +15,10 @@ import {
   assertDisconnectResponse,
   assertIdentifyDeviceResponse,
   assertStatusResponse,
-  makeConnectRequest,
-  makeDisconnectRequest,
-  makeGetCapabilitiesRequest,
-  makeGetAccountsRequest,
-  makeGetApprovalHistoryRequest,
-  makeCredentialPrepareRequest,
-  makeCredentialProposeRequest,
-  makePolicyProposeRequest,
-  makeIdentifyDeviceRequest,
-  makePolicyGetRequest,
-  makeGetStatusRequest,
-  makeStagedSignTransactionRequest,
-  payloadDeliveryCapabilityLimits,
-  consumeProtocolResponseChunk,
+  consumeDeviceResponseLineChunk,
+  createRequestId,
   parseJsonLine,
-  parseProtocolResponse,
   ProtocolError,
-  SIGNABLE_PAYLOAD_KIND_TRANSACTION,
-  serializeRequest,
   type AccountsResponse,
   type ApprovalHistoryResponse,
   type CapabilitiesResponse,
@@ -45,27 +30,19 @@ import {
   type IdentifyDeviceResponse,
   type PolicyProposeResultResponse,
   type PolicyResponse,
-  type ProtocolRequest,
-  type ProtocolResponse,
-  type SignPersonalMessageRequest,
   type SignResultResponse,
   type SignPersonalMessageParams,
-  type StagedSignTransactionRequest,
-  type SignTransactionRequest,
   type SignTransactionParams,
   type SupportedSignRoute,
   type StatusResponse,
+  validateApprovalHistoryInput,
+  validateCredentialPrepareInput,
+  validateCredentialProposeInput,
+  validatePolicyProposeInput,
 } from "./protocol.js";
 import {
-  assertAckResultResponse,
-  makeAckResultRequest,
-  makeGetResultRequest,
-} from "./protocol-recovery.js";
-import {
-  makeSignPersonalMessageRequest,
-  makeSignTransactionRequest,
+  validateSignPersonalMessageInput,
   validateSignTransactionInput,
-  type SigningPayloadCapability,
 } from "./provider-protocol.js";
 import {
   AGENT_Q_USB_PRODUCT_ID,
@@ -74,7 +51,16 @@ import {
   INTERNAL_USB_DEADLINE_MS,
   PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES,
 } from "./transport-invariants.js";
-import { withUploadedSignablePayload } from "./payload-delivery-internal.js";
+import {
+  parseDeviceResponse,
+  type DeviceResponse,
+} from "./device-contract.js";
+import {
+  requestDevice,
+  type DeviceRequestExecutor,
+  type DeviceRequestInput,
+} from "./device-request-transport.js";
+import { IDENTIFICATION_CODE_PATTERN, isClientName } from "./safe-text.js";
 
 export { AGENT_Q_USB_PRODUCT_ID, AGENT_Q_USB_VENDOR_ID, INTERNAL_USB_DEADLINE_MS };
 
@@ -114,14 +100,13 @@ export interface UsbStatusScanResult {
   failures: UsbStatusFailure[];
 }
 
-export type UsbProtocolRequestExecutor = <TResponse extends ProtocolResponse>(
-  request: ProtocolRequest,
-  deadlineMs: number,
-  assertResponse: (response: ProtocolResponse) => TResponse,
-) => Promise<TResponse>;
+export type UsbProtocolRequestExecutor = DeviceRequestExecutor;
 
-type SignProtocolRequest = SignTransactionRequest | SignPersonalMessageRequest;
-type SignDeliveryRequest = SignProtocolRequest | StagedSignTransactionRequest;
+type SignDeliveryRequest = DeviceRequestInput & {
+  readonly id: string;
+  readonly sessionId: string;
+  readonly method: "sign_transaction" | "sign_personal_message";
+};
 export type PortTransactionContext = {
   request: UsbProtocolRequestExecutor;
 };
@@ -644,7 +629,7 @@ export function withSerialPortTransaction<T>(
     );
     await waitForPortPathAvailability(portPath, absoluteDeadlineMs);
     const context: PortTransactionContext = {
-      request: async (request, requestDeadlineMs, assertResponse) => {
+      request: async (requestLine, expectedId, requestLabel, requestDeadlineMs, assertResponse) => {
         const remainingMs = ensureTransactionDeadline(
           absoluteDeadlineMs,
           "USB request expired before it reached Firmware.",
@@ -652,7 +637,9 @@ export function withSerialPortTransaction<T>(
         await waitForPortPathAvailability(portPath, absoluteDeadlineMs);
         return requestOverSerialUnlocked(
           portPath,
-          request,
+          requestLine,
+          expectedId,
+          requestLabel,
           Math.min(requestDeadlineMs, remainingMs),
           assertResponse,
         );
@@ -837,9 +824,48 @@ export function mapErrorToUnavailableReason(error: unknown): UnavailableReason {
   return "handshake_failed";
 }
 
+async function requestDeviceOverSerial<TResponse>(
+  portPath: string,
+  input: DeviceRequestInput,
+  deadlineMs: number,
+  assertResponse: (response: DeviceResponse) => TResponse,
+): Promise<TResponse> {
+  return withSerialPortTransaction(portPath, deadlineMs, (transaction) =>
+    requestDevice({
+      request: input,
+      deadlineMs,
+      execute: transaction.request,
+      assertResponse,
+      digestPayload: (bytes) => sha256PayloadDigest(bytes),
+      encodeChunkBase64: (bytes) => Buffer.from(bytes).toString("base64"),
+      makeError: (code, message, retryable = false) => new AgentQError(code, message, retryable),
+      errorCode,
+      onAbortInvalidSession: markFirmwareSessionInvalidated,
+    }),
+  );
+}
+
+function validateIdentificationCodeInput(code: string): string {
+  if (!IDENTIFICATION_CODE_PATTERN.test(code)) {
+    throw new ProtocolError("invalid_code", "Invalid identification code.");
+  }
+  return code;
+}
+
+function validateClientNameInput(clientName: string): string {
+  if (!isClientName(clientName)) {
+    throw new ProtocolError("invalid_client_name", "clientName must be 1-64 printable ASCII characters.");
+  }
+  return clientName;
+}
+
 async function requestStatusOverSerial(portPath: string, deadlineMs: number): Promise<StatusResponse> {
-  const request = makeGetStatusRequest();
-  return requestOverSerial(portPath, request, deadlineMs, (response) => assertStatusResponse(response));
+  return requestDeviceOverSerial(
+    portPath,
+    { method: "get_status" },
+    deadlineMs,
+    (response) => assertStatusResponse(response),
+  );
 }
 
 async function identifyDeviceOverSerial(
@@ -847,8 +873,13 @@ async function identifyDeviceOverSerial(
   code: string,
   deadlineMs: number,
 ): Promise<IdentifyDeviceResponse> {
-  const request = makeIdentifyDeviceRequest(code);
-  return requestOverSerial(portPath, request, deadlineMs, (response) => assertIdentifyDeviceResponse(response));
+  const normalizedCode = validateIdentificationCodeInput(code);
+  return requestDeviceOverSerial(
+    portPath,
+    { method: "identify_device", payload: { code: normalizedCode } },
+    deadlineMs,
+    (response) => assertIdentifyDeviceResponse(response),
+  );
 }
 
 async function connectDeviceOverSerial(
@@ -856,8 +887,13 @@ async function connectDeviceOverSerial(
   clientName: string,
   deadlineMs: number,
 ): Promise<ConnectResponse> {
-  const request = makeConnectRequest(clientName);
-  return requestOverSerial(portPath, request, deadlineMs, (response) => assertConnectResponse(response));
+  const normalizedClientName = validateClientNameInput(clientName);
+  return requestDeviceOverSerial(
+    portPath,
+    { method: "connect", payload: { clientName: normalizedClientName } },
+    deadlineMs,
+    (response) => assertConnectResponse(response),
+  );
 }
 
 async function disconnectDeviceOverSerial(
@@ -865,8 +901,12 @@ async function disconnectDeviceOverSerial(
   sessionId: string,
   deadlineMs: number,
 ): Promise<DisconnectResponse> {
-  const request = makeDisconnectRequest(sessionId);
-  return requestOverSerial(portPath, request, deadlineMs, (response) => assertDisconnectResponse(response));
+  return requestDeviceOverSerial(
+    portPath,
+    { method: "disconnect", sessionId },
+    deadlineMs,
+    (response) => assertDisconnectResponse(response),
+  );
 }
 
 async function getCapabilitiesOverSerial(
@@ -874,8 +914,12 @@ async function getCapabilitiesOverSerial(
   sessionId: string,
   deadlineMs: number,
 ): Promise<CapabilitiesResponse> {
-  const request = makeGetCapabilitiesRequest(sessionId);
-  return requestOverSerial(portPath, request, deadlineMs, (response) => assertCapabilitiesResponse(response));
+  return requestDeviceOverSerial(
+    portPath,
+    { method: "get_capabilities", sessionId },
+    deadlineMs,
+    (response) => assertCapabilitiesResponse(response),
+  );
 }
 
 async function getAccountsOverSerial(
@@ -883,8 +927,12 @@ async function getAccountsOverSerial(
   sessionId: string,
   deadlineMs: number,
 ): Promise<AccountsResponse> {
-  const request = makeGetAccountsRequest(sessionId);
-  return requestOverSerial(portPath, request, deadlineMs, (response) => assertAccountsResponse(response));
+  return requestDeviceOverSerial(
+    portPath,
+    { method: "get_accounts", sessionId },
+    deadlineMs,
+    (response) => assertAccountsResponse(response),
+  );
 }
 
 async function policyGetOverSerial(
@@ -892,8 +940,12 @@ async function policyGetOverSerial(
   sessionId: string,
   deadlineMs: number,
 ): Promise<PolicyResponse> {
-  const request = makePolicyGetRequest(sessionId);
-  return requestOverSerial(portPath, request, deadlineMs, (response) => assertPolicyResponse(response));
+  return requestDeviceOverSerial(
+    portPath,
+    { method: "policy_get", sessionId },
+    deadlineMs,
+    (response) => assertPolicyResponse(response),
+  );
 }
 
 async function getApprovalHistoryOverSerial(
@@ -902,8 +954,13 @@ async function getApprovalHistoryOverSerial(
   params: { limit?: number; beforeSeq?: string },
   deadlineMs: number,
 ): Promise<ApprovalHistoryResponse> {
-  const request = makeGetApprovalHistoryRequest(sessionId, params);
-  return requestOverSerial(portPath, request, deadlineMs, (response) => assertApprovalHistoryResponse(response));
+  const payload = validateApprovalHistoryInput(params);
+  return requestDeviceOverSerial(
+    portPath,
+    { method: "get_approval_history", sessionId, payload },
+    deadlineMs,
+    (response) => assertApprovalHistoryResponse(response),
+  );
 }
 
 async function policyProposeOverSerial(
@@ -912,8 +969,13 @@ async function policyProposeOverSerial(
   policy: Record<string, unknown>,
   deadlineMs: number,
 ): Promise<PolicyProposeResultResponse> {
-  const request = makePolicyProposeRequest(sessionId, policy);
-  return requestOverSerial(portPath, request, deadlineMs, (response) => assertPolicyProposeResultResponse(response));
+  validatePolicyProposeInput(policy);
+  return requestDeviceOverSerial(
+    portPath,
+    { method: "policy_propose", sessionId, payload: { policy } },
+    deadlineMs,
+    (response) => assertPolicyProposeResultResponse(response),
+  );
 }
 
 async function credentialPrepareOverSerial(
@@ -921,11 +983,16 @@ async function credentialPrepareOverSerial(
   sessionId: string,
   deadlineMs: number,
 ): Promise<CredentialPrepareResultResponse> {
-  const request = makeCredentialPrepareRequest(sessionId, {
+  const payload = validateCredentialPrepareInput({
     chain: "sui",
     credential: "zklogin",
   });
-  return requestOverSerial(portPath, request, deadlineMs, (response) => assertCredentialPrepareResultResponse(response));
+  return requestDeviceOverSerial(
+    portPath,
+    { method: "credential_prepare", sessionId, payload },
+    deadlineMs,
+    (response) => assertCredentialPrepareResultResponse(response),
+  );
 }
 
 async function credentialProposeOverSerial(
@@ -934,8 +1001,13 @@ async function credentialProposeOverSerial(
   params: CredentialProposeParams,
   deadlineMs: number,
 ): Promise<CredentialProposeResultResponse> {
-  const request = makeCredentialProposeRequest(sessionId, params);
-  return requestOverSerial(portPath, request, deadlineMs, (response) => assertCredentialProposeResultResponse(response));
+  const payload = validateCredentialProposeInput(params);
+  return requestDeviceOverSerial(
+    portPath,
+    { method: "credential_propose", sessionId, payload },
+    deadlineMs,
+    (response) => assertCredentialProposeResultResponse(response),
+  );
 }
 
 async function signTransactionOverSerial(
@@ -945,34 +1017,17 @@ async function signTransactionOverSerial(
   params: SignTransactionParams,
   deadlineMs: number,
 ): Promise<SignResultResponse> {
-  const payloadBytes = decodeCanonicalBase64Payload(params.txBytes);
   return withSerialPortTransaction(portPath, deadlineWithSignTransactionDelivery(deadlineMs, params.txBytes), async (transaction) => {
-    const capabilities = await transaction.request(
-      makeGetCapabilitiesRequest(sessionId),
-      INTERNAL_USB_DEADLINE_MS,
-      (response) => assertCapabilitiesResponse(response),
-    );
-    const payloadCapability = findSignTransactionPayloadCapability(capabilities, route);
-    if (shouldUseInlineSignRequest(payloadBytes.length, payloadCapability)) {
-      const request = makeInlineSignTransactionRequest(sessionId, route, params, payloadCapability);
-      return requestSignResultWithRecovery(request, deadlineMs, transaction.request);
-    }
-    if (payloadCapability === null) {
-      throw new AgentQError(
-        "unsupported_payload_size",
-        "Firmware does not advertise staged payload delivery for this signing method.",
-        false,
-      );
-    }
-    return signStagedTransactionOverSerial(
+    const request = makeSessionDeviceRequest({
+      method: "sign_transaction",
       sessionId,
-      route,
-      params,
-      payloadBytes,
-      payloadCapability,
-      deadlineMs,
-      transaction.request,
-    );
+      payload: {
+        chain: route.chain,
+        network: params.network,
+        txBytes: params.txBytes,
+      },
+    });
+    return requestSignResultWithRecovery(request, deadlineMs, transaction.request);
   });
 }
 
@@ -983,46 +1038,26 @@ async function signPersonalMessageOverSerial(
   params: SignPersonalMessageParams,
   deadlineMs: number,
 ): Promise<SignResultResponse> {
-  const request = makeSignPersonalMessageRequest(sessionId, route.chain, route.method, params);
+  const normalizedParams = validateSignPersonalMessageInput(route.chain, route.method, params);
+  const request = makeSessionDeviceRequest({
+    method: "sign_personal_message",
+    sessionId,
+    payload: {
+      chain: route.chain,
+      network: normalizedParams.network,
+      message: normalizedParams.message,
+    },
+  });
   return withSerialPortTransaction(portPath, deadlineWithSignRecovery(deadlineMs), (transaction) =>
     requestSignResultWithRecovery(request, deadlineMs, transaction.request),
   );
 }
 
-async function signStagedTransactionOverSerial(
-  sessionId: string,
-  route: Extract<SupportedSignRoute, { operation: "sign_transaction" }>,
-  params: SignTransactionParams,
-  payloadBytes: Buffer,
-  capability: SigningPayloadCapability,
-  deadlineMs: number,
-  executor: UsbProtocolRequestExecutor,
-): Promise<SignResultResponse> {
-  return withUploadedSignablePayload({
-    sessionId,
-    chain: route.chain,
-    method: route.method,
-    payloadKind: SIGNABLE_PAYLOAD_KIND_TRANSACTION,
-    payloadBytes,
-    capability,
-    executeUploadRequest: (request, assertResponse) =>
-      executor(request, INTERNAL_USB_DEADLINE_MS, (response) => assertResponse(response)),
-    digestPayload: (bytes) => sha256PayloadDigest(bytes),
-    encodeChunkBase64: (bytes) => Buffer.from(bytes).toString("base64"),
-    makeError: (code, message) => new AgentQError(code, message, false),
-    errorCode,
-    onAbortInvalidSession: markFirmwareSessionInvalidated,
-    consumeFinalizedPayload: (descriptor) => {
-      const request = makeStagedSignTransactionRequest(sessionId, route.chain, route.method, {
-        network: params.network,
-        payloadRef: descriptor.payloadRef,
-        payloadKind: descriptor.payloadKind,
-        sizeBytes: descriptor.sizeBytes,
-        payloadDigest: descriptor.payloadDigest,
-      });
-      return requestSignResultWithRecovery(request, deadlineMs, executor);
-    },
-  });
+function makeSessionDeviceRequest(input: Omit<SignDeliveryRequest, "id"> & { readonly id?: string }): SignDeliveryRequest {
+  return {
+    ...input,
+    id: input.id ?? createRequestId(),
+  };
 }
 
 /** @internal Shared signing-result delivery invariant for the Node USB path. */
@@ -1032,7 +1067,17 @@ export async function requestSignResultWithRecovery(
   executor: UsbProtocolRequestExecutor,
 ): Promise<SignResultResponse> {
   try {
-    return await executor(request, deadlineMs, (response) => assertSignResultResponse(response));
+    return await requestDevice({
+      request,
+      deadlineMs,
+      execute: executor,
+      assertResponse: (response) => assertSignResultResponse(response),
+      digestPayload: (bytes) => sha256PayloadDigest(bytes),
+      encodeChunkBase64: (bytes) => Buffer.from(bytes).toString("base64"),
+      makeError: (code, message, retryable = false) => new AgentQError(code, message, retryable),
+      errorCode,
+      onAbortInvalidSession: markFirmwareSessionInvalidated,
+    });
   } catch (error) {
     if (!shouldAttemptSignResultRecovery(error)) {
       throw error;
@@ -1051,12 +1096,24 @@ async function tryRecoverSignResult(
   executor: UsbProtocolRequestExecutor,
 ): Promise<SignRecoveryOutcome> {
   let recovered: SignResultResponse;
+  const getResultRequest: DeviceRequestInput & { readonly id: string } = {
+    id: createRequestId(),
+    method: "get_result",
+    sessionId,
+    payload: { retainedRequestId: requestId },
+  };
   try {
-    recovered = await executor(
-      makeGetResultRequest(sessionId, requestId),
-      INTERNAL_USB_DEADLINE_MS,
-      (response) => assertSignResultResponse(response),
-    );
+    recovered = await requestDevice({
+      request: getResultRequest,
+      deadlineMs: INTERNAL_USB_DEADLINE_MS,
+      execute: executor,
+      assertResponse: (response) => assertSignResultResponse(response),
+      digestPayload: (bytes) => sha256PayloadDigest(bytes),
+      encodeChunkBase64: (bytes) => Buffer.from(bytes).toString("base64"),
+      makeError: (code, message, retryable = false) => new AgentQError(code, message, retryable),
+      errorCode,
+      onAbortInvalidSession: markFirmwareSessionInvalidated,
+    });
   } catch (error) {
     if (errorCode(error) === "invalid_session") {
       throw error;
@@ -1075,12 +1132,24 @@ async function releaseRecoveredSignResult(
   requestId: string,
   executor: UsbProtocolRequestExecutor,
 ): Promise<AckRecoveryOutcome> {
+  const ackRequest: DeviceRequestInput & { readonly id: string } = {
+    id: createRequestId(),
+    method: "ack_result",
+    sessionId,
+    payload: { retainedRequestId: requestId },
+  };
   try {
-    await executor(
-      makeAckResultRequest(sessionId, requestId),
-      INTERNAL_USB_DEADLINE_MS,
-      (response) => assertAckResultResponse(response),
-    );
+    await requestDevice({
+      request: ackRequest,
+      deadlineMs: INTERNAL_USB_DEADLINE_MS,
+      execute: executor,
+      assertResponse: assertAckResultDeviceResponse,
+      digestPayload: (bytes) => sha256PayloadDigest(bytes),
+      encodeChunkBase64: (bytes) => Buffer.from(bytes).toString("base64"),
+      makeError: (code, message, retryable = false) => new AgentQError(code, message, retryable),
+      errorCode,
+      onAbortInvalidSession: markFirmwareSessionInvalidated,
+    });
     return "acked";
   } catch (error) {
     if (errorCode(error) === "invalid_session") {
@@ -1092,64 +1161,21 @@ async function releaseRecoveredSignResult(
   }
 }
 
-function findSignTransactionPayloadCapability(
-  capabilities: CapabilitiesResponse,
-  route: Extract<SupportedSignRoute, { operation: "sign_transaction" }>,
-): SigningPayloadCapability | null {
-  const method = capabilities.signing?.methods.find((entry) =>
-    entry.chain === route.chain && entry.method === route.method
-  );
-  return method?.payload ?? null;
-}
-
-function makeInlineSignTransactionRequest(
-  sessionId: string,
-  route: Extract<SupportedSignRoute, { operation: "sign_transaction" }>,
-  params: SignTransactionParams,
-  capability: SigningPayloadCapability | null,
-): SignTransactionRequest {
-  try {
-    return makeSignTransactionRequest(sessionId, route.chain, route.method, params);
-  } catch (error) {
-    if (
-      capability === null &&
-      error instanceof ProtocolError &&
-      error.code === "invalid_params" &&
-      error.message.includes("too large")
-    ) {
-      throw new AgentQError(
-        "unsupported_payload_size",
-        "Firmware does not advertise staged payload delivery for this signing method.",
-        false,
-      );
-    }
-    throw error;
+function assertAckResultDeviceResponse(response: DeviceResponse): void {
+  const parsed = parseDeviceResponse(response, { expectedMethod: "ack_result" });
+  if (parsed.success === false) {
+    throw new ProtocolError(parsed.error.code, parsed.error.message);
   }
-}
-
-function shouldUseInlineSignRequest(
-  payloadSize: number,
-  capability: SigningPayloadCapability | null,
-): boolean {
-  if (capability === null) {
-    return true;
+  if (parsed.id === undefined) {
+    throw new ProtocolError("invalid_response", "Ack result id is required.");
   }
-  return payloadSize <= parsePayloadCapabilityLimits(capability).inlineMaxBytes;
-}
-
-function parsePayloadCapabilityLimits(capability: SigningPayloadCapability): ReturnType<typeof payloadDeliveryCapabilityLimits> {
-  try {
-    return payloadDeliveryCapabilityLimits(capability);
-  } catch (error) {
-    if (error instanceof ProtocolError) {
-      throw new AgentQError("protocol_error", error.message, false);
-    }
-    throw error;
+  if (!isRecord(parsed.result)) {
+    throw new ProtocolError("invalid_response", "Ack result must be an object.");
   }
-}
-
-function decodeCanonicalBase64Payload(value: string): Buffer {
-  return Buffer.from(value, "base64");
+  const keys = Object.keys(parsed.result);
+  if (keys.length !== 1 || keys[0] !== "status" || parsed.result.status !== "acked") {
+    throw new ProtocolError("invalid_response", "Ack result is malformed.");
+  }
 }
 
 function sha256PayloadDigest(value: Uint8Array): string {
@@ -1177,22 +1203,13 @@ function shouldAttemptSignResultRecovery(error: unknown): boolean {
   return code !== null && RECOVERABLE_SIGN_DELIVERY_CODES.has(code);
 }
 
-async function requestOverSerial<TResponse extends ProtocolResponse>(
+async function requestOverSerialUnlocked<TResponse>(
   portPath: string,
-  request: ProtocolRequest,
+  requestLine: string,
+  expectedId: string,
+  requestLabel: string,
   deadlineMs: number,
-  assertResponse: (response: ProtocolResponse) => TResponse,
-): Promise<TResponse> {
-  return withSerialPortTransaction(portPath, deadlineMs, (transaction) =>
-    transaction.request(request, deadlineMs, assertResponse),
-  );
-}
-
-async function requestOverSerialUnlocked<TResponse extends ProtocolResponse>(
-  portPath: string,
-  request: ProtocolRequest,
-  deadlineMs: number,
-  assertResponse: (response: ProtocolResponse) => TResponse,
+  assertResponse: (response: unknown) => TResponse,
 ): Promise<TResponse> {
   const absoluteDeadlineMs = Date.now() + Math.max(0, deadlineMs);
   const lease: PortLease = {
@@ -1265,7 +1282,7 @@ async function requestOverSerialUnlocked<TResponse extends ProtocolResponse>(
       const onData = (chunk: Buffer): void => {
         let lines: string[];
         try {
-          const consumed = consumeProtocolResponseChunk(buffer, chunk.toString("utf8"));
+          const consumed = consumeDeviceResponseLineChunk(buffer, chunk.toString("utf8"));
           buffer = consumed.buffer;
           lines = consumed.lines;
         } catch (error) {
@@ -1281,7 +1298,7 @@ async function requestOverSerialUnlocked<TResponse extends ProtocolResponse>(
 
           let parsed: TResponse | undefined;
           try {
-            parsed = tryParseMatchingResponseLine(line, request.id, assertResponse);
+            parsed = tryParseMatchingWireResponseLine(line, expectedId, assertResponse);
           } catch (error) {
             settle(() => reject(markRequestMayHaveReachedFirmware(error)));
             return;
@@ -1297,7 +1314,7 @@ async function requestOverSerialUnlocked<TResponse extends ProtocolResponse>(
       port.on("error", onError);
       port.on("close", onClose);
       lease.writeReachability = "started";
-      port.write(serializeRequest(request), (error) => {
+      port.write(requestLine, (error) => {
         if (settled || lease.canceled) {
           return;
         }
@@ -1328,10 +1345,20 @@ function toAgentQProtocolError(error: unknown): unknown {
 }
 
 /** @internal Exported for focused protocol-line tests; not part of Agent-Q's public API. */
-export function tryParseMatchingResponseLine<TResponse extends ProtocolResponse>(
+export function tryParseMatchingResponseLine<TResponse>(
   line: string,
   expectedId: string,
-  assertResponse: (response: ProtocolResponse) => TResponse,
+  assertResponse: (response: DeviceResponse) => TResponse,
+): TResponse | undefined {
+  return tryParseMatchingWireResponseLine(line, expectedId, (response) =>
+    assertResponse(parseDeviceResponse(response, { expectedId })),
+  );
+}
+
+function tryParseMatchingWireResponseLine<TResponse>(
+  line: string,
+  expectedId: string,
+  assertResponse: (response: unknown) => TResponse,
 ): TResponse | undefined {
   let parsed: unknown;
   try {
@@ -1345,13 +1372,13 @@ export function tryParseMatchingResponseLine<TResponse extends ProtocolResponse>
   }
 
   if (parsed.id !== expectedId) {
-    if (parsed.id === undefined && parsed.type === "error") {
-      const response = parseProtocolResponse(line);
-      if (response.type === "error") {
+    if (parsed.id === undefined && parsed.success === false) {
+      const response = parseDeviceResponse(parsed);
+      if (response.success === false) {
         throw new AgentQError(
           response.error.code,
           response.error.message,
-          isRetryableIdlessFirmwareError(response.error.code),
+          response.error.retryable,
         );
       }
     }
@@ -1359,7 +1386,7 @@ export function tryParseMatchingResponseLine<TResponse extends ProtocolResponse>
   }
 
   try {
-    return assertResponse(parseProtocolResponse(line, expectedId));
+    return assertResponse(parsed);
   } catch (error) {
     if (error instanceof ProtocolError) {
       throw new AgentQError(error.code, error.message, error.code === "timeout");
@@ -1575,12 +1602,6 @@ function isUnavailableReason(value: string): value is UnavailableReason {
     value === "incompatible_version" ||
     value === "transport_closed"
   );
-}
-
-function isRetryableIdlessFirmwareError(code: string): boolean {
-  // Current Firmware does not emit id-less transient errors. Keep this narrow
-  // because these errors cannot be correlated to a request id.
-  return code === "busy" || code === "timeout";
 }
 
 function getFirmwareErrorCode(error: unknown): string | undefined {

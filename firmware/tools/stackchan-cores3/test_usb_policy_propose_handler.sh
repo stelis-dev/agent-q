@@ -208,8 +208,6 @@ bool write_busy_from_payload_delivery(
             agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
                 agent_q::AgentQPayloadDeliveryOperationKind::policy_propose,
                 nullptr,
-                false,
-                nullptr,
             }) !=
         agent_q::AgentQPayloadDeliveryAdmissionResult::busy) {
         return false;

@@ -33,10 +33,6 @@ AgentQSignTransactionUserIngressResult map_validation_result(
             return AgentQSignTransactionUserIngressResult::invalid_network;
         case AgentQSignTransactionUserValidationResult::invalid_tx_bytes:
             return AgentQSignTransactionUserIngressResult::invalid_tx_bytes;
-        case AgentQSignTransactionUserValidationResult::invalid_payload_ref:
-            return AgentQSignTransactionUserIngressResult::invalid_payload_ref;
-        case AgentQSignTransactionUserValidationResult::invalid_payload_descriptor:
-            return AgentQSignTransactionUserIngressResult::invalid_payload_descriptor;
     }
     return AgentQSignTransactionUserIngressResult::invalid_request_shape;
 }
@@ -165,10 +161,6 @@ const char* sign_transaction_user_ingress_result_name(
             return "invalid_network";
         case AgentQSignTransactionUserIngressResult::invalid_tx_bytes:
             return "invalid_tx_bytes";
-        case AgentQSignTransactionUserIngressResult::invalid_payload_ref:
-            return "invalid_payload_ref";
-        case AgentQSignTransactionUserIngressResult::invalid_payload_descriptor:
-            return "invalid_payload_descriptor";
     }
     return "invalid_request_shape";
 }

@@ -1,12 +1,7 @@
 import {
-  assertAccountsResponse,
-  assertCapabilitiesResponse,
-  assertConnectResponse,
-  assertDisconnectResponse,
-  assertSignResultResponse,
   AGENT_Q_USB_PRODUCT_ID_NUMBER,
   AGENT_Q_USB_VENDOR_ID_NUMBER,
-  consumeProtocolResponseChunk,
+  consumeDeviceResponseLineChunk,
   DEFAULT_AGENT_Q_USB_BAUD_RATE,
   INTERNAL_CONNECT_DEADLINE_MS,
   INTERNAL_DISCONNECT_DEADLINE_MS,
@@ -14,42 +9,32 @@ import {
   INTERNAL_SIGN_TRANSACTION_DEADLINE_MS,
   INTERNAL_USB_DEADLINE_MS,
   PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES,
-  makeConnectRequest,
-  makeDisconnectRequest,
-  makeGetAccountsRequest,
-  makeGetCapabilitiesRequest,
-  makeSignPersonalMessageRequest,
-  makeSignTransactionRequest,
   ProtocolError,
+  createRequestId,
   validateSignTransactionParams,
-  type CapabilitiesResponse,
   type ConnectResponse,
-  type ProviderProtocolRequest,
-  type ProviderProtocolResponse,
   type SignResultResponse,
   type SignTransactionParams,
-  type SigningPayloadCapability,
 } from "@stelis/agent-q-core/provider-protocol";
 import {
-  withUploadedSignablePayload,
-} from "@stelis/agent-q-core/payload-delivery-internal";
-import {
-  assertAckResultResponse,
+  assertAccountsResponse,
+  assertCapabilitiesResponse,
+  assertConnectResponse,
+  assertDisconnectResponse,
   assertCredentialPrepareResultResponse,
   assertCredentialProposeResultResponse,
-  makeAckResultRequest,
-  makeCredentialPrepareRequest,
-  makeCredentialProposeRequest,
-  makeGetResultRequest,
-  makeStagedSignTransactionRequest,
-  payloadDeliveryCapabilityLimits,
+  assertSignResultResponse,
+  isClientName,
   parseJsonLine,
-  parseProtocolResponse,
-  serializeRequest,
-  SIGNABLE_PAYLOAD_KIND_TRANSACTION,
-  type ProtocolRequest,
-  type ProtocolResponse,
+  parseDeviceResponse,
+  validateCredentialPrepareInput,
+  validateCredentialProposeInput,
+  type DeviceResponse,
 } from "@stelis/agent-q-core/protocol";
+import {
+  requestDevice,
+  type DeviceRequestInput,
+} from "@stelis/agent-q-core/adapter-internal";
 import type {
   AgentQSuiWalletGetAccountsResult,
   AgentQSuiWalletGetCapabilitiesResult,
@@ -97,10 +82,12 @@ type BrowserSession = {
   epoch: number;
 };
 
-type BrowserSignRequest = Extract<
-  ProtocolRequest,
-  { type: "sign_transaction" | "sign_personal_message" }
->;
+type BrowserSignRequest = DeviceRequestInput & {
+  readonly id: string;
+  readonly sessionId: string;
+  readonly method: "sign_transaction" | "sign_personal_message";
+};
+type BrowserDeviceRequest = DeviceRequestInput;
 type BrowserWriteReachability = "not_started" | "started";
 type BrowserPortLease = {
   canceled: boolean;
@@ -142,7 +129,8 @@ type BrowserSessionSnapshot = {
 type BrowserBufferedRecoveryOutcome =
   | { status: "not_recovered" }
   | { status: "session_invalidated" }
-  | { status: "recovered"; response: SignResultResponse; ack: "acked" | "failed" | "invalid_session" };
+  | { status: "recovered"; response: SignResultResponse; ack: "acked" | "failed" | "invalid_session" }
+  | { status: "recovered_error"; error: AgentQSuiBrowserProviderError; ack: "acked" | "failed" | "invalid_session" };
 type BrowserSignRecoveryOutcome =
   | { status: "result"; response: SignResultResponse; sessionInvalidatedByAck: boolean }
   | { status: "session_invalidated" };
@@ -202,7 +190,10 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     if (this.#session !== null && targetMatches(input.deviceId, this.#session.deviceId)) {
       const snapshot = this.#sessionSnapshot(this.#session);
       try {
-        await this.#request(makeGetCapabilitiesRequest(this.#session.sessionId), assertCapabilitiesResponse);
+        await this.#request(
+          { method: "get_capabilities", sessionId: this.#session.sessionId },
+          assertCapabilitiesResponse,
+        );
         return this.#connectOutput(this.#session);
       } catch (error) {
         const ended = this.#clearIfSessionEnded(error, snapshot);
@@ -214,10 +205,9 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
 
     let response: ConnectResponse;
     try {
-      response = await this.#exchange(
-        makeConnectRequest(input.clientName ?? this.#clientName),
-        (response) => assertConnectResponse(response as ProviderProtocolResponse),
-        INTERNAL_CONNECT_DEADLINE_MS,
+      response = await this.#request(
+        makeConnectRequestInput(input.clientName ?? this.#clientName),
+        assertConnectResponse,
       );
     } catch (error) {
       if (isSessionEndedError(error)) {
@@ -230,10 +220,9 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     }
     if (input.deviceId !== undefined && response.device.deviceId !== input.deviceId) {
       try {
-        await this.#exchange(
-          makeDisconnectRequest(response.sessionId),
-          (response) => assertDisconnectResponse(response as ProviderProtocolResponse),
-          INTERNAL_DISCONNECT_DEADLINE_MS,
+        await this.#request(
+          { method: "disconnect", sessionId: response.sessionId },
+          assertDisconnectResponse,
         );
       } catch {
         // Best-effort cleanup for a session this provider will not retain.
@@ -263,7 +252,10 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       return this.#inactiveResult(input.deviceId);
     }
     try {
-      await this.#request(makeDisconnectRequest(session.sessionId), assertDisconnectResponse);
+      await this.#request(
+        { method: "disconnect", sessionId: session.sessionId },
+        assertDisconnectResponse,
+      );
     } catch (error) {
       if (isSessionEndedError(error)) {
         return { source: "session_ended", deviceId: session.deviceId, reason: errorCode(error) ?? "session_ended" };
@@ -287,7 +279,10 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     }
     const snapshot = this.#sessionSnapshot(session);
     try {
-      const response = await this.#request(makeGetCapabilitiesRequest(session.sessionId), assertCapabilitiesResponse);
+      const response = await this.#request(
+        { method: "get_capabilities", sessionId: session.sessionId },
+        assertCapabilitiesResponse,
+      );
       return {
         source: "live",
         deviceId: session.deviceId,
@@ -314,7 +309,10 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     }
     const snapshot = this.#sessionSnapshot(session);
     try {
-      const response = await this.#request(makeGetAccountsRequest(session.sessionId), assertAccountsResponse);
+      const response = await this.#request(
+        { method: "get_accounts", sessionId: session.sessionId },
+        assertAccountsResponse,
+      );
       return { source: "live", deviceId: session.deviceId, accounts: response.accounts as AgentQSuiWalletGetAccountsResult["accounts"] };
     } catch (error) {
       const ended = this.#clearIfSessionEnded(error, snapshot);
@@ -331,15 +329,19 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       return this.#inactiveCredentialResult(input.deviceId);
     }
     const snapshot = this.#sessionSnapshot(session);
-    const request = makeCredentialPrepareRequest(session.sessionId, {
+    const payload = validateCredentialPrepareInput({
       chain: input.chain,
       credential: input.credential,
     });
+    const request: BrowserDeviceRequest = {
+      method: "credential_prepare",
+      sessionId: session.sessionId,
+      payload,
+    };
     try {
-      const response = await this.#exchange(
+      const response = await this.#request(
         request,
         assertCredentialPrepareResultResponse,
-        deadlineForProviderRequest(request),
       );
       return {
         source: "live",
@@ -363,7 +365,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       return this.#inactiveCredentialResult(input.deviceId);
     }
     const snapshot = this.#sessionSnapshot(session);
-    const request = makeCredentialProposeRequest(session.sessionId, {
+    const payload = validateCredentialProposeInput({
       chain: input.chain,
       credential: input.credential,
       network: input.network,
@@ -372,11 +374,15 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       maxEpoch: input.maxEpoch,
       inputs: input.inputs,
     });
+    const request: BrowserDeviceRequest = {
+      method: "credential_propose",
+      sessionId: session.sessionId,
+      payload,
+    };
     try {
-      const response = await this.#exchange(
+      const response = await this.#request(
         request,
         assertCredentialProposeResultResponse,
-        deadlineForProviderRequest(request),
       );
       const result: CredentialProposeResult = {
         source: "live",
@@ -463,10 +469,16 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       return this.#inactiveResult(input.deviceId);
     }
     const snapshot = this.#sessionSnapshot(session);
-    const signRequest = makeSignPersonalMessageRequest(session.sessionId, input.chain, input.method, {
-      network: input.network,
-      message: input.message,
-    }, input.requestId);
+    const signRequest: BrowserSignRequest = {
+      id: input.requestId ?? createRequestId(),
+      method: input.method,
+      sessionId: session.sessionId,
+      payload: {
+        chain: input.chain,
+        network: input.network,
+        message: input.message,
+      },
+    };
     try {
       const outcome = await this.#signWithRecovery(signRequest, session);
       if (outcome.status === "session_invalidated") {
@@ -634,15 +646,17 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     this.#clearSessionAndPort("dispose");
   }
 
-  async #request<TResponse extends ProviderProtocolResponse>(
-    request: ProviderProtocolRequest,
-    assertResponse: (response: ProviderProtocolResponse) => TResponse,
+  async #request<TResponse>(
+    request: BrowserDeviceRequest,
+    assertResponse: (response: DeviceResponse) => TResponse,
   ): Promise<TResponse> {
-    return this.#exchange(
-      request,
-      (response) => assertResponse(response as ProviderProtocolResponse),
-      deadlineForProviderRequest(request),
-    );
+    const generation = this.#transportGeneration;
+    const phaseDeadlineMs = deadlineForProviderRequest(request);
+    const absoluteDeadlineMs = Date.now() + phaseDeadlineMs;
+    return this.#enqueue(async () => {
+      this.#assertTransportLive(generation);
+      return this.#requestDeviceQueued(request, assertResponse, generation, absoluteDeadlineMs, phaseDeadlineMs);
+    });
   }
 
   #signTransactionWithDelivery(
@@ -654,94 +668,19 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
   ): Promise<BrowserSignRecoveryOutcome> {
     const generation = this.#transportGeneration;
     const absoluteDeadlineMs = Date.now() + deadlineForProviderSignTransactionDelivery(params.txBytes);
-    const payloadBytes = decodeCanonicalBase64Payload(params.txBytes);
     return this.#enqueue(async () => {
       this.#assertTransportLive(generation);
-      const port = await this.#getPort(absoluteDeadlineMs);
-      this.#assertTransportLive(generation);
-      const capabilities = await requestOverBrowserSerial(
-        port,
-        makeGetCapabilitiesRequest(session.sessionId),
-        (response) => assertCapabilitiesResponse(response as ProviderProtocolResponse),
-        remainingProviderDeadline(absoluteDeadlineMs, INTERNAL_USB_DEADLINE_MS),
-        () => this.#abandonPort(),
-      );
-      const payloadCapability = findSignTransactionPayloadCapability(capabilities, chain, method);
-      if (shouldUseInlineSignRequest(payloadBytes.length, payloadCapability)) {
-        const request = makeInlineSignTransactionRequest(
-          session.sessionId,
-          chain,
-          method,
-          params,
-          requestId,
-          payloadCapability,
-        );
-        return this.#signWithRecoveryQueued(request, session, generation, absoluteDeadlineMs);
-      }
-      if (payloadCapability === null) {
-        throw new AgentQSuiBrowserProviderError(
-          "unsupported_payload_size",
-          "Firmware does not advertise staged payload delivery for this signing method.",
-        );
-      }
-      return this.#uploadAndSignTransaction(
-        session,
-        chain,
+      const request: BrowserSignRequest = {
+        id: requestId ?? createRequestId(),
         method,
-        params,
-        requestId,
-        payloadBytes,
-        payloadCapability,
-        generation,
-        absoluteDeadlineMs,
-      );
-    });
-  }
-
-  async #uploadAndSignTransaction(
-    session: BrowserSession,
-    chain: "sui",
-    method: "sign_transaction",
-    params: SignTransactionParams,
-    requestId: string | undefined,
-    payloadBytes: Uint8Array,
-    capability: SigningPayloadCapability,
-    generation: number,
-    absoluteDeadlineMs: number,
-  ): Promise<BrowserSignRecoveryOutcome> {
-    return withUploadedSignablePayload({
-      sessionId: session.sessionId,
-      chain,
-      method,
-      payloadKind: SIGNABLE_PAYLOAD_KIND_TRANSACTION,
-      payloadBytes,
-      capability,
-      executeUploadRequest: async (request, assertResponse) => {
-        const port = await this.#getPort(absoluteDeadlineMs);
-        this.#assertTransportLive(generation);
-        return requestOverBrowserSerial(
-          port,
-          request,
-          (response) => assertResponse(response),
-          remainingProviderDeadline(absoluteDeadlineMs, INTERNAL_USB_DEADLINE_MS),
-          () => this.#abandonPort(),
-        );
-      },
-      digestPayload: (bytes) => sha256PayloadDigest(bytes),
-      encodeChunkBase64: (bytes) => encodeBase64(bytes),
-      makeError: (code, message) => new AgentQSuiBrowserProviderError(code, message),
-      errorCode,
-      onAbortInvalidSession: markBrowserFirmwareSessionInvalidated,
-      consumeFinalizedPayload: (descriptor) => {
-        const request = makeStagedSignTransactionRequest(session.sessionId, chain, method, {
+        sessionId: session.sessionId,
+        payload: {
+          chain,
           network: params.network,
-          payloadRef: descriptor.payloadRef,
-          payloadKind: descriptor.payloadKind,
-          sizeBytes: descriptor.sizeBytes,
-          payloadDigest: descriptor.payloadDigest,
-        }, requestId);
-        return this.#signWithRecoveryQueued(request, session, generation, absoluteDeadlineMs);
-      },
+          txBytes: params.txBytes,
+        },
+      };
+      return this.#signWithRecoveryQueued(request, session, generation, absoluteDeadlineMs);
     });
   }
 
@@ -758,16 +697,18 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     absoluteDeadlineMs: number,
   ): Promise<BrowserSignRecoveryOutcome> {
     this.#assertTransportLive(generation);
-    const port = await this.#getPort(absoluteDeadlineMs);
-    this.#assertTransportLive(generation);
     try {
-      const response = await requestOverBrowserSerial(
-        port,
+      const response = await this.#requestDeviceQueued(
         request,
-        (response) => assertSignResultResponse(response as ProviderProtocolResponse),
-        remainingProviderDeadline(absoluteDeadlineMs, deadlineForProviderRequest(request)),
-        () => this.#abandonPort(),
+        assertSignResultResponse,
+        generation,
+        absoluteDeadlineMs,
+        deadlineForProviderSigningTransaction(request),
       );
+      const port = this.#port;
+      if (port === null) {
+        throw new AgentQSuiBrowserProviderError("transport_closed", "Web Serial port is not available.");
+      }
       this.#restoreCapturedSessionAfterPhysicalDisconnect(generation, session, port);
       return { status: "result", response, sessionInvalidatedByAck: false };
     } catch (error) {
@@ -777,34 +718,77 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       if (!this.#canAttemptRecoveryAfterTeardown(generation, session)) {
         throw error;
       }
+      let recoveryPort: BrowserSerialPort;
+      let recovery: BrowserBufferedRecoveryOutcome;
       try {
-        const recoveryPort = await this.#getPort(absoluteDeadlineMs);
-        const recovery = await this.#tryRecoverBufferedSignResult(
+        recoveryPort = await this.#getPort(absoluteDeadlineMs);
+        recovery = await this.#tryRecoverBufferedSignResult(
           recoveryPort,
           request.sessionId,
           request.id,
           absoluteDeadlineMs,
         );
-        if (recovery.status === "session_invalidated") {
-          return { status: "session_invalidated" };
-        }
-        if (recovery.status === "recovered") {
-          if (recovery.ack !== "invalid_session") {
-            this.#restoreCapturedSessionAfterPhysicalDisconnect(generation, session, recoveryPort);
-          }
-          return {
-            status: "result",
-            response: recovery.response,
-            sessionInvalidatedByAck: recovery.ack === "invalid_session",
-          };
-        }
       } catch {
         // Recovery transport setup/read failures preserve the original signing
         // delivery error. Firmware invalid_session remains visible if it is the
         // original sign response error.
+        throw error;
+      }
+      if (recovery.status === "session_invalidated") {
+        return { status: "session_invalidated" };
+      }
+      if (recovery.status === "recovered") {
+        if (recovery.ack !== "invalid_session") {
+          this.#restoreCapturedSessionAfterPhysicalDisconnect(generation, session, recoveryPort);
+        }
+        return {
+          status: "result",
+          response: recovery.response,
+          sessionInvalidatedByAck: recovery.ack === "invalid_session",
+        };
+      }
+      if (recovery.status === "recovered_error") {
+        if (recovery.ack !== "invalid_session") {
+          this.#restoreCapturedSessionAfterPhysicalDisconnect(generation, session, recoveryPort);
+        } else {
+          markBrowserFirmwareSessionInvalidated(recovery.error);
+        }
+        throw recovery.error;
       }
       throw error;
     }
+  }
+
+  async #requestDeviceQueued<TResponse>(
+    request: BrowserDeviceRequest,
+    assertResponse: (response: DeviceResponse) => TResponse,
+    generation: number,
+    absoluteDeadlineMs: number,
+    phaseDeadlineMs: number,
+  ): Promise<TResponse> {
+    return requestDevice({
+      request,
+      deadlineMs: phaseDeadlineMs,
+      execute: async (requestLine, expectedId, requestLabel, wireDeadlineMs, assertWireResponse) => {
+        const port = await this.#getPort(absoluteDeadlineMs);
+        this.#assertTransportLive(generation);
+        return requestOverBrowserSerial(
+          port,
+          requestLine,
+          expectedId,
+          requestLabel,
+          (response) => assertWireResponse(response),
+          remainingProviderDeadline(absoluteDeadlineMs, wireDeadlineMs),
+          () => this.#abandonPort(),
+        );
+      },
+      assertResponse,
+      digestPayload: (bytes) => sha256PayloadDigest(bytes),
+      encodeChunkBase64: (bytes) => encodeBase64(bytes),
+      makeError: (code, message, retryable = false) => new AgentQSuiBrowserProviderError(code, message),
+      errorCode,
+      onAbortInvalidSession: markBrowserFirmwareSessionInvalidated,
+    });
   }
 
   async #tryRecoverBufferedSignResult(
@@ -813,23 +797,56 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     requestId: string,
     absoluteDeadlineMs: number,
   ): Promise<BrowserBufferedRecoveryOutcome> {
-    let recovered: SignResultResponse;
+    let recovered: DeviceResponse;
     try {
-      recovered = await requestOverBrowserSerial(
-        port,
-        makeGetResultRequest(sessionId, requestId),
-        (response) => assertSignResultResponse(response as ProviderProtocolResponse),
-        remainingProviderDeadline(absoluteDeadlineMs, INTERNAL_USB_DEADLINE_MS),
-        () => this.#abandonPort(),
-      );
+      recovered = await requestDevice({
+        request: {
+          id: requestId,
+          method: "get_result",
+          sessionId,
+          payload: { retainedRequestId: requestId },
+        },
+        deadlineMs: remainingProviderDeadline(absoluteDeadlineMs, INTERNAL_USB_DEADLINE_MS),
+        execute: async (requestLine, expectedId, requestLabel, wireDeadlineMs, assertWireResponse) =>
+          requestOverBrowserSerial(
+            port,
+            requestLine,
+            expectedId,
+            requestLabel,
+            assertWireResponse,
+            remainingProviderDeadline(absoluteDeadlineMs, wireDeadlineMs),
+            () => this.#abandonPort(),
+          ),
+        assertResponse: (response) => response,
+        digestPayload: (bytes) => sha256PayloadDigest(bytes),
+        encodeChunkBase64: (bytes) => encodeBase64(bytes),
+        makeError: (code, message) => new AgentQSuiBrowserProviderError(code, message),
+        errorCode,
+        onAbortInvalidSession: markBrowserFirmwareSessionInvalidated,
+      });
     } catch (error) {
       if (errorCode(error) === "invalid_session") {
         return { status: "session_invalidated" };
       }
       return { status: "not_recovered" };
     }
+    if (recovered.success === false) {
+      if (recovered.error.code === "invalid_session") {
+        return { status: "session_invalidated" };
+      }
+      if (recovered.error.code === "unknown_request") {
+        return { status: "not_recovered" };
+      }
+      const ack = await this.#releaseRecoveredSignResult(port, sessionId, requestId, absoluteDeadlineMs);
+      return {
+        status: "recovered_error",
+        error: new AgentQSuiBrowserProviderError(recovered.error.code, recovered.error.message),
+        ack,
+      };
+    }
+    const response = assertSignResultResponse(recovered);
     const ack = await this.#releaseRecoveredSignResult(port, sessionId, requestId, absoluteDeadlineMs);
-    return { status: "recovered", response: recovered, ack };
+    return { status: "recovered", response, ack };
   }
 
   async #releaseRecoveredSignResult(
@@ -839,13 +856,31 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     absoluteDeadlineMs: number,
   ): Promise<"acked" | "failed" | "invalid_session"> {
     try {
-      await requestOverBrowserSerial(
-        port,
-        makeAckResultRequest(sessionId, requestId),
-        assertAckResultResponse,
-        remainingProviderDeadline(absoluteDeadlineMs, INTERNAL_USB_DEADLINE_MS),
-        () => this.#abandonPort(),
-      );
+      await requestDevice({
+        request: {
+          id: requestId,
+          method: "ack_result",
+          sessionId,
+          payload: { retainedRequestId: requestId },
+        },
+        deadlineMs: remainingProviderDeadline(absoluteDeadlineMs, INTERNAL_USB_DEADLINE_MS),
+        execute: async (requestLine, expectedId, requestLabel, wireDeadlineMs, assertWireResponse) =>
+          requestOverBrowserSerial(
+            port,
+            requestLine,
+            expectedId,
+            requestLabel,
+            assertWireResponse,
+            remainingProviderDeadline(absoluteDeadlineMs, wireDeadlineMs),
+            () => this.#abandonPort(),
+          ),
+        assertResponse: assertAckResultDeviceResponse,
+        digestPayload: (bytes) => sha256PayloadDigest(bytes),
+        encodeChunkBase64: (bytes) => encodeBase64(bytes),
+        makeError: (code, message) => new AgentQSuiBrowserProviderError(code, message),
+        errorCode,
+        onAbortInvalidSession: markBrowserFirmwareSessionInvalidated,
+      });
       return "acked";
     } catch (error) {
       if (errorCode(error) === "invalid_session") {
@@ -900,34 +935,6 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
         "The device transport was torn down before this request could run.",
       );
     }
-  }
-
-  // Serialize one write -> read cycle against the persistent port. Concurrent
-  // callers queue behind each other instead of racing on the same port. A teardown
-  // observed while this request was queued or while #getPort() was re-prompting
-  // rejects it here rather than running over a torn-down transport.
-  #exchange<TResponse>(
-    request: ProtocolRequest,
-    assertResponse: (response: ProtocolResponse) => TResponse,
-    deadlineMs: number,
-  ): Promise<TResponse> {
-    const generation = this.#transportGeneration;
-    const absoluteDeadlineMs = Date.now() + deadlineMs;
-    return this.#enqueue(async () => {
-      this.#assertTransportLive(generation);
-      const port = await this.#getPort(absoluteDeadlineMs);
-      // Re-check after the (possibly awaited) port acquisition: a disconnect observed
-      // while #getPort() was re-prompting bumps the generation, so this request must
-      // not run over or reopen a transport that was torn down in that window.
-      this.#assertTransportLive(generation);
-      return requestOverBrowserSerial(
-        port,
-        request,
-        assertResponse,
-        remainingProviderDeadline(absoluteDeadlineMs, deadlineMs),
-        () => this.#abandonPort(),
-      );
-    });
   }
 
   #enqueue<T>(operation: () => Promise<T>): Promise<T> {
@@ -1086,7 +1093,10 @@ function isAgentQSerialPort(port: BrowserSerialPort): boolean {
 }
 
 function deadlineForProviderSigningTransaction(request: BrowserSignRequest): number {
-  return deadlineForProviderRequest(request) + INTERNAL_USB_DEADLINE_MS * 2;
+  const methodDeadline = request.method === "sign_personal_message"
+    ? INTERNAL_SIGN_PERSONAL_MESSAGE_DEADLINE_MS
+    : INTERNAL_SIGN_TRANSACTION_DEADLINE_MS;
+  return methodDeadline + INTERNAL_USB_DEADLINE_MS * 2;
 }
 
 function deadlineForProviderSignTransactionDelivery(txBytes: string): number {
@@ -1177,73 +1187,6 @@ function shouldAttemptProviderSignResultRecovery(error: unknown): boolean {
   }
   const code = errorCode(error);
   return code !== null && RECOVERABLE_PROVIDER_SIGN_DELIVERY_CODES.has(code);
-}
-
-function findSignTransactionPayloadCapability(
-  capabilities: CapabilitiesResponse,
-  chain: "sui",
-  method: "sign_transaction",
-): SigningPayloadCapability | null {
-  const entry = capabilities.signing?.methods.find((candidate) =>
-    candidate.chain === chain && candidate.method === method
-  );
-  return entry?.payload ?? null;
-}
-
-function makeInlineSignTransactionRequest(
-  sessionId: string,
-  chain: "sui",
-  method: "sign_transaction",
-  params: SignTransactionParams,
-  requestId: string | undefined,
-  capability: SigningPayloadCapability | null,
-): BrowserSignRequest {
-  try {
-    return makeSignTransactionRequest(sessionId, chain, method, params, requestId);
-  } catch (error) {
-    if (
-      capability === null &&
-      error instanceof ProtocolError &&
-      error.code === "invalid_params" &&
-      error.message.includes("too large")
-    ) {
-      throw new AgentQSuiBrowserProviderError(
-        "unsupported_payload_size",
-        "Firmware does not advertise staged payload delivery for this signing method.",
-      );
-    }
-    throw error;
-  }
-}
-
-function shouldUseInlineSignRequest(
-  payloadSize: number,
-  capability: SigningPayloadCapability | null,
-): boolean {
-  if (capability === null) {
-    return true;
-  }
-  return payloadSize <= parsePayloadCapabilityLimits(capability).inlineMaxBytes;
-}
-
-function parsePayloadCapabilityLimits(capability: SigningPayloadCapability): ReturnType<typeof payloadDeliveryCapabilityLimits> {
-  try {
-    return payloadDeliveryCapabilityLimits(capability);
-  } catch (error) {
-    if (error instanceof ProtocolError) {
-      throw new AgentQSuiBrowserProviderError("protocol_error", error.message);
-    }
-    throw error;
-  }
-}
-
-function decodeCanonicalBase64Payload(value: string): Uint8Array {
-  const binary = globalThis.atob(value);
-  const output = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; ++index) {
-    output[index] = binary.charCodeAt(index);
-  }
-  return output;
 }
 
 function encodeBase64(value: Uint8Array): string {
@@ -1378,7 +1321,7 @@ async function openBrowserPortWithinLease(
 
 async function writeBrowserRequestWithinLease(
   writer: WritableStreamDefaultWriter<Uint8Array>,
-  request: ProtocolRequest,
+  requestLine: string,
   lease: BrowserPortLease,
   absoluteDeadlineMs: number,
   abandonPort: () => BrowserStalePortLease | null,
@@ -1389,7 +1332,7 @@ async function writeBrowserRequestWithinLease(
     "The device request expired before it reached Firmware.",
   );
   lease.writeReachability = "started";
-  const write = writer.write(new TextEncoder().encode(serializeRequest(request)));
+  const write = writer.write(new TextEncoder().encode(requestLine));
   let timer: ReturnType<typeof setTimeout> | null = null;
   write.catch(() => undefined);
   const timeout = new Promise<never>((_, reject) => {
@@ -1415,8 +1358,10 @@ async function writeBrowserRequestWithinLease(
 
 async function requestOverBrowserSerial<TResponse>(
   port: BrowserSerialPort,
-  request: ProtocolRequest,
-  assertResponse: (response: ProtocolResponse) => TResponse,
+  requestLine: string,
+  expectedId: string,
+  requestLabel: string,
+  assertResponse: (response: unknown) => TResponse,
   deadlineMs: number,
   abandonPort: () => BrowserStalePortLease | null,
 ): Promise<TResponse> {
@@ -1444,11 +1389,11 @@ async function requestOverBrowserSerial<TResponse>(
     }
     reader = port.readable.getReader();
     writer = port.writable.getWriter();
-    await writeBrowserRequestWithinLease(writer, request, lease, absoluteDeadlineMs, abandonPort);
+    await writeBrowserRequestWithinLease(writer, requestLine, lease, absoluteDeadlineMs, abandonPort);
     writer.releaseLock();
     writer = null;
 
-    const response = readMatchingResponse(reader, request.id, assertResponse);
+    const response = readMatchingResponse(reader, expectedId, assertResponse);
     // If the deadline wins the race below, the read is cancelled in `finally` and
     // this promise rejects after it has already lost. Attach a no-op catch so that
     // late rejection is not reported as an unhandled promise rejection.
@@ -1458,7 +1403,7 @@ async function requestOverBrowserSerial<TResponse>(
         lease.canceled = true;
         lease.abandoned = true;
         lease.stalePortLease = abandonPort() ?? undefined;
-        console.warn(`[agent-q] No Firmware response for '${request.type}' within ${deadlineMs}ms; treating link as lost.`);
+        console.warn(`[agent-q] No Firmware response for '${requestLabel}' within ${deadlineMs}ms; treating link as lost.`);
         reject(markProviderRequestMayHaveReachedFirmware(
           new AgentQSuiBrowserProviderError("timeout", "Timed out waiting for Firmware response."),
         ));
@@ -1508,7 +1453,7 @@ async function requestOverBrowserSerial<TResponse>(
 async function readMatchingResponse<TResponse>(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   expectedId: string,
-  assertResponse: (response: ProtocolResponse) => TResponse,
+  assertResponse: (response: unknown) => TResponse,
 ): Promise<TResponse> {
   const decoder = new TextDecoder();
   let buffer = "";
@@ -1519,7 +1464,7 @@ async function readMatchingResponse<TResponse>(
     }
     let lines: string[];
     try {
-      const consumed = consumeProtocolResponseChunk(buffer, decoder.decode(value, { stream: true }));
+      const consumed = consumeDeviceResponseLineChunk(buffer, decoder.decode(value, { stream: true }));
       buffer = consumed.buffer;
       lines = consumed.lines;
     } catch (error) {
@@ -1534,15 +1479,15 @@ async function readMatchingResponse<TResponse>(
         continue;
       }
       const parsed = tryParseMatchingResponseLine(line, expectedId, assertResponse);
-      if (parsed !== undefined) {
-        return parsed;
+      if (parsed.matched) {
+        return parsed.value;
       }
     }
   }
 }
 
-function deadlineForProviderRequest(request: Pick<ProtocolRequest, "type">): number {
-  switch (request.type) {
+function deadlineForProviderRequest(request: Pick<BrowserDeviceRequest, "method">): number {
+  switch (request.method) {
     case "connect":
       return INTERNAL_CONNECT_DEADLINE_MS;
     case "disconnect":
@@ -1557,41 +1502,70 @@ function deadlineForProviderRequest(request: Pick<ProtocolRequest, "type">): num
       return INTERNAL_SIGN_TRANSACTION_DEADLINE_MS;
     case "get_capabilities":
     case "get_accounts":
+    case "get_result":
+    case "ack_result":
       return INTERNAL_USB_DEADLINE_MS;
   }
   throw new AgentQSuiBrowserProviderError("internal_error", "Provider request deadline is not defined.");
 }
 
+function makeConnectRequestInput(clientName: string): BrowserDeviceRequest {
+  if (!isClientName(clientName)) {
+    throw new AgentQSuiBrowserProviderError(
+      "invalid_params",
+      "clientName must be 1-64 printable ASCII characters.",
+    );
+  }
+  return { method: "connect", payload: { clientName } };
+}
+
 function tryParseMatchingResponseLine<TResponse>(
   line: string,
   expectedId: string,
-  assertResponse: (response: ProtocolResponse) => TResponse,
-): TResponse | undefined {
+  assertResponse: (response: unknown) => TResponse,
+): { matched: true; value: TResponse } | { matched: false } {
   let parsed: unknown;
   try {
     parsed = parseJsonLine(line);
   } catch {
-    return undefined;
+    return { matched: false };
   }
   if (!isRecord(parsed)) {
-    return undefined;
+    return { matched: false };
   }
   if (parsed.id !== expectedId) {
-    if (parsed.id === undefined && parsed.type === "error") {
-      const response = parseProtocolResponse(line);
-      if (response.type === "error") {
+    if (parsed.id === undefined && parsed.success === false) {
+      const response = parseDeviceResponse(parsed);
+      if (response.success === false) {
         throw new AgentQSuiBrowserProviderError(response.error.code, response.error.message);
       }
     }
-    return undefined;
+    return { matched: false };
   }
   try {
-    return assertResponse(parseProtocolResponse(line, expectedId));
+    return { matched: true, value: assertResponse(parsed) };
   } catch (error) {
     if (error instanceof ProtocolError) {
       throw new AgentQSuiBrowserProviderError(error.code, error.message);
     }
     throw error;
+  }
+}
+
+function assertAckResultDeviceResponse(response: DeviceResponse): void {
+  const parsed = parseDeviceResponse(response, { expectedMethod: "ack_result" });
+  if (parsed.success === false) {
+    throw new ProtocolError(parsed.error.code, parsed.error.message);
+  }
+  if (parsed.id === undefined) {
+    throw new ProtocolError("invalid_response", "Ack result id is required.");
+  }
+  if (!isRecord(parsed.result)) {
+    throw new ProtocolError("invalid_response", "Ack result must be an object.");
+  }
+  const keys = Object.keys(parsed.result);
+  if (keys.length !== 1 || keys[0] !== "status" || parsed.result.status !== "acked") {
+    throw new ProtocolError("invalid_response", "Ack result is malformed.");
   }
 }
 

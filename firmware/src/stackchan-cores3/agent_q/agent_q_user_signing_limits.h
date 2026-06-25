@@ -13,7 +13,6 @@ constexpr size_t kAgentQUserSigningIdSize = kAgentQRequestIdSize;
 constexpr size_t kAgentQUserSigningChainSize = 33;
 constexpr size_t kAgentQUserSigningMethodSize = 65;
 constexpr size_t kAgentQUserSigningNetworkSize = 9;
-constexpr size_t kAgentQSignRequestBase64MaxSize = 4096;
 constexpr uint32_t kAgentQUserSigningApprovalWindowMs = 30000;
 constexpr size_t kAgentQUserSigningPayloadMaxBytes =
     kAgentQSuiSignTransactionTxBytesMaxBytes > kAgentQSuiSignPersonalMessageMaxBytes

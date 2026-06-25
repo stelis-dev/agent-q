@@ -13,8 +13,6 @@ namespace agent_q {
 enum class AgentQPayloadDeliveryAdmissionResult {
     ok,
     busy,
-    invalid_session,
-    invalid_payload_ref,
     unknown_request,
 };
 
@@ -29,12 +27,9 @@ enum class AgentQPayloadDeliveryAdmissionReason {
     finalized_retained_result,
     finalized_disconnect_cleanup,
     finalized_transfer_abort,
-    finalized_matching_staged_consumer,
     blocked_incomplete_transfer,
     blocked_pending_finalized_payload,
     blocked_unrelated_sensitive_flow,
-    invalid_consumer_session,
-    invalid_consumer_payload_ref,
     missing_active_payload,
 };
 
@@ -42,15 +37,6 @@ struct AgentQPayloadDeliveryOperationAdmissionInput {
     AgentQTimeoutTick now_tick;
     AgentQPayloadDeliveryOperationKind operation;
     const char* session_id;
-    bool staged_payload_ref;
-    const char* payload_ref;
-};
-
-struct AgentQPayloadDeliverySignTransactionAdmissionInput {
-    AgentQTimeoutTick now_tick;
-    const char* session_id;
-    bool staged_payload_ref;
-    const char* payload_ref;
 };
 
 struct AgentQPayloadDeliveryAdmissionDecision {
@@ -72,16 +58,12 @@ inline bool operator!=(
     return !(decision == result);
 }
 
-using AgentQPayloadDeliverySignTransactionAdmissionFn =
+using AgentQPayloadDeliveryOperationAdmissionFn =
     AgentQPayloadDeliveryAdmissionDecision (*)(
-        const AgentQPayloadDeliverySignTransactionAdmissionInput& input,
-        void* context);
+        const AgentQPayloadDeliveryOperationAdmissionInput& input);
 
 AgentQPayloadDeliveryAdmissionDecision payload_delivery_admit_operation(
     const AgentQPayloadDeliveryOperationAdmissionInput& input);
-AgentQPayloadDeliveryAdmissionDecision payload_delivery_admit_sign_transaction(
-    const AgentQPayloadDeliverySignTransactionAdmissionInput& input,
-    void* context);
 
 inline bool payload_delivery_admission_allowed(
     const AgentQPayloadDeliveryAdmissionDecision& decision)
@@ -132,14 +114,6 @@ inline bool payload_delivery_admission_allows_disconnect_cleanup(
            (decision.reason == AgentQPayloadDeliveryAdmissionReason::idle_passthrough ||
             decision.reason == AgentQPayloadDeliveryAdmissionReason::receiving_disconnect_cleanup ||
             decision.reason == AgentQPayloadDeliveryAdmissionReason::finalized_disconnect_cleanup);
-}
-
-inline bool payload_delivery_admission_allows_staged_consumer(
-    const AgentQPayloadDeliveryAdmissionDecision& decision)
-{
-    return decision.result == AgentQPayloadDeliveryAdmissionResult::ok &&
-           decision.reason ==
-               AgentQPayloadDeliveryAdmissionReason::finalized_matching_staged_consumer;
 }
 
 const char* payload_delivery_admission_result_name(
