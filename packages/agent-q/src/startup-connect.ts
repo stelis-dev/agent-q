@@ -2,7 +2,7 @@ import type {
   AgentQCore,
   ScanDevicesResult,
 } from "@stelis/agent-q-core";
-import { AgentQError, toAgentQError, toPublicError } from "@stelis/agent-q-core/adapter-internal";
+import { AgentQError, toPublicErrorFromUnknown } from "@stelis/agent-q-core/adapter-internal";
 
 export type StartupConnectCore = Pick<
   AgentQCore,
@@ -39,8 +39,7 @@ export async function requestDeviceConnectionOnStart(
     writeDiagnostic(`Agent-Q device connection approved: ${result.deviceId}`);
     await writeStartupConnectionSummary(core, { deviceId, purpose: options.purpose }, writeDiagnostic);
   } catch (error) {
-    const agentQError = toAgentQError(error);
-    const publicError = toPublicError(agentQError.code, agentQError.retryable);
+    const publicError = toPublicErrorFromUnknown(error);
     writeDiagnostic(
       `Agent-Q connection request did not complete: ${publicError.code}. ${publicError.message}`,
     );
@@ -76,8 +75,7 @@ async function readStartupAccountsSummary(
     }
     return [`Agent-Q accounts unavailable: ${accountsResult.reason}`];
   } catch (error) {
-    const agentQError = toAgentQError(error);
-    const publicError = toPublicError(agentQError.code, agentQError.retryable);
+    const publicError = toPublicErrorFromUnknown(error);
     return [`Agent-Q accounts unavailable: ${publicError.code}. ${publicError.message}`];
   }
 }
@@ -103,8 +101,7 @@ async function readStartupCapabilitiesSummary(
       return [`Agent-Q capabilities unavailable: ${capabilitiesResult.reason}`];
     }
   } catch (error) {
-    const agentQError = toAgentQError(error);
-    const publicError = toPublicError(agentQError.code, agentQError.retryable);
+    const publicError = toPublicErrorFromUnknown(error);
     return [`Agent-Q capabilities unavailable: ${publicError.code}. ${publicError.message}`];
   }
 }

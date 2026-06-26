@@ -5,8 +5,8 @@ import {
   hostSuccessOutputSchemas,
   isSafeDeviceId,
   isValidPurpose,
-  toAgentQError,
   toPublicError,
+  toPublicErrorFromUnknown,
 } from "@stelis/agent-q-core/adapter-internal";
 import {
   MAX_RAW_PROTOCOL_JSON_BYTES,
@@ -222,10 +222,10 @@ async function handleLocalApiRequest(
         sendPublicError(response, 404, "unsupported_method", false);
     }
   } catch (error) {
-    const agentQError = toAgentQError(error);
-    sendJson(response, agentQError.retryable ? 503 : 400, {
+    const publicError = toPublicErrorFromUnknown(error);
+    sendJson(response, publicError.retryable ? 503 : 400, {
       ok: false,
-      error: toPublicError(agentQError.code, agentQError.retryable),
+      error: publicError,
     });
   }
 }

@@ -1,5 +1,5 @@
 import type { AgentQCore } from "@stelis/agent-q-core";
-import { toAgentQError, toPublicError } from "@stelis/agent-q-core/adapter-internal";
+import { toPublicErrorFromUnknown } from "@stelis/agent-q-core/adapter-internal";
 import {
   SIGNING_OUTCOME_ERROR_MESSAGES,
   SUI_SCHEME_PREFIXED_ED25519_PUBLIC_KEY_BYTES,
@@ -128,8 +128,7 @@ export async function runSuiSignCli(
   try {
     validatedParams = validateSignTransactionParamsInput({ network, txBytes }, "agent-q-sui-signer");
   } catch (error) {
-    const agentQError = toAgentQError(error);
-    return writeFailure(dependencies, toPublicError(agentQError.code, agentQError.retryable));
+    return writeFailure(dependencies, toPublicErrorFromUnknown(error));
   }
 
   let connected = false;
@@ -183,11 +182,7 @@ export async function runSuiSignCli(
     resultCode = 0;
     return resultCode;
   } catch (error) {
-    const agentQError = toAgentQError(error);
-    resultCode = await writeFailure(
-      dependencies,
-      toPublicError(agentQError.code, agentQError.retryable),
-    );
+    resultCode = await writeFailure(dependencies, toPublicErrorFromUnknown(error));
     return resultCode;
   } finally {
     if (connected) {
@@ -228,8 +223,7 @@ async function runConfigure(
   try {
     network = validateNetwork(networkInput);
   } catch (error) {
-    const agentQError = toAgentQError(error);
-    return writeFailure(dependencies, toPublicError(agentQError.code, agentQError.retryable));
+    return writeFailure(dependencies, toPublicErrorFromUnknown(error));
   }
 
   const config: SuiSignCliConfig = {

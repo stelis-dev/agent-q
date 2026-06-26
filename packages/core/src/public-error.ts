@@ -4,6 +4,7 @@ import {
   isDeviceErrorCode,
   type DeviceErrorCode,
 } from "./device-contract.js";
+import { toAgentQError } from "./errors.js";
 
 // Projection of Agent-Q's device-contract error table for untrusted output
 // boundaries such as MCP and the Admin HTTP API.
@@ -41,4 +42,9 @@ export function toPublicError(code: string, _retryable?: boolean): PublicError {
   const normalized = normalizeErrorCode(code);
   const row = deviceErrorRow(normalized);
   return { code: row.code, message: row.message, retryable: row.retryable };
+}
+
+export function toPublicErrorFromUnknown(error: unknown): PublicError {
+  const agentQError = toAgentQError(error);
+  return toPublicError(agentQError.code, agentQError.retryable);
 }

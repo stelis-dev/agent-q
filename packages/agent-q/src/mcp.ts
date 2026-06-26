@@ -19,7 +19,6 @@ import {
 import {
   DEVICE_ID_PATTERN,
   CLIENT_NAME_PATTERN,
-  AgentQError,
   MAX_LABEL_LENGTH,
   PUBLIC_ERROR_MESSAGES,
   PURPOSE_PATTERN,
@@ -57,8 +56,9 @@ import {
   isValidLabel,
   isValidPurpose,
   normalizeErrorCode,
-  toAgentQError,
   toPublicError,
+  toPublicErrorFromUnknown,
+  type PublicError,
 } from "@stelis/agent-q-core/adapter-internal";
 import {
   MAX_APPROVAL_HISTORY_RECORDS,
@@ -305,9 +305,9 @@ export function createAgentQMcpServer(core = createDefaultAgentQCore()): McpServ
     try {
       raw = await work();
     } catch (error) {
-      const agentQError = toAgentQError(error);
-      logToolDiagnostic("agent_q_tool_error", agentQError.code, agentQError.retryable);
-      return withStructuredContent(toPublicErrorToolResult(agentQError), true);
+      const publicError = toPublicErrorFromUnknown(error);
+      logToolDiagnostic("agent_q_tool_error", publicError.code, publicError.retryable);
+      return withStructuredContent(toPublicErrorToolResult(publicError), true);
     }
 
     let sanitized: object;
@@ -318,7 +318,7 @@ export function createAgentQMcpServer(core = createDefaultAgentQCore()): McpServ
       // generic error instead of the raw value or the ZodError details.
       logToolDiagnostic("agent_q_output_sanitize_failed", "internal_output_error", false);
       return withStructuredContent(
-        toPublicErrorToolResult(new AgentQError("internal_output_error", "", false)),
+        toPublicErrorToolResult(toPublicError("internal_output_error", false)),
         true,
       );
     }
@@ -589,11 +589,11 @@ function logToolDiagnostic(event: string, rawCode: string, retryable: boolean): 
  * Build a client-safe top-level error result. Neither the code nor the message
  * can carry attacker- or device-controlled text to the MCP client.
  */
-function toPublicErrorToolResult(error: AgentQError) {
+function toPublicErrorToolResult(error: PublicError) {
   return errorToolResultShape.parse({
     source: "error",
     connected: false,
-    error: toPublicError(error.code, error.retryable),
+    error,
   });
 }
 
