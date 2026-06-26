@@ -60,6 +60,7 @@ import {
   type DeviceRequestExecutor,
   type DeviceRequestInput,
 } from "./device-request-transport.js";
+import { requestSigningWithRetainedRecovery } from "./retained-signing-recovery-internal.js";
 import { IDENTIFICATION_CODE_PATTERN, isClientName } from "./safe-text.js";
 
 export { AGENT_Q_USB_PRODUCT_ID, AGENT_Q_USB_VENDOR_ID, INTERNAL_USB_DEADLINE_MS };
@@ -145,11 +146,6 @@ type PortQuarantine = {
   released: Promise<void>;
   release(): void;
 };
-type SignRecoveryOutcome =
-  | { status: "not_recovered" }
-  | { status: "recovered"; result: SigningOutcome };
-type AckRecoveryOutcome = "acked" | "failed" | "invalid_session";
-
 const REQUEST_MAY_HAVE_REACHED_FIRMWARE = Symbol("agent-q.requestMayHaveReachedFirmware");
 const FIRMWARE_SESSION_INVALIDATED = Symbol("agent-q.firmwareSessionInvalidated");
 const portTransactions = new Map<string, Promise<void>>();
@@ -157,13 +153,6 @@ const portQuarantines = new Map<string, PortQuarantine>();
 const USB_CLEANUP_STEP_TIMEOUT_MS = 1500;
 const defaultSerialPortFactory: SerialPortFactory = (options) => new SerialPort(options);
 let serialPortFactory: SerialPortFactory = defaultSerialPortFactory;
-
-const RECOVERABLE_SIGN_DELIVERY_CODES = new Set([
-  "timeout",
-  "transport_closed",
-  "invalid_response",
-  "handshake_failed",
-]);
 
 /** @internal Test-only injection point for transport lease tests. */
 export function setSerialPortFactoryForTest(factory: SerialPortFactory | null): void {
@@ -1065,116 +1054,27 @@ export async function requestSigningOutcomeWithRecovery(
   deadlineMs: number,
   executor: UsbDeviceRequestExecutor,
 ): Promise<SigningOutcome> {
-  try {
-    return await requestDevice({
-      request,
-      deadlineMs,
-      execute: executor,
-      assertResponse: (response) => assertSigningOutcome(response),
-      digestPayload: (bytes) => sha256PayloadDigest(bytes),
-      encodeChunkBase64: (bytes) => Buffer.from(bytes).toString("base64"),
-      makeError: (code, message, retryable = false) => new AgentQError(code, message, retryable),
-      errorCode,
-      onAbortInvalidSession: markFirmwareSessionInvalidated,
-    });
-  } catch (error) {
-    if (!shouldAttemptSigningOutcomeRecovery(error)) {
-      throw error;
-    }
-    const recovery = await tryRecoverSigningOutcome(request.sessionId, request.id, executor);
-    if (recovery.status === "recovered") {
-      return recovery.result;
-    }
-    throw error;
+  const outcome = await requestSigningWithRetainedRecovery({
+    request,
+    deadlineMs,
+    execute: executor,
+    assertSigningOutcome: (response) => assertSigningOutcome(response),
+    digestPayload: (bytes) => sha256PayloadDigest(bytes),
+    encodeChunkBase64: (bytes) => Buffer.from(bytes).toString("base64"),
+    makeError: (code, message, retryable = false) => new AgentQError(code, message, retryable),
+    errorCode,
+    requestMayHaveReachedFirmware,
+    markInvalidSession: markFirmwareSessionInvalidated,
+    recoveryDeadlineMs: () => INTERNAL_USB_DEADLINE_MS,
+    makeGetResultRequestId: createRequestId,
+    makeAckResultRequestId: createRequestId,
+    prepareRecovery: () => executor,
+    recoveryExecute: (recoveryExecutor) => recoveryExecutor,
+  });
+  if (outcome.status === "session_invalidated") {
+    throw new AgentQError("invalid_session", "Session is missing, expired, or does not match.", false);
   }
-}
-
-async function tryRecoverSigningOutcome(
-  sessionId: string,
-  requestId: string,
-  executor: UsbDeviceRequestExecutor,
-): Promise<SignRecoveryOutcome> {
-  let recovered: SigningOutcome;
-  const getResultRequest: DeviceRequestInput & { readonly id: string } = {
-    id: createRequestId(),
-    method: "get_result",
-    sessionId,
-    payload: { retainedRequestId: requestId },
-  };
-  try {
-    recovered = await requestDevice({
-      request: getResultRequest,
-      deadlineMs: INTERNAL_USB_DEADLINE_MS,
-      execute: executor,
-      assertResponse: (response) => assertSigningOutcome(response),
-      digestPayload: (bytes) => sha256PayloadDigest(bytes),
-      encodeChunkBase64: (bytes) => Buffer.from(bytes).toString("base64"),
-      makeError: (code, message, retryable = false) => new AgentQError(code, message, retryable),
-      errorCode,
-      onAbortInvalidSession: markFirmwareSessionInvalidated,
-    });
-  } catch (error) {
-    if (errorCode(error) === "invalid_session") {
-      throw error;
-    }
-    return { status: "not_recovered" };
-  }
-  const ack = await releaseRecoveredSigningOutcome(sessionId, requestId, executor);
-  if (ack === "invalid_session") {
-    markFirmwareSessionInvalidated(recovered);
-  }
-  return { status: "recovered", result: recovered };
-}
-
-async function releaseRecoveredSigningOutcome(
-  sessionId: string,
-  requestId: string,
-  executor: UsbDeviceRequestExecutor,
-): Promise<AckRecoveryOutcome> {
-  const ackRequest: DeviceRequestInput & { readonly id: string } = {
-    id: createRequestId(),
-    method: "ack_result",
-    sessionId,
-    payload: { retainedRequestId: requestId },
-  };
-  try {
-    await requestDevice({
-      request: ackRequest,
-      deadlineMs: INTERNAL_USB_DEADLINE_MS,
-      execute: executor,
-      assertResponse: assertAckResultDeviceResponse,
-      digestPayload: (bytes) => sha256PayloadDigest(bytes),
-      encodeChunkBase64: (bytes) => Buffer.from(bytes).toString("base64"),
-      makeError: (code, message, retryable = false) => new AgentQError(code, message, retryable),
-      errorCode,
-      onAbortInvalidSession: markFirmwareSessionInvalidated,
-    });
-    return "acked";
-  } catch (error) {
-    if (errorCode(error) === "invalid_session") {
-      return "invalid_session";
-    }
-    // Best-effort cleanup: a failed ack must not turn a recovered signing outcome
-    // into a caller-visible failure.
-    return "failed";
-  }
-}
-
-function assertAckResultDeviceResponse(response: DeviceResponse): void {
-  const parsed = parseDeviceResponse(response, { expectedMethod: "ack_result" });
-  if (parsed.success === false) {
-    throw new ProtocolError(parsed.error.code, parsed.error.message);
-  }
-  if (parsed.id === undefined) {
-    throw new ProtocolError("invalid_response", "Ack result id is required.");
-  }
-  if (!isRecord(parsed.result)) {
-    throw new ProtocolError("invalid_response", "Ack result must be an object.");
-  }
-  const keys = Object.keys(parsed.result);
-  if (keys.length !== 0) {
-    throw new ProtocolError("invalid_response", "Ack result is malformed.");
-  }
+  return outcome.response;
 }
 
 function sha256PayloadDigest(value: Uint8Array): string {
@@ -1192,14 +1092,6 @@ function estimateBase64DecodedBytes(value: string): number {
     padding = 1;
   }
   return Math.max(0, Math.floor(value.length / 4) * 3 - padding);
-}
-
-function shouldAttemptSigningOutcomeRecovery(error: unknown): boolean {
-  if (!requestMayHaveReachedFirmware(error)) {
-    return false;
-  }
-  const code = errorCode(error);
-  return code !== null && RECOVERABLE_SIGN_DELIVERY_CODES.has(code);
 }
 
 async function requestOverSerialUnlocked<TResponse>(

@@ -424,9 +424,15 @@ test("package self-reference resolves only core entrypoints", async () => {
   assert.equal(root.createDefaultAgentQDeviceClient, undefined);
   assert.equal(typeof adapterInternal.hostSuccessOutputSchemas, "object");
   assert.equal(adapterInternal.requestDevice, undefined);
-  assert.deepEqual(Object.keys(deviceRequest).sort(), ["requestDevice"]);
+  assert.deepEqual(Object.keys(deviceRequest).sort(), [
+    "assertAckResultDeviceResponse",
+    "requestDevice",
+    "requestSigningWithRetainedRecovery",
+  ]);
   assert.equal(typeof device.createDefaultAgentQDeviceClient, "function");
   assert.equal(typeof deviceRequest.requestDevice, "function");
+  assert.equal(typeof deviceRequest.requestSigningWithRetainedRecovery, "function");
+  assert.equal(typeof deviceRequest.assertAckResultDeviceResponse, "function");
   assert.equal(deviceRequest.serializePayloadTransferRequest, undefined);
   assert.equal(deviceRequest.serializeDeviceRequest, undefined);
   assert.equal(deviceRequest.makeDeviceRequest, undefined);
