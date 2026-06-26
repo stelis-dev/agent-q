@@ -1,6 +1,6 @@
 {
   "name": "@stelis/agent-q-core",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Agent-Q core library for USB device discovery, protocol transport, runtime session mirroring, and Firmware-authored result validation.",
   "license": "UNLICENSED",
   "type": "module",
