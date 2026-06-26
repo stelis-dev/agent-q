@@ -7,6 +7,7 @@
 #include "agent_q_protocol_constants.h"
 #include "agent_q_signing_route.h"
 #include "agent_q_sign_transaction_limits.h"
+#include "agent_q_usb_active_session_request_guard.h"
 #include "agent_q_usb_response_writer.h"
 
 extern "C" {
@@ -32,60 +33,16 @@ struct SessionReadPolicyDocument {
     const AgentQCurrentPolicyDocument* document = nullptr;
 };
 
-bool session_read_material_ready(const AgentQUsbSessionReadHandlerOps& ops)
-{
-    return ops.material_ready != nullptr && ops.material_ready();
-}
-
-bool session_read_busy(
-    const AgentQUsbSessionReadHandlerOps& ops,
-    const char* id,
-    const AgentQUsbOperationResponseWriter& writer)
-{
-    return ops.write_busy_if_pending_or_local_flow_active != nullptr &&
-           ops.write_busy_if_pending_or_local_flow_active(id, writer);
-}
-
 bool session_read_payload_delivery_admission_error(
-    const AgentQUsbSessionReadHandlerOps& ops,
+    const void* context,
     const char* id,
     AgentQUsbOperationType operation,
     const AgentQUsbOperationResponseWriter& writer)
 {
+    const AgentQUsbSessionReadHandlerOps& ops =
+        *static_cast<const AgentQUsbSessionReadHandlerOps*>(context);
     return ops.write_payload_delivery_safe_read_admission_error != nullptr &&
            ops.write_payload_delivery_safe_read_admission_error(id, operation, writer);
-}
-
-bool session_read_session_valid(
-    const AgentQUsbSessionReadHandlerOps& ops,
-    const char* id,
-    const char* session_id,
-    const AgentQUsbOperationResponseWriter& writer)
-{
-    return ops.require_active_matching_session != nullptr &&
-           ops.require_active_matching_session(id, session_id, writer);
-}
-
-bool parse_session_id_or_write_error(
-    const char* id,
-    JsonDocument& request,
-    const AgentQUsbOperationResponseWriter& writer,
-    const char** session_id)
-{
-    if (agent_q_json_optional_c_string(request["sessionId"], "", session_id)) {
-        return true;
-    }
-    writer.write_error(id, "invalid_session");
-    return false;
-}
-
-bool session_read_request_fields_supported(JsonDocument& request)
-{
-    const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId"};
-    return agent_q_json_object_fields_supported(
-        request.as<JsonVariantConst>(),
-        allowed_request_fields,
-        4);
 }
 
 bool guard_session_read_request(
@@ -96,27 +53,24 @@ bool guard_session_read_request(
     AgentQUsbOperationType operation,
     const char** session_id)
 {
-    if (!session_read_material_ready(ops)) {
-        writer.write_error(id, "invalid_state");
-        return false;
-    }
-    if (session_read_busy(ops, id, writer)) {
-        return false;
-    }
-    if (session_read_payload_delivery_admission_error(ops, id, operation, writer)) {
-        return false;
-    }
-    if (!parse_session_id_or_write_error(id, request, writer, session_id)) {
-        return false;
-    }
-    if (!session_read_session_valid(ops, id, *session_id, writer)) {
-        return false;
-    }
-    if (!session_read_request_fields_supported(request)) {
-        writer.write_error(id, "invalid_params");
-        return false;
-    }
-    return true;
+    const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId"};
+    const AgentQUsbActiveSessionRequestGuardOps guard_ops = {
+        &ops,
+        ops.material_ready,
+        ops.write_busy_if_pending_or_local_flow_active,
+        session_read_payload_delivery_admission_error,
+        ops.require_active_matching_session,
+    };
+    return guard_usb_active_session_request(
+        id,
+        request,
+        writer,
+        operation,
+        guard_ops,
+        AgentQUsbSessionIdMode::optional_default_empty,
+        allowed_request_fields,
+        4,
+        session_id);
 }
 
 const char* active_identity_key_scheme(AgentQSuiActiveIdentityKind kind)

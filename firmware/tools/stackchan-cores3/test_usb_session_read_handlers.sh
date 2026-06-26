@@ -28,6 +28,8 @@ for required in \
   "${COMMON_AGENT_Q_DIR}/agent_q_sign_route.h" \
   "${COMMON_AGENT_Q_DIR}/policy/agent_q_policy_document.cpp" \
   "${COMMON_AGENT_Q_DIR}/policy/agent_q_policy_document.h" \
+  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.h" \
   "${AGENT_Q_DIR}/agent_q_usb_session_read_handlers.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_session_read_handlers.h" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_response_writer.h"; do
@@ -855,6 +857,7 @@ CPP
   -I"${AGENT_Q_DIR}" \
   -I"${COMMON_AGENT_Q_DIR}" \
   "${TMP_DIR}/test.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_session_read_handlers.cpp" \
   "${COMMON_AGENT_Q_DIR}/policy/agent_q_policy_document.cpp" \
   -o "${TMP_DIR}/test"

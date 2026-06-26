@@ -46,6 +46,8 @@ for required in \
   "${AGENT_Q_DIR}/agent_q_payload_delivery_store.cpp" \
   "${AGENT_Q_DIR}/agent_q_payload_delivery_store.h" \
   "${AGENT_Q_DIR}/agent_q_session.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.h" \
   "${AGENT_Q_DIR}/agent_q_usb_policy_propose_handler.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_policy_propose_handler.h" \
   "${AGENT_Q_DIR}/agent_q_usb_policy_propose_outcome_writer.cpp" \
@@ -718,6 +720,7 @@ CPP
   "${TMP_DIR}/session.o" \
   "${TMP_DIR}/sha256.o" \
   "${TMP_DIR}/platform_util.o" \
+  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_policy_propose_handler.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_policy_propose_outcome_writer.cpp" \
   -o "${TMP_DIR}/test_usb_policy_propose_handler"

@@ -23,6 +23,8 @@ ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
+  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.h" \
   "${AGENT_Q_DIR}/agent_q_usb_retained_response_handlers.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_retained_response_handlers.h" \
   "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
@@ -394,6 +396,7 @@ CPP
   -I"${AGENT_Q_DIR}" \
   -I"${AGENT_Q_DIR}/../../common/agent_q" \
   "${TMP_DIR}/test.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_retained_response_handlers.cpp" \
   "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
   "${AGENT_Q_DIR}/agent_q_signing_response_store.cpp" \

@@ -38,6 +38,8 @@ for required in \
   "${MBEDTLS_INCLUDE_DIR}/mbedtls/sha256.h" \
   "${MBEDTLS_LIBRARY_DIR}/sha256.c" \
   "${MBEDTLS_LIBRARY_DIR}/platform_util.c" \
+  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.h" \
   "${AGENT_Q_DIR}/agent_q_usb_payload_transfer_handlers.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_payload_transfer_handlers.h" \
   "${AGENT_Q_DIR}/agent_q_payload_delivery_admission.cpp" \
@@ -813,6 +815,15 @@ CPP
   -I"${COMMON_AGENT_Q_DIR}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
+  -c "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
+  -o "${TMP_DIR}/active_session_request_guard.o"
+
+"${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
+  -I"${ARDUINOJSON_ROOT}" \
+  -I"${AGENT_Q_DIR}" \
+  -I"${COMMON_AGENT_Q_DIR}" \
+  -I"${TMP_DIR}" \
+  -I"${MBEDTLS_INCLUDE_DIR}" \
   -c "${AGENT_Q_DIR}/agent_q_usb_payload_transfer_handlers.cpp" \
   -o "${TMP_DIR}/usb_payload_transfer_handlers.o"
 
@@ -871,6 +882,7 @@ cc -std=c99 -Wall -Wextra -Werror \
   -I"${MBEDTLS_INCLUDE_DIR}" \
   "${TMP_DIR}/test.cpp" \
   "${TMP_DIR}/stubs.cpp" \
+  "${TMP_DIR}/active_session_request_guard.o" \
   "${TMP_DIR}/usb_payload_transfer_handlers.o" \
   "${TMP_DIR}/payload_delivery_primitives.o" \
   "${TMP_DIR}/payload_delivery_store.o" \

@@ -3,34 +3,51 @@
 #include "agent_q_json_input.h"
 #include "agent_q_request_id.h"
 #include "agent_q_signing_response_store.h"
+#include "agent_q_usb_active_session_request_guard.h"
 #include "agent_q_usb_response_writer.h"
 
 namespace agent_q {
 
 namespace {
 
-bool retained_response_material_ready(const AgentQUsbRetainedResponseHandlerOps& ops)
-{
-    return ops.material_ready != nullptr && ops.material_ready();
-}
-
-bool retained_response_session_valid(
-    const AgentQUsbRetainedResponseHandlerOps& ops,
+bool retained_response_admission_error(
+    const void* context,
     const char* id,
-    const char* session_id,
+    AgentQUsbOperationType operation,
     const AgentQUsbOperationResponseWriter& writer)
 {
-    return ops.require_active_matching_session != nullptr &&
-           ops.require_active_matching_session(id, session_id, writer);
+    const AgentQUsbRetainedResponseHandlerOps& ops =
+        *static_cast<const AgentQUsbRetainedResponseHandlerOps*>(context);
+    return ops.write_payload_delivery_retained_response_admission_error != nullptr &&
+           ops.write_payload_delivery_retained_response_admission_error(id, operation, writer);
 }
 
-bool retained_response_request_fields_supported(JsonDocument& request)
+bool guard_retained_response_request(
+    const char* id,
+    JsonDocument& request,
+    const AgentQUsbOperationResponseWriter& writer,
+    const AgentQUsbRetainedResponseHandlerOps& ops,
+    AgentQUsbOperationType operation,
+    const char** session_id)
 {
     const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId", "payload"};
-    return agent_q_json_object_fields_supported(
-        request.as<JsonVariantConst>(),
+    const AgentQUsbActiveSessionRequestGuardOps guard_ops = {
+        &ops,
+        ops.material_ready,
+        nullptr,
+        retained_response_admission_error,
+        ops.require_active_matching_session,
+    };
+    return guard_usb_active_session_request(
+        id,
+        request,
+        writer,
+        operation,
+        guard_ops,
+        AgentQUsbSessionIdMode::optional_default_empty,
         allowed_request_fields,
-        5);
+        5,
+        session_id);
 }
 
 bool retained_request_id_from_payload(JsonDocument& request, const char** retained_request_id)
@@ -88,27 +105,14 @@ void handle_usb_get_result_request(
     const AgentQUsbOperationResponseWriter& writer,
     const AgentQUsbRetainedResponseHandlerOps& ops)
 {
-    if (!retained_response_material_ready(ops)) {
-        writer.write_error(id, "invalid_state");
-        return;
-    }
-    if (ops.write_payload_delivery_retained_response_admission_error != nullptr &&
-        ops.write_payload_delivery_retained_response_admission_error(
-            id,
-            AgentQUsbOperationType::get_result,
-            writer)) {
-        return;
-    }
     const char* session_id = nullptr;
-    if (!agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-        writer.write_error(id, "invalid_session");
-        return;
-    }
-    if (!retained_response_session_valid(ops, id, session_id, writer)) {
-        return;
-    }
-    if (!retained_response_request_fields_supported(request)) {
-        writer.write_error(id, "invalid_params");
+    if (!guard_retained_response_request(
+            id,
+            request,
+            writer,
+            ops,
+            AgentQUsbOperationType::get_result,
+            &session_id)) {
         return;
     }
     const char* retained_request_id = nullptr;
@@ -128,27 +132,14 @@ void handle_usb_ack_result_request(
     const AgentQUsbOperationResponseWriter& writer,
     const AgentQUsbRetainedResponseHandlerOps& ops)
 {
-    if (!retained_response_material_ready(ops)) {
-        writer.write_error(id, "invalid_state");
-        return;
-    }
-    if (ops.write_payload_delivery_retained_response_admission_error != nullptr &&
-        ops.write_payload_delivery_retained_response_admission_error(
-            id,
-            AgentQUsbOperationType::ack_result,
-            writer)) {
-        return;
-    }
     const char* session_id = nullptr;
-    if (!agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-        writer.write_error(id, "invalid_session");
-        return;
-    }
-    if (!retained_response_session_valid(ops, id, session_id, writer)) {
-        return;
-    }
-    if (!retained_response_request_fields_supported(request)) {
-        writer.write_error(id, "invalid_params");
+    if (!guard_retained_response_request(
+            id,
+            request,
+            writer,
+            ops,
+            AgentQUsbOperationType::ack_result,
+            &session_id)) {
         return;
     }
     const char* retained_request_id = nullptr;

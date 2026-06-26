@@ -3,11 +3,24 @@
 #include "agent_q_json_input.h"
 #include "agent_q_protocol_constants.h"
 #include "agent_q_u64_decimal.h"
+#include "agent_q_usb_active_session_request_guard.h"
 #include "agent_q_usb_response_writer.h"
 
 namespace agent_q {
 
 namespace {
+
+bool approval_history_admission_error(
+    const void* context,
+    const char* id,
+    AgentQUsbOperationType operation,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    const AgentQUsbApprovalHistoryHandlerOps& ops =
+        *static_cast<const AgentQUsbApprovalHistoryHandlerOps*>(context);
+    return ops.write_payload_delivery_safe_read_admission_error != nullptr &&
+           ops.write_payload_delivery_safe_read_admission_error(id, operation, writer);
+}
 
 bool parse_approval_history_params(JsonDocument& request, size_t* limit, uint64_t* before_sequence)
 {
@@ -117,38 +130,25 @@ void handle_usb_get_approval_history_request(
     const AgentQUsbOperationResponseWriter& writer,
     const AgentQUsbApprovalHistoryHandlerOps& ops)
 {
-    if (ops.material_ready == nullptr || !ops.material_ready()) {
-        writer.write_error(id, "invalid_state");
-        return;
-    }
-    if (ops.write_busy_if_pending_or_local_flow_active != nullptr &&
-        ops.write_busy_if_pending_or_local_flow_active(id, writer)) {
-        return;
-    }
-    if (ops.write_payload_delivery_safe_read_admission_error != nullptr &&
-        ops.write_payload_delivery_safe_read_admission_error(
-            id,
-            AgentQUsbOperationType::get_approval_history,
-            writer)) {
-        return;
-    }
-
-    const char* session_id = nullptr;
-    if (!agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-        writer.write_error(id, "invalid_session");
-        return;
-    }
-    if (ops.require_active_matching_session == nullptr ||
-        !ops.require_active_matching_session(id, session_id, writer)) {
-        return;
-    }
-
     const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId", "payload"};
-    if (!agent_q_json_object_fields_supported(
-            request.as<JsonVariantConst>(),
+    const char* session_id = nullptr;
+    const AgentQUsbActiveSessionRequestGuardOps guard_ops = {
+        &ops,
+        ops.material_ready,
+        ops.write_busy_if_pending_or_local_flow_active,
+        approval_history_admission_error,
+        ops.require_active_matching_session,
+    };
+    if (!guard_usb_active_session_request(
+            id,
+            request,
+            writer,
+            AgentQUsbOperationType::get_approval_history,
+            guard_ops,
+            AgentQUsbSessionIdMode::optional_default_empty,
             allowed_request_fields,
-            5)) {
-        writer.write_error(id, "invalid_params");
+            5,
+            &session_id)) {
         return;
     }
 

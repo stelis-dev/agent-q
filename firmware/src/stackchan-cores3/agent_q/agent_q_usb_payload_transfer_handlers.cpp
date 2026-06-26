@@ -11,6 +11,7 @@
 #include "agent_q_payload_delivery_store.h"
 #include "agent_q_protocol_constants.h"
 #include "agent_q_u64_decimal.h"
+#include "agent_q_usb_active_session_request_guard.h"
 #include "agent_q_usb_line_receiver.h"
 #include "agent_q_usb_response_writer.h"
 
@@ -49,48 +50,35 @@ bool request_fields_supported(JsonDocument& request, const char* const* fields, 
         field_count);
 }
 
-bool parse_session_id_or_write_error(
-    const char* id,
-    JsonDocument& request,
-    const AgentQUsbOperationResponseWriter& writer,
-    const char** session_id)
-{
-    if (agent_q_json_value_c_string(request["sessionId"], session_id)) {
-        return true;
-    }
-    writer.write_error(id, "invalid_session");
-    return false;
-}
-
 bool guard_payload_transfer_request(
     const char* id,
     JsonDocument& request,
     const AgentQUsbOperationResponseWriter& writer,
     const AgentQUsbPayloadTransferHandlerOps& ops,
+    AgentQUsbOperationType operation,
     const char** session_id)
 {
     if (ops.current_tick == nullptr) {
         writer.write_error(id, "internal_output_error");
         return false;
     }
-    if (ops.material_ready == nullptr || !ops.material_ready()) {
-        writer.write_error(
-            id,
-            "invalid_state");
-        return false;
-    }
-    if (ops.write_busy_if_pending_or_local_flow_active != nullptr &&
-        ops.write_busy_if_pending_or_local_flow_active(id, writer)) {
-        return false;
-    }
-    if (!parse_session_id_or_write_error(id, request, writer, session_id)) {
-        return false;
-    }
-    if (ops.require_active_matching_session == nullptr ||
-        !ops.require_active_matching_session(id, *session_id, writer)) {
-        return false;
-    }
-    return true;
+    const AgentQUsbActiveSessionRequestGuardOps guard_ops = {
+        &ops,
+        ops.material_ready,
+        ops.write_busy_if_pending_or_local_flow_active,
+        nullptr,
+        ops.require_active_matching_session,
+    };
+    return guard_usb_active_session_request(
+        id,
+        request,
+        writer,
+        operation,
+        guard_ops,
+        AgentQUsbSessionIdMode::required,
+        nullptr,
+        0,
+        session_id);
 }
 
 bool write_unsupported_fields_error(
@@ -263,7 +251,13 @@ void handle_usb_payload_transfer_begin_request(
         "id", "version", "type", "action", "sessionId", "totalBytes", "payloadDigest",
     };
     const char* session_id = nullptr;
-    if (!guard_payload_transfer_request(id, request, writer, ops, &session_id)) {
+    if (!guard_payload_transfer_request(
+            id,
+            request,
+            writer,
+            ops,
+            AgentQUsbOperationType::payload_transfer_begin,
+            &session_id)) {
         return;
     }
     const AgentQTimeoutTick now_tick = handler_current_tick(ops);
@@ -321,7 +315,13 @@ void handle_usb_payload_transfer_chunk_request(
         "id", "version", "type", "action", "sessionId", "transferId", "offsetBytes", "chunk",
     };
     const char* session_id = nullptr;
-    if (!guard_payload_transfer_request(id, request, writer, ops, &session_id)) {
+    if (!guard_payload_transfer_request(
+            id,
+            request,
+            writer,
+            ops,
+            AgentQUsbOperationType::payload_transfer_chunk,
+            &session_id)) {
         return;
     }
     const AgentQTimeoutTick now_tick = handler_current_tick(ops);
@@ -396,7 +396,13 @@ void handle_usb_payload_transfer_finish_request(
 {
     const char* const fields[] = {"id", "version", "type", "action", "sessionId", "transferId"};
     const char* session_id = nullptr;
-    if (!guard_payload_transfer_request(id, request, writer, ops, &session_id)) {
+    if (!guard_payload_transfer_request(
+            id,
+            request,
+            writer,
+            ops,
+            AgentQUsbOperationType::payload_transfer_finish,
+            &session_id)) {
         return;
     }
     const AgentQTimeoutTick now_tick = handler_current_tick(ops);
@@ -437,7 +443,13 @@ void handle_usb_payload_transfer_abort_request(
 {
     const char* const fields[] = {"id", "version", "type", "action", "sessionId", "transferId"};
     const char* session_id = nullptr;
-    if (!guard_payload_transfer_request(id, request, writer, ops, &session_id)) {
+    if (!guard_payload_transfer_request(
+            id,
+            request,
+            writer,
+            ops,
+            AgentQUsbOperationType::payload_transfer_abort,
+            &session_id)) {
         return;
     }
     const AgentQTimeoutTick now_tick = handler_current_tick(ops);

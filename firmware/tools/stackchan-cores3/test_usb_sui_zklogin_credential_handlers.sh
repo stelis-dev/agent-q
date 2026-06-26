@@ -24,6 +24,8 @@ ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
+  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.h" \
   "${AGENT_Q_DIR}/agent_q_usb_sui_zklogin_credential_handlers.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_sui_zklogin_credential_handlers.h" \
   "${AGENT_Q_DIR}/agent_q_usb_sui_zklogin_credential_outcome_writer.cpp" \
@@ -465,6 +467,7 @@ CPP
   -I"${ARDUINOJSON_ROOT}" \
   -I"${AGENT_Q_DIR}" \
   "${TMP_DIR}/test.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_sui_zklogin_credential_handlers.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_sui_zklogin_credential_outcome_writer.cpp" \
   -o "${TMP_DIR}/test"

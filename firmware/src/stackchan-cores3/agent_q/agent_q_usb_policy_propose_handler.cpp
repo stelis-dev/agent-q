@@ -1,9 +1,29 @@
 #include "agent_q_usb_policy_propose_handler.h"
 
 #include "agent_q_json_input.h"
+#include "agent_q_usb_active_session_request_guard.h"
 #include "agent_q_usb_policy_propose_outcome_writer.h"
 
 namespace agent_q {
+namespace {
+
+const AgentQUsbPolicyProposeHandlerOps& policy_propose_ops(const void* context)
+{
+    return *static_cast<const AgentQUsbPolicyProposeHandlerOps*>(context);
+}
+
+bool policy_propose_admission_error(
+    const void* context,
+    const char* id,
+    AgentQUsbOperationType,
+    const AgentQUsbOperationResponseWriter& writer)
+{
+    const AgentQUsbPolicyProposeHandlerOps& ops = policy_propose_ops(context);
+    return ops.write_policy_propose_admission_error != nullptr &&
+           ops.write_policy_propose_admission_error(id, writer);
+}
+
+}  // namespace
 
 void handle_usb_policy_propose_request(
     const char* id,
@@ -11,31 +31,25 @@ void handle_usb_policy_propose_request(
     const AgentQUsbOperationResponseWriter& writer,
     const AgentQUsbPolicyProposeHandlerOps& ops)
 {
-    if (ops.material_ready == nullptr || !ops.material_ready()) {
-        writer.write_error(id, "invalid_state");
-        return;
-    }
-    if (ops.write_policy_propose_admission_error != nullptr &&
-        ops.write_policy_propose_admission_error(id, writer)) {
-        return;
-    }
-
-    const char* session_id = nullptr;
-    if (!agent_q_json_optional_c_string(request["sessionId"], "", &session_id)) {
-        writer.write_error(id, "invalid_session");
-        return;
-    }
-    if (ops.require_active_matching_session == nullptr ||
-        !ops.require_active_matching_session(id, session_id, writer)) {
-        return;
-    }
-
     const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId", "payload"};
-    if (!agent_q_json_object_fields_supported(
-            request.as<JsonVariantConst>(),
+    const char* session_id = nullptr;
+    const AgentQUsbActiveSessionRequestGuardOps guard_ops = {
+        &ops,
+        ops.material_ready,
+        nullptr,
+        policy_propose_admission_error,
+        ops.require_active_matching_session,
+    };
+    if (!guard_usb_active_session_request(
+            id,
+            request,
+            writer,
+            AgentQUsbOperationType::policy_propose,
+            guard_ops,
+            AgentQUsbSessionIdMode::optional_default_empty,
             allowed_request_fields,
-            5)) {
-        writer.write_error(id, "invalid_params");
+            5,
+            &session_id)) {
         return;
     }
 

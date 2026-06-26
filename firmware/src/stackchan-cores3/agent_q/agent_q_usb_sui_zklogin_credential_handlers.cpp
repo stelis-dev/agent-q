@@ -3,39 +3,11 @@
 #include <string.h>
 
 #include "agent_q_json_input.h"
+#include "agent_q_usb_active_session_request_guard.h"
 #include "agent_q_usb_sui_zklogin_credential_outcome_writer.h"
 
 namespace agent_q {
 namespace {
-
-bool require_common_request_fields(
-    const char* id,
-    JsonDocument& request,
-    const AgentQUsbOperationResponseWriter& writer)
-{
-    const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId", "payload"};
-    if (agent_q_json_object_fields_supported(
-            request.as<JsonVariantConst>(),
-            allowed_request_fields,
-            5)) {
-        return true;
-    }
-    writer.write_error(id, "invalid_params");
-    return false;
-}
-
-bool parse_session_id_or_write_error(
-    const char* id,
-    JsonDocument& request,
-    const AgentQUsbOperationResponseWriter& writer,
-    const char** session_id)
-{
-    if (agent_q_json_optional_c_string(request["sessionId"], "", session_id)) {
-        return true;
-    }
-    writer.write_error(id, "invalid_session");
-    return false;
-}
 
 bool parse_supported_credential_params(
     const char* id,
@@ -82,23 +54,27 @@ bool guard_common(
     JsonDocument& request,
     const AgentQUsbOperationResponseWriter& writer,
     const AgentQUsbSuiZkLoginCredentialHandlerOps& ops,
+    AgentQUsbOperationType operation,
     const char** session_id)
 {
-    if (ops.material_ready == nullptr || !ops.material_ready()) {
-        writer.write_error(id, "invalid_state");
-        return false;
-    }
-    if (!parse_session_id_or_write_error(id, request, writer, session_id)) {
-        return false;
-    }
-    if (ops.require_active_matching_session == nullptr ||
-        !ops.require_active_matching_session(id, *session_id, writer)) {
-        return false;
-    }
-    if (!require_common_request_fields(id, request, writer)) {
-        return false;
-    }
-    return true;
+    const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId", "payload"};
+    const AgentQUsbActiveSessionRequestGuardOps guard_ops = {
+        &ops,
+        ops.material_ready,
+        nullptr,
+        nullptr,
+        ops.require_active_matching_session,
+    };
+    return guard_usb_active_session_request(
+        id,
+        request,
+        writer,
+        operation,
+        guard_ops,
+        AgentQUsbSessionIdMode::optional_default_empty,
+        allowed_request_fields,
+        5,
+        session_id);
 }
 
 bool active_identity_allows_preparation(
@@ -149,6 +125,7 @@ void handle_usb_credential_prepare_request(
             request,
             writer,
             ops,
+            AgentQUsbOperationType::credential_prepare,
             &session_id)) {
         return;
     }
@@ -190,6 +167,7 @@ void handle_usb_credential_propose_request(
             request,
             writer,
             ops,
+            AgentQUsbOperationType::credential_propose,
             &session_id)) {
         return;
     }

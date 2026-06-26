@@ -25,6 +25,8 @@ ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
+  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.h" \
   "${AGENT_Q_DIR}/agent_q_usb_approval_history_handler.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_approval_history_handler.h" \
   "${AGENT_Q_DIR}/agent_q_usb_operation_response_writer.h" \
@@ -473,6 +475,7 @@ CPP
   -I"${AGENT_Q_DIR}" \
   -I"${TMP_DIR}" \
   "${TMP_DIR}/test.cpp" \
+  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
   "${AGENT_Q_DIR}/agent_q_usb_approval_history_handler.cpp" \
   -o "${TMP_DIR}/test"
 
