@@ -10,18 +10,6 @@ namespace agent_q {
 
 namespace {
 
-bool approval_history_admission_error(
-    const void* context,
-    const char* id,
-    AgentQUsbOperationType operation,
-    const AgentQUsbOperationResponseWriter& writer)
-{
-    const AgentQUsbApprovalHistoryHandlerOps& ops =
-        *static_cast<const AgentQUsbApprovalHistoryHandlerOps*>(context);
-    return ops.write_payload_delivery_safe_read_admission_error != nullptr &&
-           ops.write_payload_delivery_safe_read_admission_error(id, operation, writer);
-}
-
 bool parse_approval_history_params(JsonDocument& request, size_t* limit, uint64_t* before_sequence)
 {
     if (limit == nullptr || before_sequence == nullptr) {
@@ -133,10 +121,9 @@ void handle_usb_get_approval_history_request(
     const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId", "payload"};
     const char* session_id = nullptr;
     const AgentQUsbActiveSessionRequestGuardOps guard_ops = {
-        &ops,
         ops.material_ready,
         ops.write_busy_if_pending_or_local_flow_active,
-        approval_history_admission_error,
+        ops.write_payload_delivery_safe_read_admission_error,
         ops.require_active_matching_session,
     };
     if (!guard_usb_active_session_request(

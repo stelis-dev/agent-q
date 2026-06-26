@@ -63,7 +63,6 @@ bool guard_payload_transfer_request(
         return false;
     }
     const AgentQUsbActiveSessionRequestGuardOps guard_ops = {
-        &ops,
         ops.material_ready,
         ops.write_busy_if_pending_or_local_flow_active,
         nullptr,

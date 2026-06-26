@@ -10,7 +10,7 @@ namespace agent_q {
 
 struct AgentQUsbPolicyProposeHandlerOps {
     bool (*material_ready)();
-    bool (*write_policy_propose_admission_error)(
+    bool (*write_policy_propose_busy)(
         const char* id,
         const AgentQUsbOperationResponseWriter& writer);
     bool (*require_active_matching_session)(

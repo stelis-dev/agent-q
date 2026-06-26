@@ -68,7 +68,7 @@ bool guard_usb_active_session_request(
         return false;
     }
     if (ops.write_admission_error != nullptr &&
-        ops.write_admission_error(ops.context, id, operation, writer)) {
+        ops.write_admission_error(id, operation, writer)) {
         return false;
     }
     if (!parse_session_id_or_write_error(id, request, writer, session_id_mode, session_id)) {

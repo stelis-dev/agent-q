@@ -10,18 +10,6 @@ namespace agent_q {
 
 namespace {
 
-bool retained_response_admission_error(
-    const void* context,
-    const char* id,
-    AgentQUsbOperationType operation,
-    const AgentQUsbOperationResponseWriter& writer)
-{
-    const AgentQUsbRetainedResponseHandlerOps& ops =
-        *static_cast<const AgentQUsbRetainedResponseHandlerOps*>(context);
-    return ops.write_payload_delivery_retained_response_admission_error != nullptr &&
-           ops.write_payload_delivery_retained_response_admission_error(id, operation, writer);
-}
-
 bool guard_retained_response_request(
     const char* id,
     JsonDocument& request,
@@ -32,10 +20,9 @@ bool guard_retained_response_request(
 {
     const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId", "payload"};
     const AgentQUsbActiveSessionRequestGuardOps guard_ops = {
-        &ops,
         ops.material_ready,
         nullptr,
-        retained_response_admission_error,
+        ops.write_payload_delivery_retained_response_admission_error,
         ops.require_active_matching_session,
     };
     return guard_usb_active_session_request(

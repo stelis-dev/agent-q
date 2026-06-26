@@ -33,18 +33,6 @@ struct SessionReadPolicyDocument {
     const AgentQCurrentPolicyDocument* document = nullptr;
 };
 
-bool session_read_payload_delivery_admission_error(
-    const void* context,
-    const char* id,
-    AgentQUsbOperationType operation,
-    const AgentQUsbOperationResponseWriter& writer)
-{
-    const AgentQUsbSessionReadHandlerOps& ops =
-        *static_cast<const AgentQUsbSessionReadHandlerOps*>(context);
-    return ops.write_payload_delivery_safe_read_admission_error != nullptr &&
-           ops.write_payload_delivery_safe_read_admission_error(id, operation, writer);
-}
-
 bool guard_session_read_request(
     const char* id,
     JsonDocument& request,
@@ -55,10 +43,9 @@ bool guard_session_read_request(
 {
     const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId"};
     const AgentQUsbActiveSessionRequestGuardOps guard_ops = {
-        &ops,
         ops.material_ready,
         ops.write_busy_if_pending_or_local_flow_active,
-        session_read_payload_delivery_admission_error,
+        ops.write_payload_delivery_safe_read_admission_error,
         ops.require_active_matching_session,
     };
     return guard_usb_active_session_request(

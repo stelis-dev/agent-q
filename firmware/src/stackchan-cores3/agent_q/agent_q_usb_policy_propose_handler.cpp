@@ -5,25 +5,6 @@
 #include "agent_q_usb_policy_propose_outcome_writer.h"
 
 namespace agent_q {
-namespace {
-
-const AgentQUsbPolicyProposeHandlerOps& policy_propose_ops(const void* context)
-{
-    return *static_cast<const AgentQUsbPolicyProposeHandlerOps*>(context);
-}
-
-bool policy_propose_admission_error(
-    const void* context,
-    const char* id,
-    AgentQUsbOperationType,
-    const AgentQUsbOperationResponseWriter& writer)
-{
-    const AgentQUsbPolicyProposeHandlerOps& ops = policy_propose_ops(context);
-    return ops.write_policy_propose_admission_error != nullptr &&
-           ops.write_policy_propose_admission_error(id, writer);
-}
-
-}  // namespace
 
 void handle_usb_policy_propose_request(
     const char* id,
@@ -34,10 +15,9 @@ void handle_usb_policy_propose_request(
     const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId", "payload"};
     const char* session_id = nullptr;
     const AgentQUsbActiveSessionRequestGuardOps guard_ops = {
-        &ops,
         ops.material_ready,
+        ops.write_policy_propose_busy,
         nullptr,
-        policy_propose_admission_error,
         ops.require_active_matching_session,
     };
     if (!guard_usb_active_session_request(

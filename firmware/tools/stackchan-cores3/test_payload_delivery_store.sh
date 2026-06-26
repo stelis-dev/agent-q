@@ -315,8 +315,8 @@ grep -q 'write_identify_device_admission_error' "${USB_DEVICE_HANDLER_HEADER}" |
   echo "FAILED: identify_device handler must expose identify admission callback" >&2
   exit 1
 }
-grep -q 'write_policy_propose_admission_error' "${USB_POLICY_PROPOSE_HANDLER_HEADER}" || {
-  echo "FAILED: policy_propose handler must expose policy admission callback" >&2
+grep -q 'write_policy_propose_busy' "${USB_POLICY_PROPOSE_HANDLER_HEADER}" || {
+  echo "FAILED: policy_propose handler must expose payload delivery busy callback" >&2
   exit 1
 }
 grep -q 'write_credential_propose_admission_error' "${USB_SUI_ZKLOGIN_CREDENTIAL_HANDLER_HEADER}" || {

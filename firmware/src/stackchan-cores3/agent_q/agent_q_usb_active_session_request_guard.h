@@ -15,13 +15,11 @@ enum class AgentQUsbSessionIdMode {
 };
 
 struct AgentQUsbActiveSessionRequestGuardOps {
-    const void* context;
     bool (*material_ready)();
     bool (*write_busy_if_pending_or_local_flow_active)(
         const char* id,
         const AgentQUsbOperationResponseWriter& writer);
     bool (*write_admission_error)(
-        const void* context,
         const char* id,
         AgentQUsbOperationType operation,
         const AgentQUsbOperationResponseWriter& writer);

@@ -59,7 +59,6 @@ bool guard_common(
 {
     const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId", "payload"};
     const AgentQUsbActiveSessionRequestGuardOps guard_ops = {
-        &ops,
         ops.material_ready,
         nullptr,
         nullptr,
