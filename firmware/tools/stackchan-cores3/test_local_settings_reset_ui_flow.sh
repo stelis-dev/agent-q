@@ -305,6 +305,14 @@ void local_reset_wipe()
     g_stage = AgentQLocalResetStage::none;
 }
 
+bool local_reset_wipe_active()
+{
+    const bool active = g_stage != AgentQLocalResetStage::none;
+    ++g_wipe_calls;
+    g_stage = AgentQLocalResetStage::none;
+    return active;
+}
+
 void local_reset_begin_settings(AgentQTimeoutWindow)
 {
     ++g_begin_settings_calls;
@@ -332,6 +340,98 @@ bool local_reset_begin_error_recovery_wipe(TickType_t)
     }
     g_stage = AgentQLocalResetStage::wiping;
     return true;
+}
+
+bool local_reset_close_settings()
+{
+    if (g_stage != AgentQLocalResetStage::settings_menu) {
+        return false;
+    }
+    ++g_wipe_calls;
+    g_stage = AgentQLocalResetStage::none;
+    return true;
+}
+
+AgentQLocalResetReturnToSettingsResult local_reset_return_to_settings(AgentQTimeoutWindow)
+{
+    if (g_stage != AgentQLocalResetStage::pin_entry) {
+        return AgentQLocalResetReturnToSettingsResult::stale;
+    }
+    ++g_begin_settings_calls;
+    g_stage = AgentQLocalResetStage::settings_menu;
+    return AgentQLocalResetReturnToSettingsResult::started;
+}
+
+bool local_reset_cancel_error_recovery()
+{
+    if (g_stage != AgentQLocalResetStage::error_recovery_confirm) {
+        return false;
+    }
+    ++g_wipe_calls;
+    g_stage = AgentQLocalResetStage::none;
+    return true;
+}
+
+bool local_reset_begin_settings_pin_auth_handoff()
+{
+    if (g_stage != AgentQLocalResetStage::settings_menu) {
+        return false;
+    }
+    ++g_wipe_calls;
+    g_stage = AgentQLocalResetStage::none;
+    return true;
+}
+
+bool local_reset_begin_error_recovery_confirm_if_idle(
+    AgentQTimeoutWindow)
+{
+    if (g_stage != AgentQLocalResetStage::none) {
+        return false;
+    }
+    g_stage = AgentQLocalResetStage::error_recovery_confirm;
+    return true;
+}
+
+AgentQLocalResetErrorRecoveryActionResult local_reset_handle_error_recovery_confirm(
+    AgentQTimeoutWindow,
+    TickType_t,
+    bool start_available)
+{
+    if (g_stage == AgentQLocalResetStage::none) {
+        if (!start_available) {
+            return AgentQLocalResetErrorRecoveryActionResult::stale;
+        }
+        g_stage = AgentQLocalResetStage::error_recovery_confirm;
+        return AgentQLocalResetErrorRecoveryActionResult::confirmation_started;
+    }
+    if (g_stage != AgentQLocalResetStage::error_recovery_confirm) {
+        return AgentQLocalResetErrorRecoveryActionResult::stale;
+    }
+    g_stage = AgentQLocalResetStage::wiping;
+    return AgentQLocalResetErrorRecoveryActionResult::wipe_started;
+}
+
+bool local_reset_abort_pin_verification()
+{
+    if (g_stage != AgentQLocalResetStage::pin_verifying) {
+        return false;
+    }
+    ++g_wipe_calls;
+    g_stage = AgentQLocalResetStage::none;
+    return true;
+}
+
+AgentQLocalResetUiMaintenanceResult local_reset_handle_ui_maintenance(
+    bool panel_active,
+    TickType_t)
+{
+    if (g_stage == AgentQLocalResetStage::pin_verifying && !panel_active) {
+        return AgentQLocalResetUiMaintenanceResult::redraw_pin_verification_panel;
+    }
+    if (g_stage == AgentQLocalResetStage::wiping && !panel_active) {
+        return AgentQLocalResetUiMaintenanceResult::redraw_wiping_panel;
+    }
+    return AgentQLocalResetUiMaintenanceResult::unchanged;
 }
 
 bool local_reset_add_pin_digit(char) { return g_stage == AgentQLocalResetStage::pin_entry; }
@@ -362,6 +462,25 @@ AgentQLocalResetCommitResult local_reset_commit_material(const AgentQLocalResetP
     ++g_commit_calls;
     g_commit_order = ++g_order_counter;
     return g_commit_result;
+}
+
+AgentQLocalResetCommitFinishResult local_reset_finish_commit_if_ready(
+    TickType_t,
+    const AgentQLocalResetPersistenceOps& ops)
+{
+    if (!g_wipe_ready) {
+        return AgentQLocalResetCommitFinishResult{
+            AgentQLocalResetCommitFinishStatus::not_ready,
+            AgentQLocalResetCommitResult::missing_state,
+        };
+    }
+    const AgentQLocalResetCommitResult result = local_reset_commit_material(ops);
+    ++g_wipe_calls;
+    g_stage = AgentQLocalResetStage::none;
+    return AgentQLocalResetCommitFinishResult{
+        AgentQLocalResetCommitFinishStatus::committed,
+        result,
+    };
 }
 
 AgentQLocalResetCommitResult local_reset_resume_pending_if_needed(
@@ -471,6 +590,15 @@ int main()
     expect(g_clear_panel_calls == 1, "error recovery cancel clears old panel");
     expect(g_show_message_order < g_clear_panel_order,
            "error recovery cancel prepares result before clearing old panel");
+
+    reset_harness();
+    g_consistency_error_active = true;
+    g_error_recovery_available = false;
+    agent_q::local_settings_reset_ui_confirm_error_recovery_from_ui(ops());
+    expect(g_stage == agent_q::AgentQLocalResetStage::none,
+           "idle error recovery confirm respects recovery availability");
+    expect(g_draw_error_recovery_calls == 0,
+           "unavailable idle error recovery confirm does not draw confirmation");
 
     if (failures != 0) {
         return 1;

@@ -489,6 +489,9 @@ int main()
 {
     using Stage = agent_q::AgentQLocalResetStage;
     using Commit = agent_q::AgentQLocalResetCommitResult;
+    using ErrorRecoveryAction = agent_q::AgentQLocalResetErrorRecoveryActionResult;
+    using MaintenanceResult = agent_q::AgentQLocalResetUiMaintenanceResult;
+    using CommitFinishStatus = agent_q::AgentQLocalResetCommitFinishStatus;
 
     reset_stubs();
     agent_q::local_reset_begin_error_recovery_confirm(pin_window(1, 100));
@@ -571,6 +574,100 @@ int main()
     reset_stubs();
     expect(!agent_q::local_reset_begin_error_recovery_wipe(100),
            "error recovery wipe cannot start without confirmation state");
+
+    reset_stubs();
+    agent_q::local_reset_begin_settings(pin_window(10, 100));
+    expect(!agent_q::local_reset_begin_error_recovery_confirm_if_idle(pin_window(10, 100)),
+           "error recovery confirmation cannot start over active settings");
+    expect(agent_q::local_reset_snapshot(10).stage == Stage::settings_menu,
+           "failed error recovery confirmation start preserves active settings state");
+
+    reset_stubs();
+    expect(agent_q::local_reset_begin_error_recovery_confirm_if_idle(pin_window(10, 100)),
+           "error recovery confirmation starts only from idle state");
+    expect(agent_q::local_reset_snapshot(10).stage == Stage::error_recovery_confirm,
+           "error recovery confirmation owner records confirmation state");
+
+    reset_stubs();
+    expect(!agent_q::local_reset_begin_error_recovery_confirm_if_idle(
+               agent_q::kAgentQTimeoutWindowNone),
+           "error recovery confirmation rejects invalid window");
+    expect(agent_q::local_reset_snapshot(10).stage == Stage::none,
+           "invalid error recovery confirmation leaves no active state");
+
+    reset_stubs();
+    expect(agent_q::local_reset_handle_error_recovery_confirm(pin_window(10, 100), 200, true) ==
+               ErrorRecoveryAction::confirmation_started,
+           "error recovery confirm action starts confirmation when no flow is active");
+    expect(agent_q::local_reset_snapshot(10).stage == Stage::error_recovery_confirm,
+           "error recovery confirm action enters confirmation state");
+    expect(agent_q::local_reset_handle_error_recovery_confirm(pin_window(10, 100), 200, false) ==
+               ErrorRecoveryAction::wipe_started,
+           "error recovery confirm action starts wiping from confirmation state");
+    expect(agent_q::local_reset_snapshot(10).stage == Stage::wiping,
+           "error recovery confirm action owns wiping transition");
+
+    reset_stubs();
+    expect(agent_q::local_reset_handle_error_recovery_confirm(
+               agent_q::kAgentQTimeoutWindowNone,
+               200,
+               true) == ErrorRecoveryAction::stale,
+           "error recovery confirm action rejects invalid confirmation window");
+    expect(agent_q::local_reset_snapshot(10).stage == Stage::none,
+           "invalid error recovery confirm action leaves no active state");
+
+    reset_stubs();
+    expect(agent_q::local_reset_handle_error_recovery_confirm(
+               pin_window(10, 100),
+               200,
+               false) == ErrorRecoveryAction::stale,
+           "error recovery confirm action rejects unavailable idle start");
+    expect(agent_q::local_reset_snapshot(10).stage == Stage::none,
+           "unavailable idle error recovery confirm leaves no active state");
+
+    reset_stubs();
+    agent_q::local_reset_begin_settings(pin_window(10, 100));
+    expect(agent_q::local_reset_handle_ui_maintenance(false, 50) ==
+               MaintenanceResult::panel_lost,
+           "settings panel loss is classified by reset owner");
+    expect(agent_q::local_reset_snapshot(50).stage == Stage::none,
+           "settings panel loss clears local reset state");
+
+    reset_stubs();
+    agent_q::local_reset_begin_error_recovery_confirm(pin_window(10, 100));
+    expect(agent_q::local_reset_begin_error_recovery_wipe(200), "commit-finish setup enters wiping");
+    expect(agent_q::local_reset_finish_commit_if_ready(199, ops()).status ==
+               CommitFinishStatus::not_ready,
+           "commit finish waits until wipe display delay expires");
+    expect(agent_q::local_reset_snapshot(199).stage == Stage::wiping,
+           "not-ready commit finish preserves wiping state");
+    agent_q::AgentQLocalResetCommitFinishResult finish =
+        agent_q::local_reset_finish_commit_if_ready(200, ops());
+    expect(finish.status == CommitFinishStatus::committed &&
+               finish.commit_result == Commit::ok,
+           "commit finish persists reset once ready");
+    expect(agent_q::local_reset_snapshot(200).stage == Stage::none,
+           "commit finish clears local reset state after persistence attempt");
+
+    reset_stubs();
+    agent_q::local_reset_begin_settings(pin_window(100, 200));
+    expect(agent_q::local_reset_begin_pin_entry(pin_window(100, 200)),
+           "reset PIN entry starts before abort verification test");
+    const char abort_pin[] = "123456";
+    for (size_t index = 0; abort_pin[index] != '\0'; ++index) {
+        expect(agent_q::local_reset_add_pin_digit(abort_pin[index]),
+               "abort verification PIN digit accepted");
+    }
+    g_now = 110;
+    expect(agent_q::local_reset_submit_pin_for_verification(110, 200) ==
+               agent_q::AgentQLocalResetPinSubmitResult::started_verification,
+           "abort verification test starts worker job");
+    expect(agent_q::local_reset_abort_pin_verification(),
+           "material-unavailable abort is owned by reset domain");
+    expect(agent_q::local_reset_snapshot(110).stage == Stage::none,
+           "material-unavailable abort clears reset state");
+    expect(g_last_cancelled_worker_job_id == g_last_worker_job_id,
+           "material-unavailable abort cancels reset verification job");
 
     reset_stubs();
     expect(agent_q::local_pin_auth_begin_connect(1, pin_window(1, 100)),

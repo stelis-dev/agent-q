@@ -260,6 +260,13 @@ void local_reset_wipe()
     g_local_reset.wipe();
 }
 
+bool local_reset_wipe_active()
+{
+    const bool active = g_local_reset.stage != AgentQLocalResetStage::none;
+    g_local_reset.wipe();
+    return active;
+}
+
 void local_reset_begin_settings(AgentQTimeoutWindow input_window)
 {
     g_local_reset.wipe();
@@ -304,6 +311,140 @@ bool local_reset_begin_error_recovery_wipe(TickType_t wipe_ready_at)
     g_local_reset.stage = AgentQLocalResetStage::wiping;
     g_local_reset.wipe_ready_at = wipe_ready_at;
     return true;
+}
+
+bool local_reset_close_settings()
+{
+    if (g_local_reset.stage != AgentQLocalResetStage::settings_menu) {
+        return false;
+    }
+    g_local_reset.wipe();
+    return true;
+}
+
+AgentQLocalResetReturnToSettingsResult local_reset_return_to_settings(
+    AgentQTimeoutWindow input_window)
+{
+    if (g_local_reset.stage != AgentQLocalResetStage::pin_entry) {
+        return AgentQLocalResetReturnToSettingsResult::stale;
+    }
+    local_reset_begin_settings(input_window);
+    return g_local_reset.stage == AgentQLocalResetStage::settings_menu
+               ? AgentQLocalResetReturnToSettingsResult::started
+               : AgentQLocalResetReturnToSettingsResult::failed;
+}
+
+bool local_reset_cancel_error_recovery()
+{
+    if (g_local_reset.stage != AgentQLocalResetStage::error_recovery_confirm) {
+        return false;
+    }
+    g_local_reset.wipe();
+    return true;
+}
+
+bool local_reset_begin_settings_pin_auth_handoff()
+{
+    if (g_local_reset.stage != AgentQLocalResetStage::settings_menu) {
+        return false;
+    }
+    g_local_reset.wipe();
+    return true;
+}
+
+bool local_reset_begin_error_recovery_confirm_if_idle(
+    AgentQTimeoutWindow input_window)
+{
+    if (g_local_reset.stage != AgentQLocalResetStage::none) {
+        return false;
+    }
+    local_reset_begin_error_recovery_confirm(input_window);
+    return g_local_reset.stage == AgentQLocalResetStage::error_recovery_confirm;
+}
+
+AgentQLocalResetErrorRecoveryActionResult local_reset_handle_error_recovery_confirm(
+    AgentQTimeoutWindow input_window,
+    TickType_t wipe_ready_at,
+    bool start_available)
+{
+    if (g_local_reset.stage == AgentQLocalResetStage::none) {
+        if (!start_available) {
+            return AgentQLocalResetErrorRecoveryActionResult::stale;
+        }
+        local_reset_begin_error_recovery_confirm(input_window);
+        return g_local_reset.stage == AgentQLocalResetStage::error_recovery_confirm
+                   ? AgentQLocalResetErrorRecoveryActionResult::confirmation_started
+                   : AgentQLocalResetErrorRecoveryActionResult::stale;
+    }
+    if (g_local_reset.stage != AgentQLocalResetStage::error_recovery_confirm) {
+        return AgentQLocalResetErrorRecoveryActionResult::stale;
+    }
+    if (!local_reset_begin_error_recovery_wipe(wipe_ready_at)) {
+        return AgentQLocalResetErrorRecoveryActionResult::stale;
+    }
+    return AgentQLocalResetErrorRecoveryActionResult::wipe_started;
+}
+
+bool local_reset_abort_pin_verification()
+{
+    if (g_local_reset.stage != AgentQLocalResetStage::pin_verifying) {
+        return false;
+    }
+    g_local_reset.wipe();
+    return true;
+}
+
+AgentQLocalResetUiMaintenanceResult local_reset_handle_ui_maintenance(
+    bool panel_active,
+    TickType_t now)
+{
+    if (g_local_reset.stage == AgentQLocalResetStage::none) {
+        return AgentQLocalResetUiMaintenanceResult::unchanged;
+    }
+    if (g_local_reset.stage == AgentQLocalResetStage::pin_verifying) {
+        if (local_reset_fail_processing_if_expired(now)) {
+            return AgentQLocalResetUiMaintenanceResult::auth_unavailable;
+        }
+        if (!panel_active) {
+            return AgentQLocalResetUiMaintenanceResult::redraw_pin_verification_panel;
+        }
+        return AgentQLocalResetUiMaintenanceResult::unchanged;
+    }
+    if (g_local_reset.stage == AgentQLocalResetStage::wiping) {
+        if (!panel_active) {
+            return AgentQLocalResetUiMaintenanceResult::redraw_wiping_panel;
+        }
+        return AgentQLocalResetUiMaintenanceResult::unchanged;
+    }
+
+    const AgentQLocalResetLockoutReleaseResult lockout_release =
+        local_reset_release_lockout_if_elapsed(now);
+    if (lockout_release == AgentQLocalResetLockoutReleaseResult::failed) {
+        return AgentQLocalResetUiMaintenanceResult::lockout_release_failed;
+    }
+    if (lockout_release == AgentQLocalResetLockoutReleaseResult::released) {
+        return AgentQLocalResetUiMaintenanceResult::lockout_released;
+    }
+
+    const bool expired = local_reset_deadline_expired(now);
+    if (panel_active && !expired) {
+        return AgentQLocalResetUiMaintenanceResult::unchanged;
+    }
+
+    const AgentQLocalResetStage stage = g_local_reset.stage;
+    if (!panel_active) {
+        g_local_reset.wipe();
+    }
+    if (!expired) {
+        return AgentQLocalResetUiMaintenanceResult::panel_lost;
+    }
+    if (stage == AgentQLocalResetStage::settings_menu) {
+        return AgentQLocalResetUiMaintenanceResult::settings_timeout;
+    }
+    if (stage == AgentQLocalResetStage::error_recovery_confirm) {
+        return AgentQLocalResetUiMaintenanceResult::error_recovery_timeout;
+    }
+    return AgentQLocalResetUiMaintenanceResult::reset_timeout;
 }
 
 bool local_reset_add_pin_digit(char digit)
@@ -415,7 +556,7 @@ AgentQLocalResetPinVerifyResult local_reset_complete_pin_verify_job(
     g_local_reset.verify_ready_at = 0;
     g_local_reset.worker_deadline = 0;
     if (result.status != AgentQLocalAuthWorkerStatus::ok) {
-        g_local_reset.wipe_pin_only();
+        g_local_reset.wipe();
         return AgentQLocalResetPinVerifyResult::auth_unavailable;
     }
 
@@ -478,6 +619,25 @@ AgentQLocalResetCommitResult local_reset_commit_material(
         return AgentQLocalResetCommitResult::reset_marker_storage_error;
     }
     return wipe_persistent_material_for_local_reset(ops);
+}
+
+AgentQLocalResetCommitFinishResult local_reset_finish_commit_if_ready(
+    TickType_t now,
+    const AgentQLocalResetPersistenceOps& ops)
+{
+    if (!local_reset_wipe_ready(now)) {
+        return AgentQLocalResetCommitFinishResult{
+            AgentQLocalResetCommitFinishStatus::not_ready,
+            AgentQLocalResetCommitResult::missing_state,
+        };
+    }
+
+    const AgentQLocalResetCommitResult result = local_reset_commit_material(ops);
+    g_local_reset.wipe();
+    return AgentQLocalResetCommitFinishResult{
+        AgentQLocalResetCommitFinishStatus::committed,
+        result,
+    };
 }
 
 AgentQLocalResetCommitResult local_reset_resume_pending_if_needed(

@@ -10,9 +10,12 @@ namespace {
 
 using ResetStage = AgentQLocalResetStage;
 using ResetCommitResult = AgentQLocalResetCommitResult;
+using ResetCommitFinishStatus = AgentQLocalResetCommitFinishStatus;
 using ResetSubmitResult = AgentQLocalResetPinSubmitResult;
 using ResetVerifyResult = AgentQLocalResetPinVerifyResult;
-using ResetLockoutReleaseResult = AgentQLocalResetLockoutReleaseResult;
+using ResetMaintenanceResult = AgentQLocalResetUiMaintenanceResult;
+using ResetReturnToSettingsResult = AgentQLocalResetReturnToSettingsResult;
+using ResetErrorRecoveryActionResult = AgentQLocalResetErrorRecoveryActionResult;
 
 TickType_t now_or_zero(const AgentQLocalSettingsResetUiFlowOps& ops)
 {
@@ -67,9 +70,7 @@ void wipe_local_reset_scratch(
     const AgentQLocalSettingsResetUiFlowOps& ops,
     const char* reason)
 {
-    const bool had_reset_scratch =
-        local_reset_snapshot(now_or_zero(ops)).flow_active;
-    local_reset_wipe();
+    const bool had_reset_scratch = local_reset_wipe_active();
     clear_settings_touch_entry(ops);
     if (had_reset_scratch) {
         log_warn(ops, reason != nullptr ? reason : "local reset scratch wiped");
@@ -201,23 +202,6 @@ void show_reset_commit_result_for_transition(void* context)
         result_context->kind);
 }
 
-AgentQUiPanelKind panel_kind_for_reset_stage(ResetStage stage)
-{
-    switch (stage) {
-        case ResetStage::settings_menu:
-            return AgentQUiPanelKind::settings_menu;
-        case ResetStage::pin_entry:
-        case ResetStage::pin_verifying:
-        case ResetStage::wiping:
-            return AgentQUiPanelKind::reset_pin_entry;
-        case ResetStage::error_recovery_confirm:
-            return AgentQUiPanelKind::error_recovery;
-        case ResetStage::none:
-        default:
-            return AgentQUiPanelKind::none;
-    }
-}
-
 void complete_panel_to_result(
     const AgentQLocalSettingsResetUiFlowOps& ops,
     AgentQUiPanelKind panel,
@@ -257,6 +241,18 @@ void draw_reset_pin_error_or_wipe(
     show_result(ops, "Display error", AgentQMessageKind::error);
 }
 
+void draw_error_recovery_confirm_or_wipe(
+    const AgentQLocalSettingsResetUiFlowOps& ops)
+{
+    if (draw_error_recovery_panel(ops, true)) {
+        return;
+    }
+    wipe_local_reset_scratch(
+        ops,
+        "error recovery confirmation display allocation failed");
+    show_result(ops, "Display error", AgentQMessageKind::error);
+}
+
 }  // namespace
 
 bool local_settings_reset_ui_panel_matches_stage(AgentQUiPanelKind kind)
@@ -280,12 +276,14 @@ bool local_settings_reset_ui_accepts_reset_pin_input()
 void local_settings_reset_ui_clear_if_needed(const AgentQLocalSettingsResetUiFlowOps& ops)
 {
     const TickType_t now = now_or_zero(ops);
-    const AgentQLocalResetSnapshot reset = local_reset_snapshot(now);
-    if (reset.stage == ResetStage::none) {
-        return;
-    }
-    if (reset.stage == ResetStage::pin_verifying) {
-        if (local_reset_fail_processing_if_expired(now)) {
+    const bool active = local_reset_panel_active(ops);
+    const AgentQUiPanelKind active_panel = active_settings_panel(ops);
+    const ResetMaintenanceResult result =
+        local_reset_handle_ui_maintenance(active, now);
+    switch (result) {
+        case ResetMaintenanceResult::unchanged:
+            return;
+        case ResetMaintenanceResult::auth_unavailable:
             record_material_failure(
                 ops,
                 AgentQPersistentMaterialRuntimeFailure::local_reset_auth_unavailable);
@@ -295,84 +293,83 @@ void local_settings_reset_ui_clear_if_needed(const AgentQLocalSettingsResetUiFlo
                 "Auth error",
                 AgentQMessageKind::error);
             return;
-        }
-        if (!panel_active(ops, AgentQUiPanelKind::reset_pin_entry) &&
-            !draw_reset_pin_panel(ops)) {
-            wipe_local_reset_scratch(ops, "local reset PIN verification UI recovery failed");
+        case ResetMaintenanceResult::redraw_pin_verification_panel:
+            if (!draw_reset_pin_panel(ops)) {
+                wipe_local_reset_scratch(ops, "local reset PIN verification UI recovery failed");
+                show_result(ops, "Display error", AgentQMessageKind::error);
+            }
+            return;
+        case ResetMaintenanceResult::redraw_wiping_panel:
+            if (!draw_reset_pin_panel(ops)) {
+                log_warn(ops, "Local reset wiping panel could not be restored");
+            }
+            return;
+        case ResetMaintenanceResult::lockout_release_failed:
+            clear_settings_touch_entry(ops);
+            log_warn(ops, "local reset PIN lockout release failed");
             show_result(ops, "Display error", AgentQMessageKind::error);
-        }
-        return;
-    }
-    if (reset.stage == ResetStage::wiping) {
-        if (!panel_active(ops, AgentQUiPanelKind::reset_pin_entry) &&
-            !draw_reset_pin_panel(ops)) {
-            log_warn(ops, "Local reset wiping panel could not be restored");
-        }
-        return;
-    }
-
-    const ResetLockoutReleaseResult lockout_release =
-        local_reset_release_lockout_if_elapsed(now);
-    if (lockout_release == ResetLockoutReleaseResult::failed) {
-        wipe_local_reset_scratch(ops, "local reset PIN lockout release failed");
-        show_result(ops, "Display error", AgentQMessageKind::error);
-        return;
-    }
-    if (lockout_release == ResetLockoutReleaseResult::released) {
-        draw_reset_pin_error_or_wipe(
-            ops,
-            "Try again.",
-            "local reset PIN panel allocation failed");
-        return;
-    }
-
-    const bool active = local_reset_panel_active(ops);
-    const bool expired = local_reset_deadline_expired(now);
-    if (active && !expired) {
-        return;
-    }
-
-    if (!active) {
-        wipe_local_reset_scratch(ops, "local reset panel lost");
-    }
-
-    if (expired) {
-        const char* timeout_message = "Reset canceled";
-        if (reset.stage == ResetStage::settings_menu) {
-            timeout_message = "Settings timed out";
-        } else if (reset.stage == ResetStage::error_recovery_confirm) {
-            timeout_message = "Erase canceled";
-        }
-        AgentQUiPanelKind timeout_panel =
-            active ? panel_kind_for_reset_stage(reset.stage) : AgentQUiPanelKind::none;
-        if (active && reset.stage == ResetStage::settings_menu) {
-            timeout_panel = active_settings_panel(ops);
-        }
-        complete_panel_to_result(
-            ops,
-            timeout_panel,
-            timeout_message,
-            AgentQMessageKind::timeout);
+            return;
+        case ResetMaintenanceResult::lockout_released:
+            draw_reset_pin_error_or_wipe(
+                ops,
+                "Try again.",
+                "local reset PIN panel allocation failed");
+            return;
+        case ResetMaintenanceResult::panel_lost:
+            clear_settings_touch_entry(ops);
+            log_warn(ops, "local reset panel lost");
+            return;
+        case ResetMaintenanceResult::settings_timeout:
+            if (!active) {
+                clear_settings_touch_entry(ops);
+            }
+            complete_panel_to_result(
+                ops,
+                active ? active_panel : AgentQUiPanelKind::none,
+                "Settings timed out",
+                AgentQMessageKind::timeout);
+            return;
+        case ResetMaintenanceResult::reset_timeout:
+            if (!active) {
+                clear_settings_touch_entry(ops);
+            }
+            complete_panel_to_result(
+                ops,
+                active ? AgentQUiPanelKind::reset_pin_entry : AgentQUiPanelKind::none,
+                "Reset canceled",
+                AgentQMessageKind::timeout);
+            return;
+        case ResetMaintenanceResult::error_recovery_timeout:
+            if (!active) {
+                clear_settings_touch_entry(ops);
+            }
+            complete_panel_to_result(
+                ops,
+                active ? AgentQUiPanelKind::error_recovery : AgentQUiPanelKind::none,
+                "Erase canceled",
+                AgentQMessageKind::timeout);
+            return;
     }
 }
 
 void local_settings_reset_ui_commit_if_ready(const AgentQLocalSettingsResetUiFlowOps& ops)
 {
-    if (!local_reset_wipe_ready(now_or_zero(ops))) {
-        return;
-    }
-
     const AgentQUiPanelKind processing_panel =
         panel_active(ops, AgentQUiPanelKind::reset_pin_entry)
             ? AgentQUiPanelKind::reset_pin_entry
             : (panel_active(ops, AgentQUiPanelKind::error_recovery)
                 ? AgentQUiPanelKind::error_recovery
                 : AgentQUiPanelKind::none);
-    const ResetCommitResult result = local_reset_commit_material(ops.persistence_ops);
-    wipe_local_reset_scratch(ops, "local reset completed");
+    const AgentQLocalResetCommitFinishResult finish =
+        local_reset_finish_commit_if_ready(now_or_zero(ops), ops.persistence_ops);
+    if (finish.status == ResetCommitFinishStatus::not_ready) {
+        return;
+    }
+
+    clear_settings_touch_entry(ops);
     const char* display_message = "Reset error";
     AgentQMessageKind display_kind = AgentQMessageKind::error;
-    switch (result) {
+    switch (finish.commit_result) {
         case ResetCommitResult::ok:
             log_warn(ops, "Local reset completed; device returned to unprovisioned");
             display_message = "Device reset";
@@ -430,13 +427,22 @@ void local_settings_reset_ui_cancel_reset_from_ui(
     const char* message,
     const AgentQLocalSettingsResetUiFlowOps& ops)
 {
-    const TickType_t now = now_or_zero(ops);
-    if (local_reset_snapshot(now).stage != ResetStage::pin_entry) {
+    const ResetReturnToSettingsResult result =
+        local_reset_return_to_settings(
+            window_from_now_ms(ops, ops.local_reset_entry_ms));
+    if (result == ResetReturnToSettingsResult::stale) {
         log_warn(ops, "Stale local reset cancel ignored");
         return;
     }
+    if (result == ResetReturnToSettingsResult::failed) {
+        complete_panel_to_result(
+            ops,
+            AgentQUiPanelKind::reset_pin_entry,
+            message != nullptr && message[0] != '\0' ? message : "Reset canceled",
+            AgentQMessageKind::error);
+        return;
+    }
 
-    local_reset_begin_settings(window_from_now_ms(ops, ops.local_reset_entry_ms));
     SettingsPanelDrawContext draw_context{&ops};
     if (!modal_transition_complete_to_next_panel(
             modal_transition_ops(ops),
@@ -457,19 +463,22 @@ void local_settings_reset_ui_cancel_reset_from_ui(
 void local_settings_reset_ui_close_settings_from_ui(
     const AgentQLocalSettingsResetUiFlowOps& ops)
 {
-    if (local_reset_snapshot(now_or_zero(ops)).stage != ResetStage::settings_menu) {
+    const bool settings_active = panel_active(ops, AgentQUiPanelKind::settings_menu);
+    const bool chain_settings_active = panel_active(ops, AgentQUiPanelKind::chain_settings_menu);
+    const bool sui_settings_active = panel_active(ops, AgentQUiPanelKind::sui_settings);
+    if (!local_reset_close_settings()) {
         log_warn(ops, "Stale local settings close ignored");
         return;
     }
 
-    if (panel_active(ops, AgentQUiPanelKind::settings_menu)) {
+    if (settings_active) {
         clear_panel_if_kind(ops, AgentQUiPanelKind::settings_menu);
-    } else if (panel_active(ops, AgentQUiPanelKind::chain_settings_menu)) {
+    } else if (chain_settings_active) {
         clear_panel_if_kind(ops, AgentQUiPanelKind::chain_settings_menu);
-    } else if (panel_active(ops, AgentQUiPanelKind::sui_settings)) {
+    } else if (sui_settings_active) {
         clear_panel_if_kind(ops, AgentQUiPanelKind::sui_settings);
     }
-    wipe_local_reset_scratch(ops, "local settings closed");
+    clear_settings_touch_entry(ops);
 }
 
 void local_settings_reset_ui_show_persistent_error_recovery_if_needed(
@@ -495,37 +504,31 @@ void local_settings_reset_ui_show_persistent_error_recovery_if_needed(
 void local_settings_reset_ui_start_error_recovery_from_ui(
     const AgentQLocalSettingsResetUiFlowOps& ops)
 {
-    const TickType_t now = now_or_zero(ops);
-    const AgentQLocalResetSnapshot reset = local_reset_snapshot(now);
     if (ops.persistent_consistency_error_active == nullptr ||
         !ops.persistent_consistency_error_active() ||
-        reset.flow_active ||
         ops.error_recovery_available == nullptr ||
         !ops.error_recovery_available()) {
         log_warn(ops, "Stale error recovery action ignored");
         return;
     }
 
-    local_reset_begin_error_recovery_confirm(
-        window_from_now_ms(ops, ops.local_reset_entry_ms));
-    if (!draw_error_recovery_panel(ops, true)) {
-        wipe_local_reset_scratch(
-            ops,
-            "error recovery confirmation display allocation failed");
-        show_result(ops, "Display error", AgentQMessageKind::error);
+    if (!local_reset_begin_error_recovery_confirm_if_idle(
+            window_from_now_ms(ops, ops.local_reset_entry_ms))) {
+        log_warn(ops, "Stale error recovery action ignored");
+        return;
     }
+    draw_error_recovery_confirm_or_wipe(ops);
 }
 
 void local_settings_reset_ui_cancel_error_recovery_from_ui(
     const AgentQLocalSettingsResetUiFlowOps& ops)
 {
-    if (local_reset_snapshot(now_or_zero(ops)).stage !=
-        ResetStage::error_recovery_confirm) {
+    if (!local_reset_cancel_error_recovery()) {
         log_warn(ops, "Stale error recovery cancel ignored");
         return;
     }
 
-    wipe_local_reset_scratch(ops, "error recovery canceled");
+    clear_settings_touch_entry(ops);
     complete_panel_to_result(
         ops,
         AgentQUiPanelKind::error_recovery,
@@ -536,22 +539,28 @@ void local_settings_reset_ui_cancel_error_recovery_from_ui(
 void local_settings_reset_ui_confirm_error_recovery_from_ui(
     const AgentQLocalSettingsResetUiFlowOps& ops)
 {
-    const AgentQLocalResetSnapshot reset = local_reset_snapshot(now_or_zero(ops));
-    if (reset.stage == ResetStage::none) {
-        local_settings_reset_ui_start_error_recovery_from_ui(ops);
-        return;
-    }
-    if (reset.stage != ResetStage::error_recovery_confirm ||
-        ops.persistent_consistency_error_active == nullptr ||
+    if (ops.persistent_consistency_error_active == nullptr ||
         !ops.persistent_consistency_error_active()) {
         log_warn(ops, "Stale error recovery erase ignored");
         return;
     }
 
-    if (!local_reset_begin_error_recovery_wipe(
-            now_or_zero(ops) + pdMS_TO_TICKS(ops.local_processing_display_ms))) {
-        log_warn(ops, "Error recovery erase could not enter wiping state");
-        return;
+    const bool error_recovery_available =
+        ops.error_recovery_available != nullptr && ops.error_recovery_available();
+    const ResetErrorRecoveryActionResult action =
+        local_reset_handle_error_recovery_confirm(
+            window_from_now_ms(ops, ops.local_reset_entry_ms),
+            now_or_zero(ops) + pdMS_TO_TICKS(ops.local_processing_display_ms),
+            error_recovery_available);
+    switch (action) {
+        case ResetErrorRecoveryActionResult::stale:
+            log_warn(ops, "Stale error recovery erase ignored");
+            return;
+        case ResetErrorRecoveryActionResult::confirmation_started:
+            draw_error_recovery_confirm_or_wipe(ops);
+            return;
+        case ResetErrorRecoveryActionResult::wipe_started:
+            break;
     }
 
     ErrorRecoveryPanelDrawContext draw_context{&ops, true};
@@ -587,8 +596,8 @@ bool local_settings_reset_ui_begin_settings_pin_auth_handoff(
     const char* stale_log_message,
     const AgentQLocalSettingsResetUiFlowOps& ops)
 {
-    const AgentQLocalResetSnapshot reset = local_reset_snapshot(now_or_zero(ops));
-    if (!material_ready(ops) || reset.stage != ResetStage::settings_menu) {
+    if (!material_ready(ops) ||
+        !local_reset_begin_settings_pin_auth_handoff()) {
         log_warn(
             ops,
             stale_log_message != nullptr && stale_log_message[0] != '\0'
@@ -596,7 +605,6 @@ bool local_settings_reset_ui_begin_settings_pin_auth_handoff(
                 : "Stale local settings action ignored");
         return false;
     }
-    local_reset_wipe();
     return true;
 }
 
@@ -723,13 +731,11 @@ void local_settings_reset_ui_handle_auth_worker_result(
 {
     const TickType_t now = now_or_zero(ops);
     if (!material_ready(ops)) {
-        const AgentQLocalResetSnapshot reset = local_reset_snapshot(now);
-        if (reset.stage != ResetStage::pin_verifying) {
+        if (!local_reset_abort_pin_verification()) {
             return;
         }
-        wipe_local_reset_scratch(
-            ops,
-            "local reset material state unavailable during PIN verification");
+        clear_settings_touch_entry(ops);
+        log_warn(ops, "local reset material state unavailable during PIN verification");
         complete_panel_to_result(
             ops,
             AgentQUiPanelKind::reset_pin_entry,
@@ -750,7 +756,8 @@ void local_settings_reset_ui_handle_auth_worker_result(
             record_material_failure(
                 ops,
                 AgentQPersistentMaterialRuntimeFailure::local_reset_auth_unavailable);
-            wipe_local_reset_scratch(ops, "local reset PIN verifier unavailable");
+            clear_settings_touch_entry(ops);
+            log_warn(ops, "local reset PIN verifier unavailable");
             complete_panel_to_result(
                 ops,
                 AgentQUiPanelKind::reset_pin_entry,
