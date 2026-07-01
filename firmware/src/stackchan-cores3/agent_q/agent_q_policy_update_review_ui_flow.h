@@ -11,6 +11,18 @@
 
 namespace agent_q {
 
+enum class AgentQPolicyUpdateReviewPinBeginStatus {
+    started,
+    timed_out,
+    unavailable,
+    pin_unavailable,
+};
+
+struct AgentQPolicyUpdateReviewPinBeginResult {
+    AgentQPolicyUpdateReviewPinBeginStatus status;
+    AgentQPolicyUpdateFlowTerminalResult terminal_result;
+};
+
 struct AgentQPolicyUpdateReviewUiFlowOps {
     TickType_t (*now)();
     uint64_t (*wall_clock_ms)();
@@ -21,14 +33,11 @@ struct AgentQPolicyUpdateReviewUiFlowOps {
     bool (*clear_panel_if_kind)(AgentQUiPanelKind kind, SensitiveUiClearPolicy policy);
     bool (*review_panel_active)();
     void (*identification_display_clear)();
-    AgentQPolicyUpdateFlowTransitionResult (*continue_to_pin)(TickType_t now);
-    bool (*protocol_pin_begin_policy_update)(
-        const char* request_id,
-        const char* session_id,
+    AgentQPolicyUpdateReviewPinBeginResult (*begin_pin_from_review)(
+        const AgentQPolicyUpdateFlowSnapshot& current,
         TickType_t now,
-        AgentQTimeoutWindow window);
-    void (*protocol_pin_clear)();
-    bool (*local_pin_begin_policy_update)(TickType_t now, AgentQTimeoutWindow window);
+        AgentQTimeoutWindow window,
+        uint64_t uptime_ms);
     bool (*draw_local_pin_auth_panel)();
     void (*wipe_local_pin_auth_scratch)(const char* reason);
     bool (*review_deadline_reached)(TickType_t now);

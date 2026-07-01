@@ -422,6 +422,40 @@ bool local_pin_begin(TickType_t now, agent_q::AgentQTimeoutWindow)
     ++g_local_pin_begin_calls;
     return g_local_pin_begin_result;
 }
+agent_q::AgentQPolicyUpdateFlowTerminalResult policy_timeout(uint64_t uptime_ms);
+agent_q::AgentQPolicyUpdateReviewPinBeginResult policy_begin_pin_from_review(
+    const agent_q::AgentQPolicyUpdateFlowSnapshot& current,
+    TickType_t tick,
+    agent_q::AgentQTimeoutWindow window,
+    uint64_t uptime_ms)
+{
+    const agent_q::AgentQPolicyUpdateFlowTransitionResult transition =
+        continue_to_pin(tick);
+    if (transition == agent_q::AgentQPolicyUpdateFlowTransitionResult::timed_out) {
+        return agent_q::AgentQPolicyUpdateReviewPinBeginResult{
+            agent_q::AgentQPolicyUpdateReviewPinBeginStatus::timed_out,
+            policy_timeout(uptime_ms)};
+    }
+    if (transition != agent_q::AgentQPolicyUpdateFlowTransitionResult::ok) {
+        return agent_q::AgentQPolicyUpdateReviewPinBeginResult{
+            agent_q::AgentQPolicyUpdateReviewPinBeginStatus::unavailable,
+            agent_q::AgentQPolicyUpdateFlowTerminalResult::invalid_state};
+    }
+    if (!protocol_pin_begin(current.request_id, current.session_id, tick, window)) {
+        return agent_q::AgentQPolicyUpdateReviewPinBeginResult{
+            agent_q::AgentQPolicyUpdateReviewPinBeginStatus::unavailable,
+            agent_q::AgentQPolicyUpdateFlowTerminalResult::invalid_state};
+    }
+    if (!local_pin_begin(tick, window)) {
+        protocol_pin_clear();
+        return agent_q::AgentQPolicyUpdateReviewPinBeginResult{
+            agent_q::AgentQPolicyUpdateReviewPinBeginStatus::pin_unavailable,
+            agent_q::AgentQPolicyUpdateFlowTerminalResult::invalid_state};
+    }
+    return agent_q::AgentQPolicyUpdateReviewPinBeginResult{
+        agent_q::AgentQPolicyUpdateReviewPinBeginStatus::started,
+        agent_q::AgentQPolicyUpdateFlowTerminalResult::invalid_state};
+}
 bool draw_local_pin()
 {
     ++g_local_pin_draw_calls;
@@ -521,6 +555,42 @@ bool sui_local_pin_begin(TickType_t now, agent_q::AgentQTimeoutWindow window)
     expect(window.deadline == 200, "Sui zkLogin local PIN uses proposal window");
     ++g_sui_local_pin_begin_calls;
     return g_sui_local_pin_begin_result;
+}
+agent_q::AgentQSuiZkLoginProposalTerminalResult sui_timeout();
+agent_q::AgentQSuiZkLoginReviewPinBeginResult sui_begin_pin_from_review(
+    const agent_q::AgentQSuiZkLoginProposalSnapshot& current,
+    TickType_t tick)
+{
+    const agent_q::AgentQSuiZkLoginProposalTransitionResult transition =
+        sui_continue_to_pin(tick);
+    if (transition == agent_q::AgentQSuiZkLoginProposalTransitionResult::timed_out) {
+        return agent_q::AgentQSuiZkLoginReviewPinBeginResult{
+            agent_q::AgentQSuiZkLoginReviewPinBeginStatus::timed_out,
+            sui_timeout()};
+    }
+    if (transition != agent_q::AgentQSuiZkLoginProposalTransitionResult::ok) {
+        return agent_q::AgentQSuiZkLoginReviewPinBeginResult{
+            agent_q::AgentQSuiZkLoginReviewPinBeginStatus::unavailable,
+            agent_q::AgentQSuiZkLoginProposalTerminalResult::invalid_state};
+    }
+    if (!sui_protocol_pin_begin(
+            current.request_id,
+            current.session_id,
+            tick,
+            current.request_window)) {
+        return agent_q::AgentQSuiZkLoginReviewPinBeginResult{
+            agent_q::AgentQSuiZkLoginReviewPinBeginStatus::pin_unavailable,
+            agent_q::AgentQSuiZkLoginProposalTerminalResult::invalid_state};
+    }
+    if (!sui_local_pin_begin(tick, current.request_window)) {
+        sui_protocol_pin_clear();
+        return agent_q::AgentQSuiZkLoginReviewPinBeginResult{
+            agent_q::AgentQSuiZkLoginReviewPinBeginStatus::pin_unavailable,
+            agent_q::AgentQSuiZkLoginProposalTerminalResult::invalid_state};
+    }
+    return agent_q::AgentQSuiZkLoginReviewPinBeginResult{
+        agent_q::AgentQSuiZkLoginReviewPinBeginStatus::started,
+        agent_q::AgentQSuiZkLoginProposalTerminalResult::invalid_state};
 }
 bool draw_sui_local_pin(const char* notice)
 {
@@ -709,10 +779,7 @@ agent_q::AgentQPolicyUpdateReviewUiFlowOps policy_ops()
         clear_panel,
         policy_panel_active,
         identification_clear,
-        continue_to_pin,
-        protocol_pin_begin,
-        protocol_pin_clear,
-        local_pin_begin,
+        policy_begin_pin_from_review,
         draw_local_pin,
         wipe_pin,
         policy_deadline,
@@ -735,10 +802,7 @@ agent_q::AgentQSuiZkLoginReviewUiFlowOps sui_ops()
         clear_panel,
         sui_panel_active,
         sui_identification_clear,
-        sui_continue_to_pin,
-        sui_protocol_pin_begin,
-        sui_protocol_pin_clear,
-        sui_local_pin_begin,
+        sui_begin_pin_from_review,
         draw_sui_local_pin,
         sui_wipe_pin,
         sui_deadline,

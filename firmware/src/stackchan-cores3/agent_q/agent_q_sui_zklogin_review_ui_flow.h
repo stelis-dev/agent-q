@@ -9,6 +9,18 @@
 
 namespace agent_q {
 
+enum class AgentQSuiZkLoginReviewPinBeginStatus {
+    started,
+    timed_out,
+    unavailable,
+    pin_unavailable,
+};
+
+struct AgentQSuiZkLoginReviewPinBeginResult {
+    AgentQSuiZkLoginReviewPinBeginStatus status;
+    AgentQSuiZkLoginProposalTerminalResult terminal_result;
+};
+
 struct AgentQSuiZkLoginReviewUiFlowOps {
     TickType_t (*now)();
     AgentQSuiZkLoginProposalSnapshot (*snapshot)();
@@ -18,16 +30,9 @@ struct AgentQSuiZkLoginReviewUiFlowOps {
     bool (*clear_panel_if_kind)(AgentQUiPanelKind kind, SensitiveUiClearPolicy policy);
     bool (*review_panel_active)();
     void (*identification_display_clear)();
-    AgentQSuiZkLoginProposalTransitionResult (*continue_to_pin)(TickType_t now);
-    bool (*protocol_pin_begin_sui_zklogin_proposal)(
-        const char* request_id,
-        const char* session_id,
-        TickType_t now,
-        AgentQTimeoutWindow window);
-    void (*protocol_pin_clear)();
-    bool (*local_pin_begin_sui_zklogin_proposal)(
-        TickType_t now,
-        AgentQTimeoutWindow window);
+    AgentQSuiZkLoginReviewPinBeginResult (*begin_pin_from_review)(
+        const AgentQSuiZkLoginProposalSnapshot& current,
+        TickType_t now);
     bool (*draw_local_pin_auth_panel)(const char* notice);
     void (*wipe_local_pin_auth_scratch)(const char* reason);
     bool (*review_deadline_reached)(TickType_t now);

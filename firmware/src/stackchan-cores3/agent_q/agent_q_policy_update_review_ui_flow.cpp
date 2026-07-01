@@ -163,54 +163,45 @@ void policy_update_review_ui_continue(const AgentQPolicyUpdateReviewUiFlowOps& o
         ops.identification_display_clear();
     }
     const TickType_t started_at = now_or_zero(ops);
-    const AgentQPolicyUpdateFlowTransitionResult transition =
-        ops.continue_to_pin != nullptr
-            ? ops.continue_to_pin(started_at)
-            : AgentQPolicyUpdateFlowTransitionResult::invalid_argument;
-    if (transition == AgentQPolicyUpdateFlowTransitionResult::timed_out) {
-        complete_review_to_terminal(ops, current.request_id, record_timed_out(ops));
-        return;
-    }
-    if (transition != AgentQPolicyUpdateFlowTransitionResult::ok) {
-        finish_error_terminal(
-            ops,
-            current.request_id,
-            "invalid_state",
-            "Policy update is unavailable.",
-            "Policy unavailable");
-        return;
-    }
-
     const AgentQTimeoutWindow request_window =
         timeout_window_from_deadline(
             started_at,
             started_at + pdMS_TO_TICKS(ops.review_pin_window_ms));
-    if (ops.protocol_pin_begin_policy_update == nullptr ||
-        !ops.protocol_pin_begin_policy_update(
-            current.request_id,
-            current.session_id,
-            started_at,
-            request_window)) {
-        finish_error_terminal(
-            ops,
-            current.request_id,
-            "invalid_state",
-            "Policy update is unavailable.",
-            "Policy unavailable");
-        return;
-    }
-    if (ops.local_pin_begin_policy_update == nullptr ||
-        !ops.local_pin_begin_policy_update(started_at, request_window)) {
-        if (ops.protocol_pin_clear != nullptr) {
-            ops.protocol_pin_clear();
-        }
-        finish_error_terminal(
-            ops,
-            current.request_id,
-            "invalid_state",
-            "Policy update PIN is unavailable.",
-            "Policy unavailable");
-        return;
+    const AgentQPolicyUpdateReviewPinBeginResult begin_result =
+        ops.begin_pin_from_review != nullptr
+            ? ops.begin_pin_from_review(
+                  current,
+                  started_at,
+                  request_window,
+                  wall_clock_ms_or_zero(ops))
+            : AgentQPolicyUpdateReviewPinBeginResult{
+                  AgentQPolicyUpdateReviewPinBeginStatus::pin_unavailable,
+                  AgentQPolicyUpdateFlowTerminalResult::invalid_state};
+    switch (begin_result.status) {
+        case AgentQPolicyUpdateReviewPinBeginStatus::started:
+            break;
+        case AgentQPolicyUpdateReviewPinBeginStatus::timed_out:
+            complete_review_to_terminal(
+                ops,
+                current.request_id,
+                begin_result.terminal_result);
+            return;
+        case AgentQPolicyUpdateReviewPinBeginStatus::unavailable:
+            finish_error_terminal(
+                ops,
+                current.request_id,
+                "invalid_state",
+                "Policy update is unavailable.",
+                "Policy unavailable");
+            return;
+        case AgentQPolicyUpdateReviewPinBeginStatus::pin_unavailable:
+            finish_error_terminal(
+                ops,
+                current.request_id,
+                "invalid_state",
+                "Policy update PIN is unavailable.",
+                "Policy unavailable");
+            return;
     }
 
     DrawLocalPinContext draw_context{&ops};

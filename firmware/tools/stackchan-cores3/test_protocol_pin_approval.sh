@@ -300,10 +300,60 @@ check_connect_pin_completion_uses_connect_callbacks() {
   fi
 }
 
+check_policy_sui_pin_completion_uses_owner_callbacks() {
+  if grep -Eq 'policy_update_flow_(clear|return_to_review|return_to_pin_entry|record_|commit)|sui_zklogin_proposal_flow_(return_to_review|return_to_pin_entry|record_|commit)|write_policy_propose_outcome_with_current_policy|protocol_pin_approval_begin_sui_zklogin_proposal|protocol_pin_approval_clear\(\)' "${LOCAL_PIN_AUTH_UI_SOURCE}"; then
+    echo "FAILED: local PIN UI flow must use semantic policy/Sui callbacks instead of direct policy, Sui, or protocol PIN owner calls" >&2
+    exit 1
+  fi
+
+  for required in \
+    'return_policy_update_review_from_pin(' \
+    'return_policy_update_pin_entry_from_pin(' \
+    'record_policy_update_ui_error_from_pin(' \
+    'record_policy_update_timed_out_from_pin(' \
+    'commit_policy_update_from_pin(' \
+    'finish_policy_update_unavailable_from_pin(' \
+    'begin_sui_zklogin_proposal_pin_from_review' \
+    'return_sui_zklogin_review_from_pin(' \
+    'return_sui_zklogin_pin_entry_from_pin(' \
+    'record_sui_zklogin_ui_error_from_pin(' \
+    'record_sui_zklogin_timed_out_from_pin(' \
+    'record_sui_zklogin_rejected_from_pin(' \
+    'record_sui_zklogin_consistency_error_from_pin(' \
+    'commit_sui_zklogin_from_pin('; do
+    if ! grep -q "${required}" "${LOCAL_PIN_AUTH_UI_SOURCE}"; then
+      echo "FAILED: local PIN UI flow is missing semantic policy/Sui callback ${required}" >&2
+      exit 1
+    fi
+  done
+
+  for required in \
+    'return_policy_update_review_from_pin_for_local_pin_auth' \
+    'return_policy_update_pin_entry_from_pin_for_local_pin_auth' \
+    'record_policy_update_ui_error_from_pin_for_local_pin_auth' \
+    'record_policy_update_timed_out_from_pin_for_local_pin_auth' \
+    'commit_policy_update_from_pin_for_local_pin_auth' \
+    'finish_policy_update_unavailable_from_pin_for_local_pin_auth' \
+    'begin_sui_zklogin_proposal_pin_from_review_for_local_pin_auth' \
+    'return_sui_zklogin_review_from_pin_for_local_pin_auth' \
+    'return_sui_zklogin_pin_entry_from_pin_for_local_pin_auth' \
+    'record_sui_zklogin_ui_error_from_pin_for_local_pin_auth' \
+    'record_sui_zklogin_timed_out_from_pin_for_local_pin_auth' \
+    'record_sui_zklogin_rejected_from_pin_for_local_pin_auth' \
+    'record_sui_zklogin_consistency_error_from_pin_for_local_pin_auth' \
+    'commit_sui_zklogin_from_pin_for_local_pin_auth'; do
+    if ! grep -q "${required}" "${USB_REQUEST_SERVER_SOURCE}"; then
+      echo "FAILED: StackChan request server is missing policy/Sui PIN callback ${required}" >&2
+      exit 1
+    fi
+  done
+}
+
 check_policy_update_keeps_panel_until_commit() {
   local snippet="${TMP_DIR}/verified_policy_update_case.cpp"
   local approved_line
   local commit_line
+  local raw_commit_line
   local clear_between_approved_and_commit_line
   local transition_line
   local finish_line
@@ -315,7 +365,8 @@ check_policy_update_keeps_panel_until_commit() {
   ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${snippet}"
 
   approved_line="$(grep -En 'policy update PIN approved"' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
-  commit_line="$(grep -En 'policy_update_flow_commit' "${snippet}" | awk -F: -v approved="${approved_line:-0}" '$1 > approved { print $1; exit }' || true)"
+  commit_line="$(grep -En 'commit_policy_update_from_pin' "${snippet}" | awk -F: -v approved="${approved_line:-0}" '$1 > approved { print $1; exit }' || true)"
+  raw_commit_line="$(grep -En 'policy_update_flow_commit' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
   transition_line="$(grep -En 'complete_local_pin_processing_to_policy_terminal' "${snippet}" | awk -F: -v commit="${commit_line:-0}" '$1 > commit { print $1; exit }' || true)"
   finish_line="$(grep -En 'complete_local_pin_processing_to_policy_terminal|finish_policy_update_terminal' "${snippet}" | tail -n 1 | cut -d: -f1 || true)"
   clear_between_approved_and_commit_line="$(
@@ -326,6 +377,11 @@ check_policy_update_keeps_panel_until_commit() {
   if [[ -z "${approved_line}" || -z "${commit_line}" || -z "${transition_line}" || "${commit_line}" -ge "${transition_line}" ]]; then
     echo "FAILED: policy update PIN approval must commit policy before ModalTransitionOwner finishes the terminal result" >&2
     echo "approved_line=${approved_line:-missing} commit_line=${commit_line:-missing} transition_line=${transition_line:-missing}" >&2
+    exit 1
+  fi
+  if [[ -n "${raw_commit_line}" ]]; then
+    echo "FAILED: local PIN UI flow must use the policy commit callback instead of calling the policy flow owner directly" >&2
+    echo "raw_commit_line=${raw_commit_line}" >&2
     exit 1
   fi
   if [[ -n "${clear_between_approved_and_commit_line}" ]]; then
@@ -688,12 +744,13 @@ check_local_pin_ui_handler_timeout_order \
   "request-backed PIN submit handler must timeout before verification start"
 check_local_pin_ui_handler_timeout_order \
   local_pin_auth_ui_cancel \
-  'policy_update_flow_return_to_review|usb_response_write_connect_rejected|user_signing_confirmation_return_to_review_from_pin' \
+  'return_policy_update_review_from_pin|usb_response_write_connect_rejected|user_signing_confirmation_return_to_review_from_pin' \
   "request-backed PIN cancel handler must timeout before cancel/back action"
 check_local_pin_worker_timeout_order
 check_settings_policy_reset_keeps_panel_until_completion
 check_settings_sui_clear_keeps_panel_until_completion
 check_connect_pin_completion_uses_connect_callbacks
+check_policy_sui_pin_completion_uses_owner_callbacks
 check_policy_update_keeps_panel_until_commit
 check_user_signing_keeps_panel_until_signing_work
 check_modal_transition_next_panel_order

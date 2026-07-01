@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "agent_q_avatar_overlay_drawing.h"
@@ -16,6 +17,17 @@
 #include "freertos/FreeRTOS.h"
 
 namespace agent_q {
+
+enum class AgentQLocalPinAuthPolicyUpdateUnavailableReason {
+    material_unavailable,
+    auth_unavailable,
+};
+
+enum class AgentQLocalPinAuthSuiZkLoginPinBeginResult {
+    started,
+    unavailable,
+    pin_unavailable,
+};
 
 struct AgentQLocalPinAuthUiFlowOps {
     TickType_t (*now)();
@@ -54,13 +66,21 @@ struct AgentQLocalPinAuthUiFlowOps {
     void (*finish_connect_session_error)(const char* request_id);
     void (*finish_connect_approved)(const char* request_id);
     void (*log_write_failure)(const char* response_type, const char* id);
-    bool (*write_error)(const char* id, const char* code);
     bool (*show_policy_update_review)();
+    bool (*policy_update_request_id_for_pin)(char* output, size_t output_size);
     bool (*require_pending_policy_update_session)(const char* request_id);
-    bool (*write_policy_propose_outcome_with_current_policy)(
+    AgentQPolicyUpdateFlowTransitionResult (*return_policy_update_review_from_pin)(
+        TickType_t now,
+        AgentQTimeoutWindow window);
+    AgentQPolicyUpdateFlowTransitionResult (*return_policy_update_pin_entry_from_pin)();
+    AgentQPolicyUpdateFlowTerminalResult (*record_policy_update_ui_error_from_pin)();
+    AgentQPolicyUpdateFlowTerminalResult (*record_policy_update_timed_out_from_pin)(
+        uint64_t uptime_ms);
+    AgentQPolicyUpdateFlowTerminalResult (*commit_policy_update_from_pin)(
+        uint64_t uptime_ms);
+    void (*finish_policy_update_unavailable_from_pin)(
         const char* request_id,
-        const char* status,
-        const char* reason);
+        AgentQLocalPinAuthPolicyUpdateUnavailableReason reason);
     void (*finish_policy_update_terminal)(
         const char* request_id,
         AgentQPolicyUpdateFlowTerminalResult result);
@@ -70,6 +90,17 @@ struct AgentQLocalPinAuthUiFlowOps {
         const char* error_message,
         const char* display_message);
     bool (*require_pending_sui_zklogin_proposal_session)(const char* request_id);
+    AgentQLocalPinAuthSuiZkLoginPinBeginResult (*begin_sui_zklogin_proposal_pin_from_review)(
+        const char* request_id,
+        TickType_t now);
+    AgentQSuiZkLoginProposalTransitionResult (*return_sui_zklogin_review_from_pin)(
+        TickType_t now);
+    AgentQSuiZkLoginProposalTransitionResult (*return_sui_zklogin_pin_entry_from_pin)();
+    AgentQSuiZkLoginProposalTerminalResult (*record_sui_zklogin_ui_error_from_pin)();
+    AgentQSuiZkLoginProposalTerminalResult (*record_sui_zklogin_timed_out_from_pin)();
+    AgentQSuiZkLoginProposalTerminalResult (*record_sui_zklogin_rejected_from_pin)();
+    AgentQSuiZkLoginProposalTerminalResult (*record_sui_zklogin_consistency_error_from_pin)();
+    AgentQSuiZkLoginProposalTerminalResult (*commit_sui_zklogin_from_pin)();
     void (*finish_sui_zklogin_proposal_terminal)(
         const char* request_id,
         AgentQSuiZkLoginProposalTerminalResult result);

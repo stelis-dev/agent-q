@@ -157,50 +157,37 @@ void sui_zklogin_review_ui_continue(const AgentQSuiZkLoginReviewUiFlowOps& ops)
         ops.identification_display_clear();
     }
     const TickType_t started_at = now_or_zero(ops);
-    const AgentQSuiZkLoginProposalTransitionResult transition =
-        ops.continue_to_pin != nullptr
-            ? ops.continue_to_pin(started_at)
-            : AgentQSuiZkLoginProposalTransitionResult::invalid_argument;
-    if (transition == AgentQSuiZkLoginProposalTransitionResult::timed_out) {
-        complete_review_to_terminal(ops, current.request_id, record_timed_out(ops));
-        return;
-    }
-    if (transition != AgentQSuiZkLoginProposalTransitionResult::ok) {
-        finish_error_terminal(
-            ops,
-            current.request_id,
-            "invalid_state",
-            "Sui zkLogin proposal is unavailable.",
-            "zkLogin unavailable");
-        return;
-    }
-
-    if (ops.protocol_pin_begin_sui_zklogin_proposal == nullptr ||
-        !ops.protocol_pin_begin_sui_zklogin_proposal(
-            current.request_id,
-            current.session_id,
-            started_at,
-            current.request_window)) {
-        finish_error_terminal(
-            ops,
-            current.request_id,
-            "invalid_state",
-            "Sui zkLogin proposal PIN is unavailable.",
-            "zkLogin unavailable");
-        return;
-    }
-    if (ops.local_pin_begin_sui_zklogin_proposal == nullptr ||
-        !ops.local_pin_begin_sui_zklogin_proposal(started_at, current.request_window)) {
-        if (ops.protocol_pin_clear != nullptr) {
-            ops.protocol_pin_clear();
-        }
-        finish_error_terminal(
-            ops,
-            current.request_id,
-            "invalid_state",
-            "Sui zkLogin proposal PIN is unavailable.",
-            "zkLogin unavailable");
-        return;
+    const AgentQSuiZkLoginReviewPinBeginResult begin_result =
+        ops.begin_pin_from_review != nullptr
+            ? ops.begin_pin_from_review(current, started_at)
+            : AgentQSuiZkLoginReviewPinBeginResult{
+                  AgentQSuiZkLoginReviewPinBeginStatus::pin_unavailable,
+                  AgentQSuiZkLoginProposalTerminalResult::invalid_state};
+    switch (begin_result.status) {
+        case AgentQSuiZkLoginReviewPinBeginStatus::started:
+            break;
+        case AgentQSuiZkLoginReviewPinBeginStatus::timed_out:
+            complete_review_to_terminal(
+                ops,
+                current.request_id,
+                begin_result.terminal_result);
+            return;
+        case AgentQSuiZkLoginReviewPinBeginStatus::unavailable:
+            finish_error_terminal(
+                ops,
+                current.request_id,
+                "invalid_state",
+                "Sui zkLogin proposal is unavailable.",
+                "zkLogin unavailable");
+            return;
+        case AgentQSuiZkLoginReviewPinBeginStatus::pin_unavailable:
+            finish_error_terminal(
+                ops,
+                current.request_id,
+                "invalid_state",
+                "Sui zkLogin proposal PIN is unavailable.",
+                "zkLogin unavailable");
+            return;
     }
 
     DrawLocalPinContext draw_context{&ops};
