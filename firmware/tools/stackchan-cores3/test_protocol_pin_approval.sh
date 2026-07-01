@@ -105,21 +105,47 @@ check_no_flow_local_pin_clear_helper() {
 }
 
 check_local_pin_ui_deadline_order() {
+  local snippet="${TMP_DIR}/clear_waiting_local_pin_input_if_needed.cpp"
   local deadline_line
   local lockout_line
 
-  deadline_line="$(awk '
-    /void local_pin_auth_ui_clear_if_needed\(/ { in_fn = 1 }
-    in_fn && /request_backed_local_pin_input_deadline_reached/ { print NR; exit }
-  ' "${LOCAL_PIN_AUTH_UI_SOURCE}")"
-  lockout_line="$(awk '
-    /void local_pin_auth_ui_clear_if_needed\(/ { in_fn = 1 }
-    in_fn && /local_pin_auth_release_lockout_if_elapsed/ { print NR; exit }
-  ' "${LOCAL_PIN_AUTH_UI_SOURCE}")"
+  awk '
+    /void clear_waiting_local_pin_input_if_needed\(/ { in_fn = 1 }
+    in_fn { print }
+    in_fn && /^}/ { exit }
+  ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${snippet}"
+
+  deadline_line="$(grep -En 'finish_request_backed_local_pin_input_timeout_if_reached' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+  lockout_line="$(grep -En 'local_pin_auth_release_lockout_if_elapsed' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
 
   if [[ -z "${deadline_line}" || -z "${lockout_line}" || "${deadline_line}" -ge "${lockout_line}" ]]; then
     echo "FAILED: protocol-backed PIN input timeout must be handled before lockout retry UI recovery" >&2
     echo "deadline_line=${deadline_line:-missing} lockout_line=${lockout_line:-missing}" >&2
+    exit 1
+  fi
+}
+
+check_local_pin_clear_if_needed_dispatches_to_cleanup_helpers() {
+  local snippet="${TMP_DIR}/local_pin_auth_ui_clear_if_needed.cpp"
+  local processing_line
+  local waiting_line
+
+  awk '
+    /void local_pin_auth_ui_clear_if_needed\(/ { in_fn = 1 }
+    in_fn { print }
+    in_fn && /^}/ { exit }
+  ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${snippet}"
+
+  processing_line="$(grep -En 'clear_processing_local_pin_if_needed' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+  waiting_line="$(grep -En 'clear_waiting_local_pin_input_if_needed' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+
+  if [[ -z "${processing_line}" || -z "${waiting_line}" || "${processing_line}" -ge "${waiting_line}" ]]; then
+    echo "FAILED: local PIN cleanup frame must delegate processing and waiting-input cleanup in order" >&2
+    echo "processing_line=${processing_line:-missing} waiting_line=${waiting_line:-missing}" >&2
+    exit 1
+  fi
+  if grep -Eq 'write_connect_rejected_from_pin|finish_policy_update_terminal|finish_user_signing_error_terminal|record_policy_update_timed_out_from_pin|record_sui_zklogin_timed_out_from_pin' "${snippet}"; then
+    echo "FAILED: local PIN cleanup frame must not inline purpose-specific terminal cleanup" >&2
     exit 1
   fi
 }
@@ -743,6 +769,7 @@ CPP
 "${TMP_DIR}/protocol_pin_approval_test"
 check_modal_transition_owner_present
 check_local_pin_ui_deadline_order
+check_local_pin_clear_if_needed_dispatches_to_cleanup_helpers
 check_local_pin_ui_handler_timeout_order \
   local_pin_auth_ui_handle_digit \
   'local_pin_auth_add_digit' \

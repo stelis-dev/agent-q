@@ -2235,314 +2235,215 @@ void local_pin_auth_ui_handle_prepare_worker_result(
             result));
 }
 
-void local_pin_auth_ui_clear_if_needed(const AgentQLocalPinAuthUiFlowOps& ops)
+bool local_pin_panel_visible(const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    const TickType_t now = now_or_zero(ops);
-    const AgentQLocalPinAuthSnapshot snapshot = local_pin_auth_snapshot(now);
-    if (!snapshot.flow_active) {
+    return ops.local_pin_panel_visible != nullptr && ops.local_pin_panel_visible();
+}
+
+void finish_local_pin_processing_deadline_failure(
+    AgentQLocalPinAuthPurpose purpose,
+    const char* request_id,
+    const AgentQLocalPinAuthUiFlowOps& ops)
+{
+    if (purpose == AgentQLocalPinAuthPurpose::policy_update &&
+        request_id[0] != '\0') {
+        complete_local_pin_processing_to_policy_terminal(
+            ops,
+            request_id,
+            record_policy_update_timed_out_from_pin(ops));
         return;
     }
-    if (snapshot.processing) {
-        if (snapshot.purpose == AgentQLocalPinAuthPurpose::user_signing) {
-            char request_id[kMaxRequestIdSize] = {};
-            pending_request_id_for_local_pin_purpose(
-                snapshot.purpose,
-                request_id,
-                sizeof(request_id));
-            if (finish_request_backed_local_pin_input_timeout_if_reached(
-                    snapshot.purpose,
-                    now,
-                    "user_signing local PIN authorization timed out",
-                    ops)) {
-                return;
-            }
-            if (local_pin_auth_processing_deadline_expired(now)) {
-                cancel_user_signing_for_pin_loss(ops);
-                wipe_local_pin_auth_scratch(ops, "user_signing local PIN verifier timed out");
-                record_material_failure(
-                    ops,
-                    AgentQPersistentMaterialRuntimeFailure::local_pin_auth_unavailable);
-                complete_local_pin_to_user_error_terminal(
-                    ops,
-                    request_id,
-                    "auth_unavailable",
-                    "Local PIN verifier unavailable.",
-                    "Auth error");
-                return;
-            }
-            const bool panel_active =
-                ops.local_pin_panel_visible != nullptr && ops.local_pin_panel_visible();
-            if (!panel_active && !draw_local_pin_panel(ops)) {
-                handle_local_pin_auth_display_failure(
-                    "user_signing PIN authorization processing UI recovery failed",
-                    true,
-                    ops);
-            }
-            return;
-        }
-        if (finish_request_backed_local_pin_input_timeout_if_reached(
-                snapshot.purpose,
-                now,
-                "protocol-backed local PIN authorization timed out",
-                ops)) {
-            return;
-        }
-        if (request_backed_local_pin_input_deadline_reached(snapshot.purpose, now)) {
-            complete_local_pin_processing_to_message(
-                ops,
-                "Auth timed out",
-                AgentQMessageKind::timeout);
-            return;
-        }
-        if (!local_pin_auth_fail_processing_if_expired(now)) {
-            const bool panel_active =
-                ops.local_pin_panel_visible != nullptr && ops.local_pin_panel_visible();
-            if (!panel_active && !draw_local_pin_panel(ops)) {
-                handle_local_pin_auth_display_failure(
-                    "local PIN authorization processing UI recovery failed",
-                    true,
-                    ops);
-            }
-            return;
-        }
+    if (purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal &&
+        request_id[0] != '\0') {
+        complete_local_pin_processing_to_sui_zklogin_terminal(
+            ops,
+            request_id,
+            record_sui_zklogin_timed_out_from_pin(ops));
+        return;
+    }
+    if (request_id[0] != '\0') {
+        write_connect_rejected_from_pin(
+            ops,
+            request_id,
+            AgentQLocalPinAuthConnectRejectReason::timeout);
+        finish_connect_rejection_cleanup(ops, true);
+        complete_local_pin_processing_to_message(
+            ops,
+            "Connection timed out",
+            AgentQMessageKind::timeout);
+        return;
+    }
+    complete_local_pin_processing_to_message(
+        ops,
+        "Auth timed out",
+        AgentQMessageKind::timeout);
+}
 
-        const AgentQLocalPinAuthPurpose purpose = snapshot.purpose;
-        char request_id[kMaxRequestIdSize] = {};
-        pending_request_id_for_local_pin_purpose(purpose, request_id, sizeof(request_id));
-        if (snapshot.stage == AgentQLocalPinAuthStage::pin_verifying) {
-            record_material_failure(
-                ops,
-                AgentQPersistentMaterialRuntimeFailure::local_pin_auth_unavailable);
-            if (purpose == AgentQLocalPinAuthPurpose::policy_update &&
-                request_id[0] != '\0') {
-                finish_policy_update_unavailable_from_pin(
-                    ops,
-                    request_id,
-                    AgentQLocalPinAuthPolicyUpdateUnavailableReason::auth_unavailable);
-                complete_local_pin_processing_to_message(
-                    ops,
-                    "Auth error",
-                    AgentQMessageKind::error);
-                return;
-            }
-            if (purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal &&
-                request_id[0] != '\0') {
-                complete_local_pin_processing_to_sui_zklogin_terminal(
-                    ops,
-                    request_id,
-                    record_sui_zklogin_consistency_error_from_pin(ops));
-                return;
-            }
-            if (request_id[0] != '\0') {
-                write_connect_rejected_from_pin(
-                    ops,
-                    request_id,
-                    AgentQLocalPinAuthConnectRejectReason::auth_unavailable);
-                finish_connect_rejection_cleanup(ops, true);
-            }
-            complete_local_pin_processing_to_message(
-                ops,
-                "Auth error",
-                AgentQMessageKind::error);
-            return;
-        }
-        if (purpose == AgentQLocalPinAuthPurpose::policy_update &&
-            request_id[0] != '\0') {
-            complete_local_pin_processing_to_policy_terminal(
-                ops,
-                request_id,
-                record_policy_update_timed_out_from_pin(ops));
-            return;
-        }
-        if (purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal &&
-            request_id[0] != '\0') {
-            complete_local_pin_processing_to_sui_zklogin_terminal(
-                ops,
-                request_id,
-                record_sui_zklogin_timed_out_from_pin(ops));
-            return;
-        }
-        if (request_id[0] != '\0') {
-            write_connect_rejected_from_pin(
-                ops,
-                request_id,
-                AgentQLocalPinAuthConnectRejectReason::timeout);
-            finish_connect_rejection_cleanup(ops, true);
-            complete_local_pin_processing_to_message(
-                ops,
-                "Connection timed out",
-                AgentQMessageKind::timeout);
-            return;
-        }
+void finish_local_pin_verifier_unavailable(
+    AgentQLocalPinAuthPurpose purpose,
+    const char* request_id,
+    const AgentQLocalPinAuthUiFlowOps& ops)
+{
+    record_material_failure(
+        ops,
+        AgentQPersistentMaterialRuntimeFailure::local_pin_auth_unavailable);
+    if (purpose == AgentQLocalPinAuthPurpose::policy_update &&
+        request_id[0] != '\0') {
+        finish_policy_update_unavailable_from_pin(
+            ops,
+            request_id,
+            AgentQLocalPinAuthPolicyUpdateUnavailableReason::auth_unavailable);
+        complete_local_pin_processing_to_message(
+            ops,
+            "Auth error",
+            AgentQMessageKind::error);
+        return;
+    }
+    if (purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal &&
+        request_id[0] != '\0') {
+        complete_local_pin_processing_to_sui_zklogin_terminal(
+            ops,
+            request_id,
+            record_sui_zklogin_consistency_error_from_pin(ops));
+        return;
+    }
+    if (request_id[0] != '\0') {
+        write_connect_rejected_from_pin(
+            ops,
+            request_id,
+            AgentQLocalPinAuthConnectRejectReason::auth_unavailable);
+        finish_connect_rejection_cleanup(ops, true);
+    }
+    complete_local_pin_processing_to_message(
+        ops,
+        "Auth error",
+        AgentQMessageKind::error);
+}
+
+void clear_user_signing_processing_if_needed(
+    const AgentQLocalPinAuthSnapshot& snapshot,
+    TickType_t now,
+    const AgentQLocalPinAuthUiFlowOps& ops)
+{
+    char request_id[kMaxRequestIdSize] = {};
+    pending_request_id_for_local_pin_purpose(
+        snapshot.purpose,
+        request_id,
+        sizeof(request_id));
+    if (finish_request_backed_local_pin_input_timeout_if_reached(
+            snapshot.purpose,
+            now,
+            "user_signing local PIN authorization timed out",
+            ops)) {
+        return;
+    }
+    if (local_pin_auth_processing_deadline_expired(now)) {
+        cancel_user_signing_for_pin_loss(ops);
+        wipe_local_pin_auth_scratch(ops, "user_signing local PIN verifier timed out");
+        record_material_failure(
+            ops,
+            AgentQPersistentMaterialRuntimeFailure::local_pin_auth_unavailable);
+        complete_local_pin_to_user_error_terminal(
+            ops,
+            request_id,
+            "auth_unavailable",
+            "Local PIN verifier unavailable.",
+            "Auth error");
+        return;
+    }
+    if (!local_pin_panel_visible(ops) && !draw_local_pin_panel(ops)) {
+        handle_local_pin_auth_display_failure(
+            "user_signing PIN authorization processing UI recovery failed",
+            true,
+            ops);
+    }
+}
+
+void clear_processing_local_pin_if_needed(
+    const AgentQLocalPinAuthSnapshot& snapshot,
+    TickType_t now,
+    const AgentQLocalPinAuthUiFlowOps& ops)
+{
+    if (snapshot.purpose == AgentQLocalPinAuthPurpose::user_signing) {
+        clear_user_signing_processing_if_needed(snapshot, now, ops);
+        return;
+    }
+    if (finish_request_backed_local_pin_input_timeout_if_reached(
+            snapshot.purpose,
+            now,
+            "protocol-backed local PIN authorization timed out",
+            ops)) {
+        return;
+    }
+    if (request_backed_local_pin_input_deadline_reached(snapshot.purpose, now)) {
         complete_local_pin_processing_to_message(
             ops,
             "Auth timed out",
             AgentQMessageKind::timeout);
         return;
     }
+    if (!local_pin_auth_fail_processing_if_expired(now)) {
+        if (!local_pin_panel_visible(ops) && !draw_local_pin_panel(ops)) {
+            handle_local_pin_auth_display_failure(
+                "local PIN authorization processing UI recovery failed",
+                true,
+                ops);
+        }
+        return;
+    }
 
     const AgentQLocalPinAuthPurpose purpose = snapshot.purpose;
     char request_id[kMaxRequestIdSize] = {};
     pending_request_id_for_local_pin_purpose(purpose, request_id, sizeof(request_id));
-    if (purpose == AgentQLocalPinAuthPurpose::user_signing && request_id[0] != '\0') {
-        if (finish_request_backed_local_pin_input_timeout_if_reached(
-                purpose,
-                now,
-                "user_signing local PIN authorization timed out",
-                ops)) {
-            return;
-        }
-        if (local_pin_auth_deadline_expired(now)) {
-            wipe_local_pin_auth_scratch(ops, "user_signing local PIN input timed out");
-            const AgentQUserSigningConfirmationResult result =
-                record_user_signing_timeout_from_pin(ops, now);
-            if (result == AgentQUserSigningConfirmationResult::ok ||
-                user_signing_terminal_pending_from_pin(ops)) {
-                complete_local_pin_to_user_terminal(ops, request_id);
-            } else {
-                complete_local_pin_to_user_error_terminal(
-                    ops,
-                    request_id,
-                    "invalid_state",
-                    "Signing request is unavailable.",
-                    "Signing unavailable");
-            }
-            return;
-        }
+    if (snapshot.stage == AgentQLocalPinAuthStage::pin_verifying) {
+        finish_local_pin_verifier_unavailable(purpose, request_id, ops);
+        return;
+    }
+    finish_local_pin_processing_deadline_failure(purpose, request_id, ops);
+}
 
-        const AgentQLocalPinAuthLockoutReleaseResult lockout_release =
-            local_pin_auth_release_lockout_if_elapsed(now);
-        if (lockout_release == AgentQLocalPinAuthLockoutReleaseResult::failed) {
-            handle_local_pin_auth_display_failure(
-                "user_signing local PIN lockout release failed",
-                true,
-                ops);
-            return;
-        }
-        if (lockout_release == AgentQLocalPinAuthLockoutReleaseResult::released) {
-            if (!resume_request_backed_pin_input_window(purpose, now)) {
-                if (finish_request_backed_local_pin_input_timeout_if_reached(
-                        purpose,
-                        now,
-                        "user_signing local PIN lockout release reached timeout",
-                        ops)) {
-                    return;
-                }
-                handle_local_pin_auth_display_failure(
-                    "user_signing local PIN lockout release refresh failed",
-                    true,
-                    ops);
-                return;
-            }
-            if (!draw_local_pin_panel(ops, "Try again.")) {
-                handle_local_pin_auth_display_failure(
-                    "user_signing PIN authorization lockout display allocation failed",
-                    false,
-                    ops);
-            }
-            return;
-        }
-
-        const bool panel_active =
-            ops.local_pin_panel_visible != nullptr && ops.local_pin_panel_visible();
-        if (panel_active) {
-            return;
-        }
-        if (draw_local_pin_panel(ops)) {
-            return;
-        }
-        cancel_user_signing_for_pin_loss(ops);
-        finish_user_signing_error_terminal(
+void finish_local_pin_panel_recovery_failure(
+    AgentQLocalPinAuthPurpose purpose,
+    const char* request_id,
+    const AgentQLocalPinAuthUiFlowOps& ops)
+{
+    if (purpose == AgentQLocalPinAuthPurpose::policy_update &&
+        request_id[0] != '\0') {
+        wipe_local_pin_auth_scratch(ops, "policy update PIN UI recovery failed");
+        finish_policy_update_terminal(
             ops,
             request_id,
-            "ui_error",
-            "Could not restore signing PIN UI.",
-            "Display error");
+            record_policy_update_ui_error_from_pin(ops));
         return;
     }
-    if (finish_request_backed_local_pin_input_timeout_if_reached(
-            purpose,
-            now,
-            "protocol-backed local PIN authorization timed out",
-            ops)) {
+    if (purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal &&
+        request_id[0] != '\0') {
+        wipe_local_pin_auth_scratch(ops, "Sui zkLogin proposal PIN UI recovery failed");
+        finish_sui_zklogin_proposal_terminal(
+            ops,
+            request_id,
+            record_sui_zklogin_ui_error_from_pin(ops));
         return;
     }
+    if (purpose == AgentQLocalPinAuthPurpose::connect &&
+        request_id[0] != '\0') {
+        write_connect_rejected_from_pin(
+            ops,
+            request_id,
+            AgentQLocalPinAuthConnectRejectReason::ui_error);
+        finish_connect_rejection_cleanup(ops, true);
+    }
+    wipe_local_pin_auth_scratch(ops, "local PIN UI recovery failed");
+    show_message(ops, "Display error", AgentQMessageKind::error);
+}
 
-    const AgentQLocalPinAuthLockoutReleaseResult lockout_release =
-        local_pin_auth_release_lockout_if_elapsed(now);
-    if (lockout_release == AgentQLocalPinAuthLockoutReleaseResult::failed) {
-        handle_local_pin_auth_display_failure(
-            "local PIN lockout release failed",
-            true,
-            ops);
-        return;
-    }
-    if (lockout_release == AgentQLocalPinAuthLockoutReleaseResult::released) {
-        if (request_backed_local_pin_purpose(purpose) &&
-            !resume_request_backed_pin_input_window(purpose, now)) {
-            if (finish_request_backed_local_pin_input_timeout_if_reached(
-                    purpose,
-                    now,
-                    "protocol-backed local PIN lockout release reached timeout",
-                    ops)) {
-                return;
-            }
-            handle_local_pin_auth_display_failure(
-                "protocol-backed local PIN lockout release refresh failed",
-                true,
-                ops);
-            return;
-        }
-        if (!draw_local_pin_panel(ops, "Try again.")) {
-            handle_local_pin_auth_display_failure(
-                "local PIN authorization lockout display allocation failed",
-                false,
-                ops);
-        }
-        return;
-    }
-
-    const bool panel_active =
-        ops.local_pin_panel_visible != nullptr && ops.local_pin_panel_visible();
-    const bool expired = local_pin_auth_deadline_expired(now);
-    if (panel_active && !expired) {
-        return;
-    }
-
-    if (!panel_active && !expired) {
-        if (!draw_local_pin_panel(ops)) {
-            if (purpose == AgentQLocalPinAuthPurpose::policy_update &&
-                request_id[0] != '\0') {
-                wipe_local_pin_auth_scratch(ops, "policy update PIN UI recovery failed");
-                finish_policy_update_terminal(
-                    ops,
-                    request_id,
-                    record_policy_update_ui_error_from_pin(ops));
-                return;
-            }
-            if (purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal &&
-                request_id[0] != '\0') {
-                wipe_local_pin_auth_scratch(ops, "Sui zkLogin proposal PIN UI recovery failed");
-                finish_sui_zklogin_proposal_terminal(
-                    ops,
-                    request_id,
-                    record_sui_zklogin_ui_error_from_pin(ops));
-                return;
-            }
-            if (purpose == AgentQLocalPinAuthPurpose::connect &&
-                request_id[0] != '\0') {
-                write_connect_rejected_from_pin(
-                    ops,
-                    request_id,
-                    AgentQLocalPinAuthConnectRejectReason::ui_error);
-                finish_connect_rejection_cleanup(ops, true);
-            }
-            wipe_local_pin_auth_scratch(ops, "local PIN UI recovery failed");
-            show_message(ops, "Display error", AgentQMessageKind::error);
-        }
-        return;
-    }
-
+void finish_local_pin_timeout_or_panel_loss(
+    AgentQLocalPinAuthPurpose purpose,
+    const char* request_id,
+    bool expired,
+    bool panel_active,
+    const AgentQLocalPinAuthUiFlowOps& ops)
+{
     wipe_local_pin_auth_scratch(
         ops,
         expired ? "local PIN authorization timed out" : "local PIN authorization panel lost");
@@ -2606,6 +2507,179 @@ void local_pin_auth_ui_clear_if_needed(const AgentQLocalPinAuthUiFlowOps& ops)
             show_message(ops, "Settings timed out", AgentQMessageKind::timeout);
         }
     }
+}
+
+bool clear_user_signing_input_if_needed(
+    AgentQLocalPinAuthPurpose purpose,
+    const char* request_id,
+    TickType_t now,
+    const AgentQLocalPinAuthUiFlowOps& ops)
+{
+    if (purpose != AgentQLocalPinAuthPurpose::user_signing ||
+        request_id[0] == '\0') {
+        return false;
+    }
+    if (finish_request_backed_local_pin_input_timeout_if_reached(
+            purpose,
+            now,
+            "user_signing local PIN authorization timed out",
+            ops)) {
+        return true;
+    }
+    if (local_pin_auth_deadline_expired(now)) {
+        wipe_local_pin_auth_scratch(ops, "user_signing local PIN input timed out");
+        const AgentQUserSigningConfirmationResult result =
+            record_user_signing_timeout_from_pin(ops, now);
+        if (result == AgentQUserSigningConfirmationResult::ok ||
+            user_signing_terminal_pending_from_pin(ops)) {
+            complete_local_pin_to_user_terminal(ops, request_id);
+        } else {
+            complete_local_pin_to_user_error_terminal(
+                ops,
+                request_id,
+                "invalid_state",
+                "Signing request is unavailable.",
+                "Signing unavailable");
+        }
+        return true;
+    }
+
+    const AgentQLocalPinAuthLockoutReleaseResult lockout_release =
+        local_pin_auth_release_lockout_if_elapsed(now);
+    if (lockout_release == AgentQLocalPinAuthLockoutReleaseResult::failed) {
+        handle_local_pin_auth_display_failure(
+            "user_signing local PIN lockout release failed",
+            true,
+            ops);
+        return true;
+    }
+    if (lockout_release == AgentQLocalPinAuthLockoutReleaseResult::released) {
+        if (!resume_request_backed_pin_input_window(purpose, now)) {
+            if (finish_request_backed_local_pin_input_timeout_if_reached(
+                    purpose,
+                    now,
+                    "user_signing local PIN lockout release reached timeout",
+                    ops)) {
+                return true;
+            }
+            handle_local_pin_auth_display_failure(
+                "user_signing local PIN lockout release refresh failed",
+                true,
+                ops);
+            return true;
+        }
+        if (!draw_local_pin_panel(ops, "Try again.")) {
+            handle_local_pin_auth_display_failure(
+                "user_signing PIN authorization lockout display allocation failed",
+                false,
+                ops);
+        }
+        return true;
+    }
+
+    if (local_pin_panel_visible(ops)) {
+        return true;
+    }
+    if (draw_local_pin_panel(ops)) {
+        return true;
+    }
+    cancel_user_signing_for_pin_loss(ops);
+    finish_user_signing_error_terminal(
+        ops,
+        request_id,
+        "ui_error",
+        "Could not restore signing PIN UI.",
+        "Display error");
+    return true;
+}
+
+void clear_waiting_local_pin_input_if_needed(
+    const AgentQLocalPinAuthSnapshot& snapshot,
+    TickType_t now,
+    const AgentQLocalPinAuthUiFlowOps& ops)
+{
+    const AgentQLocalPinAuthPurpose purpose = snapshot.purpose;
+    char request_id[kMaxRequestIdSize] = {};
+    pending_request_id_for_local_pin_purpose(purpose, request_id, sizeof(request_id));
+    if (clear_user_signing_input_if_needed(purpose, request_id, now, ops)) {
+        return;
+    }
+    if (finish_request_backed_local_pin_input_timeout_if_reached(
+            purpose,
+            now,
+            "protocol-backed local PIN authorization timed out",
+            ops)) {
+        return;
+    }
+
+    const AgentQLocalPinAuthLockoutReleaseResult lockout_release =
+        local_pin_auth_release_lockout_if_elapsed(now);
+    if (lockout_release == AgentQLocalPinAuthLockoutReleaseResult::failed) {
+        handle_local_pin_auth_display_failure(
+            "local PIN lockout release failed",
+            true,
+            ops);
+        return;
+    }
+    if (lockout_release == AgentQLocalPinAuthLockoutReleaseResult::released) {
+        if (request_backed_local_pin_purpose(purpose) &&
+            !resume_request_backed_pin_input_window(purpose, now)) {
+            if (finish_request_backed_local_pin_input_timeout_if_reached(
+                    purpose,
+                    now,
+                    "protocol-backed local PIN lockout release reached timeout",
+                    ops)) {
+                return;
+            }
+            handle_local_pin_auth_display_failure(
+                "protocol-backed local PIN lockout release refresh failed",
+                true,
+                ops);
+            return;
+        }
+        if (!draw_local_pin_panel(ops, "Try again.")) {
+            handle_local_pin_auth_display_failure(
+                "local PIN authorization lockout display allocation failed",
+                false,
+                ops);
+        }
+        return;
+    }
+
+    const bool panel_active = local_pin_panel_visible(ops);
+    const bool expired = local_pin_auth_deadline_expired(now);
+    if (panel_active && !expired) {
+        return;
+    }
+
+    if (!panel_active && !expired) {
+        if (!draw_local_pin_panel(ops)) {
+            finish_local_pin_panel_recovery_failure(purpose, request_id, ops);
+        }
+        return;
+    }
+
+    finish_local_pin_timeout_or_panel_loss(
+        purpose,
+        request_id,
+        expired,
+        panel_active,
+        ops);
+}
+
+void local_pin_auth_ui_clear_if_needed(const AgentQLocalPinAuthUiFlowOps& ops)
+{
+    const TickType_t now = now_or_zero(ops);
+    const AgentQLocalPinAuthSnapshot snapshot = local_pin_auth_snapshot(now);
+    if (!snapshot.flow_active) {
+        return;
+    }
+    if (snapshot.processing) {
+        clear_processing_local_pin_if_needed(snapshot, now, ops);
+        return;
+    }
+
+    clear_waiting_local_pin_input_if_needed(snapshot, now, ops);
 }
 
 }  // namespace agent_q
