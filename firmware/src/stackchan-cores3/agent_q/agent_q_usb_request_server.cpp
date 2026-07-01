@@ -119,7 +119,6 @@ using LocalPinAuthPurpose = agent_q::AgentQLocalPinAuthPurpose;
 using LocalPinAuthStage = agent_q::AgentQLocalPinAuthStage;
 using AgentQUsbOperationResponseWriter = agent_q::AgentQUsbOperationResponseWriter;
 using ProvisioningFlowPanel = agent_q::AgentQProvisioningFlowPanel;
-using ProvisioningFlowStage = agent_q::AgentQProvisioningFlowStage;
 using ProvisioningRuntimeState = agent_q::AgentQProvisioningRuntimeState;
 using SensitiveUiClearPolicy = agent_q::SensitiveUiClearPolicy;
 
@@ -2060,11 +2059,9 @@ void show_connect_review()
     ESP_LOGW(kTag, "connect could not show Agent-Q review UI");
 }
 
-bool setup_choice_action_allowed()
+bool setup_app_action_allowed()
 {
-    if (!agent_q::provisioning_flow_stage_is(ProvisioningFlowStage::setup_choice) ||
-        !agent_q::provisioning_flow_setup_choice_action_allowed(xTaskGetTickCount()) ||
-        agent_q::connect_approval_active() ||
+    if (agent_q::connect_approval_active() ||
         agent_q::protocol_pin_approval_active() ||
         agent_q::local_reset_snapshot(xTaskGetTickCount()).flow_active) {
         return false;
@@ -2105,16 +2102,32 @@ void provisioning_ui_show_message(const char* message, AgentQMessageKind kind)
         kAgentQResultDisplayMs);
 }
 
-agent_q::AgentQPersistentMaterialCommitResult commit_setup_with_prepared_auth_for_provisioning(
+agent_q::AgentQProvisioningFlowCommitResult commit_setup_with_prepared_auth_for_provisioning(
     const uint8_t* root_material,
     size_t root_material_size,
     const agent_q::AgentQLocalAuthPreparedRecord* prepared_auth)
 {
-    return agent_q::persistent_material_commit_setup_with_prepared_auth(
-        root_material,
-        root_material_size,
-        prepared_auth,
-        persistent_material_ops());
+    const agent_q::AgentQPersistentMaterialCommitResult result =
+        agent_q::persistent_material_commit_setup_with_prepared_auth(
+            root_material,
+            root_material_size,
+            prepared_auth,
+            persistent_material_ops());
+    switch (result) {
+        case agent_q::AgentQPersistentMaterialCommitResult::ok:
+            return agent_q::AgentQProvisioningFlowCommitResult::ok;
+        case agent_q::AgentQPersistentMaterialCommitResult::missing_input:
+            return agent_q::AgentQProvisioningFlowCommitResult::missing_input;
+        case agent_q::AgentQPersistentMaterialCommitResult::root_storage_error:
+        case agent_q::AgentQPersistentMaterialCommitResult::policy_storage_error:
+        case agent_q::AgentQPersistentMaterialCommitResult::local_auth_storage_error:
+        case agent_q::AgentQPersistentMaterialCommitResult::signing_mode_storage_error:
+        case agent_q::AgentQPersistentMaterialCommitResult::human_approval_setting_storage_error:
+        case agent_q::AgentQPersistentMaterialCommitResult::sui_account_settings_storage_error:
+        case agent_q::AgentQPersistentMaterialCommitResult::state_storage_error:
+            return agent_q::AgentQProvisioningFlowCommitResult::storage_error;
+    }
+    return agent_q::AgentQProvisioningFlowCommitResult::storage_error;
 }
 
 void provisioning_ui_log_info(const char* message)
@@ -2195,7 +2208,7 @@ const agent_q::AgentQProvisioningUiFlowOps& provisioning_ui_ops()
     static const agent_q::AgentQProvisioningUiFlowOps ops = {
         provisioning_ui_now,
         local_setup_start_allowed,
-        setup_choice_action_allowed,
+        setup_app_action_allowed,
         agent_q_panel_active,
         clear_agent_q_panel_if_kind,
         agent_q::modal_draw_setup_choice_panel,

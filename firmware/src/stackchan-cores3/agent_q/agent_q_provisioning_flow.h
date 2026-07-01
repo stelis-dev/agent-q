@@ -37,9 +37,16 @@ enum class AgentQProvisioningFlowPanel {
 };
 
 enum class AgentQProvisioningFlowGenerateResult {
+    stale,
     ok,
     rng_error,
     generation_error,
+};
+
+enum class AgentQProvisioningFlowImportStartResult {
+    stale,
+    failed,
+    started,
 };
 
 enum class AgentQProvisioningFlowPinSubmitResult {
@@ -50,6 +57,68 @@ enum class AgentQProvisioningFlowPinSubmitResult {
     mismatch_restart,
     commit_started,
 };
+
+enum class AgentQProvisioningFlowCleanupResult {
+    inactive,
+    wiped,
+};
+
+enum class AgentQProvisioningFlowPanelLifetimeResult {
+    unchanged,
+    clear_panel_timeout,
+    clear_panel_preserve_timeout,
+    wiped_panel_lost,
+    wiped_panel_lost_timeout,
+};
+
+enum class AgentQProvisioningFlowCancelResult {
+    stale,
+    canceled,
+};
+
+enum class AgentQProvisioningFlowReturnToChoiceResult {
+    stale,
+    failed,
+    started,
+};
+
+enum class AgentQProvisioningFlowConfirmBackupResult {
+    stale,
+    failed,
+    started,
+};
+
+enum class AgentQProvisioningFlowImportNextResult {
+    ignored,
+    page_advanced,
+    incomplete,
+    checksum_failed,
+    pin_setup_failed,
+    pin_setup_started,
+};
+
+enum class AgentQProvisioningFlowCommitResult {
+    ok,
+    missing_input,
+    storage_error,
+};
+
+enum class AgentQProvisioningFlowCommitFinishStatus {
+    stale,
+    failed,
+    committed,
+};
+
+struct AgentQProvisioningFlowCommitFinishResult {
+    AgentQProvisioningFlowCommitFinishStatus status;
+    AgentQProvisioningFlowCommitResult commit_result;
+};
+
+using AgentQProvisioningFlowCommitSetupWithPreparedAuth =
+    AgentQProvisioningFlowCommitResult (*)(
+        const uint8_t* root_material,
+        size_t root_material_size,
+        const AgentQLocalAuthPreparedRecord* prepared_auth);
 
 struct AgentQProvisioningFlowSnapshot {
     AgentQProvisioningFlowStage stage;
@@ -68,17 +137,28 @@ AgentQProvisioningFlowSnapshot provisioning_flow_snapshot();
 bool provisioning_flow_active();
 bool provisioning_flow_stage_is(AgentQProvisioningFlowStage stage);
 bool provisioning_flow_stage_expired(TickType_t now);
-bool provisioning_flow_fail_pin_commit_if_expired(TickType_t now);
 bool provisioning_flow_commit_job_active(uint32_t job_id);
 
 void provisioning_flow_wipe();
+AgentQProvisioningFlowCleanupResult provisioning_flow_wipe_active();
 void provisioning_flow_wipe_displayed_phrase_text();
 bool provisioning_flow_handle_panel_deleted(AgentQProvisioningFlowPanel panel);
+AgentQProvisioningFlowPanelLifetimeResult provisioning_flow_handle_panel_lifetime(
+    AgentQProvisioningFlowPanel panel,
+    bool panel_active,
+    TickType_t now);
+AgentQProvisioningFlowPanelLifetimeResult provisioning_flow_handle_pin_setup_lifetime(
+    bool panel_active,
+    TickType_t now);
 
-void provisioning_flow_begin_setup_choice(AgentQTimeoutWindow input_window);
+bool provisioning_flow_begin_setup_choice(AgentQTimeoutWindow input_window);
 bool provisioning_flow_setup_choice_action_allowed(TickType_t now);
-AgentQProvisioningFlowGenerateResult provisioning_flow_begin_generate(AgentQTimeoutWindow input_window);
-void provisioning_flow_begin_import_phrase(AgentQTimeoutWindow input_window);
+AgentQProvisioningFlowGenerateResult provisioning_flow_begin_generate(
+    TickType_t action_now,
+    AgentQTimeoutWindow input_window);
+AgentQProvisioningFlowImportStartResult provisioning_flow_begin_import_phrase(
+    TickType_t action_now,
+    AgentQTimeoutWindow input_window);
 
 const char* provisioning_flow_backup_phrase();
 const char* provisioning_flow_backup_phrase_prefix_cell(size_t index);
@@ -98,10 +178,15 @@ bool provisioning_flow_import_select_candidate(uint16_t word_index, AgentQTimeou
 bool provisioning_flow_import_previous_page(AgentQTimeoutWindow input_window);
 bool provisioning_flow_import_next_page(AgentQTimeoutWindow input_window);
 bool provisioning_flow_import_refresh_deadline(AgentQTimeoutWindow input_window);
-Bip39EntropyDecodeResult provisioning_flow_decode_entropy_from_words();
 
-bool provisioning_flow_begin_pin_setup_from_displayed_phrase(AgentQTimeoutWindow input_window);
-void provisioning_flow_begin_pin_setup_after_import(AgentQTimeoutWindow input_window);
+AgentQProvisioningFlowCancelResult provisioning_flow_cancel_local_setup();
+AgentQProvisioningFlowReturnToChoiceResult provisioning_flow_return_to_setup_choice(
+    AgentQTimeoutWindow input_window);
+AgentQProvisioningFlowConfirmBackupResult provisioning_flow_confirm_backup_phrase(
+    AgentQTimeoutWindow input_window);
+AgentQProvisioningFlowImportNextResult provisioning_flow_handle_import_next(
+    AgentQTimeoutWindow import_input_window,
+    AgentQTimeoutWindow pin_input_window);
 bool provisioning_flow_add_pin_digit(char digit, AgentQTimeoutWindow input_window);
 bool provisioning_flow_clear_pin_entry(AgentQTimeoutWindow input_window);
 bool provisioning_flow_backspace_pin(AgentQTimeoutWindow input_window);
@@ -110,10 +195,8 @@ AgentQProvisioningFlowPinSubmitResult provisioning_flow_submit_pin(
     TickType_t commit_ready_at,
     TickType_t worker_deadline);
 
-bool provisioning_flow_commit_worker_result(
+AgentQProvisioningFlowCommitFinishResult provisioning_flow_finish_commit_worker_result(
     const AgentQLocalAuthWorkerResult& result,
-    const uint8_t** root_material,
-    size_t* root_material_size,
-    const AgentQLocalAuthPreparedRecord** prepared_auth);
+    AgentQProvisioningFlowCommitSetupWithPreparedAuth commit_setup);
 
 }  // namespace agent_q

@@ -6,8 +6,8 @@ usage() {
 Usage: firmware/tools/stackchan-cores3/test_provisioning_ui_flow.sh
 
 Compiles the StackChan CoreS3 provisioning UI-flow controller against host
-stubs and verifies that device-local setup UI actions own setup-choice,
-generate/import, PIN setup, display-failure wipe, and commit-result behavior
+stubs and verifies that device-local setup UI actions route setup-choice,
+generate/import, PIN setup, display-failure cleanup, and commit-result behavior
 without linking the USB request server.
 EOF
 }
@@ -210,7 +210,7 @@ namespace {
 int failures = 0;
 TickType_t g_now = 10;
 bool g_local_setup_allowed = true;
-bool g_setup_choice_allowed = true;
+bool g_setup_app_action_allowed = true;
 bool g_panel_active[12] = {};
 bool g_draw_setup_choice = true;
 bool g_draw_backup = true;
@@ -225,8 +225,8 @@ int g_commit_calls = 0;
 const char* g_last_message = nullptr;
 const char* g_last_pin_notice = nullptr;
 agent_q::AgentQMessageKind g_last_kind = agent_q::AgentQMessageKind::info;
-agent_q::AgentQPersistentMaterialCommitResult g_commit_result =
-    agent_q::AgentQPersistentMaterialCommitResult::ok;
+agent_q::AgentQProvisioningFlowCommitResult g_commit_result =
+    agent_q::AgentQProvisioningFlowCommitResult::ok;
 
 void expect(bool condition, const char* label)
 {
@@ -241,7 +241,7 @@ void reset_harness()
     agent_q::provisioning_flow_wipe();
     g_now = 10;
     g_local_setup_allowed = true;
-    g_setup_choice_allowed = true;
+    g_setup_app_action_allowed = true;
     memset(g_panel_active, 0, sizeof(g_panel_active));
     g_draw_setup_choice = true;
     g_draw_backup = true;
@@ -256,7 +256,7 @@ void reset_harness()
     g_last_message = nullptr;
     g_last_pin_notice = nullptr;
     g_last_kind = agent_q::AgentQMessageKind::info;
-    g_commit_result = agent_q::AgentQPersistentMaterialCommitResult::ok;
+    g_commit_result = agent_q::AgentQProvisioningFlowCommitResult::ok;
 }
 
 TickType_t now()
@@ -269,9 +269,9 @@ bool local_setup_allowed()
     return g_local_setup_allowed;
 }
 
-bool setup_choice_allowed()
+bool setup_app_action_allowed()
 {
-    return g_setup_choice_allowed;
+    return g_setup_app_action_allowed;
 }
 
 bool panel_active(agent_q::AgentQUiPanelKind kind)
@@ -329,7 +329,7 @@ void show_message(const char* message, agent_q::AgentQMessageKind kind)
     g_last_kind = kind;
 }
 
-agent_q::AgentQPersistentMaterialCommitResult commit_setup(
+agent_q::AgentQProvisioningFlowCommitResult commit_setup(
     const uint8_t* root_material,
     size_t root_material_size,
     const agent_q::AgentQLocalAuthPreparedRecord* prepared_auth)
@@ -356,7 +356,7 @@ const agent_q::AgentQProvisioningUiFlowOps& ops()
     static const agent_q::AgentQProvisioningUiFlowOps value = {
         now,
         local_setup_allowed,
-        setup_choice_allowed,
+        setup_app_action_allowed,
         panel_active,
         clear_panel,
         draw_setup_choice,
@@ -385,13 +385,47 @@ void enter_pin(const char* pin)
     }
 }
 
+void complete_generated_setup_with_commit_result(
+    agent_q::AgentQProvisioningFlowCommitResult commit_result,
+    const char* expected_message,
+    agent_q::AgentQMessageKind expected_kind,
+    const char* label)
+{
+    reset_harness();
+    agent_q::provisioning_ui_show_setup_choice_from_touch(ops());
+    agent_q::provisioning_ui_start_generate_from_setup_choice(ops());
+    agent_q::provisioning_ui_confirm_backup_phrase(ops());
+    enter_pin("123456");
+    agent_q::provisioning_ui_handle_pin_submit(ops());
+    enter_pin("123456");
+    agent_q::provisioning_ui_handle_pin_submit(ops());
+    expect(agent_q::provisioning_flow_stage_is(
+               agent_q::AgentQProvisioningFlowStage::pin_committing),
+           "matching PIN starts commit before result");
+    expect(agent_q::g_last_worker_job_id == 7, "worker job submitted before result");
+
+    agent_q::AgentQLocalAuthWorkerResult result = {};
+    result.owner = agent_q::AgentQLocalAuthWorkerOwner::provisioning_setup;
+    result.operation = agent_q::AgentQLocalAuthWorkerOperation::prepare_verifier_record;
+    result.status = agent_q::AgentQLocalAuthWorkerStatus::ok;
+    result.job_id = agent_q::g_last_worker_job_id;
+    memset(result.prepared_record.bytes, 0x42, sizeof(result.prepared_record.bytes));
+
+    g_commit_result = commit_result;
+    agent_q::provisioning_ui_handle_setup_auth_worker_result(result, ops());
+    expect(g_commit_calls == 1, "commit called once");
+    expect(!agent_q::provisioning_flow_active(), "commit result clears flow");
+    expect(g_last_kind == expected_kind && strcmp(g_last_message, expected_message) == 0,
+           label);
+}
+
 }  // namespace
 
 int main()
 {
     using Stage = agent_q::AgentQProvisioningFlowStage;
     using Kind = agent_q::AgentQMessageKind;
-    using Commit = agent_q::AgentQPersistentMaterialCommitResult;
+    using Commit = agent_q::AgentQProvisioningFlowCommitResult;
 
     reset_harness();
     g_local_setup_allowed = false;
@@ -406,6 +440,16 @@ int main()
     agent_q::provisioning_ui_show_setup_choice_from_touch(ops());
     expect(!agent_q::provisioning_flow_active(), "setup choice display failure wipes flow");
     expect(strcmp(g_last_message, "Display error") == 0, "setup choice display failure reports display error");
+
+    reset_harness();
+    agent_q::provisioning_ui_start_generate_from_setup_choice(ops());
+    expect(!agent_q::provisioning_flow_active(), "stale generate UI action does not start flow");
+    expect(!g_panel_active[static_cast<int>(agent_q::AgentQUiPanelKind::backup_phrase_display)],
+           "stale generate UI action does not draw backup phrase");
+    agent_q::provisioning_ui_start_import_from_setup_choice(ops());
+    expect(!agent_q::provisioning_flow_active(), "stale import UI action does not start flow");
+    expect(!g_panel_active[static_cast<int>(agent_q::AgentQUiPanelKind::import_word_entry)],
+           "stale import UI action does not draw import panel");
 
     reset_harness();
     agent_q::provisioning_ui_show_setup_choice_from_touch(ops());
@@ -432,25 +476,21 @@ int main()
     expect(g_last_pin_notice != nullptr && strcmp(g_last_pin_notice, "PINs did not match.") == 0,
            "mismatched PIN redraw message");
 
-    enter_pin("123456");
-    agent_q::provisioning_ui_handle_pin_submit(ops());
-    enter_pin("123456");
-    agent_q::provisioning_ui_handle_pin_submit(ops());
-    expect(agent_q::provisioning_flow_stage_is(Stage::pin_committing),
-           "matching PIN starts commit");
-    expect(agent_q::g_last_worker_job_id == 7, "worker job submitted");
-
-    agent_q::AgentQLocalAuthWorkerResult result = {};
-    result.owner = agent_q::AgentQLocalAuthWorkerOwner::provisioning_setup;
-    result.operation = agent_q::AgentQLocalAuthWorkerOperation::prepare_verifier_record;
-    result.status = agent_q::AgentQLocalAuthWorkerStatus::ok;
-    result.job_id = agent_q::g_last_worker_job_id;
-    memset(result.prepared_record.bytes, 0x42, sizeof(result.prepared_record.bytes));
-    g_commit_result = Commit::ok;
-    agent_q::provisioning_ui_handle_setup_auth_worker_result(result, ops());
-    expect(g_commit_calls == 1, "commit called once");
-    expect(!agent_q::provisioning_flow_active(), "successful commit clears flow");
-    expect(strcmp(g_last_message, "Provisioned") == 0, "successful commit message");
+    complete_generated_setup_with_commit_result(
+        Commit::ok,
+        "Provisioned",
+        Kind::success,
+        "successful commit message");
+    complete_generated_setup_with_commit_result(
+        Commit::missing_input,
+        "Setup unavailable",
+        Kind::error,
+        "missing input commit message");
+    complete_generated_setup_with_commit_result(
+        Commit::storage_error,
+        "Storage error",
+        Kind::error,
+        "storage failure commit message");
 
     reset_harness();
     agent_q::provisioning_ui_show_setup_choice_from_touch(ops());

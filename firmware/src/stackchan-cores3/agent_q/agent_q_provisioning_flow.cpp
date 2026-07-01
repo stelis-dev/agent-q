@@ -168,6 +168,22 @@ bool pin_setup_stage()
            g_state.stage == AgentQProvisioningFlowStage::pin_repeat_entry;
 }
 
+bool panel_matches_current_stage(AgentQProvisioningFlowPanel panel)
+{
+    switch (panel) {
+        case AgentQProvisioningFlowPanel::setup_choice:
+            return g_state.stage == AgentQProvisioningFlowStage::setup_choice;
+        case AgentQProvisioningFlowPanel::backup_phrase_display:
+            return g_state.stage == AgentQProvisioningFlowStage::backup_phrase_displayed;
+        case AgentQProvisioningFlowPanel::import_word_entry:
+            return g_state.stage == AgentQProvisioningFlowStage::import_word_entry;
+        case AgentQProvisioningFlowPanel::pin_entry:
+            return pin_setup_stage() ||
+                   g_state.stage == AgentQProvisioningFlowStage::pin_committing;
+    }
+    return false;
+}
+
 void reset_pin_entry(AgentQTimeoutWindow input_window)
 {
     wipe_sensitive_buffer(g_state.pin_entry, sizeof(g_state.pin_entry));
@@ -241,7 +257,7 @@ bool provisioning_flow_stage_expired(TickType_t now)
     return false;
 }
 
-bool provisioning_flow_fail_pin_commit_if_expired(TickType_t now)
+static bool provisioning_flow_fail_pin_commit_if_expired(TickType_t now)
 {
     if (g_state.stage != AgentQProvisioningFlowStage::pin_committing ||
         !deadline_reached(now, g_state.pin_commit_deadline)) {
@@ -263,6 +279,14 @@ void provisioning_flow_wipe()
     g_state.wipe();
 }
 
+AgentQProvisioningFlowCleanupResult provisioning_flow_wipe_active()
+{
+    const bool active = provisioning_flow_active();
+    g_state.wipe();
+    return active ? AgentQProvisioningFlowCleanupResult::wiped
+                  : AgentQProvisioningFlowCleanupResult::inactive;
+}
+
 void provisioning_flow_wipe_displayed_phrase_text()
 {
     g_state.wipe_displayed_phrase_text();
@@ -270,40 +294,88 @@ void provisioning_flow_wipe_displayed_phrase_text()
 
 bool provisioning_flow_handle_panel_deleted(AgentQProvisioningFlowPanel panel)
 {
-    const bool matches =
-        (panel == AgentQProvisioningFlowPanel::setup_choice &&
-         g_state.stage == AgentQProvisioningFlowStage::setup_choice) ||
-        (panel == AgentQProvisioningFlowPanel::backup_phrase_display &&
-         g_state.stage == AgentQProvisioningFlowStage::backup_phrase_displayed) ||
-        (panel == AgentQProvisioningFlowPanel::import_word_entry &&
-         g_state.stage == AgentQProvisioningFlowStage::import_word_entry) ||
-        (panel == AgentQProvisioningFlowPanel::pin_entry &&
-         (pin_setup_stage() || g_state.stage == AgentQProvisioningFlowStage::pin_committing));
-    if (!matches) {
+    if (!panel_matches_current_stage(panel)) {
         return false;
     }
     g_state.wipe();
     return true;
 }
 
-void provisioning_flow_begin_setup_choice(AgentQTimeoutWindow input_window)
+AgentQProvisioningFlowPanelLifetimeResult provisioning_flow_handle_panel_lifetime(
+    AgentQProvisioningFlowPanel panel,
+    bool panel_active,
+    TickType_t now)
+{
+    if (!panel_matches_current_stage(panel)) {
+        return AgentQProvisioningFlowPanelLifetimeResult::unchanged;
+    }
+
+    const bool expired = provisioning_flow_stage_expired(now);
+    if (panel_active && !expired) {
+        return AgentQProvisioningFlowPanelLifetimeResult::unchanged;
+    }
+    if (panel_active) {
+        return AgentQProvisioningFlowPanelLifetimeResult::clear_panel_timeout;
+    }
+
+    g_state.wipe();
+    return expired ? AgentQProvisioningFlowPanelLifetimeResult::wiped_panel_lost_timeout
+                   : AgentQProvisioningFlowPanelLifetimeResult::wiped_panel_lost;
+}
+
+AgentQProvisioningFlowPanelLifetimeResult provisioning_flow_handle_pin_setup_lifetime(
+    bool panel_active,
+    TickType_t now)
+{
+    if (g_state.stage == AgentQProvisioningFlowStage::pin_committing) {
+        if (!provisioning_flow_fail_pin_commit_if_expired(now)) {
+            return AgentQProvisioningFlowPanelLifetimeResult::unchanged;
+        }
+        return AgentQProvisioningFlowPanelLifetimeResult::clear_panel_preserve_timeout;
+    }
+
+    if (!pin_setup_stage()) {
+        return AgentQProvisioningFlowPanelLifetimeResult::unchanged;
+    }
+
+    const bool expired = provisioning_flow_stage_expired(now);
+    if (panel_active && !expired) {
+        return AgentQProvisioningFlowPanelLifetimeResult::unchanged;
+    }
+    if (panel_active) {
+        return AgentQProvisioningFlowPanelLifetimeResult::clear_panel_timeout;
+    }
+
+    g_state.wipe();
+    return expired ? AgentQProvisioningFlowPanelLifetimeResult::wiped_panel_lost_timeout
+                   : AgentQProvisioningFlowPanelLifetimeResult::wiped_panel_lost;
+}
+
+bool provisioning_flow_begin_setup_choice(AgentQTimeoutWindow input_window)
 {
     g_state.wipe();
     if (!timeout_window_valid(input_window)) {
-        return;
+        return false;
     }
     g_state.stage = AgentQProvisioningFlowStage::setup_choice;
     g_state.setup_choice_window = input_window;
+    return true;
 }
 
 bool provisioning_flow_setup_choice_action_allowed(TickType_t now)
 {
     return g_state.stage == AgentQProvisioningFlowStage::setup_choice &&
-           timeout_window_open_at(g_state.setup_choice_window, now);
+           timeout_window_valid_and_open_at(g_state.setup_choice_window, now);
 }
 
-AgentQProvisioningFlowGenerateResult provisioning_flow_begin_generate(AgentQTimeoutWindow input_window)
+AgentQProvisioningFlowGenerateResult provisioning_flow_begin_generate(
+    TickType_t action_now,
+    AgentQTimeoutWindow input_window)
 {
+    if (!provisioning_flow_setup_choice_action_allowed(action_now)) {
+        return AgentQProvisioningFlowGenerateResult::stale;
+    }
+
     g_state.wipe();
 
     if (!timeout_window_valid(input_window)) {
@@ -330,16 +402,23 @@ AgentQProvisioningFlowGenerateResult provisioning_flow_begin_generate(AgentQTime
     return AgentQProvisioningFlowGenerateResult::ok;
 }
 
-void provisioning_flow_begin_import_phrase(AgentQTimeoutWindow input_window)
+AgentQProvisioningFlowImportStartResult provisioning_flow_begin_import_phrase(
+    TickType_t action_now,
+    AgentQTimeoutWindow input_window)
 {
+    if (!provisioning_flow_setup_choice_action_allowed(action_now)) {
+        return AgentQProvisioningFlowImportStartResult::stale;
+    }
+
     g_state.wipe();
     if (!timeout_window_valid(input_window)) {
-        return;
+        return AgentQProvisioningFlowImportStartResult::failed;
     }
     g_state.stage = AgentQProvisioningFlowStage::import_word_entry;
     g_state.import_page = 0;
     g_state.import_active_slot = 0;
     g_state.import_word_window = input_window;
+    return AgentQProvisioningFlowImportStartResult::started;
 }
 
 const char* provisioning_flow_backup_phrase()
@@ -533,7 +612,7 @@ bool provisioning_flow_import_refresh_deadline(AgentQTimeoutWindow input_window)
     return true;
 }
 
-Bip39EntropyDecodeResult provisioning_flow_decode_entropy_from_words()
+static Bip39EntropyDecodeResult provisioning_flow_decode_entropy_from_words()
 {
     if (g_state.stage != AgentQProvisioningFlowStage::import_word_entry ||
         !provisioning_flow_import_all_words_complete()) {
@@ -550,7 +629,31 @@ Bip39EntropyDecodeResult provisioning_flow_decode_entropy_from_words()
     return result;
 }
 
-bool provisioning_flow_begin_pin_setup_from_displayed_phrase(AgentQTimeoutWindow input_window)
+AgentQProvisioningFlowCancelResult provisioning_flow_cancel_local_setup()
+{
+    if (g_state.stage == AgentQProvisioningFlowStage::none ||
+        g_state.stage == AgentQProvisioningFlowStage::pin_committing) {
+        return AgentQProvisioningFlowCancelResult::stale;
+    }
+
+    g_state.wipe();
+    return AgentQProvisioningFlowCancelResult::canceled;
+}
+
+AgentQProvisioningFlowReturnToChoiceResult provisioning_flow_return_to_setup_choice(
+    AgentQTimeoutWindow input_window)
+{
+    if (g_state.stage != AgentQProvisioningFlowStage::backup_phrase_displayed &&
+        g_state.stage != AgentQProvisioningFlowStage::import_word_entry) {
+        return AgentQProvisioningFlowReturnToChoiceResult::stale;
+    }
+
+    return provisioning_flow_begin_setup_choice(input_window)
+               ? AgentQProvisioningFlowReturnToChoiceResult::started
+               : AgentQProvisioningFlowReturnToChoiceResult::failed;
+}
+
+static bool provisioning_flow_begin_pin_setup_from_displayed_phrase(AgentQTimeoutWindow input_window)
 {
     if (g_state.stage != AgentQProvisioningFlowStage::backup_phrase_displayed ||
         !timeout_window_valid(input_window)) {
@@ -563,16 +666,58 @@ bool provisioning_flow_begin_pin_setup_from_displayed_phrase(AgentQTimeoutWindow
     return true;
 }
 
-void provisioning_flow_begin_pin_setup_after_import(AgentQTimeoutWindow input_window)
+AgentQProvisioningFlowConfirmBackupResult provisioning_flow_confirm_backup_phrase(
+    AgentQTimeoutWindow input_window)
+{
+    if (g_state.stage != AgentQProvisioningFlowStage::backup_phrase_displayed) {
+        return AgentQProvisioningFlowConfirmBackupResult::stale;
+    }
+    if (!provisioning_flow_begin_pin_setup_from_displayed_phrase(input_window)) {
+        return AgentQProvisioningFlowConfirmBackupResult::failed;
+    }
+    return AgentQProvisioningFlowConfirmBackupResult::started;
+}
+
+static bool provisioning_flow_begin_pin_setup_after_import(AgentQTimeoutWindow input_window)
 {
     if (!timeout_window_valid(input_window)) {
         g_state.wipe();
-        return;
+        return false;
     }
     g_state.stage = AgentQProvisioningFlowStage::pin_first_entry;
     g_state.wipe_import_word_entry();
     g_state.wipe_pin_only();
     g_state.pin_window = input_window;
+    return true;
+}
+
+AgentQProvisioningFlowImportNextResult provisioning_flow_handle_import_next(
+    AgentQTimeoutWindow import_input_window,
+    AgentQTimeoutWindow pin_input_window)
+{
+    if (g_state.stage != AgentQProvisioningFlowStage::import_word_entry ||
+        !provisioning_flow_import_current_page_complete()) {
+        return AgentQProvisioningFlowImportNextResult::ignored;
+    }
+
+    if (provisioning_flow_import_next_page(import_input_window)) {
+        return AgentQProvisioningFlowImportNextResult::page_advanced;
+    }
+
+    if (!provisioning_flow_import_all_words_complete()) {
+        return AgentQProvisioningFlowImportNextResult::incomplete;
+    }
+
+    const Bip39EntropyDecodeResult decode_result =
+        provisioning_flow_decode_entropy_from_words();
+    if (decode_result != Bip39EntropyDecodeResult::ok) {
+        provisioning_flow_import_refresh_deadline(import_input_window);
+        return AgentQProvisioningFlowImportNextResult::checksum_failed;
+    }
+
+    return provisioning_flow_begin_pin_setup_after_import(pin_input_window)
+               ? AgentQProvisioningFlowImportNextResult::pin_setup_started
+               : AgentQProvisioningFlowImportNextResult::pin_setup_failed;
 }
 
 bool provisioning_flow_add_pin_digit(char digit, AgentQTimeoutWindow input_window)
@@ -666,7 +811,7 @@ AgentQProvisioningFlowPinSubmitResult provisioning_flow_submit_pin(
     return AgentQProvisioningFlowPinSubmitResult::commit_started;
 }
 
-bool provisioning_flow_commit_worker_result(
+static bool provisioning_flow_commit_worker_result(
     const AgentQLocalAuthWorkerResult& result,
     const uint8_t** root_material,
     size_t* root_material_size,
@@ -687,6 +832,49 @@ bool provisioning_flow_commit_worker_result(
     *root_material_size = sizeof(g_state.root_material);
     *prepared_auth = &result.prepared_record;
     return true;
+}
+
+AgentQProvisioningFlowCommitFinishResult provisioning_flow_finish_commit_worker_result(
+    const AgentQLocalAuthWorkerResult& result,
+    AgentQProvisioningFlowCommitSetupWithPreparedAuth commit_setup)
+{
+    if (!provisioning_flow_commit_job_active(result.job_id)) {
+        return {
+            AgentQProvisioningFlowCommitFinishStatus::stale,
+            AgentQProvisioningFlowCommitResult::missing_input,
+        };
+    }
+
+    const uint8_t* root_material = nullptr;
+    size_t root_material_size = 0;
+    const AgentQLocalAuthPreparedRecord* prepared_auth = nullptr;
+    if (!provisioning_flow_commit_worker_result(
+            result,
+            &root_material,
+            &root_material_size,
+            &prepared_auth)) {
+        g_state.wipe();
+        return {
+            AgentQProvisioningFlowCommitFinishStatus::failed,
+            AgentQProvisioningFlowCommitResult::storage_error,
+        };
+    }
+
+    if (commit_setup == nullptr) {
+        g_state.wipe();
+        return {
+            AgentQProvisioningFlowCommitFinishStatus::failed,
+            AgentQProvisioningFlowCommitResult::storage_error,
+        };
+    }
+
+    const AgentQProvisioningFlowCommitResult commit_result =
+        commit_setup(root_material, root_material_size, prepared_auth);
+    g_state.wipe();
+    return {
+        AgentQProvisioningFlowCommitFinishStatus::committed,
+        commit_result,
+    };
 }
 
 }  // namespace agent_q
