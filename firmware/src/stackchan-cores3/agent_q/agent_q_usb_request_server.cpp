@@ -2647,6 +2647,52 @@ commit_sui_zklogin_from_pin_for_local_pin_auth()
     return agent_q::sui_zklogin_proposal_flow_commit();
 }
 
+agent_q::AgentQUserSigningConfirmationResult
+cancel_user_signing_for_pin_loss_from_local_pin_auth()
+{
+    return agent_q::user_signing_confirmation_cancel_for_pin_loss();
+}
+
+agent_q::AgentQUserSigningConfirmationResult
+record_user_signing_timeout_from_pin_for_local_pin_auth(TickType_t now)
+{
+    return agent_q::user_signing_confirmation_record_timeout(now);
+}
+
+agent_q::AgentQUserSigningConfirmationResult
+return_user_signing_review_from_pin_for_local_pin_auth(
+    TickType_t now,
+    agent_q::AgentQTimeoutWindow review_window)
+{
+    return agent_q::user_signing_confirmation_return_to_review_from_pin(
+        now,
+        review_window);
+}
+
+void cancel_user_signing_for_ui_loss_from_local_pin_auth()
+{
+    agent_q::user_signing_flow_cancel_for_ui_loss();
+}
+
+agent_q::AgentQUserSigningConfirmationResult
+complete_user_signing_pin_verify_from_local_pin_auth(
+    const agent_q::AgentQLocalAuthWorkerResult& worker_result,
+    TickType_t now,
+    TickType_t lockout_until)
+{
+    return agent_q::user_signing_confirmation_complete_pin_verify_job_and_write_history(
+        worker_result,
+        now,
+        lockout_until,
+        write_user_signing_confirmation_history,
+        nullptr);
+}
+
+bool user_signing_terminal_pending_from_local_pin_auth()
+{
+    return agent_q::user_signing_flow_terminal_pending();
+}
+
 void execute_user_signing_for_local_pin_auth(const char* request_id)
 {
     execute_user_signing_critical_section_and_finish(request_id);
@@ -2729,7 +2775,12 @@ agent_q::AgentQLocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops()
         finish_sui_zklogin_proposal_error_terminal,
         show_sui_zklogin_review,
         show_user_signing_review,
-        write_user_signing_confirmation_history,
+        cancel_user_signing_for_pin_loss_from_local_pin_auth,
+        record_user_signing_timeout_from_pin_for_local_pin_auth,
+        return_user_signing_review_from_pin_for_local_pin_auth,
+        cancel_user_signing_for_ui_loss_from_local_pin_auth,
+        complete_user_signing_pin_verify_from_local_pin_auth,
+        user_signing_terminal_pending_from_local_pin_auth,
         execute_user_signing_for_local_pin_auth,
         finish_user_signing_terminal_for_local_pin_auth,
         finish_user_signing_error_terminal_for_local_pin_auth,
@@ -4441,6 +4492,53 @@ void cancel_user_signing_confirmation_for_pin_loss()
     agent_q::user_signing_confirmation_cancel_for_pin_loss();
 }
 
+agent_q::AgentQUserSigningReviewAcceptResult
+accept_user_signing_review_without_pin(TickType_t now)
+{
+    const agent_q::AgentQUserSigningTransitionResult result =
+        agent_q::user_signing_flow_record_physical_confirmed_and_write_confirmation_history(
+            now,
+            write_user_signing_physical_confirmation_history,
+            nullptr);
+    if (result == agent_q::AgentQUserSigningTransitionResult::ok) {
+        return agent_q::AgentQUserSigningReviewAcceptResult::execute;
+    }
+    if (agent_q::user_signing_flow_terminal_pending()) {
+        return agent_q::AgentQUserSigningReviewAcceptResult::finish_terminal;
+    }
+    return result == agent_q::AgentQUserSigningTransitionResult::history_error
+               ? agent_q::AgentQUserSigningReviewAcceptResult::history_error
+               : agent_q::AgentQUserSigningReviewAcceptResult::unavailable;
+}
+
+agent_q::AgentQUserSigningReviewPinBeginResult begin_user_signing_pin_from_review(
+    TickType_t now,
+    agent_q::AgentQTimeoutWindow pin_input_window)
+{
+    const agent_q::AgentQUserSigningConfirmationResult result =
+        agent_q::user_signing_confirmation_accept_review_and_begin_pin(
+            now,
+            pin_input_window);
+    if (result == agent_q::AgentQUserSigningConfirmationResult::ok) {
+        return agent_q::AgentQUserSigningReviewPinBeginResult::started;
+    }
+    if (agent_q::user_signing_flow_terminal_pending()) {
+        return agent_q::AgentQUserSigningReviewPinBeginResult::finish_terminal;
+    }
+    return result == agent_q::AgentQUserSigningConfirmationResult::local_pin_busy
+               ? agent_q::AgentQUserSigningReviewPinBeginResult::busy
+               : agent_q::AgentQUserSigningReviewPinBeginResult::unavailable;
+}
+
+agent_q::AgentQUserSigningReviewRejectResult reject_user_signing_review()
+{
+    const agent_q::AgentQUserSigningConfirmationResult result =
+        agent_q::user_signing_confirmation_record_device_rejected();
+    return result == agent_q::AgentQUserSigningConfirmationResult::ok
+               ? agent_q::AgentQUserSigningReviewRejectResult::finish_terminal
+               : agent_q::AgentQUserSigningReviewRejectResult::unavailable;
+}
+
 void finish_user_signing_terminal_for_review(const char* request_id)
 {
     finish_user_signing_terminal(request_id);
@@ -4507,9 +4605,9 @@ const agent_q::AgentQUserSigningReviewUiFlowOps& user_signing_review_ui_flow_ops
         clear_agent_q_panel_if_kind,
         user_signing_review_panel_active,
         agent_q::human_approval_requires_pin,
-        agent_q::user_signing_flow_record_physical_confirmed_and_write_confirmation_history,
-        agent_q::user_signing_confirmation_accept_review_and_begin_pin,
-        agent_q::user_signing_confirmation_record_device_rejected,
+        accept_user_signing_review_without_pin,
+        begin_user_signing_pin_from_review,
+        reject_user_signing_review,
         agent_q::user_signing_flow_record_timeout,
         agent_q::user_signing_flow_pause_review_deadline,
         agent_q::user_signing_flow_resume_review_deadline,
@@ -4519,7 +4617,6 @@ const agent_q::AgentQUserSigningReviewUiFlowOps& user_signing_review_ui_flow_ops
         draw_local_pin_auth_panel_for_review_flow,
         agent_q::usb_response_write_error,
         show_user_signing_display_error,
-        write_user_signing_physical_confirmation_history,
         execute_user_signing_critical_section_and_finish,
         finish_user_signing_terminal_for_review,
         finish_user_signing_error_terminal,

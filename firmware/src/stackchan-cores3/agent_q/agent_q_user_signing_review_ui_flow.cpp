@@ -123,10 +123,10 @@ void execute_user_signing_for_transition(void* context)
     const auto* work_context = static_cast<const UserSigningWorkContext*>(context);
     if (work_context == nullptr ||
         work_context->ops == nullptr ||
-        work_context->ops->execute_critical_section_and_finish == nullptr) {
+        work_context->ops->execute_user_signing_from_review == nullptr) {
         return;
     }
-    work_context->ops->execute_critical_section_and_finish(work_context->request_id);
+    work_context->ops->execute_user_signing_from_review(work_context->request_id);
 }
 
 void run_user_signing_then_clear_review_panel(
@@ -258,47 +258,52 @@ void user_signing_review_ui_accept(const AgentQUserSigningReviewUiFlowOps& ops)
         ops.human_approval_requires_pin != nullptr &&
         ops.human_approval_requires_pin();
     if (!requires_pin) {
-        const AgentQUserSigningTransitionResult result =
-            ops.record_physical_confirmed_and_write_confirmation_history != nullptr
-                ? ops.record_physical_confirmed_and_write_confirmation_history(
-                    now,
-                    ops.write_confirmation_history,
-                    nullptr)
-                : AgentQUserSigningTransitionResult::invalid_argument;
-        if (result == AgentQUserSigningTransitionResult::ok) {
-            run_user_signing_then_clear_review_panel(ops, current.request_id);
-            return;
+        const AgentQUserSigningReviewAcceptResult result =
+            ops.accept_review_without_pin != nullptr
+                ? ops.accept_review_without_pin(now)
+                : AgentQUserSigningReviewAcceptResult::unavailable;
+        switch (result) {
+            case AgentQUserSigningReviewAcceptResult::execute:
+                run_user_signing_then_clear_review_panel(ops, current.request_id);
+                return;
+            case AgentQUserSigningReviewAcceptResult::finish_terminal:
+                finish_terminal(ops, current.request_id);
+                return;
+            case AgentQUserSigningReviewAcceptResult::history_error:
+                finish_error_terminal(
+                    ops,
+                    current.request_id,
+                    "history_unavailable",
+                    "Signing request is unavailable.",
+                    "Signing unavailable");
+                return;
+            case AgentQUserSigningReviewAcceptResult::unavailable:
+                finish_error_terminal(
+                    ops,
+                    current.request_id,
+                    "invalid_state",
+                    "Signing request is unavailable.",
+                    "Signing unavailable");
+                return;
         }
-        if (terminal_pending(ops)) {
-            finish_terminal(ops, current.request_id);
-            return;
-        }
-        finish_error_terminal(
-            ops,
-            current.request_id,
-            result == AgentQUserSigningTransitionResult::history_error
-                ? "history_unavailable"
-                : "invalid_state",
-            "Signing request is unavailable.",
-            "Signing unavailable");
         return;
     }
 
     const AgentQTimeoutWindow pin_input_window =
         window_from_now_ms(ops, ops.pin_input_window_ms);
-    const AgentQUserSigningConfirmationResult result =
-        ops.accept_review_and_begin_pin != nullptr
-            ? ops.accept_review_and_begin_pin(now, pin_input_window)
-            : AgentQUserSigningConfirmationResult::invalid_argument;
-    if (result != AgentQUserSigningConfirmationResult::ok) {
-        if (terminal_pending(ops)) {
+    const AgentQUserSigningReviewPinBeginResult result =
+        ops.begin_pin_from_review != nullptr
+            ? ops.begin_pin_from_review(now, pin_input_window)
+            : AgentQUserSigningReviewPinBeginResult::unavailable;
+    if (result != AgentQUserSigningReviewPinBeginResult::started) {
+        if (result == AgentQUserSigningReviewPinBeginResult::finish_terminal) {
             finish_terminal(ops, current.request_id);
             return;
         }
         finish_error_terminal(
             ops,
             current.request_id,
-            result == AgentQUserSigningConfirmationResult::local_pin_busy
+            result == AgentQUserSigningReviewPinBeginResult::busy
                 ? "busy"
                 : "invalid_state",
             "Signing request is unavailable.",
@@ -337,11 +342,11 @@ void user_signing_review_ui_reject(const AgentQUserSigningReviewUiFlowOps& ops)
         return;
     }
 
-    const AgentQUserSigningConfirmationResult result =
-        ops.record_device_rejected != nullptr
-            ? ops.record_device_rejected()
-            : AgentQUserSigningConfirmationResult::invalid_argument;
-    if (result != AgentQUserSigningConfirmationResult::ok) {
+    const AgentQUserSigningReviewRejectResult result =
+        ops.reject_review != nullptr
+            ? ops.reject_review()
+            : AgentQUserSigningReviewRejectResult::unavailable;
+    if (result != AgentQUserSigningReviewRejectResult::finish_terminal) {
         finish_error_terminal(
             ops,
             current.request_id,

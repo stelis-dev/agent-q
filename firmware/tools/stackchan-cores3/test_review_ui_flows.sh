@@ -157,12 +157,12 @@ bool g_user_timer_update_result = true;
 bool g_user_local_pin_draw_result = true;
 bool g_user_panel_active = true;
 bool g_user_terminal_pending = false;
-agent_q::AgentQUserSigningTransitionResult g_user_physical_result =
-    agent_q::AgentQUserSigningTransitionResult::ok;
-agent_q::AgentQUserSigningConfirmationResult g_user_begin_pin_result =
-    agent_q::AgentQUserSigningConfirmationResult::ok;
-agent_q::AgentQUserSigningConfirmationResult g_user_reject_result =
-    agent_q::AgentQUserSigningConfirmationResult::ok;
+agent_q::AgentQUserSigningReviewAcceptResult g_user_physical_result =
+    agent_q::AgentQUserSigningReviewAcceptResult::execute;
+agent_q::AgentQUserSigningReviewPinBeginResult g_user_begin_pin_result =
+    agent_q::AgentQUserSigningReviewPinBeginResult::started;
+agent_q::AgentQUserSigningReviewRejectResult g_user_reject_result =
+    agent_q::AgentQUserSigningReviewRejectResult::finish_terminal;
 agent_q::AgentQUserSigningTransitionResult g_user_timeout_result =
     agent_q::AgentQUserSigningTransitionResult::deadline_not_reached;
 agent_q::AgentQUserSigningTransitionResult g_user_pause_result =
@@ -315,9 +315,9 @@ void reset_user()
     g_user_local_pin_draw_result = true;
     g_user_panel_active = true;
     g_user_terminal_pending = false;
-    g_user_physical_result = agent_q::AgentQUserSigningTransitionResult::ok;
-    g_user_begin_pin_result = agent_q::AgentQUserSigningConfirmationResult::ok;
-    g_user_reject_result = agent_q::AgentQUserSigningConfirmationResult::ok;
+    g_user_physical_result = agent_q::AgentQUserSigningReviewAcceptResult::execute;
+    g_user_begin_pin_result = agent_q::AgentQUserSigningReviewPinBeginResult::started;
+    g_user_reject_result = agent_q::AgentQUserSigningReviewRejectResult::finish_terminal;
     g_user_timeout_result =
         agent_q::AgentQUserSigningTransitionResult::deadline_not_reached;
     g_user_pause_result = agent_q::AgentQUserSigningTransitionResult::ok;
@@ -685,16 +685,13 @@ bool draw_user_review(
 
 bool user_panel_active() { return g_user_panel_active; }
 bool requires_pin() { return g_user_requires_pin; }
-agent_q::AgentQUserSigningTransitionResult physical_confirm(
-    TickType_t tick,
-    agent_q::AgentQUserSigningHistoryWriteFn,
-    void*)
+agent_q::AgentQUserSigningReviewAcceptResult physical_confirm(TickType_t tick)
 {
     expect(tick == g_now, "physical confirm receives current tick");
     ++g_user_physical_calls;
     return g_user_physical_result;
 }
-agent_q::AgentQUserSigningConfirmationResult begin_user_pin(
+agent_q::AgentQUserSigningReviewPinBeginResult begin_user_pin(
     TickType_t tick,
     agent_q::AgentQTimeoutWindow window)
 {
@@ -703,7 +700,7 @@ agent_q::AgentQUserSigningConfirmationResult begin_user_pin(
     ++g_user_begin_pin_calls;
     return g_user_begin_pin_result;
 }
-agent_q::AgentQUserSigningConfirmationResult record_user_rejected()
+agent_q::AgentQUserSigningReviewRejectResult record_user_rejected()
 {
     ++g_user_reject_calls;
     return g_user_reject_result;
@@ -749,7 +746,6 @@ bool write_error(const char*, const char* code){
     return true;
 }
 void show_display_error() { ++g_user_display_error_calls; }
-bool dummy_history_write(const agent_q::AgentQUserSigningFlowCoreSnapshot&, void*) { return true; }
 void execute_signing(const char* request_id)
 {
     expect(strcmp(request_id, "sign-1") == 0, "execute uses request id");
@@ -840,7 +836,6 @@ agent_q::AgentQUserSigningReviewUiFlowOps user_ops()
         draw_local_pin,
         write_error,
         show_display_error,
-        dummy_history_write,
         execute_signing,
         finish_user_terminal,
         finish_user_error,
@@ -958,6 +953,31 @@ void test_user_accept_reject_and_pin()
            "user no-PIN accept keeps review panel until signing work completes");
 
     reset_user();
+    g_user_physical_result = agent_q::AgentQUserSigningReviewAcceptResult::history_error;
+    agent_q::user_signing_review_ui_accept(user_ops());
+    expect(g_user_finish_error_calls == 1 &&
+               strcmp(g_user_last_error_code, "history_unavailable") == 0,
+           "user no-PIN history failure emits history_unavailable");
+    expect(g_user_execute_calls == 0 &&
+               g_user_finish_terminal_calls == 0,
+           "user no-PIN history failure does not execute or finish terminal");
+
+    reset_user();
+    g_user_physical_result = agent_q::AgentQUserSigningReviewAcceptResult::finish_terminal;
+    agent_q::user_signing_review_ui_accept(user_ops());
+    expect(g_user_finish_terminal_calls == 1 &&
+               g_user_execute_calls == 0 &&
+               g_user_finish_error_calls == 0,
+           "user no-PIN terminal result finishes terminal without signing work");
+
+    reset_user();
+    g_user_physical_result = agent_q::AgentQUserSigningReviewAcceptResult::unavailable;
+    agent_q::user_signing_review_ui_accept(user_ops());
+    expect(g_user_finish_error_calls == 1 &&
+               strcmp(g_user_last_error_code, "invalid_state") == 0,
+           "user no-PIN unavailable result emits invalid_state");
+
+    reset_user();
     g_user_requires_pin = true;
     agent_q::user_signing_review_ui_accept(user_ops());
     expect(g_user_begin_pin_calls == 1, "user PIN accept begins PIN");
@@ -967,11 +987,45 @@ void test_user_accept_reject_and_pin()
            "user PIN accept prepares PIN panel before clearing review");
 
     reset_user();
+    g_user_requires_pin = true;
+    g_user_begin_pin_result = agent_q::AgentQUserSigningReviewPinBeginResult::busy;
+    agent_q::user_signing_review_ui_accept(user_ops());
+    expect(g_user_finish_error_calls == 1 &&
+               strcmp(g_user_last_error_code, "busy") == 0,
+           "user PIN busy result emits busy");
+    expect(g_user_local_pin_draw_calls == 0 &&
+               g_user_clear_review_calls == 0,
+           "user PIN busy result does not draw PIN or clear review");
+
+    reset_user();
+    g_user_requires_pin = true;
+    g_user_begin_pin_result = agent_q::AgentQUserSigningReviewPinBeginResult::finish_terminal;
+    agent_q::user_signing_review_ui_accept(user_ops());
+    expect(g_user_finish_terminal_calls == 1 &&
+               g_user_finish_error_calls == 0,
+           "user PIN terminal result finishes terminal");
+
+    reset_user();
+    g_user_requires_pin = true;
+    g_user_begin_pin_result = agent_q::AgentQUserSigningReviewPinBeginResult::unavailable;
+    agent_q::user_signing_review_ui_accept(user_ops());
+    expect(g_user_finish_error_calls == 1 &&
+               strcmp(g_user_last_error_code, "invalid_state") == 0,
+           "user PIN unavailable result emits invalid_state");
+
+    reset_user();
     agent_q::user_signing_review_ui_reject(user_ops());
     expect(g_user_reject_calls == 1, "user reject records rejection");
     expect(g_user_finish_terminal_calls == 1, "user reject finishes terminal");
     expect(g_user_finish_terminal_order < g_user_clear_review_order,
            "user reject prepares terminal result before clearing review");
+
+    reset_user();
+    g_user_reject_result = agent_q::AgentQUserSigningReviewRejectResult::unavailable;
+    agent_q::user_signing_review_ui_reject(user_ops());
+    expect(g_user_finish_error_calls == 1 &&
+               strcmp(g_user_last_error_code, "invalid_state") == 0,
+           "user reject unavailable result emits invalid_state");
 }
 
 void test_user_scroll_events()

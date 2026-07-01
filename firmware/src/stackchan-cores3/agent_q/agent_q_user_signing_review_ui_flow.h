@@ -5,12 +5,30 @@
 #include "agent_q_avatar_overlay_drawing.h"
 #include "agent_q_drawing_surface.h"
 #include "agent_q_timeout_window.h"
-#include "agent_q_user_signing_confirmation.h"
 #include "agent_q_user_signing_flow.h"
 #include "agent_q_user_signing_review_view_model.h"
 #include "freertos/FreeRTOS.h"
 
 namespace agent_q {
+
+enum class AgentQUserSigningReviewAcceptResult {
+    execute,
+    finish_terminal,
+    history_error,
+    unavailable,
+};
+
+enum class AgentQUserSigningReviewPinBeginResult {
+    started,
+    finish_terminal,
+    busy,
+    unavailable,
+};
+
+enum class AgentQUserSigningReviewRejectResult {
+    finish_terminal,
+    unavailable,
+};
 
 struct AgentQUserSigningReviewUiFlowOps {
     TickType_t (*now)();
@@ -27,15 +45,11 @@ struct AgentQUserSigningReviewUiFlowOps {
     bool (*clear_panel_if_kind)(AgentQUiPanelKind kind, SensitiveUiClearPolicy policy);
     bool (*review_panel_active)();
     bool (*human_approval_requires_pin)();
-    AgentQUserSigningTransitionResult
-        (*record_physical_confirmed_and_write_confirmation_history)(
-            TickType_t now,
-            AgentQUserSigningHistoryWriteFn write_fn,
-            void* context);
-    AgentQUserSigningConfirmationResult (*accept_review_and_begin_pin)(
+    AgentQUserSigningReviewAcceptResult (*accept_review_without_pin)(TickType_t now);
+    AgentQUserSigningReviewPinBeginResult (*begin_pin_from_review)(
         TickType_t now,
         AgentQTimeoutWindow pin_input_window);
-    AgentQUserSigningConfirmationResult (*record_device_rejected)();
+    AgentQUserSigningReviewRejectResult (*reject_review)();
     AgentQUserSigningTransitionResult (*record_timeout)(TickType_t now);
     AgentQUserSigningTransitionResult (*pause_review_deadline)(TickType_t now);
     AgentQUserSigningTransitionResult (*resume_review_deadline)(TickType_t now);
@@ -45,8 +59,7 @@ struct AgentQUserSigningReviewUiFlowOps {
     bool (*draw_local_pin_auth_panel)();
     bool (*write_error)(const char* id, const char* code);
     void (*show_display_error)();
-    AgentQUserSigningHistoryWriteFn write_confirmation_history;
-    void (*execute_critical_section_and_finish)(const char* request_id);
+    void (*execute_user_signing_from_review)(const char* request_id);
     void (*finish_terminal)(const char* request_id);
     void (*finish_error_terminal)(
         const char* request_id,

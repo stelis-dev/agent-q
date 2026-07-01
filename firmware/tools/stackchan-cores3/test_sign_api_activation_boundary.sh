@@ -233,8 +233,12 @@ expect_present "${USB_SERVER}" 'local_pin_auth_ui_handle_verify_worker_result' \
   "USB request server must delegate local PIN auth verifier worker results"
 expect_present "${USB_SERVER}" 'local_pin_auth_ui_clear_if_needed' \
   "USB request server maintenance phase must delegate local PIN auth cleanup"
-expect_absent "${USB_SERVER}" 'local_pin_auth_complete_verify_job|user_signing_confirmation_complete_pin_verify_job_and_write_history|local_pin_auth_fail_processing_if_expired|local_pin_auth_release_lockout_if_elapsed|request_backed_local_pin_deadline_reached|request_backed_local_pin_resume_input_window|request_backed_local_pin_pause_input_window' \
+expect_absent "${USB_SERVER}" 'local_pin_auth_complete_verify_job|local_pin_auth_fail_processing_if_expired|local_pin_auth_release_lockout_if_elapsed|request_backed_local_pin_deadline_reached|request_backed_local_pin_resume_input_window|request_backed_local_pin_pause_input_window' \
   "USB request server must not own local PIN verification, lockout, timeout, or request-backed input-window effects"
+expect_present "${USB_SERVER}" 'complete_user_signing_pin_verify_from_local_pin_auth' \
+  "USB request server must wire user-signing PIN verification through the user-signing confirmation coordinator"
+expect_absent "${LOCAL_PIN_AUTH_UI_SOURCE}" 'user_signing_confirmation_complete_pin_verify_job_and_write_history|user_signing_confirmation_record_timeout|user_signing_confirmation_cancel_for_pin_loss|user_signing_flow_terminal_pending|user_signing_flow_cancel_for_ui_loss' \
+  "local PIN auth UI flow must use app-level user-signing callbacks instead of direct user-signing owner calls"
 expect_present "${POLICY_UPDATE_REVIEW_UI_SOURCE}" 'policy_update_review_ui_continue' \
   "policy update review UI flow must own continue-to-PIN lifecycle effects"
 expect_present "${POLICY_UPDATE_REVIEW_UI_SOURCE}" 'policy_update_review_ui_reject' \

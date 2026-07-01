@@ -111,8 +111,19 @@ struct AgentQLocalPinAuthUiFlowOps {
         const char* display_message);
     bool (*show_sui_zklogin_review)();
     bool (*show_user_signing_review)();
-    AgentQUserSigningHistoryWriteFn write_user_signing_confirmation_history;
-    void (*execute_user_signing_critical_section_and_finish)(const char* request_id);
+    AgentQUserSigningConfirmationResult (*cancel_user_signing_for_pin_loss)();
+    AgentQUserSigningConfirmationResult (*record_user_signing_timeout_from_pin)(
+        TickType_t now);
+    AgentQUserSigningConfirmationResult (*return_user_signing_review_from_pin)(
+        TickType_t now,
+        AgentQTimeoutWindow review_window);
+    void (*cancel_user_signing_for_ui_loss)();
+    AgentQUserSigningConfirmationResult (*complete_user_signing_pin_verify_from_pin)(
+        const AgentQLocalAuthWorkerResult& worker_result,
+        TickType_t now,
+        TickType_t lockout_until);
+    bool (*user_signing_terminal_pending_from_pin)();
+    void (*execute_user_signing_from_pin)(const char* request_id);
     void (*finish_user_signing_terminal)(const char* request_id);
     void (*finish_user_signing_error_terminal)(
         const char* request_id,

@@ -400,10 +400,22 @@ check_user_signing_keeps_panel_until_signing_work() {
   local work_line
   local raw_execute_line
   local helper_line
+  local raw_confirmation_line
+  local raw_flow_line
 
   helper_line="$(grep -En 'run_user_signing_then_clear_local_pin_panel' "${LOCAL_PIN_AUTH_UI_SOURCE}" | head -n 1 | cut -d: -f1 || true)"
   work_line="$(grep -En 'modal_transition_run_work_then_clear_panel' "${LOCAL_PIN_AUTH_UI_SOURCE}" | head -n 1 | cut -d: -f1 || true)"
   raw_execute_line="$(grep -En 'execute_user_signing_critical_section_and_finish\\(request_id\\)' "${LOCAL_PIN_AUTH_UI_SOURCE}" | head -n 1 | cut -d: -f1 || true)"
+  raw_confirmation_line="$(
+    grep -En 'user_signing_confirmation_(cancel_for_pin_loss|record_timeout|return_to_review_from_pin|complete_pin_verify_job_and_write_history)\(' "${LOCAL_PIN_AUTH_UI_SOURCE}" |
+      head -n 1 |
+      cut -d: -f1 || true
+  )"
+  raw_flow_line="$(
+    grep -En 'user_signing_flow_(terminal_pending|cancel_for_ui_loss)\(' "${LOCAL_PIN_AUTH_UI_SOURCE}" |
+      head -n 1 |
+      cut -d: -f1 || true
+  )"
 
   if [[ -z "${helper_line}" || -z "${work_line}" ]]; then
     echo "FAILED: user signing local PIN approval must route signing work through ModalTransitionOwner" >&2
@@ -413,6 +425,11 @@ check_user_signing_keeps_panel_until_signing_work() {
   if [[ -n "${raw_execute_line}" ]]; then
     echo "FAILED: local PIN user signing must not call signing work directly from the verified path" >&2
     echo "raw_execute_line=${raw_execute_line}" >&2
+    exit 1
+  fi
+  if [[ -n "${raw_confirmation_line}" || -n "${raw_flow_line}" ]]; then
+    echo "FAILED: local PIN user signing must use app-level user-signing callbacks instead of direct owner calls" >&2
+    echo "raw_confirmation_line=${raw_confirmation_line:-none} raw_flow_line=${raw_flow_line:-none}" >&2
     exit 1
   fi
 }

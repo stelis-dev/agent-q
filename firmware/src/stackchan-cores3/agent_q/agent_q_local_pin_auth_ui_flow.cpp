@@ -10,8 +10,6 @@
 #include "agent_q_local_reset.h"
 #include "agent_q_modal_transition.h"
 #include "agent_q_request_backed_local_pin_context.h"
-#include "agent_q_user_signing_confirmation.h"
-#include "agent_q_user_signing_flow.h"
 
 namespace agent_q {
 namespace {
@@ -286,6 +284,60 @@ void finish_user_signing_error_terminal(
     }
 }
 
+AgentQUserSigningConfirmationResult cancel_user_signing_for_pin_loss(
+    const AgentQLocalPinAuthUiFlowOps& ops)
+{
+    return ops.cancel_user_signing_for_pin_loss != nullptr
+               ? ops.cancel_user_signing_for_pin_loss()
+               : AgentQUserSigningConfirmationResult::inactive;
+}
+
+AgentQUserSigningConfirmationResult record_user_signing_timeout_from_pin(
+    const AgentQLocalPinAuthUiFlowOps& ops,
+    TickType_t now)
+{
+    return ops.record_user_signing_timeout_from_pin != nullptr
+               ? ops.record_user_signing_timeout_from_pin(now)
+               : AgentQUserSigningConfirmationResult::invalid_argument;
+}
+
+AgentQUserSigningConfirmationResult return_user_signing_review_from_pin(
+    const AgentQLocalPinAuthUiFlowOps& ops,
+    TickType_t now,
+    AgentQTimeoutWindow review_window)
+{
+    return ops.return_user_signing_review_from_pin != nullptr
+               ? ops.return_user_signing_review_from_pin(now, review_window)
+               : AgentQUserSigningConfirmationResult::invalid_argument;
+}
+
+void cancel_user_signing_for_ui_loss(const AgentQLocalPinAuthUiFlowOps& ops)
+{
+    if (ops.cancel_user_signing_for_ui_loss != nullptr) {
+        ops.cancel_user_signing_for_ui_loss();
+    }
+}
+
+AgentQUserSigningConfirmationResult complete_user_signing_pin_verify_from_pin(
+    const AgentQLocalPinAuthUiFlowOps& ops,
+    const AgentQLocalAuthWorkerResult& worker_result,
+    TickType_t now,
+    TickType_t lockout_until)
+{
+    return ops.complete_user_signing_pin_verify_from_pin != nullptr
+               ? ops.complete_user_signing_pin_verify_from_pin(
+                   worker_result,
+                   now,
+                   lockout_until)
+               : AgentQUserSigningConfirmationResult::invalid_argument;
+}
+
+bool user_signing_terminal_pending_from_pin(const AgentQLocalPinAuthUiFlowOps& ops)
+{
+    return ops.user_signing_terminal_pending_from_pin != nullptr &&
+           ops.user_signing_terminal_pending_from_pin();
+}
+
 AgentQSuiZkLoginProposalTransitionResult return_sui_zklogin_review_from_pin(
     const AgentQLocalPinAuthUiFlowOps& ops,
     TickType_t now)
@@ -481,7 +533,7 @@ void handle_local_pin_auth_display_failure(
             AgentQLocalPinAuthPurpose::user_signing,
             request_id,
             sizeof(request_id))) {
-        user_signing_confirmation_cancel_for_pin_loss();
+        cancel_user_signing_for_pin_loss(ops);
         wipe_local_pin_auth_scratch(ops, reason);
         if (clear_panel) {
             complete_local_pin_to_user_error_terminal(
@@ -599,9 +651,9 @@ bool finish_request_backed_local_pin_input_timeout_if_reached(
         case AgentQRequestBackedLocalPinOwner::user_signing:
             if (request_id[0] != '\0') {
                 const AgentQUserSigningConfirmationResult result =
-                    user_signing_confirmation_record_timeout(now);
+                    record_user_signing_timeout_from_pin(ops, now);
                 if (result == AgentQUserSigningConfirmationResult::ok ||
-                    user_signing_flow_terminal_pending()) {
+                    user_signing_terminal_pending_from_pin(ops)) {
                     complete_local_pin_to_user_terminal(ops, request_id);
                 } else {
                     complete_local_pin_to_user_error_terminal(
@@ -1121,10 +1173,10 @@ void execute_user_signing_for_transition(void* context)
     const auto* work_context = static_cast<const UserSigningWorkContext*>(context);
     if (work_context == nullptr ||
         work_context->ops == nullptr ||
-        work_context->ops->execute_user_signing_critical_section_and_finish == nullptr) {
+        work_context->ops->execute_user_signing_from_pin == nullptr) {
         return;
     }
-    work_context->ops->execute_user_signing_critical_section_and_finish(
+    work_context->ops->execute_user_signing_from_pin(
         work_context->request_id);
 }
 
@@ -1545,12 +1597,13 @@ void local_pin_auth_ui_cancel(
     if (purpose == AgentQLocalPinAuthPurpose::user_signing &&
         request_id[0] != '\0') {
         const AgentQUserSigningConfirmationResult result =
-            user_signing_confirmation_return_to_review_from_pin(
+            return_user_signing_review_from_pin(
+                ops,
                 now,
                 window_from_now_ms(ops, ops.provisioning_approval_ms));
         if (result == AgentQUserSigningConfirmationResult::ok) {
             if (!complete_local_pin_to_review_panel(ops, purpose)) {
-                user_signing_flow_cancel_for_ui_loss();
+                cancel_user_signing_for_ui_loss(ops);
                 complete_local_pin_to_user_error_terminal(
                     ops,
                     request_id,
@@ -1770,7 +1823,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
         char request_id[kMaxRequestIdSize] = {};
         pending_request_id_for_local_pin_purpose(purpose, request_id, sizeof(request_id));
         if (!provisioned_material_ready(ops)) {
-            user_signing_confirmation_cancel_for_pin_loss();
+            cancel_user_signing_for_pin_loss(ops);
             wipe_local_pin_auth_scratch(ops, "user_signing material state unavailable");
             complete_local_pin_to_user_error_terminal(
                 ops,
@@ -1782,12 +1835,11 @@ void local_pin_auth_ui_handle_verify_worker_result(
         }
 
         const AgentQUserSigningConfirmationResult confirmation_result =
-            user_signing_confirmation_complete_pin_verify_job_and_write_history(
+            complete_user_signing_pin_verify_from_pin(
+                ops,
                 worker_result,
                 now,
-                now + pdMS_TO_TICKS(kAgentQLocalResetPinLockoutMs),
-                ops.write_user_signing_confirmation_history,
-                nullptr);
+                now + pdMS_TO_TICKS(kAgentQLocalResetPinLockoutMs));
         switch (confirmation_result) {
             case AgentQUserSigningConfirmationResult::not_ready:
                 return;
@@ -1840,7 +1892,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
             case AgentQUserSigningConfirmationResult::local_pin_unavailable:
             case AgentQUserSigningConfirmationResult::stale_state:
             case AgentQUserSigningConfirmationResult::busy:
-                if (user_signing_flow_terminal_pending()) {
+                if (user_signing_terminal_pending_from_pin(ops)) {
                     complete_local_pin_to_user_terminal(ops, request_id);
                     return;
                 }
@@ -2205,7 +2257,7 @@ void local_pin_auth_ui_clear_if_needed(const AgentQLocalPinAuthUiFlowOps& ops)
                 return;
             }
             if (local_pin_auth_processing_deadline_expired(now)) {
-                user_signing_confirmation_cancel_for_pin_loss();
+                cancel_user_signing_for_pin_loss(ops);
                 wipe_local_pin_auth_scratch(ops, "user_signing local PIN verifier timed out");
                 record_material_failure(
                     ops,
@@ -2343,9 +2395,9 @@ void local_pin_auth_ui_clear_if_needed(const AgentQLocalPinAuthUiFlowOps& ops)
         if (local_pin_auth_deadline_expired(now)) {
             wipe_local_pin_auth_scratch(ops, "user_signing local PIN input timed out");
             const AgentQUserSigningConfirmationResult result =
-                user_signing_confirmation_record_timeout(now);
+                record_user_signing_timeout_from_pin(ops, now);
             if (result == AgentQUserSigningConfirmationResult::ok ||
-                user_signing_flow_terminal_pending()) {
+                user_signing_terminal_pending_from_pin(ops)) {
                 complete_local_pin_to_user_terminal(ops, request_id);
             } else {
                 complete_local_pin_to_user_error_terminal(
@@ -2399,7 +2451,7 @@ void local_pin_auth_ui_clear_if_needed(const AgentQLocalPinAuthUiFlowOps& ops)
         if (draw_local_pin_panel(ops)) {
             return;
         }
-        user_signing_confirmation_cancel_for_pin_loss();
+        cancel_user_signing_for_pin_loss(ops);
         finish_user_signing_error_terminal(
             ops,
             request_id,
