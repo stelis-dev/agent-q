@@ -2405,6 +2405,91 @@ void log_connect_pin_approved_for_local_pin_auth(const char* id)
     ESP_LOGI(kTag, "connect PIN approved: id=%s", id != nullptr ? id : "");
 }
 
+const char* local_pin_connect_rejection_code(
+    agent_q::AgentQLocalPinAuthConnectRejectReason reason)
+{
+    switch (reason) {
+        case agent_q::AgentQLocalPinAuthConnectRejectReason::invalid_state:
+            return "invalid_state";
+        case agent_q::AgentQLocalPinAuthConnectRejectReason::ui_error:
+            return "ui_error";
+        case agent_q::AgentQLocalPinAuthConnectRejectReason::timeout:
+            return "timeout";
+        case agent_q::AgentQLocalPinAuthConnectRejectReason::user_rejected:
+            return "user_rejected";
+        case agent_q::AgentQLocalPinAuthConnectRejectReason::auth_unavailable:
+            return "auth_unavailable";
+    }
+    return "invalid_state";
+}
+
+void write_connect_rejected_from_pin_for_local_pin_auth(
+    const char* request_id,
+    agent_q::AgentQLocalPinAuthConnectRejectReason reason)
+{
+    agent_q::usb_response_write_connect_rejected(
+        request_id,
+        local_pin_connect_rejection_code(reason));
+}
+
+void finish_connect_rejection_cleanup_for_local_pin_auth(bool clear_protocol_pin)
+{
+    agent_q::connect_approval_clear();
+    if (clear_protocol_pin) {
+        agent_q::protocol_pin_approval_clear();
+    }
+}
+
+bool return_connect_review_from_pin_for_local_pin_auth(
+    TickType_t now,
+    agent_q::AgentQTimeoutWindow approval_window)
+{
+    char request_id[agent_q::kAgentQRequestIdSize] = {};
+    agent_q::protocol_pin_approval_request_id_for_local_pin_purpose(
+        agent_q::AgentQLocalPinAuthPurpose::connect,
+        request_id,
+        sizeof(request_id));
+    agent_q::protocol_pin_approval_clear();
+    if (agent_q::connect_approval_return_to_review(now, approval_window)) {
+        return true;
+    }
+    agent_q::usb_response_write_connect_rejected(request_id, "invalid_state");
+    agent_q::connect_approval_clear();
+    return false;
+}
+
+agent_q::AgentQLocalPinAuthConnectSessionResult
+replace_connect_session_from_pin_for_local_pin_auth(const char* request_id)
+{
+    if (replace_active_session()) {
+        return agent_q::AgentQLocalPinAuthConnectSessionResult::connected;
+    }
+    if (request_id != nullptr && request_id[0] != '\0') {
+        agent_q::usb_response_write_error(request_id, "rng_unavailable");
+    }
+    log_connect_session_creation_failed_for_local_pin_auth(request_id);
+    return agent_q::AgentQLocalPinAuthConnectSessionResult::session_unavailable;
+}
+
+void finish_connect_session_error_for_local_pin_auth(const char*)
+{
+    agent_q::connect_approval_clear();
+    agent_q::protocol_pin_approval_clear();
+}
+
+void finish_connect_approved_for_local_pin_auth(const char* request_id)
+{
+    agent_q::connect_approval_clear();
+    if (request_id != nullptr && request_id[0] != '\0') {
+        const bool written = write_connect_approved_response(request_id);
+        if (!written) {
+            agent_q::usb_response_log_write_failure("connect", request_id);
+        }
+    }
+    agent_q::protocol_pin_approval_clear();
+    log_connect_pin_approved_for_local_pin_auth(request_id);
+}
+
 void execute_user_signing_for_local_pin_auth(const char* request_id)
 {
     execute_user_signing_critical_section_and_finish(request_id);
@@ -2455,16 +2540,15 @@ agent_q::AgentQLocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops()
         draw_local_pin_auth_processing_overlay,
         local_pin_auth_ui_show_message,
         local_pin_auth_record_material_failure,
-        agent_q::connect_approval_clear,
-        agent_q::connect_approval_return_to_review,
+        write_connect_rejected_from_pin_for_local_pin_auth,
+        finish_connect_rejection_cleanup_for_local_pin_auth,
+        return_connect_review_from_pin_for_local_pin_auth,
         show_connect_review,
-        replace_active_session,
-        agent_q::usb_response_write_error,
-        write_connect_approved_response,
-        agent_q::usb_response_write_connect_rejected,
-        log_connect_session_creation_failed_for_local_pin_auth,
-        log_connect_pin_approved_for_local_pin_auth,
+        replace_connect_session_from_pin_for_local_pin_auth,
+        finish_connect_session_error_for_local_pin_auth,
+        finish_connect_approved_for_local_pin_auth,
         agent_q::usb_response_log_write_failure,
+        agent_q::usb_response_write_error,
         show_policy_update_review,
         require_pending_policy_update_session,
         write_policy_propose_outcome_with_current_policy,

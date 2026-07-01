@@ -21,6 +21,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
 LOCAL_PIN_AUTH_UI_SOURCE="${AGENT_Q_DIR}/agent_q_local_pin_auth_ui_flow.cpp"
 MODAL_TRANSITION_SOURCE="${AGENT_Q_DIR}/agent_q_modal_transition.cpp"
+USB_REQUEST_SERVER_SOURCE="${AGENT_Q_DIR}/agent_q_usb_request_server.cpp"
 CXX_BIN="${CXX:-c++}"
 
 check_modal_transition_owner_present() {
@@ -240,6 +241,61 @@ check_settings_sui_clear_keeps_panel_until_completion() {
   if [[ -n "${clear_before_complete_line}" ]]; then
     echo "FAILED: Sui zkLogin Settings clear must keep the processing panel visible until proof clear completes" >&2
     echo "clear_before_complete_line=${clear_before_complete_line} complete_setting_line=${complete_setting_line}" >&2
+    exit 1
+  fi
+}
+
+check_connect_pin_completion_uses_connect_callbacks() {
+  if grep -Eq 'ops\.(write_connect_rejected\(|write_connect_approved|replace_active_session|clear_connect_approval|connect_approval_return_to_review|log_connect_session_creation_failed|log_connect_pin_approved)' "${LOCAL_PIN_AUTH_UI_SOURCE}"; then
+    echo "FAILED: local PIN UI flow must use semantic connect completion callbacks instead of raw connect response/session/approval ops" >&2
+    exit 1
+  fi
+
+  for required in \
+    'write_connect_rejected_from_pin(' \
+    'finish_connect_rejection_cleanup(' \
+    'return_connect_review_from_pin(' \
+    'replace_connect_session_from_pin(' \
+    'finish_connect_session_error(' \
+    'finish_connect_approved('; do
+    if ! grep -q "${required}" "${LOCAL_PIN_AUTH_UI_SOURCE}"; then
+      echo "FAILED: local PIN UI flow is missing semantic connect callback ${required}" >&2
+      exit 1
+    fi
+  done
+
+  for required in \
+    'write_connect_rejected_from_pin_for_local_pin_auth' \
+    'finish_connect_rejection_cleanup_for_local_pin_auth' \
+    'return_connect_review_from_pin_for_local_pin_auth' \
+    'replace_connect_session_from_pin_for_local_pin_auth' \
+    'finish_connect_session_error_for_local_pin_auth' \
+    'finish_connect_approved_for_local_pin_auth'; do
+    if ! grep -q "${required}" "${USB_REQUEST_SERVER_SOURCE}"; then
+      echo "FAILED: StackChan request server is missing connect PIN callback ${required}" >&2
+      exit 1
+    fi
+  done
+
+  local begin_connect_draw_failure="${TMP_DIR}/local_pin_auth_ui_begin_connect_draw_failure.cpp"
+  local write_line
+  local wipe_line
+  local cleanup_line
+
+  awk '
+    /if \(!draw_local_pin_panel\(ops\)\)/ { in_block = 1 }
+    in_block { print }
+    in_block && /return false;/ { exit }
+  ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${begin_connect_draw_failure}"
+
+  write_line="$(grep -En 'write_connect_rejected_from_pin' "${begin_connect_draw_failure}" | head -n 1 | cut -d: -f1 || true)"
+  wipe_line="$(grep -En 'wipe_local_pin_auth_scratch' "${begin_connect_draw_failure}" | head -n 1 | cut -d: -f1 || true)"
+  cleanup_line="$(grep -En 'finish_connect_rejection_cleanup' "${begin_connect_draw_failure}" | head -n 1 | cut -d: -f1 || true)"
+
+  if [[ -z "${write_line}" || -z "${wipe_line}" || -z "${cleanup_line}" ||
+        "${write_line}" -ge "${wipe_line}" || "${wipe_line}" -ge "${cleanup_line}" ]]; then
+    echo "FAILED: connect PIN display-allocation failure must write rejection before wiping scratch and clear pending state after wiping scratch" >&2
+    echo "write_line=${write_line:-missing} wipe_line=${wipe_line:-missing} cleanup_line=${cleanup_line:-missing}" >&2
     exit 1
   fi
 }
@@ -637,6 +693,7 @@ check_local_pin_ui_handler_timeout_order \
 check_local_pin_worker_timeout_order
 check_settings_policy_reset_keeps_panel_until_completion
 check_settings_sui_clear_keeps_panel_until_completion
+check_connect_pin_completion_uses_connect_callbacks
 check_policy_update_keeps_panel_until_commit
 check_user_signing_keeps_panel_until_signing_work
 check_modal_transition_next_panel_order

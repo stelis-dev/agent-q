@@ -43,16 +43,18 @@ struct AgentQLocalPinAuthUiFlowOps {
     bool (*draw_processing_overlay_on_current_panel)(AgentQUiPanelKind kind);
     void (*show_message)(const char* message, AgentQMessageKind kind);
     void (*record_material_failure)(AgentQPersistentMaterialRuntimeFailure failure);
-    void (*clear_connect_approval)();
-    bool (*connect_approval_return_to_review)(TickType_t now, AgentQTimeoutWindow window);
+    void (*write_connect_rejected_from_pin)(
+        const char* request_id,
+        AgentQLocalPinAuthConnectRejectReason reason);
+    void (*finish_connect_rejection_cleanup)(bool clear_protocol_pin);
+    bool (*return_connect_review_from_pin)(TickType_t now, AgentQTimeoutWindow window);
     void (*show_connect_review)();
-    bool (*replace_active_session)();
-    bool (*write_error)(const char* id, const char* code);
-    bool (*write_connect_approved)(const char* id);
-    bool (*write_connect_rejected)(const char* id, const char* code);
-    void (*log_connect_session_creation_failed)(const char* id);
-    void (*log_connect_pin_approved)(const char* id);
+    AgentQLocalPinAuthConnectSessionResult (*replace_connect_session_from_pin)(
+        const char* request_id);
+    void (*finish_connect_session_error)(const char* request_id);
+    void (*finish_connect_approved)(const char* request_id);
     void (*log_write_failure)(const char* response_type, const char* id);
+    bool (*write_error)(const char* id, const char* code);
     bool (*show_policy_update_review)();
     bool (*require_pending_policy_update_session)(const char* request_id);
     bool (*write_policy_propose_outcome_with_current_policy)(

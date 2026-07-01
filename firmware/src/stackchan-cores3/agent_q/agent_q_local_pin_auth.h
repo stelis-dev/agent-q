@@ -93,6 +93,19 @@ enum class AgentQLocalPinAuthSettingsCompletionResult {
     sui_clear_failed,
 };
 
+enum class AgentQLocalPinAuthConnectRejectReason {
+    invalid_state,
+    ui_error,
+    timeout,
+    user_rejected,
+    auth_unavailable,
+};
+
+enum class AgentQLocalPinAuthConnectSessionResult {
+    connected,
+    session_unavailable,
+};
+
 enum class AgentQLocalPinAuthLockoutReleaseResult {
     not_released,
     released,

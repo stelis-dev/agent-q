@@ -109,6 +109,61 @@ void log_warn(const AgentQLocalPinAuthUiFlowOps& ops, const char* message)
     }
 }
 
+void write_connect_rejected_from_pin(
+    const AgentQLocalPinAuthUiFlowOps& ops,
+    const char* request_id,
+    AgentQLocalPinAuthConnectRejectReason reason)
+{
+    if (ops.write_connect_rejected_from_pin != nullptr) {
+        ops.write_connect_rejected_from_pin(request_id, reason);
+    }
+}
+
+void finish_connect_rejection_cleanup(
+    const AgentQLocalPinAuthUiFlowOps& ops,
+    bool clear_protocol_pin)
+{
+    if (ops.finish_connect_rejection_cleanup != nullptr) {
+        ops.finish_connect_rejection_cleanup(clear_protocol_pin);
+    }
+}
+
+bool return_connect_review_from_pin(
+    const AgentQLocalPinAuthUiFlowOps& ops,
+    TickType_t now,
+    AgentQTimeoutWindow window)
+{
+    return ops.return_connect_review_from_pin != nullptr &&
+           ops.return_connect_review_from_pin(now, window);
+}
+
+AgentQLocalPinAuthConnectSessionResult replace_connect_session_from_pin(
+    const AgentQLocalPinAuthUiFlowOps& ops,
+    const char* request_id)
+{
+    return ops.replace_connect_session_from_pin != nullptr
+               ? ops.replace_connect_session_from_pin(request_id)
+               : AgentQLocalPinAuthConnectSessionResult::session_unavailable;
+}
+
+void finish_connect_session_error(
+    const AgentQLocalPinAuthUiFlowOps& ops,
+    const char* request_id)
+{
+    if (ops.finish_connect_session_error != nullptr) {
+        ops.finish_connect_session_error(request_id);
+    }
+}
+
+void finish_connect_approved(
+    const AgentQLocalPinAuthUiFlowOps& ops,
+    const char* request_id)
+{
+    if (ops.finish_connect_approved != nullptr) {
+        ops.finish_connect_approved(request_id);
+    }
+}
+
 void wipe_local_pin_auth_scratch(
     const AgentQLocalPinAuthUiFlowOps& ops,
     const char* reason)
@@ -381,15 +436,11 @@ void handle_local_pin_auth_display_failure(
             request_id,
             sizeof(request_id))) {
         wipe_local_pin_auth_scratch(ops, reason);
-        if (ops.write_connect_rejected != nullptr) {
-            ops.write_connect_rejected(
-                request_id,
-                "ui_error");
-        }
-        if (ops.clear_connect_approval != nullptr) {
-            ops.clear_connect_approval();
-        }
-        protocol_pin_approval_clear();
+        write_connect_rejected_from_pin(
+            ops,
+            request_id,
+            AgentQLocalPinAuthConnectRejectReason::ui_error);
+        finish_connect_rejection_cleanup(ops, true);
         if (clear_panel) {
             complete_local_pin_processing_to_message(
                 ops,
@@ -444,15 +495,11 @@ bool finish_request_backed_local_pin_input_timeout_if_reached(
             }
             if (purpose == AgentQLocalPinAuthPurpose::connect &&
                 request_id[0] != '\0') {
-                if (ops.write_connect_rejected != nullptr) {
-                    ops.write_connect_rejected(
-                        request_id,
-                        "timeout");
-                }
-                if (ops.clear_connect_approval != nullptr) {
-                    ops.clear_connect_approval();
-                }
-                protocol_pin_approval_clear();
+                write_connect_rejected_from_pin(
+                    ops,
+                    request_id,
+                    AgentQLocalPinAuthConnectRejectReason::timeout);
+                finish_connect_rejection_cleanup(ops, true);
                 complete_local_pin_processing_to_message(
                     ops,
                     "Connection timed out",
@@ -1028,42 +1075,31 @@ bool local_pin_auth_ui_begin_connect(
             now,
             now + pdMS_TO_TICKS(ops.connect_approval_ms));
     if (!protocol_pin_approval_begin_connect(request_id, now, request_window)) {
-        if (ops.write_connect_rejected != nullptr) {
-            ops.write_connect_rejected(
-                request_id,
-                "invalid_state");
-        }
-        if (ops.clear_connect_approval != nullptr) {
-            ops.clear_connect_approval();
-        }
+        write_connect_rejected_from_pin(
+            ops,
+            request_id,
+            AgentQLocalPinAuthConnectRejectReason::invalid_state);
+        finish_connect_rejection_cleanup(ops, false);
         show_message(ops, "Connect unavailable", AgentQMessageKind::error);
         return false;
     }
     if (!local_pin_auth_begin_connect(now, request_window)) {
-        if (ops.write_connect_rejected != nullptr) {
-            ops.write_connect_rejected(
-                request_id,
-                "invalid_state");
-        }
-        if (ops.clear_connect_approval != nullptr) {
-            ops.clear_connect_approval();
-        }
-        protocol_pin_approval_clear();
+        write_connect_rejected_from_pin(
+            ops,
+            request_id,
+            AgentQLocalPinAuthConnectRejectReason::invalid_state);
+        finish_connect_rejection_cleanup(ops, true);
         show_message(ops, "Connect unavailable", AgentQMessageKind::error);
         return false;
     }
 
     if (!draw_local_pin_panel(ops)) {
-        if (ops.write_connect_rejected != nullptr) {
-            ops.write_connect_rejected(
-                request_id,
-                "ui_error");
-        }
+        write_connect_rejected_from_pin(
+            ops,
+            request_id,
+            AgentQLocalPinAuthConnectRejectReason::ui_error);
         wipe_local_pin_auth_scratch(ops, "connect PIN display allocation failed");
-        if (ops.clear_connect_approval != nullptr) {
-            ops.clear_connect_approval();
-        }
-        protocol_pin_approval_clear();
+        finish_connect_rejection_cleanup(ops, true);
         show_message(ops, "Display error", AgentQMessageKind::error);
         return false;
     }
@@ -1413,21 +1449,12 @@ void local_pin_auth_ui_cancel(
     if (purpose == AgentQLocalPinAuthPurpose::connect &&
         request_id[0] != '\0') {
         wipe_local_pin_auth_scratch(ops, "local PIN authorization canceled");
-        protocol_pin_approval_clear();
-        if (ops.connect_approval_return_to_review == nullptr ||
-            !ops.connect_approval_return_to_review(
+        if (!return_connect_review_from_pin(
+                ops,
                 now,
                 timeout_window_from_deadline(
                     now,
                     now + pdMS_TO_TICKS(ops.connect_approval_ms)))) {
-            if (ops.write_connect_rejected != nullptr) {
-                ops.write_connect_rejected(
-                    request_id,
-                    "invalid_state");
-            }
-            if (ops.clear_connect_approval != nullptr) {
-                ops.clear_connect_approval();
-            }
             complete_local_pin_processing_to_message(
                 ops,
                 "Connect unavailable",
@@ -1786,15 +1813,11 @@ void local_pin_auth_ui_handle_verify_worker_result(
                     AgentQSuiZkLoginProposalTerminalResult::consistency_error);
                 return;
             }
-            if (ops.write_connect_rejected != nullptr) {
-                ops.write_connect_rejected(
-                    request_id,
-                    "invalid_state");
-            }
-            if (ops.clear_connect_approval != nullptr) {
-                ops.clear_connect_approval();
-            }
-            protocol_pin_approval_clear();
+            write_connect_rejected_from_pin(
+                ops,
+                request_id,
+                AgentQLocalPinAuthConnectRejectReason::invalid_state);
+            finish_connect_rejection_cleanup(ops, true);
         }
         complete_local_pin_processing_to_message(
             ops,
@@ -1870,15 +1893,11 @@ void local_pin_auth_ui_handle_verify_worker_result(
                 return;
             }
             if (request_id[0] != '\0') {
-                if (ops.write_connect_rejected != nullptr) {
-                    ops.write_connect_rejected(
-                        request_id,
-                        "auth_unavailable");
-                }
-                if (ops.clear_connect_approval != nullptr) {
-                    ops.clear_connect_approval();
-                }
-                protocol_pin_approval_clear();
+                write_connect_rejected_from_pin(
+                    ops,
+                    request_id,
+                    AgentQLocalPinAuthConnectRejectReason::auth_unavailable);
+                finish_connect_rejection_cleanup(ops, true);
             }
             complete_local_pin_processing_to_message(
                 ops,
@@ -1967,19 +1986,11 @@ void local_pin_auth_ui_handle_verify_worker_result(
                 AgentQLocalPinAuthPurpose::connect,
                 request_id,
                 sizeof(request_id));
-            if (ops.replace_active_session == nullptr ||
-                !ops.replace_active_session()) {
-                if (request_id[0] != '\0' && ops.write_error != nullptr) {
-                    ops.write_error(request_id, "rng_unavailable");
-                }
-                if (ops.log_connect_session_creation_failed != nullptr) {
-                    ops.log_connect_session_creation_failed(request_id);
-                }
+            const AgentQLocalPinAuthConnectSessionResult session_result =
+                replace_connect_session_from_pin(ops, request_id);
+            if (session_result == AgentQLocalPinAuthConnectSessionResult::session_unavailable) {
                 wipe_local_pin_auth_scratch(ops, "connect PIN session creation failed");
-                if (ops.clear_connect_approval != nullptr) {
-                    ops.clear_connect_approval();
-                }
-                protocol_pin_approval_clear();
+                finish_connect_session_error(ops, request_id);
                 complete_local_pin_processing_to_message(
                     ops,
                     "RNG error",
@@ -1987,21 +1998,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
                 return;
             }
             wipe_local_pin_auth_scratch(ops, "connect PIN approved");
-            if (ops.clear_connect_approval != nullptr) {
-                ops.clear_connect_approval();
-            }
-            if (request_id[0] != '\0') {
-                const bool written =
-                    ops.write_connect_approved != nullptr &&
-                    ops.write_connect_approved(request_id);
-                if (!written && ops.log_write_failure != nullptr) {
-                    ops.log_write_failure("connect", request_id);
-                }
-            }
-            protocol_pin_approval_clear();
-            if (ops.log_connect_pin_approved != nullptr) {
-                ops.log_connect_pin_approved(request_id);
-            }
+            finish_connect_approved(ops, request_id);
             complete_local_pin_processing_to_message(
                 ops,
                 "Connected",
@@ -2213,15 +2210,11 @@ void local_pin_auth_ui_clear_if_needed(const AgentQLocalPinAuthUiFlowOps& ops)
                 return;
             }
             if (request_id[0] != '\0') {
-                if (ops.write_connect_rejected != nullptr) {
-                    ops.write_connect_rejected(
-                        request_id,
-                        "auth_unavailable");
-                }
-                if (ops.clear_connect_approval != nullptr) {
-                    ops.clear_connect_approval();
-                }
-                protocol_pin_approval_clear();
+                write_connect_rejected_from_pin(
+                    ops,
+                    request_id,
+                    AgentQLocalPinAuthConnectRejectReason::auth_unavailable);
+                finish_connect_rejection_cleanup(ops, true);
             }
             complete_local_pin_processing_to_message(
                 ops,
@@ -2246,15 +2239,11 @@ void local_pin_auth_ui_clear_if_needed(const AgentQLocalPinAuthUiFlowOps& ops)
             return;
         }
         if (request_id[0] != '\0') {
-            if (ops.write_connect_rejected != nullptr) {
-                ops.write_connect_rejected(
-                    request_id,
-                    "timeout");
-            }
-            if (ops.clear_connect_approval != nullptr) {
-                ops.clear_connect_approval();
-            }
-            protocol_pin_approval_clear();
+            write_connect_rejected_from_pin(
+                ops,
+                request_id,
+                AgentQLocalPinAuthConnectRejectReason::timeout);
+            finish_connect_rejection_cleanup(ops, true);
             complete_local_pin_processing_to_message(
                 ops,
                 "Connection timed out",
@@ -2418,15 +2407,11 @@ void local_pin_auth_ui_clear_if_needed(const AgentQLocalPinAuthUiFlowOps& ops)
             }
             if (purpose == AgentQLocalPinAuthPurpose::connect &&
                 request_id[0] != '\0') {
-                if (ops.write_connect_rejected != nullptr) {
-                    ops.write_connect_rejected(
-                        request_id,
-                        "ui_error");
-                }
-                if (ops.clear_connect_approval != nullptr) {
-                    ops.clear_connect_approval();
-                }
-                protocol_pin_approval_clear();
+                write_connect_rejected_from_pin(
+                    ops,
+                    request_id,
+                    AgentQLocalPinAuthConnectRejectReason::ui_error);
+                finish_connect_rejection_cleanup(ops, true);
             }
             wipe_local_pin_auth_scratch(ops, "local PIN UI recovery failed");
             show_message(ops, "Display error", AgentQMessageKind::error);
@@ -2467,15 +2452,12 @@ void local_pin_auth_ui_clear_if_needed(const AgentQLocalPinAuthUiFlowOps& ops)
             }
             return;
         }
-        if (ops.write_connect_rejected != nullptr) {
-            ops.write_connect_rejected(
-                request_id,
-                expired ? "timeout" : "user_rejected");
-        }
-        if (ops.clear_connect_approval != nullptr) {
-            ops.clear_connect_approval();
-        }
-        protocol_pin_approval_clear();
+        write_connect_rejected_from_pin(
+            ops,
+            request_id,
+            expired ? AgentQLocalPinAuthConnectRejectReason::timeout
+                    : AgentQLocalPinAuthConnectRejectReason::user_rejected);
+        finish_connect_rejection_cleanup(ops, true);
         if (panel_active) {
             complete_local_pin_processing_to_message(
                 ops,
