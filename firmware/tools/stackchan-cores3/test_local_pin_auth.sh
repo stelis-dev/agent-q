@@ -706,6 +706,103 @@ int main()
     }
 
     {
+        using Purpose = agent_q::AgentQLocalPinAuthPurpose;
+        using Commit = agent_q::AgentQLocalPinAuthCommitResult;
+        using Completion = agent_q::AgentQLocalPinAuthSettingsCompletionResult;
+
+        expect(agent_q::local_pin_auth_settings_purpose(
+                   Purpose::settings_human_approval_input),
+               "human approval setting is classified as settings-owned");
+        expect(agent_q::local_pin_auth_settings_purpose(
+                   Purpose::settings_sui_zklogin_clear),
+               "Sui zkLogin clear is classified as settings-owned");
+        expect(!agent_q::local_pin_auth_settings_purpose(Purpose::connect),
+               "connect is not classified as settings-owned");
+        expect(agent_q::local_pin_auth_settings_start_available(),
+               "settings start is available when local PIN auth is inactive");
+        agent_q::test_set_tick(355);
+        expect(agent_q::local_pin_auth_begin_connect(355, pin_window(355, 385)),
+               "connect PIN auth begins before settings-start availability test");
+        expect(!agent_q::local_pin_auth_settings_start_available(),
+               "settings start is unavailable while local PIN auth is active");
+        agent_q::local_pin_auth_clear_flow();
+        expect(agent_q::local_pin_auth_target_human_approval_input_mode(
+                   agent_q::AgentQHumanApprovalInputMode::pin) ==
+                   agent_q::AgentQHumanApprovalInputMode::confirm,
+               "human approval input target toggles PIN to Confirm");
+        expect(agent_q::local_pin_auth_target_human_approval_input_mode(
+                   agent_q::AgentQHumanApprovalInputMode::confirm) ==
+                   agent_q::AgentQHumanApprovalInputMode::pin,
+               "human approval input target toggles Confirm to PIN");
+        expect(agent_q::local_pin_auth_target_signing_authorization_mode(
+                   agent_q::AgentQSigningAuthorizationMode::policy) ==
+                   agent_q::AgentQSigningAuthorizationMode::user,
+               "signing authorization target toggles Policy to User");
+        expect(agent_q::local_pin_auth_target_signing_authorization_mode(
+                   agent_q::AgentQSigningAuthorizationMode::user) ==
+                   agent_q::AgentQSigningAuthorizationMode::policy,
+               "signing authorization target toggles User to Policy");
+        expect(agent_q::local_pin_auth_target_sui_accept_gas_sponsor_settings(
+                   agent_q::AgentQSuiAccountSettings{false}).accept_gas_sponsor,
+               "Sui gas sponsor target toggles disabled to enabled");
+        expect(!agent_q::local_pin_auth_target_sui_accept_gas_sponsor_settings(
+                   agent_q::AgentQSuiAccountSettings{true}).accept_gas_sponsor,
+               "Sui gas sponsor target toggles enabled to disabled");
+        expect(agent_q::local_pin_auth_settings_completion_for_commit_result(
+                   Purpose::connect,
+                   Commit::setting_stored) == Completion::not_ready,
+               "non-settings purpose does not produce a settings completion");
+        expect(agent_q::local_pin_auth_settings_completion_for_commit_result(
+                   Purpose::settings_policy_reset,
+                   Commit::setting_stored) == Completion::not_ready,
+               "policy reset purpose does not consume setting commit results");
+        expect(agent_q::local_pin_auth_settings_completion_for_commit_result(
+                   Purpose::settings_human_approval_input,
+                   Commit::pin_changed) == Completion::not_ready,
+               "non-PIN-change setting purpose does not consume PIN change results");
+        expect(agent_q::local_pin_auth_settings_completion_for_commit_result(
+                   Purpose::settings_human_approval_input,
+                   Commit::setting_stored) == Completion::settings_saved,
+               "human approval setting save returns settings completion");
+        expect(agent_q::local_pin_auth_settings_completion_for_commit_result(
+                   Purpose::settings_signing_mode,
+                   Commit::storage_error) == Completion::settings_error,
+               "signing mode storage failure returns settings error completion");
+        expect(agent_q::local_pin_auth_settings_completion_for_commit_result(
+                   Purpose::settings_sui_accept_gas_sponsor,
+                   Commit::setting_stored) == Completion::sui_settings_saved,
+               "Sui settings save returns Sui settings completion");
+        expect(agent_q::local_pin_auth_settings_completion_for_commit_result(
+                   Purpose::settings_sui_accept_gas_sponsor,
+                   Commit::storage_error) == Completion::sui_settings_error,
+               "Sui settings storage failure returns Sui settings error completion");
+        expect(agent_q::local_pin_auth_settings_completion_for_commit_result(
+                   Purpose::settings_change_pin,
+                   Commit::pin_changed) == Completion::pin_changed,
+               "PIN change success returns PIN changed completion");
+        expect(agent_q::local_pin_auth_settings_completion_for_commit_result(
+                   Purpose::settings_change_pin,
+                   Commit::pin_change_storage_error) == Completion::pin_change_failed,
+               "PIN change storage failure returns PIN change failed completion");
+        expect(agent_q::local_pin_auth_settings_completion_for_commit_result(
+                   Purpose::settings_change_pin,
+                   Commit::pin_change_auth_unavailable) == Completion::auth_error,
+               "PIN change auth failure returns auth error completion");
+        expect(agent_q::local_pin_auth_settings_completion_for_policy_reset(true) ==
+                   Completion::policy_reset,
+               "policy reset success returns policy reset completion");
+        expect(agent_q::local_pin_auth_settings_completion_for_policy_reset(false) ==
+                   Completion::policy_reset_failed,
+               "policy reset failure returns policy reset failed completion");
+        expect(agent_q::local_pin_auth_settings_completion_for_sui_zklogin_clear(true) ==
+                   Completion::sui_proof_cleared,
+               "Sui zkLogin clear success returns Sui proof cleared completion");
+        expect(agent_q::local_pin_auth_settings_completion_for_sui_zklogin_clear(false) ==
+                   Completion::sui_clear_failed,
+               "Sui zkLogin clear failure returns Sui clear failed completion");
+    }
+
+    {
         agent_q::test_set_tick(360);
         expect(agent_q::local_pin_auth_begin_policy_update(360, pin_window(360, 420)),
                "policy update PIN auth begins before capped retry test");

@@ -78,6 +78,21 @@ enum class AgentQLocalPinAuthCommitResult {
     pin_change_auth_unavailable,
 };
 
+enum class AgentQLocalPinAuthSettingsCompletionResult {
+    not_ready,
+    settings_saved,
+    settings_error,
+    sui_settings_saved,
+    sui_settings_error,
+    pin_changed,
+    pin_change_failed,
+    auth_error,
+    policy_reset,
+    policy_reset_failed,
+    sui_proof_cleared,
+    sui_clear_failed,
+};
+
 enum class AgentQLocalPinAuthLockoutReleaseResult {
     not_released,
     released,
@@ -99,6 +114,14 @@ struct AgentQLocalPinAuthSnapshot {
 };
 
 AgentQLocalPinAuthSnapshot local_pin_auth_snapshot(TickType_t now);
+bool local_pin_auth_settings_start_available();
+bool local_pin_auth_settings_purpose(AgentQLocalPinAuthPurpose purpose);
+AgentQHumanApprovalInputMode local_pin_auth_target_human_approval_input_mode(
+    AgentQHumanApprovalInputMode current_mode);
+AgentQSigningAuthorizationMode local_pin_auth_target_signing_authorization_mode(
+    AgentQSigningAuthorizationMode current_mode);
+AgentQSuiAccountSettings local_pin_auth_target_sui_accept_gas_sponsor_settings(
+    const AgentQSuiAccountSettings& current_settings);
 bool local_pin_auth_flow_active();
 bool local_pin_auth_accepts_keypad_input();
 bool local_pin_auth_deadline_expired(TickType_t now);
@@ -144,5 +167,13 @@ AgentQLocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
 AgentQLocalPinAuthCommitResult local_pin_auth_complete_pin_change_job(
     const AgentQLocalAuthWorkerResult& result);
 AgentQLocalPinAuthCommitResult local_pin_auth_commit_if_ready(TickType_t now);
+AgentQLocalPinAuthSettingsCompletionResult
+local_pin_auth_settings_completion_for_commit_result(
+    AgentQLocalPinAuthPurpose purpose,
+    AgentQLocalPinAuthCommitResult result);
+AgentQLocalPinAuthSettingsCompletionResult
+local_pin_auth_settings_completion_for_policy_reset(bool stored);
+AgentQLocalPinAuthSettingsCompletionResult
+local_pin_auth_settings_completion_for_sui_zklogin_clear(bool cleared);
 
 }  // namespace agent_q

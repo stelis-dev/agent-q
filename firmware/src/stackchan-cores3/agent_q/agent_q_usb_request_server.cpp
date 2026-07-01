@@ -2331,13 +2331,23 @@ bool sui_zklogin_proof_clear_available()
            agent_q::AgentQSuiZkLoginProofRecordStatus::missing;
 }
 
-bool clear_sui_zklogin_proof_for_settings()
+agent_q::AgentQLocalPinAuthSettingsCompletionResult
+complete_policy_reset_setting_for_local_pin_auth()
+{
+    return agent_q::local_pin_auth_settings_completion_for_policy_reset(
+        agent_q::store_default_policy());
+}
+
+agent_q::AgentQLocalPinAuthSettingsCompletionResult
+complete_sui_zklogin_clear_setting_for_local_pin_auth()
 {
     const bool wiped = agent_q::wipe_sui_zklogin_proof_record();
     clear_active_session();
-    return wiped &&
-           agent_q::sui_zklogin_proof_record_status() ==
-               agent_q::AgentQSuiZkLoginProofRecordStatus::missing;
+    const bool cleared =
+        wiped &&
+        agent_q::sui_zklogin_proof_record_status() ==
+            agent_q::AgentQSuiZkLoginProofRecordStatus::missing;
+    return agent_q::local_pin_auth_settings_completion_for_sui_zklogin_clear(cleared);
 }
 
 bool begin_settings_pin_auth_handoff_for_local_pin_auth(const char* stale_log_message)
@@ -2433,9 +2443,9 @@ agent_q::AgentQLocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops()
         agent_q::read_human_approval_input_mode,
         agent_q::read_signing_authorization_mode,
         agent_q::read_sui_account_settings,
-        agent_q::store_default_policy,
+        complete_policy_reset_setting_for_local_pin_auth,
         sui_zklogin_proof_clear_available,
-        clear_sui_zklogin_proof_for_settings,
+        complete_sui_zklogin_clear_setting_for_local_pin_auth,
         begin_settings_pin_auth_handoff_for_local_pin_auth,
         restore_settings_menu_for_local_pin_auth,
         restore_sui_settings_for_local_pin_auth,

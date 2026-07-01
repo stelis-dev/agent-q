@@ -153,6 +153,13 @@ bool resume_after_wrong_pin(TickType_t now)
     return true;
 }
 
+bool settings_commit_purpose(AgentQLocalPinAuthPurpose purpose)
+{
+    return purpose == AgentQLocalPinAuthPurpose::settings_human_approval_input ||
+           purpose == AgentQLocalPinAuthPurpose::settings_signing_mode ||
+           purpose == AgentQLocalPinAuthPurpose::settings_sui_accept_gas_sponsor;
+}
+
 }  // namespace
 
 AgentQLocalPinAuthSnapshot local_pin_auth_snapshot(TickType_t now)
@@ -175,6 +182,45 @@ AgentQLocalPinAuthSnapshot local_pin_auth_snapshot(TickType_t now)
         processing_stage(g_state.stage),
         pin_attempt_locked_at(now),
     };
+}
+
+bool local_pin_auth_settings_start_available()
+{
+    return !g_state.flow_active();
+}
+
+bool local_pin_auth_settings_purpose(AgentQLocalPinAuthPurpose purpose)
+{
+    return purpose == AgentQLocalPinAuthPurpose::settings_human_approval_input ||
+           purpose == AgentQLocalPinAuthPurpose::settings_signing_mode ||
+           purpose == AgentQLocalPinAuthPurpose::settings_policy_reset ||
+           purpose == AgentQLocalPinAuthPurpose::settings_change_pin ||
+           purpose == AgentQLocalPinAuthPurpose::settings_sui_accept_gas_sponsor ||
+           purpose == AgentQLocalPinAuthPurpose::settings_sui_zklogin_clear;
+}
+
+AgentQHumanApprovalInputMode local_pin_auth_target_human_approval_input_mode(
+    AgentQHumanApprovalInputMode current_mode)
+{
+    return current_mode == AgentQHumanApprovalInputMode::pin
+               ? AgentQHumanApprovalInputMode::confirm
+               : AgentQHumanApprovalInputMode::pin;
+}
+
+AgentQSigningAuthorizationMode local_pin_auth_target_signing_authorization_mode(
+    AgentQSigningAuthorizationMode current_mode)
+{
+    return current_mode == AgentQSigningAuthorizationMode::policy
+               ? AgentQSigningAuthorizationMode::user
+               : AgentQSigningAuthorizationMode::policy;
+}
+
+AgentQSuiAccountSettings local_pin_auth_target_sui_accept_gas_sponsor_settings(
+    const AgentQSuiAccountSettings& current_settings)
+{
+    AgentQSuiAccountSettings target_settings = current_settings;
+    target_settings.accept_gas_sponsor = !current_settings.accept_gas_sponsor;
+    return target_settings;
 }
 
 bool local_pin_auth_flow_active()
@@ -712,6 +758,67 @@ AgentQLocalPinAuthCommitResult local_pin_auth_commit_if_ready(TickType_t now)
     }
 
     return AgentQLocalPinAuthCommitResult::setting_stored;
+}
+
+AgentQLocalPinAuthSettingsCompletionResult
+local_pin_auth_settings_completion_for_commit_result(
+    AgentQLocalPinAuthPurpose purpose,
+    AgentQLocalPinAuthCommitResult result)
+{
+    if (!local_pin_auth_settings_purpose(purpose)) {
+        return AgentQLocalPinAuthSettingsCompletionResult::not_ready;
+    }
+
+    switch (result) {
+        case AgentQLocalPinAuthCommitResult::not_ready:
+            return AgentQLocalPinAuthSettingsCompletionResult::not_ready;
+        case AgentQLocalPinAuthCommitResult::setting_stored:
+            if (!settings_commit_purpose(purpose)) {
+                return AgentQLocalPinAuthSettingsCompletionResult::not_ready;
+            }
+            return purpose == AgentQLocalPinAuthPurpose::settings_sui_accept_gas_sponsor
+                       ? AgentQLocalPinAuthSettingsCompletionResult::sui_settings_saved
+                       : AgentQLocalPinAuthSettingsCompletionResult::settings_saved;
+        case AgentQLocalPinAuthCommitResult::pin_changed:
+            if (purpose != AgentQLocalPinAuthPurpose::settings_change_pin) {
+                return AgentQLocalPinAuthSettingsCompletionResult::not_ready;
+            }
+            return AgentQLocalPinAuthSettingsCompletionResult::pin_changed;
+        case AgentQLocalPinAuthCommitResult::storage_error:
+            if (!settings_commit_purpose(purpose)) {
+                return AgentQLocalPinAuthSettingsCompletionResult::not_ready;
+            }
+            return purpose == AgentQLocalPinAuthPurpose::settings_sui_accept_gas_sponsor
+                       ? AgentQLocalPinAuthSettingsCompletionResult::sui_settings_error
+                       : AgentQLocalPinAuthSettingsCompletionResult::settings_error;
+        case AgentQLocalPinAuthCommitResult::pin_change_storage_error:
+            if (purpose != AgentQLocalPinAuthPurpose::settings_change_pin) {
+                return AgentQLocalPinAuthSettingsCompletionResult::not_ready;
+            }
+            return AgentQLocalPinAuthSettingsCompletionResult::pin_change_failed;
+        case AgentQLocalPinAuthCommitResult::pin_change_auth_unavailable:
+            if (purpose != AgentQLocalPinAuthPurpose::settings_change_pin) {
+                return AgentQLocalPinAuthSettingsCompletionResult::not_ready;
+            }
+            return AgentQLocalPinAuthSettingsCompletionResult::auth_error;
+    }
+    return AgentQLocalPinAuthSettingsCompletionResult::not_ready;
+}
+
+AgentQLocalPinAuthSettingsCompletionResult
+local_pin_auth_settings_completion_for_policy_reset(bool stored)
+{
+    return stored
+               ? AgentQLocalPinAuthSettingsCompletionResult::policy_reset
+               : AgentQLocalPinAuthSettingsCompletionResult::policy_reset_failed;
+}
+
+AgentQLocalPinAuthSettingsCompletionResult
+local_pin_auth_settings_completion_for_sui_zklogin_clear(bool cleared)
+{
+    return cleared
+               ? AgentQLocalPinAuthSettingsCompletionResult::sui_proof_cleared
+               : AgentQLocalPinAuthSettingsCompletionResult::sui_clear_failed;
 }
 
 }  // namespace agent_q

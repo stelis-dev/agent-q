@@ -25,9 +25,9 @@ struct AgentQLocalPinAuthUiFlowOps {
     bool (*read_human_approval_input_mode)(AgentQHumanApprovalInputMode* output);
     bool (*read_signing_authorization_mode)(AgentQSigningAuthorizationMode* output);
     bool (*read_sui_account_settings)(AgentQSuiAccountSettings* output);
-    bool (*store_default_policy)();
+    AgentQLocalPinAuthSettingsCompletionResult (*complete_policy_reset_setting)();
     bool (*sui_zklogin_proof_clear_available)();
-    bool (*clear_sui_zklogin_proof)();
+    AgentQLocalPinAuthSettingsCompletionResult (*complete_sui_zklogin_clear_setting)();
     bool (*begin_settings_pin_auth_handoff)(const char* stale_log_message);
     void (*restore_settings_menu)(
         const char* display_failure_wipe_reason,

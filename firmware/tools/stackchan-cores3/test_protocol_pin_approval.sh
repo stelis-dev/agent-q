@@ -168,10 +168,11 @@ check_local_pin_worker_timeout_order() {
   fi
 }
 
-check_settings_policy_reset_keeps_panel_until_store() {
+check_settings_policy_reset_keeps_panel_until_completion() {
   local snippet="${TMP_DIR}/settings_policy_reset_case.cpp"
-  local store_line
-  local clear_before_store_line
+  local complete_setting_line
+  local raw_store_line
+  local clear_before_complete_line
   local restore_line
 
   awk '
@@ -180,29 +181,36 @@ check_settings_policy_reset_keeps_panel_until_store() {
     in_case && /return;/ { exit }
   ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${snippet}"
 
-  store_line="$(grep -En 'store_default_policy' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
-  restore_line="$(grep -En 'complete_local_pin_processing_to_settings|restore_settings_menu_after_pin' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
-  clear_before_store_line="$(
+  complete_setting_line="$(grep -En 'complete_policy_reset_setting' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+  raw_store_line="$(grep -En 'store_default_policy' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+  restore_line="$(grep -En 'complete_local_pin_settings_completion|complete_local_pin_processing_to_settings|restore_settings_menu_after_pin' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+  clear_before_complete_line="$(
     grep -En 'clear_local_pin_panel' "${snippet}" |
-      awk -F: -v store="${store_line:-0}" '$1 < store { print $1; exit }' || true
+      awk -F: -v complete="${complete_setting_line:-0}" '$1 < complete { print $1; exit }' || true
   )"
 
-  if [[ -z "${store_line}" || -z "${restore_line}" || "${store_line}" -ge "${restore_line}" ]]; then
-    echo "FAILED: settings policy reset must store before restoring Settings" >&2
-    echo "store_line=${store_line:-missing} restore_line=${restore_line:-missing}" >&2
+  if [[ -n "${raw_store_line}" ]]; then
+    echo "FAILED: settings policy reset UI must not call the raw policy store callback" >&2
+    echo "raw_store_line=${raw_store_line}" >&2
     exit 1
   fi
-  if [[ -n "${clear_before_store_line}" ]]; then
-    echo "FAILED: settings policy reset must keep the processing panel visible until policy storage completes" >&2
-    echo "clear_before_store_line=${clear_before_store_line} store_line=${store_line}" >&2
+  if [[ -z "${complete_setting_line}" || -z "${restore_line}" || "${complete_setting_line}" -ge "${restore_line}" ]]; then
+    echo "FAILED: settings policy reset must complete the setting action before restoring Settings" >&2
+    echo "complete_setting_line=${complete_setting_line:-missing} restore_line=${restore_line:-missing}" >&2
+    exit 1
+  fi
+  if [[ -n "${clear_before_complete_line}" ]]; then
+    echo "FAILED: settings policy reset must keep the processing panel visible until policy reset completes" >&2
+    echo "clear_before_complete_line=${clear_before_complete_line} complete_setting_line=${complete_setting_line}" >&2
     exit 1
   fi
 }
 
-check_settings_sui_clear_keeps_panel_until_wipe() {
+check_settings_sui_clear_keeps_panel_until_completion() {
   local snippet="${TMP_DIR}/settings_sui_clear_case.cpp"
-  local clear_line
-  local clear_before_wipe_line
+  local complete_setting_line
+  local raw_clear_line
+  local clear_before_complete_line
   local restore_line
 
   awk '
@@ -211,21 +219,27 @@ check_settings_sui_clear_keeps_panel_until_wipe() {
     in_case && /return;/ { exit }
   ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${snippet}"
 
-  clear_line="$(grep -En 'clear_sui_zklogin_proof' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
-  restore_line="$(grep -En 'complete_local_pin_processing_to_sui_settings|restore_sui_settings_after_pin' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
-  clear_before_wipe_line="$(
+  complete_setting_line="$(grep -En 'complete_sui_zklogin_clear_setting' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+  raw_clear_line="$(grep -En 'clear_sui_zklogin_proof' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+  restore_line="$(grep -En 'complete_local_pin_settings_completion|complete_local_pin_processing_to_sui_settings|restore_sui_settings_after_pin' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
+  clear_before_complete_line="$(
     grep -En 'clear_local_pin_panel' "${snippet}" |
-      awk -F: -v clear="${clear_line:-0}" '$1 < clear { print $1; exit }' || true
+      awk -F: -v complete="${complete_setting_line:-0}" '$1 < complete { print $1; exit }' || true
   )"
 
-  if [[ -z "${clear_line}" || -z "${restore_line}" || "${clear_line}" -ge "${restore_line}" ]]; then
-    echo "FAILED: Sui zkLogin Settings clear must wipe proof before restoring Settings" >&2
-    echo "clear_line=${clear_line:-missing} restore_line=${restore_line:-missing}" >&2
+  if [[ -n "${raw_clear_line}" ]]; then
+    echo "FAILED: Sui zkLogin Settings clear UI must not call the raw proof clear callback" >&2
+    echo "raw_clear_line=${raw_clear_line}" >&2
     exit 1
   fi
-  if [[ -n "${clear_before_wipe_line}" ]]; then
+  if [[ -z "${complete_setting_line}" || -z "${restore_line}" || "${complete_setting_line}" -ge "${restore_line}" ]]; then
+    echo "FAILED: Sui zkLogin Settings clear must complete the setting action before restoring Settings" >&2
+    echo "complete_setting_line=${complete_setting_line:-missing} restore_line=${restore_line:-missing}" >&2
+    exit 1
+  fi
+  if [[ -n "${clear_before_complete_line}" ]]; then
     echo "FAILED: Sui zkLogin Settings clear must keep the processing panel visible until proof clear completes" >&2
-    echo "clear_before_wipe_line=${clear_before_wipe_line} clear_line=${clear_line}" >&2
+    echo "clear_before_complete_line=${clear_before_complete_line} complete_setting_line=${complete_setting_line}" >&2
     exit 1
   fi
 }
@@ -621,8 +635,8 @@ check_local_pin_ui_handler_timeout_order \
   'policy_update_flow_return_to_review|usb_response_write_connect_rejected|user_signing_confirmation_return_to_review_from_pin' \
   "request-backed PIN cancel handler must timeout before cancel/back action"
 check_local_pin_worker_timeout_order
-check_settings_policy_reset_keeps_panel_until_store
-check_settings_sui_clear_keeps_panel_until_wipe
+check_settings_policy_reset_keeps_panel_until_completion
+check_settings_sui_clear_keeps_panel_until_completion
 check_policy_update_keeps_panel_until_commit
 check_user_signing_keeps_panel_until_signing_work
 check_modal_transition_next_panel_order

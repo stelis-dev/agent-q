@@ -43,16 +43,6 @@ bool provisioned_material_ready(const AgentQLocalPinAuthUiFlowOps& ops)
            ops.provisioned_material_ready();
 }
 
-bool settings_pin_purpose(AgentQLocalPinAuthPurpose purpose)
-{
-    return purpose == AgentQLocalPinAuthPurpose::settings_human_approval_input ||
-           purpose == AgentQLocalPinAuthPurpose::settings_signing_mode ||
-           purpose == AgentQLocalPinAuthPurpose::settings_policy_reset ||
-           purpose == AgentQLocalPinAuthPurpose::settings_change_pin ||
-           purpose == AgentQLocalPinAuthPurpose::settings_sui_accept_gas_sponsor ||
-           purpose == AgentQLocalPinAuthPurpose::settings_sui_zklogin_clear;
-}
-
 AgentQModalTransitionOps modal_transition_ops(const AgentQLocalPinAuthUiFlowOps& ops)
 {
     return AgentQModalTransitionOps{
@@ -258,7 +248,7 @@ AgentQTimeoutWindow local_pin_auth_next_input_window(
         timeout_window_from_deadline(
             now,
             now + pdMS_TO_TICKS(ops.local_pin_input_window_ms));
-    if (settings_pin_purpose(purpose)) {
+    if (local_pin_auth_settings_purpose(purpose)) {
         return next_input_window;
     }
     if (!request_backed_local_pin_purpose(purpose)) {
@@ -503,7 +493,7 @@ bool start_settings_handoff(
     const char* stale_message,
     const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    if (local_pin_auth_flow_active()) {
+    if (!local_pin_auth_settings_start_available()) {
         log_warn(ops, stale_message);
         return false;
     }
@@ -604,6 +594,93 @@ void complete_local_pin_processing_to_sui_settings(
         AgentQUiPanelKind::local_pin_auth,
         restore_sui_settings_for_transition,
         &context);
+}
+
+void complete_local_pin_settings_completion(
+    const AgentQLocalPinAuthUiFlowOps& ops,
+    AgentQLocalPinAuthSettingsCompletionResult result)
+{
+    switch (result) {
+        case AgentQLocalPinAuthSettingsCompletionResult::not_ready:
+            return;
+        case AgentQLocalPinAuthSettingsCompletionResult::settings_saved:
+            complete_local_pin_processing_to_settings(
+                ops,
+                "local settings display allocation failed after PIN commit",
+                "Settings saved",
+                AgentQMessageKind::success);
+            return;
+        case AgentQLocalPinAuthSettingsCompletionResult::settings_error:
+            complete_local_pin_processing_to_message(
+                ops,
+                "Settings error",
+                AgentQMessageKind::error);
+            return;
+        case AgentQLocalPinAuthSettingsCompletionResult::sui_settings_saved:
+            complete_local_pin_processing_to_sui_settings(
+                ops,
+                "local Sui settings display allocation failed after PIN commit",
+                "Settings saved",
+                AgentQMessageKind::success);
+            return;
+        case AgentQLocalPinAuthSettingsCompletionResult::sui_settings_error:
+            complete_local_pin_processing_to_sui_settings(
+                ops,
+                "local Sui settings display allocation failed after setting storage error",
+                "Settings error",
+                AgentQMessageKind::error);
+            return;
+        case AgentQLocalPinAuthSettingsCompletionResult::pin_changed:
+            complete_local_pin_processing_to_settings(
+                ops,
+                "local settings display allocation failed after PIN commit",
+                "PIN changed",
+                AgentQMessageKind::success);
+            return;
+        case AgentQLocalPinAuthSettingsCompletionResult::pin_change_failed:
+            complete_local_pin_processing_to_message(
+                ops,
+                "PIN change failed",
+                AgentQMessageKind::error);
+            return;
+        case AgentQLocalPinAuthSettingsCompletionResult::auth_error:
+            record_material_failure(
+                ops,
+                AgentQPersistentMaterialRuntimeFailure::pin_change_auth_unavailable);
+            complete_local_pin_processing_to_message(
+                ops,
+                "Auth error",
+                AgentQMessageKind::error);
+            return;
+        case AgentQLocalPinAuthSettingsCompletionResult::policy_reset:
+            complete_local_pin_processing_to_settings(
+                ops,
+                "local settings display allocation failed after policy reset",
+                "Policy reset",
+                AgentQMessageKind::success);
+            return;
+        case AgentQLocalPinAuthSettingsCompletionResult::policy_reset_failed:
+            complete_local_pin_processing_to_settings(
+                ops,
+                "local settings display allocation failed after policy reset",
+                "Policy reset failed",
+                AgentQMessageKind::error);
+            return;
+        case AgentQLocalPinAuthSettingsCompletionResult::sui_proof_cleared:
+            complete_local_pin_processing_to_sui_settings(
+                ops,
+                "local settings display allocation failed after Sui clear",
+                "Sui proof cleared",
+                AgentQMessageKind::success);
+            return;
+        case AgentQLocalPinAuthSettingsCompletionResult::sui_clear_failed:
+            complete_local_pin_processing_to_sui_settings(
+                ops,
+                "local settings display allocation failed after Sui clear",
+                "Sui clear failed",
+                AgentQMessageKind::error);
+            return;
+    }
 }
 
 struct ShowMessageContext {
@@ -1068,9 +1145,7 @@ void local_pin_auth_ui_start_settings_human_approval_input(
         return;
     }
     const AgentQHumanApprovalInputMode target_mode =
-        current_mode == AgentQHumanApprovalInputMode::pin
-            ? AgentQHumanApprovalInputMode::confirm
-            : AgentQHumanApprovalInputMode::pin;
+        local_pin_auth_target_human_approval_input_mode(current_mode);
     const TickType_t now = now_or_zero(ops);
     if (!local_pin_auth_begin_human_approval_input_setting(
             target_mode,
@@ -1108,9 +1183,7 @@ void local_pin_auth_ui_start_settings_signing_mode(
     }
 
     const AgentQSigningAuthorizationMode target_mode =
-        current_mode == AgentQSigningAuthorizationMode::policy
-            ? AgentQSigningAuthorizationMode::user
-            : AgentQSigningAuthorizationMode::policy;
+        local_pin_auth_target_signing_authorization_mode(current_mode);
     const TickType_t now = now_or_zero(ops);
     if (!local_pin_auth_begin_signing_mode_setting(
             target_mode,
@@ -1200,8 +1273,8 @@ void local_pin_auth_ui_start_settings_sui_accept_gas_sponsor(
         return;
     }
 
-    AgentQSuiAccountSettings target_settings = current_settings;
-    target_settings.accept_gas_sponsor = !current_settings.accept_gas_sponsor;
+    const AgentQSuiAccountSettings target_settings =
+        local_pin_auth_target_sui_accept_gas_sponsor_settings(current_settings);
     const TickType_t now = now_or_zero(ops);
     if (!local_pin_auth_begin_sui_accept_gas_sponsor_setting(
             target_settings,
@@ -1395,7 +1468,7 @@ void local_pin_auth_ui_cancel(
         }
         return;
     }
-    if (settings_pin_purpose(purpose)) {
+    if (local_pin_auth_settings_purpose(purpose)) {
         wipe_local_pin_auth_scratch(ops, "local PIN authorization canceled");
         complete_local_pin_processing_to_settings(
             ops,
@@ -1577,57 +1650,9 @@ void local_pin_auth_ui_commit_setting_if_ready(
     const AgentQLocalPinAuthPurpose purpose =
         local_pin_auth_snapshot(now).purpose;
     const AgentQLocalPinAuthCommitResult result = local_pin_auth_commit_if_ready(now);
-    if (result == AgentQLocalPinAuthCommitResult::not_ready) {
-        return;
-    }
-    if (result == AgentQLocalPinAuthCommitResult::pin_change_auth_unavailable) {
-        record_material_failure(
-            ops,
-            AgentQPersistentMaterialRuntimeFailure::pin_change_auth_unavailable);
-        complete_local_pin_processing_to_message(
-            ops,
-            "Auth error",
-            AgentQMessageKind::error);
-        return;
-    }
-    if (result == AgentQLocalPinAuthCommitResult::pin_change_storage_error) {
-        complete_local_pin_processing_to_message(
-            ops,
-            "PIN change failed",
-            AgentQMessageKind::error);
-        return;
-    }
-    if (result == AgentQLocalPinAuthCommitResult::storage_error) {
-        if (purpose == AgentQLocalPinAuthPurpose::settings_sui_accept_gas_sponsor) {
-            complete_local_pin_processing_to_sui_settings(
-                ops,
-                "local Sui settings display allocation failed after setting storage error",
-                "Settings error",
-                AgentQMessageKind::error);
-        } else {
-            complete_local_pin_processing_to_message(
-                ops,
-                "Settings error",
-                AgentQMessageKind::error);
-        }
-        return;
-    }
-
-    if (purpose == AgentQLocalPinAuthPurpose::settings_sui_accept_gas_sponsor) {
-        complete_local_pin_processing_to_sui_settings(
-            ops,
-            "local Sui settings display allocation failed after PIN commit",
-            "Settings saved",
-            AgentQMessageKind::success);
-    } else {
-        complete_local_pin_processing_to_settings(
-            ops,
-            "local settings display allocation failed after PIN commit",
-            result == AgentQLocalPinAuthCommitResult::pin_changed
-                ? "PIN changed"
-                : "Settings saved",
-            AgentQMessageKind::success);
-    }
+    complete_local_pin_settings_completion(
+        ops,
+        local_pin_auth_settings_completion_for_commit_result(purpose, result));
 }
 
 void local_pin_auth_ui_handle_verify_worker_result(
@@ -1984,29 +2009,29 @@ void local_pin_auth_ui_handle_verify_worker_result(
             return;
         }
         case AgentQLocalPinAuthVerifyResult::verified_settings_policy_reset: {
-            const bool stored = ops.store_default_policy != nullptr &&
-                                ops.store_default_policy();
+            const AgentQLocalPinAuthSettingsCompletionResult completion =
+                ops.complete_policy_reset_setting != nullptr
+                    ? ops.complete_policy_reset_setting()
+                    : AgentQLocalPinAuthSettingsCompletionResult::policy_reset_failed;
             wipe_local_pin_auth_scratch(
                 ops,
-                stored ? "settings policy reset committed" : "settings policy reset failed");
-            complete_local_pin_processing_to_settings(
-                ops,
-                "local settings display allocation failed after policy reset",
-                stored ? "Policy reset" : "Policy reset failed",
-                stored ? AgentQMessageKind::success : AgentQMessageKind::error);
+                completion == AgentQLocalPinAuthSettingsCompletionResult::policy_reset
+                    ? "settings policy reset committed"
+                    : "settings policy reset failed");
+            complete_local_pin_settings_completion(ops, completion);
             return;
         }
         case AgentQLocalPinAuthVerifyResult::verified_settings_sui_zklogin_clear: {
-            const bool cleared = ops.clear_sui_zklogin_proof != nullptr &&
-                                 ops.clear_sui_zklogin_proof();
+            const AgentQLocalPinAuthSettingsCompletionResult completion =
+                ops.complete_sui_zklogin_clear_setting != nullptr
+                    ? ops.complete_sui_zklogin_clear_setting()
+                    : AgentQLocalPinAuthSettingsCompletionResult::sui_clear_failed;
             wipe_local_pin_auth_scratch(
                 ops,
-                cleared ? "Sui zkLogin proof cleared" : "Sui zkLogin proof clear failed");
-            complete_local_pin_processing_to_sui_settings(
-                ops,
-                "local settings display allocation failed after Sui clear",
-                cleared ? "Sui proof cleared" : "Sui clear failed",
-                cleared ? AgentQMessageKind::success : AgentQMessageKind::error);
+                completion == AgentQLocalPinAuthSettingsCompletionResult::sui_proof_cleared
+                    ? "Sui zkLogin proof cleared"
+                    : "Sui zkLogin proof clear failed");
+            complete_local_pin_settings_completion(ops, completion);
             return;
         }
         case AgentQLocalPinAuthVerifyResult::verified_policy_update: {
@@ -2083,32 +2108,11 @@ void local_pin_auth_ui_handle_prepare_worker_result(
 {
     const AgentQLocalPinAuthCommitResult result =
         local_pin_auth_complete_pin_change_job(worker_result);
-    if (result == AgentQLocalPinAuthCommitResult::not_ready) {
-        return;
-    }
-    if (result == AgentQLocalPinAuthCommitResult::pin_change_auth_unavailable) {
-        record_material_failure(
-            ops,
-            AgentQPersistentMaterialRuntimeFailure::pin_change_auth_unavailable);
-        complete_local_pin_processing_to_message(
-            ops,
-            "Auth error",
-            AgentQMessageKind::error);
-        return;
-    }
-    if (result == AgentQLocalPinAuthCommitResult::pin_change_storage_error) {
-        complete_local_pin_processing_to_message(
-            ops,
-            "PIN change failed",
-            AgentQMessageKind::error);
-        return;
-    }
-
-    complete_local_pin_processing_to_settings(
+    complete_local_pin_settings_completion(
         ops,
-        "local settings display allocation failed after PIN commit",
-        "PIN changed",
-        AgentQMessageKind::success);
+        local_pin_auth_settings_completion_for_commit_result(
+            AgentQLocalPinAuthPurpose::settings_change_pin,
+            result));
 }
 
 void local_pin_auth_ui_clear_if_needed(const AgentQLocalPinAuthUiFlowOps& ops)
