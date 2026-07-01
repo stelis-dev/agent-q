@@ -3,10 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_connect_approval.h"
 #include "agent_q_identification_display.h"
 #include "agent_q_protocol_constants.h"
-#include "agent_q_protocol_pin_approval.h"
 #include "agent_q_local_reset.h"
 #include "agent_q_modal_transition.h"
 #include "agent_q_request_backed_local_pin_context.h"
@@ -18,12 +16,12 @@ constexpr size_t kMaxRequestIdSize = kAgentQRequestIdSize;
 
 TickType_t now_or_zero(const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    return ops.now != nullptr ? ops.now() : 0;
+    return ops.timing.now != nullptr ? ops.timing.now() : 0;
 }
 
 uint64_t wall_clock_ms_or_zero(const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    return ops.wall_clock_ms != nullptr ? ops.wall_clock_ms() : 0;
+    return ops.timing.wall_clock_ms != nullptr ? ops.timing.wall_clock_ms() : 0;
 }
 
 AgentQTimeoutWindow window_from_now_ms(
@@ -36,16 +34,16 @@ AgentQTimeoutWindow window_from_now_ms(
 
 bool provisioned_material_ready(const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    return ops.provisioned_material_ready != nullptr &&
-           ops.provisioned_material_ready();
+    return ops.material_settings.provisioned_material_ready != nullptr &&
+           ops.material_settings.provisioned_material_ready();
 }
 
 AgentQModalTransitionOps modal_transition_ops(const AgentQLocalPinAuthUiFlowOps& ops)
 {
     return AgentQModalTransitionOps{
-        ops.clear_panel_if_kind,
-        ops.draw_processing_overlay_on_current_panel,
-        ops.log_warn,
+        ops.display.clear_panel_if_kind,
+        ops.display.draw_processing_overlay_on_current_panel,
+        ops.display.log_warn,
     };
 }
 
@@ -53,8 +51,8 @@ bool draw_local_pin_panel(
     const AgentQLocalPinAuthUiFlowOps& ops,
     const char* notice = nullptr)
 {
-    return ops.draw_local_pin_auth_panel != nullptr &&
-           ops.draw_local_pin_auth_panel(notice);
+    return ops.display.draw_local_pin_auth_panel != nullptr &&
+           ops.display.draw_local_pin_auth_panel(notice);
 }
 
 struct LocalPinPanelDrawContext {
@@ -85,8 +83,8 @@ void show_message(
     const char* message,
     AgentQMessageKind kind)
 {
-    if (ops.show_message != nullptr) {
-        ops.show_message(message, kind);
+    if (ops.display.show_message != nullptr) {
+        ops.display.show_message(message, kind);
     }
 }
 
@@ -94,15 +92,15 @@ void record_material_failure(
     const AgentQLocalPinAuthUiFlowOps& ops,
     AgentQPersistentMaterialRuntimeFailure failure)
 {
-    if (ops.record_material_failure != nullptr) {
-        ops.record_material_failure(failure);
+    if (ops.material_settings.record_material_failure != nullptr) {
+        ops.material_settings.record_material_failure(failure);
     }
 }
 
 void log_warn(const AgentQLocalPinAuthUiFlowOps& ops, const char* message)
 {
-    if (ops.log_warn != nullptr) {
-        ops.log_warn(message);
+    if (ops.display.log_warn != nullptr) {
+        ops.display.log_warn(message);
     }
 }
 
@@ -111,8 +109,8 @@ void write_connect_rejected_from_pin(
     const char* request_id,
     AgentQLocalPinAuthConnectRejectReason reason)
 {
-    if (ops.write_connect_rejected_from_pin != nullptr) {
-        ops.write_connect_rejected_from_pin(request_id, reason);
+    if (ops.connect.write_connect_rejected_from_pin != nullptr) {
+        ops.connect.write_connect_rejected_from_pin(request_id, reason);
     }
 }
 
@@ -120,8 +118,8 @@ void finish_connect_rejection_cleanup(
     const AgentQLocalPinAuthUiFlowOps& ops,
     bool clear_protocol_pin)
 {
-    if (ops.finish_connect_rejection_cleanup != nullptr) {
-        ops.finish_connect_rejection_cleanup(clear_protocol_pin);
+    if (ops.connect.finish_connect_rejection_cleanup != nullptr) {
+        ops.connect.finish_connect_rejection_cleanup(clear_protocol_pin);
     }
 }
 
@@ -130,16 +128,16 @@ bool return_connect_review_from_pin(
     TickType_t now,
     AgentQTimeoutWindow window)
 {
-    return ops.return_connect_review_from_pin != nullptr &&
-           ops.return_connect_review_from_pin(now, window);
+    return ops.connect.return_connect_review_from_pin != nullptr &&
+           ops.connect.return_connect_review_from_pin(now, window);
 }
 
 AgentQLocalPinAuthConnectSessionResult replace_connect_session_from_pin(
     const AgentQLocalPinAuthUiFlowOps& ops,
     const char* request_id)
 {
-    return ops.replace_connect_session_from_pin != nullptr
-               ? ops.replace_connect_session_from_pin(request_id)
+    return ops.connect.replace_connect_session_from_pin != nullptr
+               ? ops.connect.replace_connect_session_from_pin(request_id)
                : AgentQLocalPinAuthConnectSessionResult::session_unavailable;
 }
 
@@ -147,8 +145,8 @@ void finish_connect_session_error(
     const AgentQLocalPinAuthUiFlowOps& ops,
     const char* request_id)
 {
-    if (ops.finish_connect_session_error != nullptr) {
-        ops.finish_connect_session_error(request_id);
+    if (ops.connect.finish_connect_session_error != nullptr) {
+        ops.connect.finish_connect_session_error(request_id);
     }
 }
 
@@ -156,8 +154,8 @@ void finish_connect_approved(
     const AgentQLocalPinAuthUiFlowOps& ops,
     const char* request_id)
 {
-    if (ops.finish_connect_approved != nullptr) {
-        ops.finish_connect_approved(request_id);
+    if (ops.connect.finish_connect_approved != nullptr) {
+        ops.connect.finish_connect_approved(request_id);
     }
 }
 
@@ -177,8 +175,8 @@ void finish_policy_update_terminal(
     const char* request_id,
     AgentQPolicyUpdateFlowTerminalResult result)
 {
-    if (ops.finish_policy_update_terminal != nullptr) {
-        ops.finish_policy_update_terminal(request_id, result);
+    if (ops.policy_update.finish_policy_update_terminal != nullptr) {
+        ops.policy_update.finish_policy_update_terminal(request_id, result);
     }
 }
 
@@ -189,8 +187,8 @@ void finish_policy_update_error_terminal(
     const char* error_message,
     const char* display_message)
 {
-    if (ops.finish_policy_update_error_terminal != nullptr) {
-        ops.finish_policy_update_error_terminal(
+    if (ops.policy_update.finish_policy_update_error_terminal != nullptr) {
+        ops.policy_update.finish_policy_update_error_terminal(
             request_id,
             error_code,
             error_message,
@@ -203,50 +201,54 @@ AgentQPolicyUpdateFlowTransitionResult return_policy_update_review_from_pin(
     TickType_t now,
     AgentQTimeoutWindow window)
 {
-    return ops.return_policy_update_review_from_pin != nullptr
-               ? ops.return_policy_update_review_from_pin(now, window)
+    return ops.policy_update.return_policy_update_review_from_pin != nullptr
+               ? ops.policy_update.return_policy_update_review_from_pin(now, window)
                : AgentQPolicyUpdateFlowTransitionResult::invalid_argument;
 }
 
 AgentQPolicyUpdateFlowTransitionResult return_policy_update_pin_entry_from_pin(
     const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    return ops.return_policy_update_pin_entry_from_pin != nullptr
-               ? ops.return_policy_update_pin_entry_from_pin()
+    return ops.policy_update.return_policy_update_pin_entry_from_pin != nullptr
+               ? ops.policy_update.return_policy_update_pin_entry_from_pin()
                : AgentQPolicyUpdateFlowTransitionResult::invalid_argument;
 }
 
 AgentQPolicyUpdateFlowTerminalResult record_policy_update_ui_error_from_pin(
     const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    return ops.record_policy_update_ui_error_from_pin != nullptr
-               ? ops.record_policy_update_ui_error_from_pin()
+    return ops.policy_update.record_policy_update_ui_error_from_pin != nullptr
+               ? ops.policy_update.record_policy_update_ui_error_from_pin()
                : AgentQPolicyUpdateFlowTerminalResult::ui_error;
 }
 
 AgentQPolicyUpdateFlowTerminalResult record_policy_update_timed_out_from_pin(
     const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    return ops.record_policy_update_timed_out_from_pin != nullptr
-               ? ops.record_policy_update_timed_out_from_pin(wall_clock_ms_or_zero(ops))
+    return ops.policy_update.record_policy_update_timed_out_from_pin != nullptr
+               ? ops.policy_update.record_policy_update_timed_out_from_pin(wall_clock_ms_or_zero(ops))
                : AgentQPolicyUpdateFlowTerminalResult::timed_out;
 }
 
 AgentQPolicyUpdateFlowTerminalResult commit_policy_update_from_pin(
     const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    return ops.commit_policy_update_from_pin != nullptr
-               ? ops.commit_policy_update_from_pin(wall_clock_ms_or_zero(ops))
+    return ops.policy_update.commit_policy_update_from_pin != nullptr
+               ? ops.policy_update.commit_policy_update_from_pin(wall_clock_ms_or_zero(ops))
                : AgentQPolicyUpdateFlowTerminalResult::invalid_state;
 }
 
-bool policy_update_request_id_for_pin(
+bool request_id_for_pin(
     const AgentQLocalPinAuthUiFlowOps& ops,
+    AgentQLocalPinAuthPurpose purpose,
     char* output,
     size_t output_size)
 {
-    return ops.policy_update_request_id_for_pin != nullptr &&
-           ops.policy_update_request_id_for_pin(output, output_size);
+    if (output != nullptr && output_size > 0) {
+        output[0] = '\0';
+    }
+    return ops.request.request_id_for_pin != nullptr &&
+           ops.request.request_id_for_pin(purpose, output, output_size);
 }
 
 void finish_policy_update_unavailable_from_pin(
@@ -254,8 +256,8 @@ void finish_policy_update_unavailable_from_pin(
     const char* request_id,
     AgentQLocalPinAuthPolicyUpdateUnavailableReason reason)
 {
-    if (ops.finish_policy_update_unavailable_from_pin != nullptr) {
-        ops.finish_policy_update_unavailable_from_pin(request_id, reason);
+    if (ops.policy_update.finish_policy_update_unavailable_from_pin != nullptr) {
+        ops.policy_update.finish_policy_update_unavailable_from_pin(request_id, reason);
     }
 }
 
@@ -263,8 +265,8 @@ void finish_user_signing_terminal(
     const AgentQLocalPinAuthUiFlowOps& ops,
     const char* request_id)
 {
-    if (ops.finish_user_signing_terminal != nullptr) {
-        ops.finish_user_signing_terminal(request_id);
+    if (ops.user_signing.finish_user_signing_terminal != nullptr) {
+        ops.user_signing.finish_user_signing_terminal(request_id);
     }
 }
 
@@ -275,8 +277,8 @@ void finish_user_signing_error_terminal(
     const char* error_message,
     const char* display_message)
 {
-    if (ops.finish_user_signing_error_terminal != nullptr) {
-        ops.finish_user_signing_error_terminal(
+    if (ops.user_signing.finish_user_signing_error_terminal != nullptr) {
+        ops.user_signing.finish_user_signing_error_terminal(
             request_id,
             error_code,
             error_message,
@@ -287,8 +289,8 @@ void finish_user_signing_error_terminal(
 AgentQUserSigningConfirmationResult cancel_user_signing_for_pin_loss(
     const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    return ops.cancel_user_signing_for_pin_loss != nullptr
-               ? ops.cancel_user_signing_for_pin_loss()
+    return ops.user_signing.cancel_user_signing_for_pin_loss != nullptr
+               ? ops.user_signing.cancel_user_signing_for_pin_loss()
                : AgentQUserSigningConfirmationResult::inactive;
 }
 
@@ -296,8 +298,8 @@ AgentQUserSigningConfirmationResult record_user_signing_timeout_from_pin(
     const AgentQLocalPinAuthUiFlowOps& ops,
     TickType_t now)
 {
-    return ops.record_user_signing_timeout_from_pin != nullptr
-               ? ops.record_user_signing_timeout_from_pin(now)
+    return ops.user_signing.record_user_signing_timeout_from_pin != nullptr
+               ? ops.user_signing.record_user_signing_timeout_from_pin(now)
                : AgentQUserSigningConfirmationResult::invalid_argument;
 }
 
@@ -306,15 +308,15 @@ AgentQUserSigningConfirmationResult return_user_signing_review_from_pin(
     TickType_t now,
     AgentQTimeoutWindow review_window)
 {
-    return ops.return_user_signing_review_from_pin != nullptr
-               ? ops.return_user_signing_review_from_pin(now, review_window)
+    return ops.user_signing.return_user_signing_review_from_pin != nullptr
+               ? ops.user_signing.return_user_signing_review_from_pin(now, review_window)
                : AgentQUserSigningConfirmationResult::invalid_argument;
 }
 
 void cancel_user_signing_for_ui_loss(const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    if (ops.cancel_user_signing_for_ui_loss != nullptr) {
-        ops.cancel_user_signing_for_ui_loss();
+    if (ops.user_signing.cancel_user_signing_for_ui_loss != nullptr) {
+        ops.user_signing.cancel_user_signing_for_ui_loss();
     }
 }
 
@@ -324,8 +326,8 @@ AgentQUserSigningConfirmationResult complete_user_signing_pin_verify_from_pin(
     TickType_t now,
     TickType_t lockout_until)
 {
-    return ops.complete_user_signing_pin_verify_from_pin != nullptr
-               ? ops.complete_user_signing_pin_verify_from_pin(
+    return ops.user_signing.complete_user_signing_pin_verify_from_pin != nullptr
+               ? ops.user_signing.complete_user_signing_pin_verify_from_pin(
                    worker_result,
                    now,
                    lockout_until)
@@ -334,64 +336,64 @@ AgentQUserSigningConfirmationResult complete_user_signing_pin_verify_from_pin(
 
 bool user_signing_terminal_pending_from_pin(const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    return ops.user_signing_terminal_pending_from_pin != nullptr &&
-           ops.user_signing_terminal_pending_from_pin();
+    return ops.user_signing.user_signing_terminal_pending_from_pin != nullptr &&
+           ops.user_signing.user_signing_terminal_pending_from_pin();
 }
 
 AgentQSuiZkLoginProposalTransitionResult return_sui_zklogin_review_from_pin(
     const AgentQLocalPinAuthUiFlowOps& ops,
     TickType_t now)
 {
-    return ops.return_sui_zklogin_review_from_pin != nullptr
-               ? ops.return_sui_zklogin_review_from_pin(now)
+    return ops.sui_zklogin.return_sui_zklogin_review_from_pin != nullptr
+               ? ops.sui_zklogin.return_sui_zklogin_review_from_pin(now)
                : AgentQSuiZkLoginProposalTransitionResult::invalid_argument;
 }
 
 AgentQSuiZkLoginProposalTransitionResult return_sui_zklogin_pin_entry_from_pin(
     const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    return ops.return_sui_zklogin_pin_entry_from_pin != nullptr
-               ? ops.return_sui_zklogin_pin_entry_from_pin()
+    return ops.sui_zklogin.return_sui_zklogin_pin_entry_from_pin != nullptr
+               ? ops.sui_zklogin.return_sui_zklogin_pin_entry_from_pin()
                : AgentQSuiZkLoginProposalTransitionResult::invalid_argument;
 }
 
 AgentQSuiZkLoginProposalTerminalResult record_sui_zklogin_ui_error_from_pin(
     const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    return ops.record_sui_zklogin_ui_error_from_pin != nullptr
-               ? ops.record_sui_zklogin_ui_error_from_pin()
+    return ops.sui_zklogin.record_sui_zklogin_ui_error_from_pin != nullptr
+               ? ops.sui_zklogin.record_sui_zklogin_ui_error_from_pin()
                : AgentQSuiZkLoginProposalTerminalResult::ui_error;
 }
 
 AgentQSuiZkLoginProposalTerminalResult record_sui_zklogin_timed_out_from_pin(
     const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    return ops.record_sui_zklogin_timed_out_from_pin != nullptr
-               ? ops.record_sui_zklogin_timed_out_from_pin()
+    return ops.sui_zklogin.record_sui_zklogin_timed_out_from_pin != nullptr
+               ? ops.sui_zklogin.record_sui_zklogin_timed_out_from_pin()
                : AgentQSuiZkLoginProposalTerminalResult::timed_out;
 }
 
 AgentQSuiZkLoginProposalTerminalResult record_sui_zklogin_rejected_from_pin(
     const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    return ops.record_sui_zklogin_rejected_from_pin != nullptr
-               ? ops.record_sui_zklogin_rejected_from_pin()
+    return ops.sui_zklogin.record_sui_zklogin_rejected_from_pin != nullptr
+               ? ops.sui_zklogin.record_sui_zklogin_rejected_from_pin()
                : AgentQSuiZkLoginProposalTerminalResult::rejected;
 }
 
 AgentQSuiZkLoginProposalTerminalResult record_sui_zklogin_consistency_error_from_pin(
     const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    return ops.record_sui_zklogin_consistency_error_from_pin != nullptr
-               ? ops.record_sui_zklogin_consistency_error_from_pin()
+    return ops.sui_zklogin.record_sui_zklogin_consistency_error_from_pin != nullptr
+               ? ops.sui_zklogin.record_sui_zklogin_consistency_error_from_pin()
                : AgentQSuiZkLoginProposalTerminalResult::consistency_error;
 }
 
 AgentQSuiZkLoginProposalTerminalResult commit_sui_zklogin_from_pin(
     const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    return ops.commit_sui_zklogin_from_pin != nullptr
-               ? ops.commit_sui_zklogin_from_pin()
+    return ops.sui_zklogin.commit_sui_zklogin_from_pin != nullptr
+               ? ops.sui_zklogin.commit_sui_zklogin_from_pin()
                : AgentQSuiZkLoginProposalTerminalResult::invalid_state;
 }
 
@@ -400,8 +402,8 @@ void finish_sui_zklogin_proposal_terminal(
     const char* request_id,
     AgentQSuiZkLoginProposalTerminalResult result)
 {
-    if (ops.finish_sui_zklogin_proposal_terminal != nullptr) {
-        ops.finish_sui_zklogin_proposal_terminal(request_id, result);
+    if (ops.sui_zklogin.finish_sui_zklogin_proposal_terminal != nullptr) {
+        ops.sui_zklogin.finish_sui_zklogin_proposal_terminal(request_id, result);
     }
 }
 
@@ -412,8 +414,8 @@ void finish_sui_zklogin_proposal_error_terminal(
     const char* error_message,
     const char* display_message)
 {
-    if (ops.finish_sui_zklogin_proposal_error_terminal != nullptr) {
-        ops.finish_sui_zklogin_proposal_error_terminal(
+    if (ops.sui_zklogin.finish_sui_zklogin_proposal_error_terminal != nullptr) {
+        ops.sui_zklogin.finish_sui_zklogin_proposal_error_terminal(
             request_id,
             error_code,
             error_message,
@@ -455,14 +457,6 @@ void complete_local_pin_to_sui_zklogin_error_terminal(
     const char* error_message,
     const char* display_message);
 
-bool pending_request_id_for_local_pin_purpose(
-    AgentQLocalPinAuthPurpose purpose,
-    char* output,
-    size_t output_size)
-{
-    return request_backed_local_pin_request_id(purpose, output, output_size);
-}
-
 AgentQTimeoutWindow local_pin_auth_next_input_window(
     AgentQLocalPinAuthPurpose purpose,
     TickType_t now,
@@ -471,7 +465,7 @@ AgentQTimeoutWindow local_pin_auth_next_input_window(
     const AgentQTimeoutWindow next_input_window =
         timeout_window_from_deadline(
             now,
-            now + pdMS_TO_TICKS(ops.local_pin_input_window_ms));
+            now + pdMS_TO_TICKS(ops.timing.local_pin_input_window_ms));
     if (local_pin_auth_settings_purpose(purpose)) {
         return next_input_window;
     }
@@ -511,7 +505,11 @@ void handle_local_pin_auth_display_failure(
         local_pin_auth_snapshot(now_or_zero(ops));
     char request_id[kMaxRequestIdSize] = {};
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::policy_update) {
-        policy_update_request_id_for_pin(ops, request_id, sizeof(request_id));
+        request_id_for_pin(
+            ops,
+            AgentQLocalPinAuthPurpose::policy_update,
+            request_id,
+            sizeof(request_id));
         if (request_id[0] != '\0') {
             wipe_local_pin_auth_scratch(ops, reason);
             if (clear_panel) {
@@ -529,7 +527,8 @@ void handle_local_pin_auth_display_failure(
         }
     }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::user_signing &&
-        pending_request_id_for_local_pin_purpose(
+        request_id_for_pin(
+            ops,
             AgentQLocalPinAuthPurpose::user_signing,
             request_id,
             sizeof(request_id))) {
@@ -553,7 +552,8 @@ void handle_local_pin_auth_display_failure(
         return;
     }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::sui_zklogin_proposal &&
-        protocol_pin_approval_request_id_for_local_pin_purpose(
+        request_id_for_pin(
+            ops,
             AgentQLocalPinAuthPurpose::sui_zklogin_proposal,
             request_id,
             sizeof(request_id))) {
@@ -572,7 +572,8 @@ void handle_local_pin_auth_display_failure(
         return;
     }
     if (snapshot.purpose == AgentQLocalPinAuthPurpose::connect &&
-        protocol_pin_approval_request_id_for_local_pin_purpose(
+        request_id_for_pin(
+            ops,
             AgentQLocalPinAuthPurpose::connect,
             request_id,
             sizeof(request_id))) {
@@ -614,7 +615,7 @@ bool finish_request_backed_local_pin_input_timeout_if_reached(
     }
 
     char request_id[kMaxRequestIdSize] = {};
-    pending_request_id_for_local_pin_purpose(purpose, request_id, sizeof(request_id));
+    request_id_for_pin(ops, purpose, request_id, sizeof(request_id));
     wipe_local_pin_auth_scratch(ops, scratch_reason);
     switch (request_backed_local_pin_owner_for_purpose(purpose)) {
         case AgentQRequestBackedLocalPinOwner::protocol_pin_approval:
@@ -685,8 +686,8 @@ bool start_settings_handoff(
         log_warn(ops, stale_message);
         return false;
     }
-    return ops.begin_settings_pin_auth_handoff != nullptr &&
-           ops.begin_settings_pin_auth_handoff(stale_message);
+    return ops.material_settings.begin_settings_pin_auth_handoff != nullptr &&
+           ops.material_settings.begin_settings_pin_auth_handoff(stale_message);
 }
 
 void show_settings_error(const AgentQLocalPinAuthUiFlowOps& ops)
@@ -703,10 +704,10 @@ bool restore_settings_menu_after_pin(
     AgentQMessageKind kind,
     const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    if (ops.restore_settings_menu == nullptr) {
+    if (ops.material_settings.restore_settings_menu == nullptr) {
         return false;
     }
-    ops.restore_settings_menu(wipe_reason, message, kind);
+    ops.material_settings.restore_settings_menu(wipe_reason, message, kind);
     return true;
 }
 
@@ -716,10 +717,10 @@ bool restore_sui_settings_after_pin(
     AgentQMessageKind kind,
     const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    if (ops.restore_sui_settings == nullptr) {
+    if (ops.material_settings.restore_sui_settings == nullptr) {
         return false;
     }
-    ops.restore_sui_settings(wipe_reason, message, kind);
+    ops.material_settings.restore_sui_settings(wipe_reason, message, kind);
     return true;
 }
 
@@ -1132,20 +1133,20 @@ bool draw_review_panel_for_transition(void* context)
     }
     switch (draw_context->purpose) {
         case AgentQLocalPinAuthPurpose::policy_update:
-            return draw_context->ops->show_policy_update_review != nullptr &&
-                   draw_context->ops->show_policy_update_review();
+            return draw_context->ops->policy_update.show_policy_update_review != nullptr &&
+                   draw_context->ops->policy_update.show_policy_update_review();
         case AgentQLocalPinAuthPurpose::connect:
-            if (draw_context->ops->show_connect_review == nullptr) {
+            if (draw_context->ops->connect.show_connect_review == nullptr) {
                 return false;
             }
-            draw_context->ops->show_connect_review();
+            draw_context->ops->connect.show_connect_review();
             return true;
         case AgentQLocalPinAuthPurpose::user_signing:
-            return draw_context->ops->show_user_signing_review != nullptr &&
-                   draw_context->ops->show_user_signing_review();
+            return draw_context->ops->user_signing.show_user_signing_review != nullptr &&
+                   draw_context->ops->user_signing.show_user_signing_review();
         case AgentQLocalPinAuthPurpose::sui_zklogin_proposal:
-            return draw_context->ops->show_sui_zklogin_review != nullptr &&
-                   draw_context->ops->show_sui_zklogin_review();
+            return draw_context->ops->sui_zklogin.show_sui_zklogin_review != nullptr &&
+                   draw_context->ops->sui_zklogin.show_sui_zklogin_review();
         default:
             return false;
     }
@@ -1173,10 +1174,10 @@ void execute_user_signing_for_transition(void* context)
     const auto* work_context = static_cast<const UserSigningWorkContext*>(context);
     if (work_context == nullptr ||
         work_context->ops == nullptr ||
-        work_context->ops->execute_user_signing_from_pin == nullptr) {
+        work_context->ops->user_signing.execute_user_signing_from_pin == nullptr) {
         return;
     }
-    work_context->ops->execute_user_signing_from_pin(
+    work_context->ops->user_signing.execute_user_signing_from_pin(
         work_context->request_id);
 }
 
@@ -1214,24 +1215,30 @@ bool local_pin_auth_ui_begin_connect(
     const AgentQTimeoutWindow request_window =
         timeout_window_from_deadline(
             now,
-            now + pdMS_TO_TICKS(ops.connect_approval_ms));
-    if (!protocol_pin_approval_begin_connect(request_id, now, request_window)) {
-        write_connect_rejected_from_pin(
-            ops,
-            request_id,
-            AgentQLocalPinAuthConnectRejectReason::invalid_state);
-        finish_connect_rejection_cleanup(ops, false);
-        show_message(ops, "Connect unavailable", AgentQMessageKind::error);
-        return false;
-    }
-    if (!local_pin_auth_begin_connect(now, request_window)) {
-        write_connect_rejected_from_pin(
-            ops,
-            request_id,
-            AgentQLocalPinAuthConnectRejectReason::invalid_state);
-        finish_connect_rejection_cleanup(ops, true);
-        show_message(ops, "Connect unavailable", AgentQMessageKind::error);
-        return false;
+            now + pdMS_TO_TICKS(ops.timing.connect_approval_ms));
+    const AgentQLocalPinAuthConnectPinBeginResult begin_result =
+        ops.connect.begin_connect_pin_auth != nullptr
+            ? ops.connect.begin_connect_pin_auth(request_id, now, request_window)
+            : AgentQLocalPinAuthConnectPinBeginResult::unavailable;
+    switch (begin_result) {
+        case AgentQLocalPinAuthConnectPinBeginResult::started:
+            break;
+        case AgentQLocalPinAuthConnectPinBeginResult::unavailable:
+            write_connect_rejected_from_pin(
+                ops,
+                request_id,
+                AgentQLocalPinAuthConnectRejectReason::invalid_state);
+            finish_connect_rejection_cleanup(ops, false);
+            show_message(ops, "Connect unavailable", AgentQMessageKind::error);
+            return false;
+        case AgentQLocalPinAuthConnectPinBeginResult::pin_unavailable:
+            write_connect_rejected_from_pin(
+                ops,
+                request_id,
+                AgentQLocalPinAuthConnectRejectReason::invalid_state);
+            finish_connect_rejection_cleanup(ops, true);
+            show_message(ops, "Connect unavailable", AgentQMessageKind::error);
+            return false;
     }
 
     if (!draw_local_pin_panel(ops)) {
@@ -1254,8 +1261,8 @@ bool local_pin_auth_ui_begin_sui_zklogin_proposal(
     identification_display_clear();
     const TickType_t now = now_or_zero(ops);
     const AgentQLocalPinAuthSuiZkLoginPinBeginResult begin_result =
-        ops.begin_sui_zklogin_proposal_pin_from_review != nullptr
-            ? ops.begin_sui_zklogin_proposal_pin_from_review(request_id, now)
+        ops.sui_zklogin.begin_sui_zklogin_proposal_pin_from_review != nullptr
+            ? ops.sui_zklogin.begin_sui_zklogin_proposal_pin_from_review(request_id, now)
             : AgentQLocalPinAuthSuiZkLoginPinBeginResult::pin_unavailable;
     switch (begin_result) {
         case AgentQLocalPinAuthSuiZkLoginPinBeginResult::started:
@@ -1301,8 +1308,8 @@ void local_pin_auth_ui_start_settings_human_approval_input(
     }
 
     AgentQHumanApprovalInputMode current_mode = AgentQHumanApprovalInputMode::pin;
-    if (ops.read_human_approval_input_mode == nullptr ||
-        !ops.read_human_approval_input_mode(&current_mode)) {
+    if (ops.material_settings.read_human_approval_input_mode == nullptr ||
+        !ops.material_settings.read_human_approval_input_mode(&current_mode)) {
         show_settings_error(ops);
         return;
     }
@@ -1314,7 +1321,7 @@ void local_pin_auth_ui_start_settings_human_approval_input(
             now,
             timeout_window_from_deadline(
                 now,
-                now + pdMS_TO_TICKS(ops.local_reset_entry_ms)))) {
+                now + pdMS_TO_TICKS(ops.timing.local_reset_entry_ms)))) {
         show_message(ops, "Settings unavailable", AgentQMessageKind::error);
         return;
     }
@@ -1338,8 +1345,8 @@ void local_pin_auth_ui_start_settings_signing_mode(
 
     AgentQSigningAuthorizationMode current_mode =
         AgentQSigningAuthorizationMode::user;
-    if (ops.read_signing_authorization_mode == nullptr ||
-        !ops.read_signing_authorization_mode(&current_mode)) {
+    if (ops.material_settings.read_signing_authorization_mode == nullptr ||
+        !ops.material_settings.read_signing_authorization_mode(&current_mode)) {
         show_settings_error(ops);
         return;
     }
@@ -1352,7 +1359,7 @@ void local_pin_auth_ui_start_settings_signing_mode(
             now,
             timeout_window_from_deadline(
                 now,
-                now + pdMS_TO_TICKS(ops.local_reset_entry_ms)))) {
+                now + pdMS_TO_TICKS(ops.timing.local_reset_entry_ms)))) {
         show_message(ops, "Settings unavailable", AgentQMessageKind::error);
         return;
     }
@@ -1379,7 +1386,7 @@ void local_pin_auth_ui_start_settings_policy_reset(
             now,
             timeout_window_from_deadline(
                 now,
-                now + pdMS_TO_TICKS(ops.local_reset_entry_ms)))) {
+                now + pdMS_TO_TICKS(ops.timing.local_reset_entry_ms)))) {
         show_message(ops, "Policy reset unavailable", AgentQMessageKind::error);
         return;
     }
@@ -1406,7 +1413,7 @@ void local_pin_auth_ui_start_settings_change_pin(
             now,
             timeout_window_from_deadline(
                 now,
-                now + pdMS_TO_TICKS(ops.local_reset_entry_ms)))) {
+                now + pdMS_TO_TICKS(ops.timing.local_reset_entry_ms)))) {
         show_message(ops, "Change PIN unavailable", AgentQMessageKind::error);
         return;
     }
@@ -1429,8 +1436,8 @@ void local_pin_auth_ui_start_settings_sui_accept_gas_sponsor(
     }
 
     AgentQSuiAccountSettings current_settings = kDefaultSuiAccountSettings;
-    if (ops.read_sui_account_settings == nullptr ||
-        !ops.read_sui_account_settings(&current_settings)) {
+    if (ops.material_settings.read_sui_account_settings == nullptr ||
+        !ops.material_settings.read_sui_account_settings(&current_settings)) {
         show_settings_error(ops);
         return;
     }
@@ -1443,7 +1450,7 @@ void local_pin_auth_ui_start_settings_sui_accept_gas_sponsor(
             now,
             timeout_window_from_deadline(
                 now,
-                now + pdMS_TO_TICKS(ops.local_reset_entry_ms)))) {
+                now + pdMS_TO_TICKS(ops.timing.local_reset_entry_ms)))) {
         show_message(ops, "Sui setting unavailable", AgentQMessageKind::error);
         return;
     }
@@ -1463,8 +1470,8 @@ void local_pin_auth_ui_start_settings_sui_accept_gas_sponsor(
 void local_pin_auth_ui_start_settings_sui_zklogin_clear(
     const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    if (ops.sui_zklogin_proof_clear_available == nullptr ||
-        !ops.sui_zklogin_proof_clear_available()) {
+    if (ops.material_settings.sui_zklogin_proof_clear_available == nullptr ||
+        !ops.material_settings.sui_zklogin_proof_clear_available()) {
         show_message(ops, "No Sui proof", AgentQMessageKind::info);
         return;
     }
@@ -1479,7 +1486,7 @@ void local_pin_auth_ui_start_settings_sui_zklogin_clear(
             now,
             timeout_window_from_deadline(
                 now,
-                now + pdMS_TO_TICKS(ops.local_reset_entry_ms)))) {
+                now + pdMS_TO_TICKS(ops.timing.local_reset_entry_ms)))) {
         show_message(ops, "Sui clear unavailable", AgentQMessageKind::error);
         return;
     }
@@ -1513,7 +1520,7 @@ void local_pin_auth_ui_cancel(
     }
 
     char request_id[kMaxRequestIdSize] = {};
-    pending_request_id_for_local_pin_purpose(purpose, request_id, sizeof(request_id));
+    request_id_for_pin(ops, purpose, request_id, sizeof(request_id));
 
     if (purpose == AgentQLocalPinAuthPurpose::policy_update &&
         request_id[0] != '\0') {
@@ -1524,7 +1531,7 @@ void local_pin_auth_ui_cancel(
                 now,
                 timeout_window_from_deadline(
                     now,
-                    now + pdMS_TO_TICKS(ops.provisioning_approval_ms)));
+                    now + pdMS_TO_TICKS(ops.timing.provisioning_approval_ms)));
         if (transition != AgentQPolicyUpdateFlowTransitionResult::ok) {
             complete_local_pin_to_policy_error_terminal(
                 ops,
@@ -1579,7 +1586,7 @@ void local_pin_auth_ui_cancel(
                 now,
                 timeout_window_from_deadline(
                     now,
-                    now + pdMS_TO_TICKS(ops.connect_approval_ms)))) {
+                    now + pdMS_TO_TICKS(ops.timing.connect_approval_ms)))) {
             complete_local_pin_processing_to_message(
                 ops,
                 "Connect unavailable",
@@ -1600,7 +1607,7 @@ void local_pin_auth_ui_cancel(
             return_user_signing_review_from_pin(
                 ops,
                 now,
-                window_from_now_ms(ops, ops.provisioning_approval_ms));
+                window_from_now_ms(ops, ops.timing.provisioning_approval_ms));
         if (result == AgentQUserSigningConfirmationResult::ok) {
             if (!complete_local_pin_to_review_panel(ops, purpose)) {
                 cancel_user_signing_for_ui_loss(ops);
@@ -1728,10 +1735,10 @@ void local_pin_auth_ui_handle_submit(const AgentQLocalPinAuthUiFlowOps& ops)
         local_pin_auth_next_input_window(snapshot.purpose, now, ops);
     const AgentQLocalPinAuthSubmitResult result =
         local_pin_auth_submit(
-            now + pdMS_TO_TICKS(ops.local_processing_render_delay_ms),
-            now + pdMS_TO_TICKS(ops.local_processing_display_ms),
+            now + pdMS_TO_TICKS(ops.timing.local_processing_render_delay_ms),
+            now + pdMS_TO_TICKS(ops.timing.local_processing_display_ms),
             next_input_window,
-            now + pdMS_TO_TICKS(ops.local_auth_worker_max_ms));
+            now + pdMS_TO_TICKS(ops.timing.local_auth_worker_max_ms));
     switch (result) {
         case AgentQLocalPinAuthSubmitResult::unavailable_stage:
             log_warn(ops, "Stale local PIN authorization submit ignored");
@@ -1821,7 +1828,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
     const AgentQLocalPinAuthPurpose purpose = snapshot.purpose;
     if (purpose == AgentQLocalPinAuthPurpose::user_signing) {
         char request_id[kMaxRequestIdSize] = {};
-        pending_request_id_for_local_pin_purpose(purpose, request_id, sizeof(request_id));
+        request_id_for_pin(ops, purpose, request_id, sizeof(request_id));
         if (!provisioned_material_ready(ops)) {
             cancel_user_signing_for_pin_loss(ops);
             wipe_local_pin_auth_scratch(ops, "user_signing material state unavailable");
@@ -1912,7 +1919,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
     }
     if (!provisioned_material_ready(ops)) {
         char request_id[kMaxRequestIdSize] = {};
-        pending_request_id_for_local_pin_purpose(purpose, request_id, sizeof(request_id));
+        request_id_for_pin(ops, purpose, request_id, sizeof(request_id));
         wipe_local_pin_auth_scratch(ops, "local PIN authorization material state unavailable");
         if (purpose == AgentQLocalPinAuthPurpose::policy_update && request_id[0] != '\0') {
             finish_policy_update_unavailable_from_pin(
@@ -1963,7 +1970,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
             worker_result,
             next_input_window,
             now + pdMS_TO_TICKS(kAgentQLocalResetPinLockoutMs),
-            now + pdMS_TO_TICKS(ops.local_processing_display_ms));
+            now + pdMS_TO_TICKS(ops.timing.local_processing_display_ms));
     if ((result == AgentQLocalPinAuthVerifyResult::locked ||
          result == AgentQLocalPinAuthVerifyResult::wrong_pin ||
          result == AgentQLocalPinAuthVerifyResult::verified_connect ||
@@ -1990,7 +1997,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
             return;
         case AgentQLocalPinAuthVerifyResult::auth_unavailable: {
             char request_id[kMaxRequestIdSize] = {};
-            pending_request_id_for_local_pin_purpose(purpose, request_id, sizeof(request_id));
+            request_id_for_pin(ops, purpose, request_id, sizeof(request_id));
             record_material_failure(
                 ops,
                 AgentQPersistentMaterialRuntimeFailure::local_pin_auth_unavailable);
@@ -2105,7 +2112,8 @@ void local_pin_auth_ui_handle_verify_worker_result(
             return;
         case AgentQLocalPinAuthVerifyResult::verified_connect: {
             char request_id[kMaxRequestIdSize] = {};
-            pending_request_id_for_local_pin_purpose(
+            request_id_for_pin(
+                ops,
                 AgentQLocalPinAuthPurpose::connect,
                 request_id,
                 sizeof(request_id));
@@ -2130,8 +2138,8 @@ void local_pin_auth_ui_handle_verify_worker_result(
         }
         case AgentQLocalPinAuthVerifyResult::verified_settings_policy_reset: {
             const AgentQLocalPinAuthSettingsCompletionResult completion =
-                ops.complete_policy_reset_setting != nullptr
-                    ? ops.complete_policy_reset_setting()
+                ops.material_settings.complete_policy_reset_setting != nullptr
+                    ? ops.material_settings.complete_policy_reset_setting()
                     : AgentQLocalPinAuthSettingsCompletionResult::policy_reset_failed;
             wipe_local_pin_auth_scratch(
                 ops,
@@ -2143,8 +2151,8 @@ void local_pin_auth_ui_handle_verify_worker_result(
         }
         case AgentQLocalPinAuthVerifyResult::verified_settings_sui_zklogin_clear: {
             const AgentQLocalPinAuthSettingsCompletionResult completion =
-                ops.complete_sui_zklogin_clear_setting != nullptr
-                    ? ops.complete_sui_zklogin_clear_setting()
+                ops.material_settings.complete_sui_zklogin_clear_setting != nullptr
+                    ? ops.material_settings.complete_sui_zklogin_clear_setting()
                     : AgentQLocalPinAuthSettingsCompletionResult::sui_clear_failed;
             wipe_local_pin_auth_scratch(
                 ops,
@@ -2156,12 +2164,13 @@ void local_pin_auth_ui_handle_verify_worker_result(
         }
         case AgentQLocalPinAuthVerifyResult::verified_policy_update: {
             char request_id[kMaxRequestIdSize] = {};
-            pending_request_id_for_local_pin_purpose(
+            request_id_for_pin(
+                ops,
                 AgentQLocalPinAuthPurpose::policy_update,
                 request_id,
                 sizeof(request_id));
-            if (ops.require_pending_policy_update_session == nullptr ||
-                !ops.require_pending_policy_update_session(request_id)) {
+            if (ops.policy_update.require_pending_policy_update_session == nullptr ||
+                !ops.policy_update.require_pending_policy_update_session(request_id)) {
                 wipe_local_pin_auth_scratch(
                     ops,
                     "policy update PIN approved but session was unavailable");
@@ -2184,12 +2193,13 @@ void local_pin_auth_ui_handle_verify_worker_result(
         }
         case AgentQLocalPinAuthVerifyResult::verified_sui_zklogin_proposal: {
             char request_id[kMaxRequestIdSize] = {};
-            pending_request_id_for_local_pin_purpose(
+            request_id_for_pin(
+                ops,
                 AgentQLocalPinAuthPurpose::sui_zklogin_proposal,
                 request_id,
                 sizeof(request_id));
-            if (ops.require_pending_sui_zklogin_proposal_session == nullptr ||
-                !ops.require_pending_sui_zklogin_proposal_session(request_id)) {
+            if (ops.sui_zklogin.require_pending_sui_zklogin_proposal_session == nullptr ||
+                !ops.sui_zklogin.require_pending_sui_zklogin_proposal_session(request_id)) {
                 wipe_local_pin_auth_scratch(
                     ops,
                     "Sui zkLogin proposal PIN approved but session was unavailable");
@@ -2237,7 +2247,7 @@ void local_pin_auth_ui_handle_prepare_worker_result(
 
 bool local_pin_panel_visible(const AgentQLocalPinAuthUiFlowOps& ops)
 {
-    return ops.local_pin_panel_visible != nullptr && ops.local_pin_panel_visible();
+    return ops.display.local_pin_panel_visible != nullptr && ops.display.local_pin_panel_visible();
 }
 
 void finish_local_pin_processing_deadline_failure(
@@ -2326,7 +2336,8 @@ void clear_user_signing_processing_if_needed(
     const AgentQLocalPinAuthUiFlowOps& ops)
 {
     char request_id[kMaxRequestIdSize] = {};
-    pending_request_id_for_local_pin_purpose(
+    request_id_for_pin(
+        ops,
         snapshot.purpose,
         request_id,
         sizeof(request_id));
@@ -2394,7 +2405,7 @@ void clear_processing_local_pin_if_needed(
 
     const AgentQLocalPinAuthPurpose purpose = snapshot.purpose;
     char request_id[kMaxRequestIdSize] = {};
-    pending_request_id_for_local_pin_purpose(purpose, request_id, sizeof(request_id));
+    request_id_for_pin(ops, purpose, request_id, sizeof(request_id));
     if (snapshot.stage == AgentQLocalPinAuthStage::pin_verifying) {
         finish_local_pin_verifier_unavailable(purpose, request_id, ops);
         return;
@@ -2600,7 +2611,7 @@ void clear_waiting_local_pin_input_if_needed(
 {
     const AgentQLocalPinAuthPurpose purpose = snapshot.purpose;
     char request_id[kMaxRequestIdSize] = {};
-    pending_request_id_for_local_pin_purpose(purpose, request_id, sizeof(request_id));
+    request_id_for_pin(ops, purpose, request_id, sizeof(request_id));
     if (clear_user_signing_input_if_needed(purpose, request_id, now, ops)) {
         return;
     }

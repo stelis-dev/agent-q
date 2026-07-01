@@ -2395,14 +2395,22 @@ void restore_sui_settings_for_local_pin_auth(
         kAgentQResultDisplayMs);
 }
 
-void log_connect_session_creation_failed_for_local_pin_auth(const char* id)
+agent_q::AgentQLocalPinAuthConnectPinBeginResult
+begin_connect_pin_auth_for_local_pin_auth(
+    const char* request_id,
+    TickType_t now,
+    agent_q::AgentQTimeoutWindow request_window)
 {
-    ESP_LOGE(kTag, "connect PIN could not create session id: id=%s", id != nullptr ? id : "");
-}
-
-void log_connect_pin_approved_for_local_pin_auth(const char* id)
-{
-    ESP_LOGI(kTag, "connect PIN approved: id=%s", id != nullptr ? id : "");
+    if (!agent_q::protocol_pin_approval_begin_connect(
+            request_id,
+            now,
+            request_window)) {
+        return agent_q::AgentQLocalPinAuthConnectPinBeginResult::unavailable;
+    }
+    if (!agent_q::local_pin_auth_begin_connect(now, request_window)) {
+        return agent_q::AgentQLocalPinAuthConnectPinBeginResult::pin_unavailable;
+    }
+    return agent_q::AgentQLocalPinAuthConnectPinBeginResult::started;
 }
 
 const char* local_pin_connect_rejection_code(
@@ -2467,7 +2475,10 @@ replace_connect_session_from_pin_for_local_pin_auth(const char* request_id)
     if (request_id != nullptr && request_id[0] != '\0') {
         agent_q::usb_response_write_error(request_id, "rng_unavailable");
     }
-    log_connect_session_creation_failed_for_local_pin_auth(request_id);
+    ESP_LOGE(
+        kTag,
+        "connect PIN could not create session id: id=%s",
+        request_id != nullptr ? request_id : "");
     return agent_q::AgentQLocalPinAuthConnectSessionResult::session_unavailable;
 }
 
@@ -2487,7 +2498,7 @@ void finish_connect_approved_for_local_pin_auth(const char* request_id)
         }
     }
     agent_q::protocol_pin_approval_clear();
-    log_connect_pin_approved_for_local_pin_auth(request_id);
+    ESP_LOGI(kTag, "connect PIN approved: id=%s", request_id != nullptr ? request_id : "");
 }
 
 void clear_policy_update_terminal_state();
@@ -2514,6 +2525,17 @@ bool policy_update_request_id_for_local_pin_auth(char* output, size_t output_siz
     return true;
 }
 
+bool request_id_for_local_pin_auth(
+    agent_q::AgentQLocalPinAuthPurpose purpose,
+    char* output,
+    size_t output_size)
+{
+    if (purpose == agent_q::AgentQLocalPinAuthPurpose::policy_update) {
+        return policy_update_request_id_for_local_pin_auth(output, output_size);
+    }
+    return agent_q::request_backed_local_pin_request_id(purpose, output, output_size);
+}
+
 agent_q::AgentQPolicyUpdateFlowTransitionResult
 return_policy_update_review_from_pin_for_local_pin_auth(
     TickType_t now,
@@ -2521,30 +2543,6 @@ return_policy_update_review_from_pin_for_local_pin_auth(
 {
     agent_q::protocol_pin_approval_clear();
     return agent_q::policy_update_flow_return_to_review(now, review_window);
-}
-
-agent_q::AgentQPolicyUpdateFlowTransitionResult
-return_policy_update_pin_entry_from_pin_for_local_pin_auth()
-{
-    return agent_q::policy_update_flow_return_to_pin_entry();
-}
-
-agent_q::AgentQPolicyUpdateFlowTerminalResult
-record_policy_update_ui_error_from_pin_for_local_pin_auth()
-{
-    return agent_q::policy_update_flow_record_ui_error();
-}
-
-agent_q::AgentQPolicyUpdateFlowTerminalResult
-record_policy_update_timed_out_from_pin_for_local_pin_auth(uint64_t uptime_ms)
-{
-    return agent_q::policy_update_flow_record_timed_out(uptime_ms);
-}
-
-agent_q::AgentQPolicyUpdateFlowTerminalResult
-commit_policy_update_from_pin_for_local_pin_auth(uint64_t uptime_ms)
-{
-    return agent_q::policy_update_flow_commit(uptime_ms);
 }
 
 void finish_policy_update_unavailable_from_pin_for_local_pin_auth(
@@ -2611,67 +2609,10 @@ return_sui_zklogin_review_from_pin_for_local_pin_auth(TickType_t now)
     return agent_q::sui_zklogin_proposal_flow_return_to_review(now);
 }
 
-agent_q::AgentQSuiZkLoginProposalTransitionResult
-return_sui_zklogin_pin_entry_from_pin_for_local_pin_auth()
-{
-    return agent_q::sui_zklogin_proposal_flow_return_to_pin_entry();
-}
-
-agent_q::AgentQSuiZkLoginProposalTerminalResult
-record_sui_zklogin_ui_error_from_pin_for_local_pin_auth()
-{
-    return agent_q::sui_zklogin_proposal_flow_record_ui_error();
-}
-
-agent_q::AgentQSuiZkLoginProposalTerminalResult
-record_sui_zklogin_timed_out_from_pin_for_local_pin_auth()
-{
-    return agent_q::sui_zklogin_proposal_flow_record_timed_out();
-}
-
-agent_q::AgentQSuiZkLoginProposalTerminalResult
-record_sui_zklogin_rejected_from_pin_for_local_pin_auth()
-{
-    return agent_q::sui_zklogin_proposal_flow_record_rejected();
-}
-
 agent_q::AgentQSuiZkLoginProposalTerminalResult
 record_sui_zklogin_consistency_error_from_pin_for_local_pin_auth()
 {
     return agent_q::AgentQSuiZkLoginProposalTerminalResult::consistency_error;
-}
-
-agent_q::AgentQSuiZkLoginProposalTerminalResult
-commit_sui_zklogin_from_pin_for_local_pin_auth()
-{
-    return agent_q::sui_zklogin_proposal_flow_commit();
-}
-
-agent_q::AgentQUserSigningConfirmationResult
-cancel_user_signing_for_pin_loss_from_local_pin_auth()
-{
-    return agent_q::user_signing_confirmation_cancel_for_pin_loss();
-}
-
-agent_q::AgentQUserSigningConfirmationResult
-record_user_signing_timeout_from_pin_for_local_pin_auth(TickType_t now)
-{
-    return agent_q::user_signing_confirmation_record_timeout(now);
-}
-
-agent_q::AgentQUserSigningConfirmationResult
-return_user_signing_review_from_pin_for_local_pin_auth(
-    TickType_t now,
-    agent_q::AgentQTimeoutWindow review_window)
-{
-    return agent_q::user_signing_confirmation_return_to_review_from_pin(
-        now,
-        review_window);
-}
-
-void cancel_user_signing_for_ui_loss_from_local_pin_auth()
-{
-    agent_q::user_signing_flow_cancel_for_ui_loss();
 }
 
 agent_q::AgentQUserSigningConfirmationResult
@@ -2688,32 +2629,14 @@ complete_user_signing_pin_verify_from_local_pin_auth(
         nullptr);
 }
 
-bool user_signing_terminal_pending_from_local_pin_auth()
+void cancel_user_signing_for_ui_loss_from_local_pin_auth()
 {
-    return agent_q::user_signing_flow_terminal_pending();
-}
-
-void execute_user_signing_for_local_pin_auth(const char* request_id)
-{
-    execute_user_signing_critical_section_and_finish(request_id);
+    agent_q::user_signing_flow_cancel_for_ui_loss();
 }
 
 void finish_user_signing_terminal_for_local_pin_auth(const char* request_id)
 {
     finish_user_signing_terminal(request_id);
-}
-
-void finish_user_signing_error_terminal_for_local_pin_auth(
-    const char* request_id,
-    const char* error_code,
-    const char* error_message,
-    const char* display_message)
-{
-    finish_user_signing_error_terminal(
-        request_id,
-        error_code,
-        error_message,
-        display_message);
 }
 
 void local_pin_auth_log_warn(const char* message)
@@ -2723,76 +2646,103 @@ void local_pin_auth_log_warn(const char* message)
 
 agent_q::AgentQLocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops()
 {
-    return agent_q::AgentQLocalPinAuthUiFlowOps{
-        xTaskGetTickCount,
-        local_pin_auth_wall_clock_ms,
-        provisioned_material_ready,
-        agent_q::human_approval_requires_pin,
-        agent_q::read_human_approval_input_mode,
-        agent_q::read_signing_authorization_mode,
-        agent_q::read_sui_account_settings,
-        complete_policy_reset_setting_for_local_pin_auth,
-        sui_zklogin_proof_clear_available,
-        complete_sui_zklogin_clear_setting_for_local_pin_auth,
-        begin_settings_pin_auth_handoff_for_local_pin_auth,
-        restore_settings_menu_for_local_pin_auth,
-        restore_sui_settings_for_local_pin_auth,
-        clear_agent_q_panel_if_kind,
-        local_pin_auth_panel_visible,
-        draw_local_pin_auth_panel_for_flow,
-        draw_local_pin_auth_processing_overlay,
-        local_pin_auth_ui_show_message,
-        local_pin_auth_record_material_failure,
-        write_connect_rejected_from_pin_for_local_pin_auth,
-        finish_connect_rejection_cleanup_for_local_pin_auth,
-        return_connect_review_from_pin_for_local_pin_auth,
-        show_connect_review,
-        replace_connect_session_from_pin_for_local_pin_auth,
-        finish_connect_session_error_for_local_pin_auth,
-        finish_connect_approved_for_local_pin_auth,
-        agent_q::usb_response_log_write_failure,
-        show_policy_update_review,
-        policy_update_request_id_for_local_pin_auth,
-        require_pending_policy_update_session,
-        return_policy_update_review_from_pin_for_local_pin_auth,
-        return_policy_update_pin_entry_from_pin_for_local_pin_auth,
-        record_policy_update_ui_error_from_pin_for_local_pin_auth,
-        record_policy_update_timed_out_from_pin_for_local_pin_auth,
-        commit_policy_update_from_pin_for_local_pin_auth,
-        finish_policy_update_unavailable_from_pin_for_local_pin_auth,
-        finish_policy_update_terminal,
-        finish_policy_update_error_terminal,
-        require_pending_sui_zklogin_proposal_session,
-        begin_sui_zklogin_proposal_pin_from_review_for_local_pin_auth,
-        return_sui_zklogin_review_from_pin_for_local_pin_auth,
-        return_sui_zklogin_pin_entry_from_pin_for_local_pin_auth,
-        record_sui_zklogin_ui_error_from_pin_for_local_pin_auth,
-        record_sui_zklogin_timed_out_from_pin_for_local_pin_auth,
-        record_sui_zklogin_rejected_from_pin_for_local_pin_auth,
-        record_sui_zklogin_consistency_error_from_pin_for_local_pin_auth,
-        commit_sui_zklogin_from_pin_for_local_pin_auth,
-        finish_sui_zklogin_proposal_terminal,
-        finish_sui_zklogin_proposal_error_terminal,
-        show_sui_zklogin_review,
-        show_user_signing_review,
-        cancel_user_signing_for_pin_loss_from_local_pin_auth,
-        record_user_signing_timeout_from_pin_for_local_pin_auth,
-        return_user_signing_review_from_pin_for_local_pin_auth,
-        cancel_user_signing_for_ui_loss_from_local_pin_auth,
-        complete_user_signing_pin_verify_from_local_pin_auth,
-        user_signing_terminal_pending_from_local_pin_auth,
-        execute_user_signing_for_local_pin_auth,
-        finish_user_signing_terminal_for_local_pin_auth,
-        finish_user_signing_error_terminal_for_local_pin_auth,
-        local_pin_auth_log_warn,
-        kConnectApprovalDefaultMs,
-        kProvisioningApprovalMaxMs,
-        kLocalPinInputWindowMs,
-        kLocalProcessingRenderDelayMs,
-        kLocalProcessingDisplayMs,
-        agent_q::kAgentQLocalAuthWorkerMaxMs,
-        agent_q::kAgentQLocalResetEntryMs,
-    };
+    agent_q::AgentQLocalPinAuthUiFlowOps ops{};
+
+    ops.timing.now = xTaskGetTickCount;
+    ops.timing.wall_clock_ms = local_pin_auth_wall_clock_ms;
+    ops.material_settings.provisioned_material_ready = provisioned_material_ready;
+    ops.material_settings.human_approval_requires_pin = agent_q::human_approval_requires_pin;
+    ops.material_settings.read_human_approval_input_mode = agent_q::read_human_approval_input_mode;
+    ops.material_settings.read_signing_authorization_mode = agent_q::read_signing_authorization_mode;
+    ops.material_settings.read_sui_account_settings = agent_q::read_sui_account_settings;
+    ops.material_settings.complete_policy_reset_setting = complete_policy_reset_setting_for_local_pin_auth;
+    ops.material_settings.sui_zklogin_proof_clear_available = sui_zklogin_proof_clear_available;
+    ops.material_settings.complete_sui_zklogin_clear_setting =
+        complete_sui_zklogin_clear_setting_for_local_pin_auth;
+    ops.material_settings.begin_settings_pin_auth_handoff = begin_settings_pin_auth_handoff_for_local_pin_auth;
+    ops.material_settings.restore_settings_menu = restore_settings_menu_for_local_pin_auth;
+    ops.material_settings.restore_sui_settings = restore_sui_settings_for_local_pin_auth;
+
+    ops.display.clear_panel_if_kind = clear_agent_q_panel_if_kind;
+    ops.display.local_pin_panel_visible = local_pin_auth_panel_visible;
+    ops.display.draw_local_pin_auth_panel = draw_local_pin_auth_panel_for_flow;
+    ops.display.draw_processing_overlay_on_current_panel = draw_local_pin_auth_processing_overlay;
+    ops.display.show_message = local_pin_auth_ui_show_message;
+    ops.material_settings.record_material_failure = local_pin_auth_record_material_failure;
+    ops.display.log_write_failure = agent_q::usb_response_log_write_failure;
+    ops.display.log_warn = local_pin_auth_log_warn;
+
+    ops.connect.begin_connect_pin_auth = begin_connect_pin_auth_for_local_pin_auth;
+    ops.connect.write_connect_rejected_from_pin =
+        write_connect_rejected_from_pin_for_local_pin_auth;
+    ops.connect.finish_connect_rejection_cleanup =
+        finish_connect_rejection_cleanup_for_local_pin_auth;
+    ops.connect.return_connect_review_from_pin = return_connect_review_from_pin_for_local_pin_auth;
+    ops.connect.show_connect_review = show_connect_review;
+    ops.connect.replace_connect_session_from_pin = replace_connect_session_from_pin_for_local_pin_auth;
+    ops.connect.finish_connect_session_error = finish_connect_session_error_for_local_pin_auth;
+    ops.connect.finish_connect_approved = finish_connect_approved_for_local_pin_auth;
+
+    ops.policy_update.show_policy_update_review = show_policy_update_review;
+    ops.request.request_id_for_pin = request_id_for_local_pin_auth;
+    ops.policy_update.require_pending_policy_update_session = require_pending_policy_update_session;
+    ops.policy_update.return_policy_update_review_from_pin =
+        return_policy_update_review_from_pin_for_local_pin_auth;
+    ops.policy_update.return_policy_update_pin_entry_from_pin =
+        agent_q::policy_update_flow_return_to_pin_entry;
+    ops.policy_update.record_policy_update_ui_error_from_pin = agent_q::policy_update_flow_record_ui_error;
+    ops.policy_update.record_policy_update_timed_out_from_pin = agent_q::policy_update_flow_record_timed_out;
+    ops.policy_update.commit_policy_update_from_pin = agent_q::policy_update_flow_commit;
+    ops.policy_update.finish_policy_update_unavailable_from_pin =
+        finish_policy_update_unavailable_from_pin_for_local_pin_auth;
+    ops.policy_update.finish_policy_update_terminal = finish_policy_update_terminal;
+    ops.policy_update.finish_policy_update_error_terminal = finish_policy_update_error_terminal;
+
+    ops.sui_zklogin.require_pending_sui_zklogin_proposal_session =
+        require_pending_sui_zklogin_proposal_session;
+    ops.sui_zklogin.begin_sui_zklogin_proposal_pin_from_review =
+        begin_sui_zklogin_proposal_pin_from_review_for_local_pin_auth;
+    ops.sui_zklogin.return_sui_zklogin_review_from_pin =
+        return_sui_zklogin_review_from_pin_for_local_pin_auth;
+    ops.sui_zklogin.return_sui_zklogin_pin_entry_from_pin =
+        agent_q::sui_zklogin_proposal_flow_return_to_pin_entry;
+    ops.sui_zklogin.record_sui_zklogin_ui_error_from_pin =
+        agent_q::sui_zklogin_proposal_flow_record_ui_error;
+    ops.sui_zklogin.record_sui_zklogin_timed_out_from_pin =
+        agent_q::sui_zklogin_proposal_flow_record_timed_out;
+    ops.sui_zklogin.record_sui_zklogin_rejected_from_pin =
+        agent_q::sui_zklogin_proposal_flow_record_rejected;
+    ops.sui_zklogin.record_sui_zklogin_consistency_error_from_pin =
+        record_sui_zklogin_consistency_error_from_pin_for_local_pin_auth;
+    ops.sui_zklogin.commit_sui_zklogin_from_pin = agent_q::sui_zklogin_proposal_flow_commit;
+    ops.sui_zklogin.finish_sui_zklogin_proposal_terminal = finish_sui_zklogin_proposal_terminal;
+    ops.sui_zklogin.finish_sui_zklogin_proposal_error_terminal =
+        finish_sui_zklogin_proposal_error_terminal;
+    ops.sui_zklogin.show_sui_zklogin_review = show_sui_zklogin_review;
+
+    ops.user_signing.show_user_signing_review = show_user_signing_review;
+    ops.user_signing.cancel_user_signing_for_pin_loss =
+        agent_q::user_signing_confirmation_cancel_for_pin_loss;
+    ops.user_signing.record_user_signing_timeout_from_pin =
+        agent_q::user_signing_confirmation_record_timeout;
+    ops.user_signing.return_user_signing_review_from_pin =
+        agent_q::user_signing_confirmation_return_to_review_from_pin;
+    ops.user_signing.cancel_user_signing_for_ui_loss = cancel_user_signing_for_ui_loss_from_local_pin_auth;
+    ops.user_signing.complete_user_signing_pin_verify_from_pin =
+        complete_user_signing_pin_verify_from_local_pin_auth;
+    ops.user_signing.user_signing_terminal_pending_from_pin = agent_q::user_signing_flow_terminal_pending;
+    ops.user_signing.execute_user_signing_from_pin = execute_user_signing_critical_section_and_finish;
+    ops.user_signing.finish_user_signing_terminal = finish_user_signing_terminal_for_local_pin_auth;
+    ops.user_signing.finish_user_signing_error_terminal = finish_user_signing_error_terminal;
+
+    ops.timing.connect_approval_ms = kConnectApprovalDefaultMs;
+    ops.timing.provisioning_approval_ms = kProvisioningApprovalMaxMs;
+    ops.timing.local_pin_input_window_ms = kLocalPinInputWindowMs;
+    ops.timing.local_processing_render_delay_ms = kLocalProcessingRenderDelayMs;
+    ops.timing.local_processing_display_ms = kLocalProcessingDisplayMs;
+    ops.timing.local_auth_worker_max_ms = agent_q::kAgentQLocalAuthWorkerMaxMs;
+    ops.timing.local_reset_entry_ms = agent_q::kAgentQLocalResetEntryMs;
+    return ops;
 }
 
 void clear_setup_choice_if_needed()

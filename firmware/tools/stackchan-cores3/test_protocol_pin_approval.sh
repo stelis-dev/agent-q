@@ -19,6 +19,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+LOCAL_PIN_AUTH_UI_HEADER="${AGENT_Q_DIR}/agent_q_local_pin_auth_ui_flow.h"
 LOCAL_PIN_AUTH_UI_SOURCE="${AGENT_Q_DIR}/agent_q_local_pin_auth_ui_flow.cpp"
 MODAL_TRANSITION_SOURCE="${AGENT_Q_DIR}/agent_q_modal_transition.cpp"
 USB_REQUEST_SERVER_SOURCE="${AGENT_Q_DIR}/agent_q_usb_request_server.cpp"
@@ -272,12 +273,18 @@ check_settings_sui_clear_keeps_panel_until_completion() {
 }
 
 check_connect_pin_completion_uses_connect_callbacks() {
+  if grep -Eq 'protocol_pin_approval_begin_connect\(|local_pin_auth_begin_connect\(' "${LOCAL_PIN_AUTH_UI_SOURCE}"; then
+    echo "FAILED: local PIN UI flow must use a semantic connect PIN begin callback instead of direct protocol/local PIN begin owner calls" >&2
+    exit 1
+  fi
+
   if grep -Eq 'ops\.(write_connect_rejected\(|write_connect_approved|replace_active_session|clear_connect_approval|connect_approval_return_to_review|log_connect_session_creation_failed|log_connect_pin_approved)' "${LOCAL_PIN_AUTH_UI_SOURCE}"; then
     echo "FAILED: local PIN UI flow must use semantic connect completion callbacks instead of raw connect response/session/approval ops" >&2
     exit 1
   fi
 
   for required in \
+    'begin_connect_pin_auth(' \
     'write_connect_rejected_from_pin(' \
     'finish_connect_rejection_cleanup(' \
     'return_connect_review_from_pin(' \
@@ -291,6 +298,7 @@ check_connect_pin_completion_uses_connect_callbacks() {
   done
 
   for required in \
+    'begin_connect_pin_auth_for_local_pin_auth' \
     'write_connect_rejected_from_pin_for_local_pin_auth' \
     'finish_connect_rejection_cleanup_for_local_pin_auth' \
     'return_connect_review_from_pin_for_local_pin_auth' \
@@ -326,6 +334,22 @@ check_connect_pin_completion_uses_connect_callbacks() {
   fi
 }
 
+check_local_pin_request_id_lookup_uses_app_callback() {
+  if grep -Eq 'protocol_pin_approval_request_id_for_local_pin_purpose\(|request_backed_local_pin_request_id\(|pending_request_id_for_local_pin_purpose\(|policy_update_request_id_for_pin\(' "${LOCAL_PIN_AUTH_UI_SOURCE}"; then
+    echo "FAILED: local PIN UI flow must use the app-provided request-id callback for terminal/rejection decisions" >&2
+    exit 1
+  fi
+
+  if ! grep -q 'request_id_for_pin(' "${LOCAL_PIN_AUTH_UI_SOURCE}"; then
+    echo "FAILED: local PIN UI flow is missing the semantic request-id callback" >&2
+    exit 1
+  fi
+  if ! grep -q 'request_id_for_local_pin_auth' "${USB_REQUEST_SERVER_SOURCE}"; then
+    echo "FAILED: StackChan request server is missing the local PIN request-id callback" >&2
+    exit 1
+  fi
+}
+
 check_policy_sui_pin_completion_uses_owner_callbacks() {
   if grep -Eq 'policy_update_flow_(clear|return_to_review|return_to_pin_entry|record_|commit)|sui_zklogin_proposal_flow_(return_to_review|return_to_pin_entry|record_|commit)|write_policy_propose_outcome_with_current_policy|protocol_pin_approval_begin_sui_zklogin_proposal|protocol_pin_approval_clear\(\)' "${LOCAL_PIN_AUTH_UI_SOURCE}"; then
     echo "FAILED: local PIN UI flow must use semantic policy/Sui callbacks instead of direct policy, Sui, or protocol PIN owner calls" >&2
@@ -355,21 +379,40 @@ check_policy_sui_pin_completion_uses_owner_callbacks() {
 
   for required in \
     'return_policy_update_review_from_pin_for_local_pin_auth' \
-    'return_policy_update_pin_entry_from_pin_for_local_pin_auth' \
-    'record_policy_update_ui_error_from_pin_for_local_pin_auth' \
-    'record_policy_update_timed_out_from_pin_for_local_pin_auth' \
-    'commit_policy_update_from_pin_for_local_pin_auth' \
     'finish_policy_update_unavailable_from_pin_for_local_pin_auth' \
     'begin_sui_zklogin_proposal_pin_from_review_for_local_pin_auth' \
     'return_sui_zklogin_review_from_pin_for_local_pin_auth' \
-    'return_sui_zklogin_pin_entry_from_pin_for_local_pin_auth' \
-    'record_sui_zklogin_ui_error_from_pin_for_local_pin_auth' \
-    'record_sui_zklogin_timed_out_from_pin_for_local_pin_auth' \
-    'record_sui_zklogin_rejected_from_pin_for_local_pin_auth' \
-    'record_sui_zklogin_consistency_error_from_pin_for_local_pin_auth' \
-    'commit_sui_zklogin_from_pin_for_local_pin_auth'; do
+    'record_sui_zklogin_consistency_error_from_pin_for_local_pin_auth'; do
     if ! grep -q "${required}" "${USB_REQUEST_SERVER_SOURCE}"; then
       echo "FAILED: StackChan request server is missing policy/Sui PIN callback ${required}" >&2
+      exit 1
+    fi
+  done
+
+  if grep -Eq 'return_policy_update_pin_entry_from_pin_for_local_pin_auth|record_policy_update_ui_error_from_pin_for_local_pin_auth|record_policy_update_timed_out_from_pin_for_local_pin_auth|commit_policy_update_from_pin_for_local_pin_auth|return_sui_zklogin_pin_entry_from_pin_for_local_pin_auth|record_sui_zklogin_ui_error_from_pin_for_local_pin_auth|record_sui_zklogin_timed_out_from_pin_for_local_pin_auth|record_sui_zklogin_rejected_from_pin_for_local_pin_auth|commit_sui_zklogin_from_pin_for_local_pin_auth' "${USB_REQUEST_SERVER_SOURCE}"; then
+    echo "FAILED: StackChan request server must not reintroduce one-line policy/Sui local PIN wrappers that can bind owner functions directly" >&2
+    exit 1
+  fi
+
+  local ops_snippet="${TMP_DIR}/local_pin_auth_ops.cpp"
+  awk '
+    /^agent_q::AgentQLocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops\(\)$/ { in_ops = 1 }
+    in_ops { print }
+    in_ops && /^}/ { exit }
+  ' "${USB_REQUEST_SERVER_SOURCE}" >"${ops_snippet}"
+
+  for required in \
+    'agent_q::policy_update_flow_return_to_pin_entry' \
+    'agent_q::policy_update_flow_record_ui_error' \
+    'agent_q::policy_update_flow_record_timed_out' \
+    'agent_q::policy_update_flow_commit' \
+    'agent_q::sui_zklogin_proposal_flow_return_to_pin_entry' \
+    'agent_q::sui_zklogin_proposal_flow_record_ui_error' \
+    'agent_q::sui_zklogin_proposal_flow_record_timed_out' \
+    'agent_q::sui_zklogin_proposal_flow_record_rejected' \
+    'agent_q::sui_zklogin_proposal_flow_commit'; do
+    if ! grep -q "${required}" "${ops_snippet}"; then
+      echo "FAILED: StackChan local PIN ops must bind direct owner function ${required}" >&2
       exit 1
     fi
   done
@@ -456,6 +499,88 @@ check_user_signing_keeps_panel_until_signing_work() {
   if [[ -n "${raw_confirmation_line}" || -n "${raw_flow_line}" ]]; then
     echo "FAILED: local PIN user signing must use app-level user-signing callbacks instead of direct owner calls" >&2
     echo "raw_confirmation_line=${raw_confirmation_line:-none} raw_flow_line=${raw_flow_line:-none}" >&2
+    exit 1
+  fi
+
+  if grep -Eq 'cancel_user_signing_for_pin_loss_from_local_pin_auth|record_user_signing_timeout_from_pin_for_local_pin_auth|return_user_signing_review_from_pin_for_local_pin_auth|user_signing_terminal_pending_from_local_pin_auth|execute_user_signing_for_local_pin_auth|finish_user_signing_error_terminal_for_local_pin_auth' "${USB_REQUEST_SERVER_SOURCE}"; then
+    echo "FAILED: StackChan request server must not reintroduce one-line user-signing local PIN wrappers that can bind owner functions directly" >&2
+    exit 1
+  fi
+
+  local ops_snippet="${TMP_DIR}/local_pin_auth_user_signing_ops.cpp"
+  awk '
+    /^agent_q::AgentQLocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops\(\)$/ { in_ops = 1 }
+    in_ops { print }
+    in_ops && /^}/ { exit }
+  ' "${USB_REQUEST_SERVER_SOURCE}" >"${ops_snippet}"
+
+  for required in \
+    'agent_q::user_signing_confirmation_cancel_for_pin_loss' \
+    'agent_q::user_signing_confirmation_record_timeout' \
+    'agent_q::user_signing_confirmation_return_to_review_from_pin' \
+    'agent_q::user_signing_flow_terminal_pending' \
+    'execute_user_signing_critical_section_and_finish' \
+    'finish_user_signing_error_terminal'; do
+    if ! grep -q "${required}" "${ops_snippet}"; then
+      echo "FAILED: StackChan local PIN ops must bind direct owner function ${required}" >&2
+      exit 1
+    fi
+  done
+}
+
+check_local_pin_ops_surface_is_grouped() {
+  local ops_struct="${TMP_DIR}/AgentQLocalPinAuthUiFlowOps.h"
+  local ops_builder="${TMP_DIR}/local_pin_auth_grouped_ops.cpp"
+
+  awk '
+    /^struct AgentQLocalPinAuthUiFlowOps / { in_struct = 1 }
+    in_struct { print }
+    in_struct && /^};/ { exit }
+  ' "${LOCAL_PIN_AUTH_UI_HEADER}" >"${ops_struct}"
+
+  if grep -q '(\*' "${ops_struct}"; then
+    echo "FAILED: AgentQLocalPinAuthUiFlowOps must expose responsibility groups, not flat callback fields" >&2
+    exit 1
+  fi
+
+  for required in \
+    'AgentQLocalPinAuthTimingOps timing' \
+    'AgentQLocalPinAuthDisplayOps display' \
+    'AgentQLocalPinAuthMaterialSettingsOps material_settings' \
+    'AgentQLocalPinAuthRequestOps request' \
+    'AgentQLocalPinAuthConnectOps connect' \
+    'AgentQLocalPinAuthPolicyUpdateOps policy_update' \
+    'AgentQLocalPinAuthSuiZkLoginOps sui_zklogin' \
+    'AgentQLocalPinAuthUserSigningOps user_signing'; do
+    if ! grep -q "${required}" "${ops_struct}"; then
+      echo "FAILED: local PIN ops surface is missing responsibility group ${required}" >&2
+      exit 1
+    fi
+  done
+
+  awk '
+    /^agent_q::AgentQLocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops\(\)$/ { in_ops = 1 }
+    in_ops { print }
+    in_ops && /^}/ { exit }
+  ' "${USB_REQUEST_SERVER_SOURCE}" >"${ops_builder}"
+
+  for required in \
+    'ops.timing.' \
+    'ops.display.' \
+    'ops.material_settings.' \
+    'ops.request.' \
+    'ops.connect.' \
+    'ops.policy_update.' \
+    'ops.sui_zklogin.' \
+    'ops.user_signing.'; do
+    if ! grep -q "${required}" "${ops_builder}"; then
+      echo "FAILED: StackChan local PIN ops builder is missing grouped assignment ${required}" >&2
+      exit 1
+    fi
+  done
+
+  if grep -Eq 'ops\.(now|wall_clock_ms|provisioned_material_ready|human_approval_requires_pin|read_human_approval_input_mode|read_signing_authorization_mode|read_sui_account_settings|begin_connect_pin_auth|request_id_for_pin|show_policy_update_review|show_sui_zklogin_review|show_user_signing_review|connect_approval_ms)[[:space:]]*=' "${ops_builder}"; then
+    echo "FAILED: StackChan local PIN ops builder must not assign flat operation fields" >&2
     exit 1
   fi
 }
@@ -794,9 +919,11 @@ check_local_pin_worker_timeout_order
 check_settings_policy_reset_keeps_panel_until_completion
 check_settings_sui_clear_keeps_panel_until_completion
 check_connect_pin_completion_uses_connect_callbacks
+check_local_pin_request_id_lookup_uses_app_callback
 check_policy_sui_pin_completion_uses_owner_callbacks
 check_policy_update_keeps_panel_until_commit
 check_user_signing_keeps_panel_until_signing_work
+check_local_pin_ops_surface_is_grouped
 check_modal_transition_next_panel_order
 check_settings_completion_uses_transition_owner
 check_no_flow_local_pin_clear_helper

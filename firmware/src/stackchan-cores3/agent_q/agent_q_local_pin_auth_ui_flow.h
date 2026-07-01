@@ -29,10 +29,37 @@ enum class AgentQLocalPinAuthSuiZkLoginPinBeginResult {
     pin_unavailable,
 };
 
-struct AgentQLocalPinAuthUiFlowOps {
+enum class AgentQLocalPinAuthConnectPinBeginResult {
+    started,
+    unavailable,
+    pin_unavailable,
+};
+
+struct AgentQLocalPinAuthTimingOps {
     TickType_t (*now)();
     uint64_t (*wall_clock_ms)();
+    uint32_t connect_approval_ms;
+    uint32_t provisioning_approval_ms;
+    uint32_t local_pin_input_window_ms;
+    uint32_t local_processing_render_delay_ms;
+    uint32_t local_processing_display_ms;
+    uint32_t local_auth_worker_max_ms;
+    uint32_t local_reset_entry_ms;
+};
+
+struct AgentQLocalPinAuthDisplayOps {
+    bool (*clear_panel_if_kind)(AgentQUiPanelKind kind, SensitiveUiClearPolicy policy);
+    bool (*local_pin_panel_visible)();
+    bool (*draw_local_pin_auth_panel)(const char* notice);
+    bool (*draw_processing_overlay_on_current_panel)(AgentQUiPanelKind kind);
+    void (*show_message)(const char* message, AgentQMessageKind kind);
+    void (*log_write_failure)(const char* response_type, const char* id);
+    void (*log_warn)(const char* message);
+};
+
+struct AgentQLocalPinAuthMaterialSettingsOps {
     bool (*provisioned_material_ready)();
+    void (*record_material_failure)(AgentQPersistentMaterialRuntimeFailure failure);
     bool (*human_approval_requires_pin)();
     bool (*read_human_approval_input_mode)(AgentQHumanApprovalInputMode* output);
     bool (*read_signing_authorization_mode)(AgentQSigningAuthorizationMode* output);
@@ -49,12 +76,20 @@ struct AgentQLocalPinAuthUiFlowOps {
         const char* display_failure_wipe_reason,
         const char* display_failure_message,
         AgentQMessageKind display_failure_kind);
-    bool (*clear_panel_if_kind)(AgentQUiPanelKind kind, SensitiveUiClearPolicy policy);
-    bool (*local_pin_panel_visible)();
-    bool (*draw_local_pin_auth_panel)(const char* notice);
-    bool (*draw_processing_overlay_on_current_panel)(AgentQUiPanelKind kind);
-    void (*show_message)(const char* message, AgentQMessageKind kind);
-    void (*record_material_failure)(AgentQPersistentMaterialRuntimeFailure failure);
+};
+
+struct AgentQLocalPinAuthRequestOps {
+    bool (*request_id_for_pin)(
+        AgentQLocalPinAuthPurpose purpose,
+        char* output,
+        size_t output_size);
+};
+
+struct AgentQLocalPinAuthConnectOps {
+    AgentQLocalPinAuthConnectPinBeginResult (*begin_connect_pin_auth)(
+        const char* request_id,
+        TickType_t now,
+        AgentQTimeoutWindow request_window);
     void (*write_connect_rejected_from_pin)(
         const char* request_id,
         AgentQLocalPinAuthConnectRejectReason reason);
@@ -65,9 +100,10 @@ struct AgentQLocalPinAuthUiFlowOps {
         const char* request_id);
     void (*finish_connect_session_error)(const char* request_id);
     void (*finish_connect_approved)(const char* request_id);
-    void (*log_write_failure)(const char* response_type, const char* id);
+};
+
+struct AgentQLocalPinAuthPolicyUpdateOps {
     bool (*show_policy_update_review)();
-    bool (*policy_update_request_id_for_pin)(char* output, size_t output_size);
     bool (*require_pending_policy_update_session)(const char* request_id);
     AgentQPolicyUpdateFlowTransitionResult (*return_policy_update_review_from_pin)(
         TickType_t now,
@@ -89,6 +125,9 @@ struct AgentQLocalPinAuthUiFlowOps {
         const char* error_code,
         const char* error_message,
         const char* display_message);
+};
+
+struct AgentQLocalPinAuthSuiZkLoginOps {
     bool (*require_pending_sui_zklogin_proposal_session)(const char* request_id);
     AgentQLocalPinAuthSuiZkLoginPinBeginResult (*begin_sui_zklogin_proposal_pin_from_review)(
         const char* request_id,
@@ -110,6 +149,9 @@ struct AgentQLocalPinAuthUiFlowOps {
         const char* error_message,
         const char* display_message);
     bool (*show_sui_zklogin_review)();
+};
+
+struct AgentQLocalPinAuthUserSigningOps {
     bool (*show_user_signing_review)();
     AgentQUserSigningConfirmationResult (*cancel_user_signing_for_pin_loss)();
     AgentQUserSigningConfirmationResult (*record_user_signing_timeout_from_pin)(
@@ -130,14 +172,17 @@ struct AgentQLocalPinAuthUiFlowOps {
         const char* error_code,
         const char* error_message,
         const char* display_message);
-    void (*log_warn)(const char* message);
-    uint32_t connect_approval_ms;
-    uint32_t provisioning_approval_ms;
-    uint32_t local_pin_input_window_ms;
-    uint32_t local_processing_render_delay_ms;
-    uint32_t local_processing_display_ms;
-    uint32_t local_auth_worker_max_ms;
-    uint32_t local_reset_entry_ms;
+};
+
+struct AgentQLocalPinAuthUiFlowOps {
+    AgentQLocalPinAuthTimingOps timing;
+    AgentQLocalPinAuthDisplayOps display;
+    AgentQLocalPinAuthMaterialSettingsOps material_settings;
+    AgentQLocalPinAuthRequestOps request;
+    AgentQLocalPinAuthConnectOps connect;
+    AgentQLocalPinAuthPolicyUpdateOps policy_update;
+    AgentQLocalPinAuthSuiZkLoginOps sui_zklogin;
+    AgentQLocalPinAuthUserSigningOps user_signing;
 };
 
 bool local_pin_auth_ui_panel_matches_stage(AgentQUiPanelKind kind);
