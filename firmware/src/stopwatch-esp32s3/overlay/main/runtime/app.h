@@ -1,6 +1,7 @@
 #pragma once
 
 #include <apps/common/key_manager/key_manager.h>
+#include <hal/hal.h>
 #include <lvgl.h>
 #include <mooncake.h>
 #include <memory>
@@ -33,11 +34,22 @@ private:
     uint32_t last_update_ms_ = 0;
     uint32_t last_seen_rejected_connects_ = 0;
     std::string last_input_ = "none";
+    int display_restore_brightness_ = 80;
+    bool display_on_ = true;
+    bool button_feedback_suppressed_ = false;
+    bool power_policy_synced_ = false;
+    bool external_power_present_ = false;
+    Hal::ButtonConfig saved_button_config_ = {};
 
     void create_ui();
     void destroy_ui();
     void update_ui(bool force);
     void handle_key_event(input::KeyEvent event);
+    void handle_power_button();
+    void sync_power_button_policy();
+    bool usb_power_present_for_power_policy() const;
+    void set_display_on(bool display_on, bool feedback = true, bool lvgl_locked = false);
+    void set_button_feedback_suppressed(bool suppressed);
     void record_input(const char* input_name, uint16_t vibration_ms, uint8_t strength, bool lvgl_locked);
     static void handle_touch_event(lv_event_t* event);
 };

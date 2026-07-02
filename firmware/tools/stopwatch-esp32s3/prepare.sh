@@ -57,6 +57,9 @@ cp "${OVERLAY_MAIN}/CMakeLists.txt" "${CHECKOUT_DIR}/main/CMakeLists.txt"
 rm -rf "${CHECKOUT_DIR}/main/runtime"
 mkdir -p "${CHECKOUT_DIR}/main/runtime"
 cp -R "${OVERLAY_MAIN}/runtime/." "${CHECKOUT_DIR}/main/runtime/"
+if [[ -d "${OVERLAY_MAIN}/hal" ]]; then
+  cp -R "${OVERLAY_MAIN}/hal/." "${CHECKOUT_DIR}/main/hal/"
+fi
 rm -rf "${CHECKOUT_DIR}/main/firmware_common/protocol"
 mkdir -p "${CHECKOUT_DIR}/main/firmware_common/protocol"
 cp -R "${COMMON_PROTOCOL}/." "${CHECKOUT_DIR}/main/firmware_common/protocol/"

@@ -11,7 +11,11 @@ Current status: the target implements an unprovisioned first slice only:
 - `connect` fail-closed with the current protocol `invalid_state` error while
   unprovisioned;
 - local display, touch, physical button, battery display, and vibration
-  feedback used by this slice.
+  feedback used by this slice;
+- target-local power-button behavior: while USB power is present, short press
+  toggles display backlight off/on; while USB power is absent, short press
+  remains the StopWatch PMIC power-on/reset behavior; hardware double-click
+  power-off remains PMIC-owned.
 
 The target does not implement provisioning, approved connect, session creation,
 disconnect session cleanup, signing, policy, accounts, zkLogin, approval
@@ -71,6 +75,14 @@ FIRMWARE_IDF_PATH=/path/to/esp-idf-v5.5.4 \
 - Buttons: KEYA on G2, KEYB on G1, plus M5PM1 power button.
 - Vibration: built-in motor through M5IOE1 PWM.
 - Power: M5PM1, 450mAh battery, USB Type-C 5V input.
+
+Power-button behavior is target-local. While USB power is present, a short M5PM1
+power-button press toggles the display backlight off and on. While the display
+is off, local input and request feedback turn it back on before updating the
+screen. While USB power is absent, a short press remains the StopWatch PMIC
+power-on/reset behavior. Hardware power-off remains the StopWatch PMIC
+double-click behavior and is not implemented as a Firmware protocol method or
+app-owned product state transition.
 
 ## Boundary
 

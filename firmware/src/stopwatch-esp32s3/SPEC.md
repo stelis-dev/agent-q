@@ -20,7 +20,8 @@ Its current role is:
 - reject `connect` while unprovisioned with the current protocol
   `invalid_state` error;
 - provide local display, touch, physical button, battery display, and vibration
-  feedback for the first slice.
+  feedback for the first slice;
+- provide target-local power-button behavior.
 
 It is not a signing product target. It does not expose MCP directly and does
 not provide chain-specific signing APIs.
@@ -42,6 +43,7 @@ Legend:
 | Touch feedback | O | Touch A and Touch B update local UI state and trigger vibration. |
 | Physical button feedback | O | KEYA, KEYB, and KEYA+KEYB events update local UI state and trigger vibration. |
 | Vibration feedback | O | Target-local user feedback only; it does not authorize protocol behavior. |
+| Power-button behavior | O | USB-power-present short click toggles display backlight off/on. USB-power-absent short click remains the StopWatch PMIC power-on/reset behavior. Hardware double-click power-off remains PMIC-owned. |
 | Provisioning | X | Not implemented. |
 | Approved connect | X | Not implemented. |
 | Firmware sessions | X | Not implemented. |
@@ -85,6 +87,26 @@ Implemented request behavior:
 
 The target does not implement a test-only setup path, debug state setter,
 provisioning shortcut, or host-triggered reset.
+
+## Power Button Behavior
+
+Power-button behavior is target-local hardware UX:
+
+- while USB power is present, short M5PM1 power-button click turns the display
+  backlight off when it is on and restores the display backlight when it is off;
+- while the display is off in USB-power-present mode, KEYA, KEYB, KEYA+KEYB,
+  Touch A, Touch B, and request feedback restore the display before updating
+  the screen;
+- USB request handling continues while the display is off in USB-power-present
+  mode;
+- while USB power is absent, short M5PM1 power-button click remains the
+  StopWatch PMIC power-on/reset behavior;
+- hardware power-off remains the StopWatch PMIC double-click behavior and is
+  not implemented as a Firmware protocol command or app-owned state transition.
+
+This behavior does not expose a protocol command, does not change public
+provisioning state or device state, and does not authorize or reject protocol
+requests.
 
 ## Hardware Boundary
 

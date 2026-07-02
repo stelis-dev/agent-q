@@ -66,6 +66,15 @@ void RuntimeApp::onOpen()
     mclog::tagInfo(kAppName, "on open");
     key_manager_ = std::make_unique<input::KeyManager>();
     usb_transport_init();
+    display_on_ = true;
+    button_feedback_suppressed_ = false;
+    saved_button_config_ = GetHAL().getButtonConfig();
+    display_restore_brightness_ = GetHAL().getBackLightBrightness(false);
+    if (display_restore_brightness_ <= 0) {
+        display_restore_brightness_ = 80;
+    }
+    GetHAL().setBackLightBrightness(display_restore_brightness_, false);
+    sync_power_button_policy();
 
     LvglLockGuard lock;
     create_ui();
@@ -77,7 +86,10 @@ void RuntimeApp::onRunning()
     usb_transport_poll();
 
     if (key_manager_) {
-        handle_key_event(key_manager_->update());
+        const input::KeyEvent key_event = key_manager_->update();
+        sync_power_button_policy();
+        handle_power_button();
+        handle_key_event(key_event);
     }
 
     const UsbStatus status = usb_transport_status();
@@ -87,7 +99,7 @@ void RuntimeApp::onRunning()
     }
 
     const uint32_t now = GetHAL().millis();
-    if (now - last_update_ms_ >= kUiRefreshMs) {
+    if (display_on_ && now - last_update_ms_ >= kUiRefreshMs) {
         LvglLockGuard lock;
         update_ui(false);
     }
@@ -96,6 +108,7 @@ void RuntimeApp::onRunning()
 void RuntimeApp::onClose()
 {
     mclog::tagInfo(kAppName, "on close");
+    set_button_feedback_suppressed(false);
     key_manager_.reset();
 
     LvglLockGuard lock;
@@ -156,6 +169,10 @@ void RuntimeApp::destroy_ui()
 
 void RuntimeApp::update_ui(bool force)
 {
+    if (!display_on_) {
+        return;
+    }
+
     const uint32_t now = GetHAL().millis();
     if (!force && now - last_update_ms_ < kUiRefreshMs) {
         return;
@@ -183,13 +200,15 @@ void RuntimeApp::update_ui(bool force)
         status.last_error[0] != '\0' ? status.last_error : "none");
     set_label_text(input_label_, input_text);
 
+    const bool external_power_present = GetHAL().isExternalPowerPresent();
+    const bool battery_charging       = GetHAL().isBatteryCharging();
     char power_text[128];
     snprintf(
         power_text,
         sizeof(power_text),
         "Battery %u%%  %s",
         static_cast<unsigned>(GetHAL().getBatteryLevel()),
-        GetHAL().isBatteryCharging() ? "USB power" : "battery");
+        external_power_present ? (battery_charging ? "USB charging" : "USB power") : "battery");
     set_label_text(power_label_, power_text);
 }
 
@@ -210,12 +229,103 @@ void RuntimeApp::handle_key_event(input::KeyEvent event)
     }
 }
 
+void RuntimeApp::handle_power_button()
+{
+    switch (GetHAL().readPowerButtonEvent()) {
+        case Hal::PowerButtonEvent::shortClick:
+            if (usb_power_present_for_power_policy()) {
+                set_display_on(!display_on_);
+            }
+            break;
+        case Hal::PowerButtonEvent::none:
+            break;
+    }
+}
+
+void RuntimeApp::sync_power_button_policy()
+{
+    const bool external_power_present = GetHAL().isExternalPowerPresent();
+    if (power_policy_synced_ && external_power_present_ == external_power_present) {
+        return;
+    }
+    if (GetHAL().setPowerButtonSingleClickResetEnabled(!external_power_present)) {
+        external_power_present_ = external_power_present;
+        power_policy_synced_ = true;
+    }
+}
+
+bool RuntimeApp::usb_power_present_for_power_policy() const
+{
+    return external_power_present_;
+}
+
+void RuntimeApp::set_display_on(bool display_on, bool feedback, bool lvgl_locked)
+{
+    if (display_on_ == display_on) {
+        return;
+    }
+
+    if (display_on) {
+        display_on_ = true;
+        set_button_feedback_suppressed(false);
+        const int brightness = display_restore_brightness_ > 0 ? display_restore_brightness_ : 80;
+        GetHAL().setBackLightBrightness(brightness, false);
+        last_input_ = "power screen on";
+        if (feedback) {
+            GetHAL().vibrate(35, 70);
+        }
+        if (lvgl_locked) {
+            update_ui(true);
+        } else {
+            LvglLockGuard lock;
+            update_ui(true);
+        }
+        return;
+    }
+
+    const int current_brightness = GetHAL().getBackLightBrightness(false);
+    if (current_brightness > 0) {
+        display_restore_brightness_ = current_brightness;
+    }
+    last_input_ = "power screen off";
+    if (feedback) {
+        GetHAL().vibrate(35, 70);
+    }
+    set_button_feedback_suppressed(true);
+    GetHAL().setBackLightBrightness(0, false);
+    display_on_ = false;
+}
+
+void RuntimeApp::set_button_feedback_suppressed(bool suppressed)
+{
+    if (button_feedback_suppressed_ == suppressed) {
+        return;
+    }
+
+    if (suppressed) {
+        saved_button_config_ = GetHAL().getButtonConfig();
+        Hal::ButtonConfig disabled_config = saved_button_config_;
+        disabled_config.sfxEnabled = false;
+        disabled_config.vibrateEnabled = false;
+        GetHAL().setButtonConfig(disabled_config, false);
+        button_feedback_suppressed_ = true;
+        return;
+    }
+
+    GetHAL().setButtonConfig(saved_button_config_, false);
+    button_feedback_suppressed_ = false;
+}
+
 void RuntimeApp::record_input(
     const char* input_name,
     uint16_t vibration_ms,
     uint8_t strength,
     bool lvgl_locked)
 {
+    if (!display_on_) {
+        set_display_on(true, false, lvgl_locked);
+    }
+
     last_input_ = input_name != nullptr ? input_name : "unknown";
     GetHAL().vibrate(vibration_ms, strength);
     if (lvgl_locked) {
