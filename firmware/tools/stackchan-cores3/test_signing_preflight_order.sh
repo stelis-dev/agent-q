@@ -550,7 +550,7 @@ bool usb_response_write_json(JsonDocument& response)
     return true;
 }
 
-bool usb_response_prepare_success_result(
+bool device_response_prepare_success_result(
     JsonDocument& response,
     const char* id,
     const char* method,
@@ -568,7 +568,7 @@ bool usb_response_prepare_success_result(
     return true;
 }
 
-bool usb_response_prepare_method_error(
+bool device_response_prepare_method_error(
     JsonDocument& response,
     const char* id,
     const char* method,
@@ -600,7 +600,7 @@ bool usb_response_write_method_error(
     const char* code)
 {
     JsonDocument response;
-    if (!usb_response_prepare_method_error(response, id, method, code)) {
+    if (!device_response_prepare_method_error(response, id, method, code)) {
         return false;
     }
     return usb_response_write_json(response);

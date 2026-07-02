@@ -8,10 +8,10 @@ namespace signing {
 
 namespace {
 
-bool write_status_response(const char* id, const UsbDeviceResponseInfo& info)
+bool write_status_response(const char* id, const UsbDeviceStatusInfo& info)
 {
     JsonDocument result;
-    usb_response_write_device_fields(result["device"].to<JsonObject>(), info);
+    device_response_write_device_fields(result["device"].to<JsonObject>(), info.device);
     result["provisioning"]["state"] = info.provisioning_state;
     return usb_response_write_success_result(id, "get_status", result.as<JsonObjectConst>());
 }
@@ -19,11 +19,11 @@ bool write_status_response(const char* id, const UsbDeviceResponseInfo& info)
 bool write_identify_device_method_result(
     const char* id,
     const char* code,
-    const UsbDeviceResponseInfo& info)
+    const UsbDeviceStatusInfo& info)
 {
     JsonDocument result;
     result["code"] = code;
-    usb_response_write_device_fields(result["device"].to<JsonObject>(), info);
+    device_response_write_device_fields(result["device"].to<JsonObject>(), info.device);
     return usb_response_write_success_result(id, "identify_device", result.as<JsonObjectConst>());
 }
 
@@ -53,8 +53,8 @@ void handle_usb_get_status_request(
     if (ops.refresh_persistent_material_consistency != nullptr) {
         (void)ops.refresh_persistent_material_consistency();
     }
-    if (ops.device_response_info != nullptr &&
-        write_status_response(id, ops.device_response_info())) {
+    if (ops.device_status_info != nullptr &&
+        write_status_response(id, ops.device_status_info())) {
         return;
     }
     {
@@ -103,8 +103,8 @@ void handle_usb_identify_device_request(
     if (ops.show_identification_code != nullptr) {
         ops.show_identification_code(code, ops.identify_display_ms);
     }
-    if (ops.device_response_info != nullptr &&
-        write_identify_device_method_result(id, code, ops.device_response_info())) {
+    if (ops.device_status_info != nullptr &&
+        write_identify_device_method_result(id, code, ops.device_status_info())) {
         return;
     }
     writer.log_write_failure("identify_device", id);

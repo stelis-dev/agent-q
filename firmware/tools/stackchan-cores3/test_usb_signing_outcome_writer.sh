@@ -12,6 +12,7 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.h" \
+  "${COMMON_ROOT}/protocol/device_response.h" \
   "${RUNTIME_DIR}/usb_signing_outcome_writer.cpp" \
   "${RUNTIME_DIR}/usb_signing_outcome_writer.h" \
   "${RUNTIME_DIR}/signing_response_store.cpp" \
@@ -161,7 +162,7 @@ bool usb_response_write_json(JsonDocument& response)
     return true;
 }
 
-bool usb_response_prepare_success_result(
+bool device_response_prepare_success_result(
     JsonDocument& response,
     const char* id,
     const char* method,
@@ -179,7 +180,7 @@ bool usb_response_prepare_success_result(
     return true;
 }
 
-bool usb_response_prepare_method_error(
+bool device_response_prepare_method_error(
     JsonDocument& response,
     const char* id,
     const char* method,
@@ -211,7 +212,7 @@ bool usb_response_write_method_error(
     const char* code)
 {
     JsonDocument response;
-    if (!usb_response_prepare_method_error(response, id, method, code)) {
+    if (!device_response_prepare_method_error(response, id, method, code)) {
         return false;
     }
     return usb_response_write_json(response);

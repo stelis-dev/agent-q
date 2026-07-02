@@ -39,6 +39,8 @@ fi
 for required_common_protocol in \
   device_contract.cpp \
   device_contract.h \
+  device_response.cpp \
+  device_response.h \
   json_input.h \
   protocol_constants.h \
   request_id.cpp \

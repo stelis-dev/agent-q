@@ -26,6 +26,8 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.h" \
+  "${COMMON_ROOT}/protocol/device_response.cpp" \
+  "${COMMON_ROOT}/protocol/device_response.h" \
   "${COMMON_ROOT}/protocol/protocol_constants.h" \
   "${RUNTIME_DIR}/usb_response_writer.cpp" \
   "${RUNTIME_DIR}/usb_response_writer.h"; do
@@ -137,13 +139,12 @@ int main()
 {
     {
         reset_written();
-        const signing::UsbDeviceResponseInfo info{
+        const signing::DeviceResponseDeviceFields info{
             "device-1",
             "idle",
             "Agent-Q Firmware",
             "stackchan-cores3",
             "0.0.0",
-            nullptr,
         };
         assert(signing::usb_response_write_connect_approved(
             "req",
@@ -193,6 +194,7 @@ CPP
   "${TMP_DIR}/test.cpp" \
   "${RUNTIME_DIR}/usb_response_writer.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
+  "${COMMON_ROOT}/protocol/device_response.cpp" \
   -o "${TMP_DIR}/test_usb_response_writer"
 
 "${TMP_DIR}/test_usb_response_writer"

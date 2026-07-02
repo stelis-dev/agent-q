@@ -8,6 +8,7 @@ idf_component_register(
         "runtime/app.cpp"
         "runtime/usb_transport.cpp"
         "firmware_common/protocol/device_contract.cpp"
+        "firmware_common/protocol/device_response.cpp"
         "firmware_common/protocol/request_id.cpp"
         "firmware_common/protocol/request_line.cpp"
         "apps/common/audio/audio.cpp"

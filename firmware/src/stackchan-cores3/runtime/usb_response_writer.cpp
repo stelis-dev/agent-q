@@ -3,7 +3,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "protocol/device_contract.h"
 #include "protocol/protocol_constants.h"
 
 #include "driver/usb_serial_jtag.h"
@@ -86,17 +85,6 @@ private:
 
 }  // namespace
 
-void usb_response_write_device_fields(
-    JsonObject device,
-    const UsbDeviceResponseInfo& info)
-{
-    device["deviceId"] = info.device_id;
-    device["state"] = info.device_state;
-    device["firmwareName"] = info.firmware_name;
-    device["hardware"] = info.hardware;
-    device["firmwareVersion"] = info.firmware_version;
-}
-
 bool usb_response_write_json(JsonDocument& response)
 {
     if (response.overflowed()) {
@@ -138,59 +126,13 @@ bool usb_response_write_json(JsonDocument& response)
     return false;
 }
 
-bool usb_response_prepare_success_result(
-    JsonDocument& response,
-    const char* id,
-    const char* method,
-    JsonObjectConst result)
-{
-    if (method == nullptr || method[0] == '\0' || result.isNull()) {
-        return false;
-    }
-    response.clear();
-    response["id"] = id;
-    response["version"] = kProtocolVersion;
-    response["success"] = true;
-    response["method"] = method;
-    response["result"].set(result);
-    return true;
-}
-
 bool usb_response_write_success_result(const char* id, const char* method, JsonObjectConst result)
 {
     JsonDocument response;
-    if (!usb_response_prepare_success_result(response, id, method, result)) {
+    if (!device_response_prepare_success_result(response, id, method, result)) {
         return false;
     }
     return usb_response_write_json(response);
-}
-
-bool usb_response_prepare_method_error(
-    JsonDocument& response,
-    const char* id,
-    const char* method,
-    const char* code)
-{
-    const DeviceErrorRow* error = device_error_row(code);
-    if (error == nullptr) {
-        error = device_error_row("unknown_error");
-    }
-    if (error == nullptr) {
-        return false;
-    }
-    response.clear();
-    if (id != nullptr && id[0] != '\0') {
-        response["id"] = id;
-    }
-    response["version"] = kProtocolVersion;
-    response["success"] = false;
-    if (method != nullptr && method[0] != '\0') {
-        response["method"] = method;
-    }
-    response["error"]["code"] = error->code;
-    response["error"]["message"] = error->message;
-    response["error"]["retryable"] = error->retryable;
-    return true;
 }
 
 bool usb_response_write_method_error(
@@ -199,7 +141,7 @@ bool usb_response_write_method_error(
     const char* code)
 {
     JsonDocument response;
-    if (!usb_response_prepare_method_error(response, id, method, code)) {
+    if (!device_response_prepare_method_error(response, id, method, code)) {
         return false;
     }
     return usb_response_write_json(response);
@@ -228,12 +170,12 @@ bool usb_response_write_connect_approved(
     const char* id,
     const char* session_id,
     uint32_t session_ttl_ms,
-    const UsbDeviceResponseInfo& info)
+    const DeviceResponseDeviceFields& info)
 {
     JsonDocument result;
     result["sessionId"] = session_id;
     result["sessionTtlMs"] = session_ttl_ms;
-    usb_response_write_device_fields(result["device"].to<JsonObject>(), info);
+    device_response_write_device_fields(result["device"].to<JsonObject>(), info);
     return usb_response_write_success_result(id, "connect", result.as<JsonObjectConst>());
 }
 

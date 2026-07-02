@@ -526,27 +526,28 @@ bool write_operation_error(
         code);
 }
 
-signing::UsbDeviceResponseInfo usb_device_response_info()
+signing::UsbDeviceStatusInfo usb_device_status_info()
 {
-    return signing::UsbDeviceResponseInfo{
-        g_device_id,
-        current_device_state(),
-        kFirmwareName,
-        kHardwareId,
-        kFirmwareVersion,
+    return signing::UsbDeviceStatusInfo{
+        {
+            g_device_id,
+            current_device_state(),
+            kFirmwareName,
+            kHardwareId,
+            kFirmwareVersion,
+        },
         signing::provisioning_runtime_state_reported(),
     };
 }
 
 bool write_connect_approved_response(const char* id)
 {
-    const signing::UsbDeviceResponseInfo info{
+    const signing::DeviceResponseDeviceFields info{
         g_device_id,
         "idle",
         kFirmwareName,
         kHardwareId,
         kFirmwareVersion,
-        nullptr,
     };
     return signing::usb_response_write_connect_approved(
         id,
@@ -3862,7 +3863,7 @@ const signing::UsbGetStatusHandlerOps& usb_get_status_handler_ops()
     static const signing::UsbGetStatusHandlerOps ops = {
         refresh_persistent_material_consistency,
         write_payload_delivery_safe_read_admission_error,
-        usb_device_response_info,
+        usb_device_status_info,
     };
     return ops;
 }
@@ -3885,7 +3886,7 @@ const signing::UsbIdentifyDeviceHandlerOps& usb_identify_device_handler_ops()
         write_payload_delivery_identify_device_busy,
         signing::transient_ui_identification_code_safe,
         show_identification_code,
-        usb_device_response_info,
+        usb_device_status_info,
         kIdentifyDisplayDefaultMs,
     };
     return ops;

@@ -19,11 +19,13 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
 ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
+  "${COMMON_ROOT}/protocol/device_response.h" \
   "${RUNTIME_DIR}/usb_device_handlers.cpp" \
   "${RUNTIME_DIR}/usb_device_handlers.h" \
   "${RUNTIME_DIR}/usb_operation_response_writer.h"; do
@@ -96,9 +98,9 @@ void reset_state()
 
 namespace signing {
 
-void usb_response_write_device_fields(
+void device_response_write_device_fields(
     JsonObject device,
-    const UsbDeviceResponseInfo& info)
+    const DeviceResponseDeviceFields& info)
 {
     device["deviceId"] = info.device_id;
     device["state"] = info.device_state;
@@ -207,14 +209,16 @@ bool refresh_material()
     return true;
 }
 
-signing::UsbDeviceResponseInfo device_info()
+signing::UsbDeviceStatusInfo device_info()
 {
-    return signing::UsbDeviceResponseInfo{
-        "device-1",
-        "idle",
-        "Agent-Q Firmware",
-        "stackchan-cores3",
-        "0.0.0",
+    return signing::UsbDeviceStatusInfo{
+        {
+            "device-1",
+            "idle",
+            "Agent-Q Firmware",
+            "stackchan-cores3",
+            "0.0.0",
+        },
         "provisioned",
     };
 }
@@ -365,6 +369,7 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${ARDUINOJSON_ROOT}" \
+  -I"${COMMON_ROOT}" \
   -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
   "${RUNTIME_DIR}/usb_device_handlers.cpp" \

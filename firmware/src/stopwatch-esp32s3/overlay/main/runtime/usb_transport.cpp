@@ -14,6 +14,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "protocol/device_contract.h"
+#include "protocol/device_response.h"
 #include "protocol/json_input.h"
 #include "protocol/protocol_constants.h"
 #include "protocol/request_id.h"
@@ -120,26 +121,10 @@ bool write_json_response(JsonDocument& response, size_t output_size)
 
 bool write_error_response(const char* id, const char* method, const char* code)
 {
-    const signing::DeviceErrorRow* error = signing::device_error_row(code);
-    if (error == nullptr) {
-        error = signing::device_error_row("unknown_error");
-    }
-    if (error == nullptr) {
+    JsonDocument response;
+    if (!signing::device_response_prepare_method_error(response, id, method, code)) {
         return false;
     }
-    JsonDocument response;
-    if (id != nullptr && id[0] != '\0') {
-        response["id"] = id;
-    }
-    response["version"] = signing::kProtocolVersion;
-    response["success"] = false;
-    if (method != nullptr && method[0] != '\0') {
-        response["method"] = method;
-    }
-    response["error"]["code"] = error->code;
-    response["error"]["message"] = error->message;
-    response["error"]["retryable"] = error->retryable;
-
     return write_json_response(response, 768);
 }
 
@@ -147,20 +132,25 @@ bool write_status_response(const char* id)
 {
     format_device_id();
 
-    JsonDocument response;
-    response["id"] = id;
-    response["version"] = signing::kProtocolVersion;
-    response["success"] = true;
-    response["method"] = "get_status";
-    JsonObject result = response["result"].to<JsonObject>();
-    JsonObject device = result["device"].to<JsonObject>();
-    device["deviceId"] = g_device_id;
-    device["state"] = kDeviceState;
-    device["firmwareName"] = kFirmwareName;
-    device["hardware"] = kHardwareId;
-    device["firmwareVersion"] = kFirmwareVersion;
+    const signing::DeviceResponseDeviceFields info{
+        g_device_id,
+        kDeviceState,
+        kFirmwareName,
+        kHardwareId,
+        kFirmwareVersion,
+    };
+    JsonDocument result;
+    signing::device_response_write_device_fields(result["device"].to<JsonObject>(), info);
     result["provisioning"]["state"] = kProvisioningState;
 
+    JsonDocument response;
+    if (!signing::device_response_prepare_success_result(
+            response,
+            id,
+            "get_status",
+            result.as<JsonObjectConst>())) {
+        return false;
+    }
     return write_json_response(response, 1024);
 }
 

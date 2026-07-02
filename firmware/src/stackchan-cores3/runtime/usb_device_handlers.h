@@ -4,11 +4,17 @@
 
 #include <ArduinoJson.h>
 
+#include "protocol/device_response.h"
 #include "usb_operation_type.h"
 #include "usb_operation_response_writer.h"
 #include "usb_response_writer.h"
 
 namespace signing {
+
+struct UsbDeviceStatusInfo {
+    DeviceResponseDeviceFields device;
+    const char* provisioning_state;
+};
 
 struct UsbGetStatusHandlerOps {
     bool (*refresh_persistent_material_consistency)();
@@ -16,7 +22,7 @@ struct UsbGetStatusHandlerOps {
         const char* id,
         UsbOperationType operation,
         const UsbOperationResponseWriter& writer);
-    UsbDeviceResponseInfo (*device_response_info)();
+    UsbDeviceStatusInfo (*device_status_info)();
 };
 
 struct UsbIdentifyDeviceHandlerOps {
@@ -25,7 +31,7 @@ struct UsbIdentifyDeviceHandlerOps {
         const UsbOperationResponseWriter& writer);
     bool (*is_safe_identification_code)(const char* value);
     void (*show_identification_code)(const char* code, uint32_t duration_ms);
-    UsbDeviceResponseInfo (*device_response_info)();
+    UsbDeviceStatusInfo (*device_status_info)();
     uint32_t identify_display_ms = 0;
 };
 

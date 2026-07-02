@@ -179,8 +179,8 @@ expect_present "${USB_OPERATION_MANIFEST_SOURCE}" '"sign_transaction"' \
   "USB operation manifest must accept public sign_transaction messages"
 expect_absent "${USB_OPERATION_MANIFEST_SOURCE}" '"sign_transaction_user"|"sign_transaction_policy"' \
   "USB operation classifier must not accept host-selected authorization request types"
-expect_present "${USB_SIGNING_OUTCOME_WRITER_SOURCE}" 'usb_response_prepare_success_result|usb_response_prepare_method_error' \
-  "USB signing outcome writer must emit DeviceResponse envelopes through the shared response writer"
+expect_present "${USB_SIGNING_OUTCOME_WRITER_SOURCE}" 'device_response_prepare_success_result|device_response_prepare_method_error' \
+  "USB signing outcome writer must emit DeviceResponse envelopes through the shared response helper"
 expect_absent "${USB_SIGNING_OUTCOME_WRITER_SOURCE}" 'response\["type"\]' \
   "USB signing outcome writer must not hand-build top-level response type fields"
 expect_absent "${USB_SERVER}" 'response\["type"\]|write_signing_' \

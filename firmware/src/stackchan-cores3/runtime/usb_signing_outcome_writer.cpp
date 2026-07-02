@@ -182,7 +182,7 @@ bool prepare_signed_signing_response(
     }
 
     response.clear();
-    if (!usb_response_prepare_success_result(response, id, method, result)) {
+    if (!device_response_prepare_success_result(response, id, method, result)) {
         return false;
     }
     return true;
@@ -226,7 +226,7 @@ bool write_policy_rejected_signing_response(
         return false;
     }
     JsonDocument response;
-    if (!usb_response_prepare_method_error(response, id, "sign_transaction", "policy_rejected")) {
+    if (!device_response_prepare_method_error(response, id, "sign_transaction", "policy_rejected")) {
         return false;
     }
     return buffer_and_write_response(session_id, id, request_identity, response);
@@ -243,7 +243,7 @@ bool write_failed_signing_response(
         return false;
     }
     JsonDocument response;
-    if (!usb_response_prepare_method_error(response, id, "sign_transaction", "signing_failed")) {
+    if (!device_response_prepare_method_error(response, id, "sign_transaction", "signing_failed")) {
         return false;
     }
     return buffer_and_write_response(session_id, id, request_identity, response);
@@ -313,7 +313,7 @@ bool usb_signing_outcome_write_user_terminal(
     }
 
     JsonDocument response;
-    if (!usb_response_prepare_method_error(response, id, method, error_code)) {
+    if (!device_response_prepare_method_error(response, id, method, error_code)) {
         return false;
     }
     return buffer_and_write_response(session_id, id, request_identity, response);
