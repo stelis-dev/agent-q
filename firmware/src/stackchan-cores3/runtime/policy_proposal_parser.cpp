@@ -2,7 +2,7 @@
 
 #include <string.h>
 
-#include "json_input.h"
+#include "protocol/json_input.h"
 
 namespace signing {
 namespace {

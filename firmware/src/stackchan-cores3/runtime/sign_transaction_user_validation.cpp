@@ -7,9 +7,9 @@
 
 #include "approval_history.h"
 #include "base64.h"
-#include "json_input.h"
-#include "protocol_constants.h"
-#include "request_id.h"
+#include "protocol/json_input.h"
+#include "protocol/protocol_constants.h"
+#include "protocol/request_id.h"
 #include "sui_network.h"
 #include "numeric/u64_decimal.h"
 

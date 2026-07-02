@@ -1,0 +1,34 @@
+set(MY_INCS
+    "."
+)
+
+idf_component_register(
+    SRCS
+        "main.cpp"
+        "runtime/app.cpp"
+        "runtime/usb_transport.cpp"
+        "firmware_common/protocol/device_contract.cpp"
+        "firmware_common/protocol/request_id.cpp"
+        "firmware_common/protocol/usb_request_line.cpp"
+        "apps/common/audio/audio.cpp"
+        "apps/common/key_manager/key_manager.cpp"
+        "hal/hal.cpp"
+        "hal/hal_audio.cpp"
+        "hal/hal_button.cpp"
+        "hal/hal_display.cpp"
+        "hal/hal_fs.cpp"
+        "hal/hal_imu.cpp"
+        "hal/hal_ioe.cpp"
+        "hal/hal_pmic.cpp"
+        "hal/hal_rtc.cpp"
+        "hal/drivers/cst820/cst820.cpp"
+        "hal/drivers/rx8130/rx8130.cpp"
+        "hal/utils/button/Button_Class.cpp"
+        "hal/utils/settings/settings.cc"
+        "hal/utils/wear_levelling/wear_levelling.c"
+    INCLUDE_DIRS
+        ${MY_INCS}
+        "firmware_common"
+    EMBED_FILES
+        "assets/sfx/boot_sfx.bin"
+)

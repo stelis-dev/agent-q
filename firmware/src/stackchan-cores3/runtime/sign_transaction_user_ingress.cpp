@@ -4,9 +4,9 @@
 
 #include "protocol_input_copy.h"
 
-#include "json_input.h"
-#include "protocol_constants.h"
-#include "request_id.h"
+#include "protocol/json_input.h"
+#include "protocol/protocol_constants.h"
+#include "protocol/request_id.h"
 
 namespace signing {
 namespace {

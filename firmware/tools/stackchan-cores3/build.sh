@@ -7,7 +7,7 @@ Usage: firmware/tools/stackchan-cores3/build.sh [path-to-StackChan-or-firmware] 
 
 ESP-IDF must already be installed and active in the shell, so idf.py is on PATH.
 By default, the script downloads the pinned StackChan host firmware into the
-ignored .firmware-cache directory, applies the tracked Agent-Q overlay, and
+ignored .firmware-cache directory, applies the tracked target overlay, and
 downloads the pinned signing and BIP-39 wordlist sources into .firmware-cache
 before building. It does not depend on .WORK paths.
 EOF
@@ -65,6 +65,7 @@ fetch_pinned_repo() {
     git -C "${checkout_dir}" fetch --tags origin
   fi
   git -C "${checkout_dir}" checkout --force "${commit}"
+  git -C "${checkout_dir}" clean -fdx >/dev/null
 }
 
 if [[ -z "${SIGNING_CRYPTO_ROOT:-}" ]]; then

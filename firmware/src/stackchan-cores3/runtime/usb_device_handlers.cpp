@@ -1,7 +1,7 @@
 #include "usb_device_handlers.h"
 
-#include "json_input.h"
-#include "protocol_constants.h"
+#include "protocol/json_input.h"
+#include "protocol/protocol_constants.h"
 #include "usb_response_writer.h"
 
 namespace signing {

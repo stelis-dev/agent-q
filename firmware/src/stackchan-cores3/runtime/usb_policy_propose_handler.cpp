@@ -1,6 +1,6 @@
 #include "usb_policy_propose_handler.h"
 
-#include "json_input.h"
+#include "protocol/json_input.h"
 #include "usb_active_session_request_guard.h"
 #include "usb_policy_propose_outcome_writer.h"
 

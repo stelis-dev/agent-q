@@ -1,6 +1,6 @@
 #include "usb_disconnect_handler.h"
 
-#include "json_input.h"
+#include "protocol/json_input.h"
 #include "usb_response_writer.h"
 
 namespace signing {

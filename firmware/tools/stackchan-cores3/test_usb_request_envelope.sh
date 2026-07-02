@@ -18,17 +18,20 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
 ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
+  "${COMMON_ROOT}/protocol/device_contract.cpp" \
+  "${COMMON_ROOT}/protocol/device_contract.h" \
   "${RUNTIME_DIR}/usb_request_envelope.cpp" \
   "${RUNTIME_DIR}/usb_request_envelope.h" \
   "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
   "${RUNTIME_DIR}/usb_operation_manifest.h" \
   "${RUNTIME_DIR}/usb_operation_type.h" \
-  "${RUNTIME_DIR}/request_id.cpp"; do
+  "${COMMON_ROOT}/protocol/request_id.cpp"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -200,12 +203,13 @@ CPP
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
   -I"${RUNTIME_DIR}" \
+  -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
-  "${RUNTIME_DIR}/device_contract.cpp" \
+  "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${RUNTIME_DIR}/session.cpp" \
   "${RUNTIME_DIR}/usb_request_envelope.cpp" \
   "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
-  "${RUNTIME_DIR}/request_id.cpp" \
+  "${COMMON_ROOT}/protocol/request_id.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

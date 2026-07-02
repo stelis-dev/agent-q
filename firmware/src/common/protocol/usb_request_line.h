@@ -4,6 +4,8 @@
 
 namespace signing {
 
+constexpr size_t kUsbRequestLineMaxBytes = 16 * 1024;
+
 // Framing for the newline-delimited request stream from the host. One JSON object per
 // line; a leading/trailing newline isolates partial bytes left by a failed write. This
 // per-byte accumulator is the read side of that framing and is robust by contract:

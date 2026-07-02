@@ -21,6 +21,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
 ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
@@ -30,8 +31,8 @@ for required in \
   "${RUNTIME_DIR}/base64.h" \
   "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
   "${RUNTIME_DIR}/payload_delivery_primitives.h" \
-  "${RUNTIME_DIR}/request_id.cpp" \
-  "${RUNTIME_DIR}/request_id.h" \
+  "${COMMON_ROOT}/protocol/request_id.cpp" \
+  "${COMMON_ROOT}/protocol/request_id.h" \
   "${RUNTIME_DIR}/session.cpp" \
   "${RUNTIME_DIR}/session.h" \
   "${RUNTIME_DIR}/sign_transaction_user_validation.cpp" \
@@ -537,7 +538,7 @@ CPP
   "${TMP_DIR}/sign_transaction_user_validation_test.cpp" \
   "${RUNTIME_DIR}/base64.cpp" \
   "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
-  "${RUNTIME_DIR}/request_id.cpp" \
+  "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${RUNTIME_DIR}/session.cpp" \
   "${RUNTIME_DIR}/sign_transaction_user_validation.cpp" \
   -o "${TMP_DIR}/sign_transaction_user_validation_test"

@@ -2,7 +2,7 @@
 
 #include <ArduinoJson.h>
 
-#include "request_id.h"
+#include "protocol/request_id.h"
 #include "session.h"
 #include "sui_zklogin_proof_store.h"
 #include "timeout_window.h"

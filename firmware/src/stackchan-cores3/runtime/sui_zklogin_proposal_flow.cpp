@@ -4,7 +4,7 @@
 #include <string.h>
 
 #include "base64.h"
-#include "json_input.h"
+#include "protocol/json_input.h"
 #include "protocol_input_copy.h"
 #include "mbedtls/sha256.h"
 

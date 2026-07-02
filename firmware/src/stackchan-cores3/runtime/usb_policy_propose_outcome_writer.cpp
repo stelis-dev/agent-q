@@ -2,7 +2,7 @@
 
 #include <ArduinoJson.h>
 
-#include "protocol_constants.h"
+#include "protocol/protocol_constants.h"
 #include "usb_response_writer.h"
 
 namespace signing {

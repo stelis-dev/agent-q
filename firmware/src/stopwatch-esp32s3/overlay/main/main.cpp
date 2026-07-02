@@ -1,0 +1,32 @@
+/*
+ * StopWatch ESP32-S3 target entrypoint.
+ */
+#include <memory>
+
+#include <hal/hal.h>
+#include <mooncake.h>
+#include <mooncake_log.h>
+#include <runtime/app.h>
+#include <smooth_ui_toolkit.hpp>
+#include <uitk/short_namespace.hpp>
+
+using namespace mooncake;
+using namespace smooth_ui_toolkit;
+
+extern "C" void app_main(void)
+{
+    mclog::set_level(mclog::level_info);
+    mclog::set_time_format(mclog::time_format_unix_milliseconds);
+
+    GetHAL().init();
+
+    ui_hal::on_delay([](uint32_t ms) { GetHAL().delay(ms); });
+    ui_hal::on_get_tick([]() { return GetHAL().millis(); });
+
+    GetMooncake().installApp(std::make_unique<stopwatch_target::RuntimeApp>());
+
+    while (1) {
+        GetHAL().feedTheDog();
+        GetMooncake().update();
+    }
+}

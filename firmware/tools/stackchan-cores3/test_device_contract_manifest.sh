@@ -18,12 +18,13 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 
 for required in \
   "${REPO_ROOT}/packages/core/package.json" \
   "${REPO_ROOT}/packages/core/src/device-contract.ts" \
-  "${RUNTIME_DIR}/device_contract.cpp" \
-  "${RUNTIME_DIR}/device_contract.h"; do
+  "${COMMON_ROOT}/protocol/device_contract.cpp" \
+  "${COMMON_ROOT}/protocol/device_contract.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
@@ -38,8 +39,8 @@ CXX_BIN="${CXX:-c++}"
 cat >"${TMP_DIR}/firmware_manifest.cpp" <<'CPP'
 #include <stdio.h>
 
-#include "device_contract.h"
-#include "protocol_constants.h"
+#include "protocol/device_contract.h"
+#include "protocol/protocol_constants.h"
 
 namespace {
 
@@ -96,8 +97,9 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${RUNTIME_DIR}" \
+  -I"${COMMON_ROOT}" \
   "${TMP_DIR}/firmware_manifest.cpp" \
-  "${RUNTIME_DIR}/device_contract.cpp" \
+  "${COMMON_ROOT}/protocol/device_contract.cpp" \
   -o "${TMP_DIR}/firmware_manifest"
 
 "${TMP_DIR}/firmware_manifest" >"${TMP_DIR}/firmware.tsv"

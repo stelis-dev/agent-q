@@ -2,16 +2,14 @@
 
 #include <ArduinoJson.h>
 
-#include "device_contract.h"
-#include "json_input.h"
-#include "protocol_constants.h"
-#include "request_id.h"
+#include "protocol/device_contract.h"
+#include "protocol/json_input.h"
+#include "protocol/protocol_constants.h"
+#include "protocol/request_id.h"
 #include "session.h"
 
 namespace signing {
 namespace {
-
-constexpr uint8_t kUsbRequestJsonNestingLimit = 16;
 
 bool object_has_key(JsonObjectConst object, const char* key)
 {

@@ -3,8 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "device_contract.h"
-#include "protocol_constants.h"
+#include "protocol/device_contract.h"
+#include "protocol/protocol_constants.h"
 
 #include "driver/usb_serial_jtag.h"
 #include "esp_err.h"

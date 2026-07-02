@@ -1,7 +1,7 @@
 #include "signing_retry_response.h"
 
-#include "device_contract.h"
-#include "protocol_constants.h"
+#include "protocol/device_contract.h"
+#include "protocol/protocol_constants.h"
 
 namespace signing {
 namespace {

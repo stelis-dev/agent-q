@@ -25,8 +25,8 @@ ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${RUNTIME_DIR}/device_contract.cpp" \
-  "${RUNTIME_DIR}/device_contract.h" \
+  "${COMMON_ROOT}/protocol/device_contract.cpp" \
+  "${COMMON_ROOT}/protocol/device_contract.h" \
   "${RUNTIME_DIR}/signing_retry_response.cpp" \
   "${RUNTIME_DIR}/signing_retry_response.h"; do
   if [[ ! -f "${required}" ]]; then
@@ -249,7 +249,7 @@ CPP
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
-  "${RUNTIME_DIR}/device_contract.cpp" \
+  "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${RUNTIME_DIR}/signing_retry_response.cpp" \
   -o "${TMP_DIR}/test"
 

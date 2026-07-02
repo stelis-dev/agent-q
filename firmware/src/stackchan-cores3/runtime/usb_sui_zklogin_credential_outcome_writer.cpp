@@ -2,7 +2,7 @@
 
 #include <ArduinoJson.h>
 
-#include "protocol_constants.h"
+#include "protocol/protocol_constants.h"
 #include "sui_zklogin_proof_store.h"
 #include "usb_response_writer.h"
 

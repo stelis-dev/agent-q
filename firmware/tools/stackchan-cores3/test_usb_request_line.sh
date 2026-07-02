@@ -2,7 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUNTIME_DIR="${SCRIPT_DIR}/../../src/stackchan-cores3/runtime"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 CXX_BIN="${CXX:-c++}"
@@ -12,7 +13,7 @@ cat >"${TMP_DIR}/usb_request_line_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "usb_request_line.h"
+#include "protocol/usb_request_line.h"
 
 using namespace signing;
 
@@ -75,9 +76,9 @@ int main()
 CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
-  -I"${RUNTIME_DIR}" \
+  -I"${COMMON_ROOT}" \
   "${TMP_DIR}/usb_request_line_test.cpp" \
-  "${RUNTIME_DIR}/usb_request_line.cpp" \
+  "${COMMON_ROOT}/protocol/usb_request_line.cpp" \
   -o "${TMP_DIR}/usb_request_line_test"
 
 "${TMP_DIR}/usb_request_line_test"

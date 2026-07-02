@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-#include "usb_request_line.h"
+#include "protocol/usb_request_line.h"
 #include "driver/usb_serial_jtag.h"
 
 namespace signing {

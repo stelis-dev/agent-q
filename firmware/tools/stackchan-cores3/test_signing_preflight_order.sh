@@ -50,8 +50,9 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${MICROSUI_CORE}/byte_conversions.c" \
   "${RUNTIME_DIR}/base64.cpp" \
-  "${RUNTIME_DIR}/device_contract.cpp" \
-  "${RUNTIME_DIR}/request_id.cpp" \
+  "${COMMON_ROOT}/protocol/device_contract.cpp" \
+  "${COMMON_ROOT}/protocol/device_contract.h" \
+  "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${RUNTIME_DIR}/session.cpp" \
   "${RUNTIME_DIR}/sign_request_identity.cpp" \
   "${RUNTIME_DIR}/payload_delivery_admission.cpp" \
@@ -118,8 +119,8 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include "sign_request_identity.h"
 #include "signing_retry_response.h"
 #include "signing_response_store.h"
-#include "device_contract.h"
-#include "protocol_constants.h"
+#include "protocol/device_contract.h"
+#include "protocol/protocol_constants.h"
 #include "usb_signing_outcome_writer.h"
 #include "sui_account_store.h"
 #include "sui_signing_authority.h"
@@ -964,8 +965,8 @@ CPP
   -I"${MBEDTLS_INCLUDE_DIR}" \
   "${TMP_DIR}/test.cpp" \
   "${RUNTIME_DIR}/base64.cpp" \
-  "${RUNTIME_DIR}/device_contract.cpp" \
-  "${RUNTIME_DIR}/request_id.cpp" \
+  "${COMMON_ROOT}/protocol/device_contract.cpp" \
+  "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${RUNTIME_DIR}/session.cpp" \
   "${RUNTIME_DIR}/sign_request_identity.cpp" \
   "${RUNTIME_DIR}/payload_delivery_admission.cpp" \

@@ -6,10 +6,10 @@
 
 #include "base64.h"
 #include "bip39.h"
-#include "json_input.h"
+#include "protocol/json_input.h"
 #include "payload_delivery_admission.h"
 #include "payload_delivery_store.h"
-#include "protocol_constants.h"
+#include "protocol/protocol_constants.h"
 #include "numeric/u64_decimal.h"
 #include "usb_active_session_request_guard.h"
 #include "usb_line_receiver.h"

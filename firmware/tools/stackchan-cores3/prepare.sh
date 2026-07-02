@@ -290,6 +290,12 @@ cmake = insert_after_once(
 )
 cmake = insert_after_once(
     cmake,
+    '    "firmware_common/policy/*.cpp"\n',
+    '    "firmware_common/protocol/*.c"\n    "firmware_common/protocol/*.cc"\n    "firmware_common/protocol/*.cpp"\n',
+    "main/CMakeLists.txt common protocol sources",
+)
+cmake = insert_after_once(
+    cmake,
     '    "stackchan/*.cpp"\n)\n',
     r'''
 

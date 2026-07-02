@@ -79,7 +79,7 @@ cat >"${TMP_DIR}/stubs.cpp" <<'CPP'
 #include <string.h>
 
 #include "approval_history.h"
-#include "protocol_constants.h"
+#include "protocol/protocol_constants.h"
 
 namespace {
 

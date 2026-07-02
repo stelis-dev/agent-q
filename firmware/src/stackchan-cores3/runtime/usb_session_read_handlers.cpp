@@ -2,9 +2,9 @@
 
 #include <stdio.h>
 
-#include "json_input.h"
+#include "protocol/json_input.h"
 #include "payload_delivery_store.h"
-#include "protocol_constants.h"
+#include "protocol/protocol_constants.h"
 #include "signing_route.h"
 #include "sign_transaction_limits.h"
 #include "usb_active_session_request_guard.h"

@@ -1,7 +1,7 @@
 #include "usb_approval_history_handler.h"
 
-#include "json_input.h"
-#include "protocol_constants.h"
+#include "protocol/json_input.h"
+#include "protocol/protocol_constants.h"
 #include "numeric/u64_decimal.h"
 #include "usb_active_session_request_guard.h"
 #include "usb_response_writer.h"

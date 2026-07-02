@@ -3,7 +3,7 @@
 #include <stddef.h>
 
 #include "local_pin_auth.h"
-#include "request_id.h"
+#include "protocol/request_id.h"
 #include "session.h"
 #include "timeout_window.h"
 #include "freertos/FreeRTOS.h"

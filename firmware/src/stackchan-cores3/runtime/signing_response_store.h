@@ -2,7 +2,7 @@
 
 #include <stddef.h>
 
-#include "request_id.h"
+#include "protocol/request_id.h"
 #include "sign_request_identity.h"
 #include "session.h"
 

@@ -2,7 +2,7 @@
 
 #include <string.h>
 
-#include "json_input.h"
+#include "protocol/json_input.h"
 #include "payload_delivery_admission.h"
 #include "sui_signing_authority.h"
 

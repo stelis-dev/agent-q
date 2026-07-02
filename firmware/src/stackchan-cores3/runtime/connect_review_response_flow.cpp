@@ -1,6 +1,6 @@
 #include "connect_review_response_flow.h"
 
-#include "request_id.h"
+#include "protocol/request_id.h"
 
 namespace signing {
 

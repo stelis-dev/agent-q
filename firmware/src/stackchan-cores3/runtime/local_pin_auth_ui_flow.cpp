@@ -4,7 +4,7 @@
 #include <string.h>
 
 #include "identification_display.h"
-#include "protocol_constants.h"
+#include "protocol/protocol_constants.h"
 #include "local_reset.h"
 #include "modal_transition.h"
 #include "request_backed_local_pin_context.h"

@@ -5,7 +5,7 @@
 
 #include <ArduinoJson.h>
 
-#include "protocol_constants.h"
+#include "protocol/protocol_constants.h"
 #include "sign_personal_message_limits.h"
 #include "signing_mode.h"
 #include "signing_response_store.h"

@@ -18,14 +18,15 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
 ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${RUNTIME_DIR}/device_contract.cpp" \
-  "${RUNTIME_DIR}/device_contract.h" \
-  "${RUNTIME_DIR}/protocol_constants.h" \
+  "${COMMON_ROOT}/protocol/device_contract.cpp" \
+  "${COMMON_ROOT}/protocol/device_contract.h" \
+  "${COMMON_ROOT}/protocol/protocol_constants.h" \
   "${RUNTIME_DIR}/usb_response_writer.cpp" \
   "${RUNTIME_DIR}/usb_response_writer.h"; do
   if [[ ! -f "${required}" ]]; then
@@ -92,7 +93,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "protocol_constants.h"
+#include "protocol/protocol_constants.h"
 #include "usb_response_writer.h"
 #include "driver/usb_serial_jtag.h"
 
@@ -188,9 +189,10 @@ CPP
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
   -I"${RUNTIME_DIR}" \
+  -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
   "${RUNTIME_DIR}/usb_response_writer.cpp" \
-  "${RUNTIME_DIR}/device_contract.cpp" \
+  "${COMMON_ROOT}/protocol/device_contract.cpp" \
   -o "${TMP_DIR}/test_usb_response_writer"
 
 "${TMP_DIR}/test_usb_response_writer"

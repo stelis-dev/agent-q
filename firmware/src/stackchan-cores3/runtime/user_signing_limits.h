@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "request_id.h"
+#include "protocol/request_id.h"
 #include "sign_personal_message_limits.h"
 #include "sign_transaction_limits.h"
 

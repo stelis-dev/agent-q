@@ -1,7 +1,7 @@
 #include "usb_retained_response_handlers.h"
 
-#include "json_input.h"
-#include "request_id.h"
+#include "protocol/json_input.h"
+#include "protocol/request_id.h"
 #include "signing_response_store.h"
 #include "usb_active_session_request_guard.h"
 #include "usb_response_writer.h"
