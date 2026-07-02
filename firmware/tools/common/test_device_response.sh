@@ -7,7 +7,8 @@ Usage: firmware/tools/common/test_device_response.sh
 
 Compiles the common DeviceResponse helper with a host C++ compiler and verifies
 the protocol response envelope and device-field JSON shape. This test does not
-require ESP-IDF or hardware.
+require ESP-IDF or hardware. Set FIRMWARE_ARDUINOJSON_ROOT to an ArduinoJson
+src directory from a pinned firmware dependency checkout.
 EOF
 }
 
@@ -19,8 +20,13 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
-DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
-ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-}"
+
+if [[ -z "${ARDUINOJSON_ROOT}" ]]; then
+  echo "FIRMWARE_ARDUINOJSON_ROOT is required." >&2
+  echo "Point it to an ArduinoJson src directory from a pinned firmware dependency checkout." >&2
+  exit 1
+fi
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
@@ -31,7 +37,8 @@ for required in \
   "${COMMON_ROOT}/protocol/protocol_constants.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
-    echo "Run a firmware target build first when cache sources are missing, or set FIRMWARE_ARDUINOJSON_ROOT." >&2
+    echo "Set FIRMWARE_ARDUINOJSON_ROOT to an ArduinoJson src directory" >&2
+    echo "from a pinned firmware dependency checkout." >&2
     exit 1
   fi
 done
@@ -57,7 +64,7 @@ int main()
             "device-1",
             "idle",
             "Test Firmware",
-            "stackchan-cores3",
+            "test-hardware",
             "0.0.0",
         };
         JsonDocument result;
@@ -77,7 +84,7 @@ int main()
         assert(strcmp(response["result"]["device"]["deviceId"] | "", "device-1") == 0);
         assert(strcmp(response["result"]["device"]["state"] | "", "idle") == 0);
         assert(strcmp(response["result"]["device"]["firmwareName"] | "", "Test Firmware") == 0);
-        assert(strcmp(response["result"]["device"]["hardware"] | "", "stackchan-cores3") == 0);
+        assert(strcmp(response["result"]["device"]["hardware"] | "", "test-hardware") == 0);
         assert(strcmp(response["result"]["device"]["firmwareVersion"] | "", "0.0.0") == 0);
         assert(strcmp(response["result"]["provisioning"]["state"] | "", "provisioned") == 0);
     }
