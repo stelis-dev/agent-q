@@ -23,15 +23,15 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 COMMON_SUI_DIR="${COMMON_ROOT}/sui"
 FIXTURE_DIR="${COMMON_SUI_DIR}/testdata/sui_transaction_facts"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
-ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
-DEFAULT_SIGNING_DIR="${REPO_ROOT}/.firmware-cache/signing-crypto/microsui-lib"
-SIGNING_ROOT="${AGENT_Q_SIGNING_CRYPTO_ROOT:-${DEFAULT_SIGNING_DIR}}"
-SIGNING_CORE="${SIGNING_ROOT}/src/microsui_core"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
+DEFAULT_RUNTIME_DIR="${REPO_ROOT}/.firmware-cache/signing-crypto/microsui-lib"
+CRYPTO_ROOT="${SIGNING_CRYPTO_ROOT:-${DEFAULT_RUNTIME_DIR}}"
+MICROSUI_CORE="${CRYPTO_ROOT}/src/microsui_core"
 
 if [[ -z "${IDF_PATH:-}" ]]; then
   echo "IDF_PATH is not set. Source ESP-IDF v5.5.4 export.sh before running this test." >&2
@@ -48,29 +48,29 @@ fi
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${SIGNING_CORE}/byte_conversions.c" \
-  "${AGENT_Q_DIR}/agent_q_base64.cpp" \
-  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
-  "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
-  "${AGENT_Q_DIR}/agent_q_session.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_request_identity.cpp" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_admission.cpp" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_store.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_signing_outcome_writer.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signing_preflight.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signing_retry_response.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_personal_message_user_ingress.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_personal_message_user_validation.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signing_retry_delivery.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_transaction_user_ingress.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_transaction_user_validation.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signing_response_store.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sui_signing_preparation.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_offline_policy_facts.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_sign_transaction_adapter.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
+  "${MICROSUI_CORE}/byte_conversions.c" \
+  "${RUNTIME_DIR}/base64.cpp" \
+  "${RUNTIME_DIR}/device_contract.cpp" \
+  "${RUNTIME_DIR}/request_id.cpp" \
+  "${RUNTIME_DIR}/session.cpp" \
+  "${RUNTIME_DIR}/sign_request_identity.cpp" \
+  "${RUNTIME_DIR}/payload_delivery_admission.cpp" \
+  "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
+  "${RUNTIME_DIR}/payload_delivery_store.cpp" \
+  "${RUNTIME_DIR}/usb_signing_outcome_writer.cpp" \
+  "${RUNTIME_DIR}/signing_preflight.cpp" \
+  "${RUNTIME_DIR}/signing_retry_response.cpp" \
+  "${RUNTIME_DIR}/sign_personal_message_user_ingress.cpp" \
+  "${RUNTIME_DIR}/sign_personal_message_user_validation.cpp" \
+  "${RUNTIME_DIR}/signing_retry_delivery.cpp" \
+  "${RUNTIME_DIR}/sign_transaction_user_ingress.cpp" \
+  "${RUNTIME_DIR}/sign_transaction_user_validation.cpp" \
+  "${RUNTIME_DIR}/signing_response_store.cpp" \
+  "${RUNTIME_DIR}/sui_signing_preparation.cpp" \
+  "${COMMON_SUI_DIR}/offline_policy_facts.cpp" \
+  "${COMMON_SUI_DIR}/sign_transaction_adapter.cpp" \
+  "${COMMON_SUI_DIR}/transaction_facts.cpp" \
+  "${COMMON_SUI_DIR}/bcs_reader.cpp" \
   "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex" \
   "${FIXTURE_DIR}/synthetic_swap_shape_tx.bcs.hex"; do
   if [[ ! -f "${required}" ]]; then
@@ -82,12 +82,12 @@ done
 
 CXX_BIN="${CXX:-c++}"
 CC_BIN="${CC:-cc}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-signing-preflight-order.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-signing-preflight-order.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
-mkdir -p "${TMP_DIR}/agent_q_common"
+mkdir -p "${TMP_DIR}/firmware_common"
 mkdir -p "${TMP_DIR}/freertos"
-ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
-ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/agent_q_common/sui"
+ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
+ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/firmware_common/sui"
 
 cat >"${TMP_DIR}/freertos/FreeRTOS.h" <<'H'
 #pragma once
@@ -112,19 +112,19 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <string>
 #include <vector>
 
-#include "agent_q_sign_route.h"
-#include "agent_q_sign_transaction_user_ingress.h"
-#include "agent_q_signing_preflight.h"
-#include "agent_q_sign_request_identity.h"
-#include "agent_q_signing_retry_response.h"
-#include "agent_q_signing_response_store.h"
-#include "agent_q_device_contract.h"
-#include "agent_q_protocol_constants.h"
-#include "agent_q_usb_signing_outcome_writer.h"
-#include "agent_q_sui_account_store.h"
-#include "agent_q_sui_signing_authority.h"
-#include "agent_q_sui_signing_preparation.h"
-#include "agent_q_sui_zklogin_proof_store.h"
+#include "protocol/sign_route.h"
+#include "sign_transaction_user_ingress.h"
+#include "signing_preflight.h"
+#include "sign_request_identity.h"
+#include "signing_retry_response.h"
+#include "signing_response_store.h"
+#include "device_contract.h"
+#include "protocol_constants.h"
+#include "usb_signing_outcome_writer.h"
+#include "sui_account_store.h"
+#include "sui_signing_authority.h"
+#include "sui_signing_preparation.h"
+#include "sui_zklogin_proof_store.h"
 
 extern "C" {
 #include "byte_conversions.h"
@@ -136,20 +136,20 @@ int g_failures = 0;
 int g_session_calls = 0;
 int g_digest_calls = 0;
 int g_binding_calls = 0;
-agent_q::AgentQSuiActiveIdentityKind g_active_identity_kind =
-    agent_q::AgentQSuiActiveIdentityKind::native;
-char g_zklogin_network[agent_q::kAgentQSuiNetworkBufferSize] = "devnet";
+signing::SuiActiveIdentityKind g_active_identity_kind =
+    signing::SuiActiveIdentityKind::native;
+char g_zklogin_network[signing::kSuiNetworkBufferSize] = "devnet";
 
-agent_q::AgentQSessionValidationResult g_session_result =
-    agent_q::AgentQSessionValidationResult::ok;
-agent_q::AgentQSuiSigningAccountBindingResult g_binding_result =
-    agent_q::AgentQSuiSigningAccountBindingResult::ok;
-agent_q::AgentQSigningAuthorizationMode g_signing_mode =
-    agent_q::AgentQSigningAuthorizationMode::user;
-agent_q::AgentQSigningRetryDeliveryStatus g_retry_status =
-    agent_q::AgentQSigningRetryDeliveryStatus::not_found;
-agent_q::AgentQSuiSigningPreparationResult g_last_preparation_result =
-    agent_q::AgentQSuiSigningPreparationResult::ok;
+signing::SessionValidationResult g_session_result =
+    signing::SessionValidationResult::ok;
+signing::SuiSigningAccountBindingResult g_binding_result =
+    signing::SuiSigningAccountBindingResult::ok;
+signing::AuthorizationMode g_signing_mode =
+    signing::AuthorizationMode::user;
+signing::RetryDeliveryStatus g_retry_status =
+    signing::RetryDeliveryStatus::not_found;
+signing::SuiSigningPreparationResult g_last_preparation_result =
+    signing::SuiSigningPreparationResult::ok;
 int g_retry_response_write_calls = 0;
 std::string g_retry_response_json;
 
@@ -241,26 +241,26 @@ std::string request_json(
            "\",\"txBytes\":\"" + tx_bytes + "\"}}";
 }
 
-agent_q::AgentQSessionValidationResult validate_session(
+signing::SessionValidationResult validate_session(
     const char* session_id,
     void*)
 {
     ++g_session_calls;
     if (strcmp(session_id, "session_aaaaaaaaaaaaaaaa") != 0) {
-        return agent_q::AgentQSessionValidationResult::mismatch;
+        return signing::SessionValidationResult::mismatch;
     }
     return g_session_result;
 }
 
-agent_q::AgentQPayloadDeliveryAdmissionDecision admit_payload_delivery(
-    const agent_q::AgentQPayloadDeliveryOperationAdmissionInput& input)
+signing::PayloadDeliveryAdmissionDecision admit_payload_delivery(
+    const signing::PayloadDeliveryOperationAdmissionInput& input)
 {
-    return agent_q::payload_delivery_admit_operation(input);
+    return signing::payload_delivery_admit_operation(input);
 }
 
-agent_q::AgentQSignTransactionUserIngressState state(bool material_ready, bool busy)
+signing::SignTransactionUserIngressState state(bool material_ready, bool busy)
 {
-    return agent_q::AgentQSignTransactionUserIngressState{
+    return signing::SignTransactionUserIngressState{
         0,
         material_ready,
         busy,
@@ -271,51 +271,51 @@ agent_q::AgentQSignTransactionUserIngressState state(bool material_ready, bool b
 }
 
 PreflightOutcome preflight_result_outcome(
-    agent_q::AgentQSigningPreflightResult result,
-    const agent_q::AgentQSignTransactionPreflightOutput& output)
+    signing::PreflightResult result,
+    const signing::SignTransactionPreflightOutput& output)
 {
     switch (result) {
-        case agent_q::AgentQSigningPreflightResult::ok:
+        case signing::PreflightResult::ok:
             return PreflightOutcome::ok_prepared;
-        case agent_q::AgentQSigningPreflightResult::route_invalid_params:
+        case signing::PreflightResult::route_invalid_params:
             return PreflightOutcome::route_invalid_params;
-        case agent_q::AgentQSigningPreflightResult::route_unsupported_chain:
+        case signing::PreflightResult::route_unsupported_chain:
             return PreflightOutcome::route_unsupported_chain;
-        case agent_q::AgentQSigningPreflightResult::route_unsupported_method:
+        case signing::PreflightResult::route_unsupported_method:
             return PreflightOutcome::route_unsupported_method;
-        case agent_q::AgentQSigningPreflightResult::transaction_ingress_error:
+        case signing::PreflightResult::transaction_ingress_error:
             switch (output.ingress_result) {
-                case agent_q::AgentQSignTransactionUserIngressResult::invalid_state:
+                case signing::SignTransactionUserIngressResult::invalid_state:
                     return PreflightOutcome::ingress_invalid_state;
-                case agent_q::AgentQSignTransactionUserIngressResult::busy:
+                case signing::SignTransactionUserIngressResult::busy:
                     return PreflightOutcome::ingress_busy;
-                case agent_q::AgentQSignTransactionUserIngressResult::invalid_session:
+                case signing::SignTransactionUserIngressResult::invalid_session:
                     return PreflightOutcome::ingress_invalid_session;
-                case agent_q::AgentQSignTransactionUserIngressResult::invalid_tx_bytes:
+                case signing::SignTransactionUserIngressResult::invalid_tx_bytes:
                     return PreflightOutcome::ingress_invalid_tx_bytes;
                 default:
                     return PreflightOutcome::identity_error;
             }
-        case agent_q::AgentQSigningPreflightResult::retry_consumed:
-            if (g_retry_status == agent_q::AgentQSigningRetryDeliveryStatus::match) {
+        case signing::PreflightResult::retry_consumed:
+            if (g_retry_status == signing::RetryDeliveryStatus::match) {
                 return PreflightOutcome::replay_match;
             }
             if (g_retry_status ==
-                agent_q::AgentQSigningRetryDeliveryStatus::request_id_conflict) {
+                signing::RetryDeliveryStatus::request_id_conflict) {
                 return PreflightOutcome::replay_conflict;
             }
             return PreflightOutcome::identity_error;
-        case agent_q::AgentQSigningPreflightResult::transaction_preparation_error:
+        case signing::PreflightResult::transaction_preparation_error:
             if (output.preparation_result ==
-                agent_q::AgentQSuiSigningPreparationResult::invalid_network) {
+                signing::SuiSigningPreparationResult::invalid_network) {
                 return PreflightOutcome::network_mismatch;
             }
             if (output.preparation_result ==
-                agent_q::AgentQSuiSigningPreparationResult::payload_too_large) {
+                signing::SuiSigningPreparationResult::payload_too_large) {
                 return PreflightOutcome::preparation_payload_too_large;
             }
             if (output.preparation_result ==
-                agent_q::AgentQSuiSigningPreparationResult::payload_unavailable) {
+                signing::SuiSigningPreparationResult::payload_unavailable) {
                 return PreflightOutcome::payload_unavailable;
             }
             return PreflightOutcome::preparation_error;
@@ -325,7 +325,7 @@ PreflightOutcome preflight_result_outcome(
 }
 
 bool read_signing_mode(
-    agent_q::AgentQSigningAuthorizationMode* mode,
+    signing::AuthorizationMode* mode,
     void*)
 {
     assert(mode != nullptr);
@@ -341,16 +341,16 @@ bool capture_retry_response(JsonDocument& response, void*)
     return true;
 }
 
-agent_q::AgentQSigningPreflightRetryDisposition respond_to_retry(
+signing::PreflightRetryDisposition respond_to_retry(
     const char* request_id,
     const char* method,
-    const agent_q::AgentQSigningRetryDeliveryResult& retry,
+    const signing::RetryDeliveryResult& retry,
     const char* stored_response,
     void*)
 {
     g_retry_status = retry.status;
-    const agent_q::AgentQSigningRetryResponseResult response_result =
-        agent_q::deliver_signing_retry_response(
+    const signing::RetryResponseResult response_result =
+        signing::deliver_signing_retry_response(
             request_id,
             method,
             retry,
@@ -358,16 +358,16 @@ agent_q::AgentQSigningPreflightRetryDisposition respond_to_retry(
             capture_retry_response,
             nullptr);
     switch (response_result) {
-        case agent_q::AgentQSigningRetryResponseResult::not_found:
-        case agent_q::AgentQSigningRetryResponseResult::invalid_stored_response:
-        case agent_q::AgentQSigningRetryResponseResult::replay_write_failed:
-            return agent_q::AgentQSigningPreflightRetryDisposition::continue_preflight;
-        case agent_q::AgentQSigningRetryResponseResult::replayed_result:
-        case agent_q::AgentQSigningRetryResponseResult::error_response:
-        case agent_q::AgentQSigningRetryResponseResult::error_write_failed:
-            return agent_q::AgentQSigningPreflightRetryDisposition::consumed;
+        case signing::RetryResponseResult::not_found:
+        case signing::RetryResponseResult::invalid_stored_response:
+        case signing::RetryResponseResult::replay_write_failed:
+            return signing::PreflightRetryDisposition::continue_preflight;
+        case signing::RetryResponseResult::replayed_result:
+        case signing::RetryResponseResult::error_response:
+        case signing::RetryResponseResult::error_write_failed:
+            return signing::PreflightRetryDisposition::consumed;
     }
-    return agent_q::AgentQSigningPreflightRetryDisposition::consumed;
+    return signing::PreflightRetryDisposition::consumed;
 }
 
 PreflightOutcome run_transaction_preflight(
@@ -376,13 +376,13 @@ PreflightOutcome run_transaction_preflight(
     bool busy)
 {
     JsonDocument document = parse_json(json);
-    agent_q::AgentQSignTransactionPreflightOutput output = {};
-    char retry_stored_response[agent_q::kSigningResponseMaxSize] = {};
-    const agent_q::AgentQSigningPreflightResult result =
-        agent_q::evaluate_sign_transaction_preflight(
+    signing::SignTransactionPreflightOutput output = {};
+    char retry_stored_response[signing::kResponseMaxSize] = {};
+    const signing::PreflightResult result =
+        signing::evaluate_sign_transaction_preflight(
             document,
             state(material_ready, busy),
-            agent_q::AgentQSigningPreflightRuntime{
+            signing::PreflightRuntime{
                 0,
                 read_signing_mode,
                 nullptr,
@@ -394,7 +394,7 @@ PreflightOutcome run_transaction_preflight(
             &output);
     g_last_preparation_result = output.preparation_result;
     const PreflightOutcome outcome = preflight_result_outcome(result, output);
-    agent_q::clear_prepared_sui_sign_transaction(&output.prepared);
+    signing::clear_prepared_sui_sign_transaction(&output.prepared);
     return outcome;
 }
 
@@ -403,15 +403,15 @@ void reset_counters()
     g_session_calls = 0;
     g_digest_calls = 0;
     g_binding_calls = 0;
-    g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::native;
+    g_active_identity_kind = signing::SuiActiveIdentityKind::native;
     snprintf(g_zklogin_network, sizeof(g_zklogin_network), "%s", "devnet");
-    g_session_result = agent_q::AgentQSessionValidationResult::ok;
-    g_binding_result = agent_q::AgentQSuiSigningAccountBindingResult::ok;
-    g_signing_mode = agent_q::AgentQSigningAuthorizationMode::user;
-    g_retry_status = agent_q::AgentQSigningRetryDeliveryStatus::not_found;
+    g_session_result = signing::SessionValidationResult::ok;
+    g_binding_result = signing::SuiSigningAccountBindingResult::ok;
+    g_signing_mode = signing::AuthorizationMode::user;
+    g_retry_status = signing::RetryDeliveryStatus::not_found;
     g_retry_response_write_calls = 0;
     g_retry_response_json.clear();
-    agent_q::signing_response_clear_all();
+    signing::signing_response_clear_all();
 }
 
 void expect_case(
@@ -458,9 +458,9 @@ void expect_contains(const char* label, const std::string& value, const char* ex
 
 void expect_no_stored_response(const char* label, const char* session_id, const char* request_id)
 {
-    char stored[agent_q::kSigningResponseMaxSize] = {};
+    char stored[signing::kResponseMaxSize] = {};
     size_t stored_len = 0;
-    if (agent_q::signing_response_find(
+    if (signing::signing_response_find(
             session_id,
             request_id,
             stored,
@@ -476,38 +476,38 @@ void store_identity_for(
     const char* stored_response)
 {
     JsonDocument document = parse_json(json);
-    const agent_q::AgentQSignRouteClassification classification =
-        agent_q::classify_sign_route(
-            agent_q::AgentQSignOperation::sign_transaction,
+    const signing::SignRouteClassification classification =
+        signing::classify_sign_route(
+            signing::SignOperation::sign_transaction,
             document["payload"]["chain"].as<const char*>(),
             document["method"].as<const char*>());
-    assert(classification.result == agent_q::AgentQSignRouteResult::ok);
-    agent_q::AgentQSignTransactionUserIngressOutput ingress = {};
-    assert(agent_q::evaluate_sign_transaction_user_ingress(
+    assert(classification.result == signing::SignRouteResult::ok);
+    signing::SignTransactionUserIngressOutput ingress = {};
+    assert(signing::evaluate_sign_transaction_user_ingress(
                document,
                classification.route,
                state(true, false),
-               &ingress) == agent_q::AgentQSignTransactionUserIngressResult::ok);
-    uint8_t identity[agent_q::kAgentQSignRequestIdentitySize] = {};
-    assert(agent_q::sign_request_identity(
+               &ingress) == signing::SignTransactionUserIngressResult::ok);
+    uint8_t identity[signing::kSignRequestIdentitySize] = {};
+    assert(signing::sign_request_identity(
         classification.route,
         ingress.params.network,
         ingress.params.tx_bytes_base64,
         identity,
         sizeof(identity)));
-    assert(agent_q::signing_response_store(
+    assert(signing::signing_response_store(
                ingress.session.session_id,
                ingress.envelope.request_id,
                identity,
                sizeof(identity),
                stored_response,
-               strlen(stored_response)) == agent_q::SigningResponseStoreOutcome::stored);
+               strlen(stored_response)) == signing::ResponseStoreOutcome::stored);
     g_session_calls = 0;
 }
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 void wipe_sensitive_buffer(void* data, size_t size)
 {
@@ -533,12 +533,12 @@ bool approval_history_digest_payload(
     return true;
 }
 
-const char* user_signing_flow_terminal_status(AgentQUserSigningTerminalResult)
+const char* user_signing_flow_terminal_status(UserSigningTerminalResult)
 {
     return "failed";
 }
 
-const char* user_signing_flow_terminal_reason(AgentQUserSigningTerminalResult)
+const char* user_signing_flow_terminal_reason(UserSigningTerminalResult)
 {
     return "signing_failed";
 }
@@ -560,7 +560,7 @@ bool usb_response_prepare_success_result(
     }
     response.clear();
     response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
+    response["version"] = kProtocolVersion;
     response["success"] = true;
     response["method"] = method;
     response["result"].set(result);
@@ -573,7 +573,7 @@ bool usb_response_prepare_method_error(
     const char* method,
     const char* code)
 {
-    const AgentQDeviceErrorRow* error = device_error_row(code);
+    const DeviceErrorRow* error = device_error_row(code);
     if (error == nullptr) {
         error = device_error_row("unknown_error");
     }
@@ -582,7 +582,7 @@ bool usb_response_prepare_method_error(
     }
     response.clear();
     response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
+    response["version"] = kProtocolVersion;
     response["success"] = false;
     if (method != nullptr && method[0] != '\0') {
         response["method"] = method;
@@ -612,16 +612,16 @@ bool usb_response_write_error(const char* id, const char* code)
     return true;
 }
 
-AgentQSuiSigningAccountBindingResult verify_sui_signing_active_account_binding(
+SuiSigningAccountBindingResult verify_sui_signing_active_account_binding(
     const SuiPolicySubjectFacts&,
-    const AgentQSuiActiveIdentity&,
-    const AgentQSuiAccountSettings&)
+    const SuiActiveIdentity&,
+    const SuiAccountSettings&)
 {
     ++g_binding_calls;
     return g_binding_result;
 }
 
-bool read_sui_account_settings(AgentQSuiAccountSettings* settings)
+bool read_sui_account_settings(SuiAccountSettings* settings)
 {
     if (settings == nullptr) {
         return false;
@@ -630,29 +630,29 @@ bool read_sui_account_settings(AgentQSuiAccountSettings* settings)
     return true;
 }
 
-AgentQSuiSigningActiveIdentityNetworkResult verify_sui_signing_active_identity_network(
-    const AgentQSuiActiveIdentity& active_identity,
+SuiSigningActiveIdentityNetworkResult verify_sui_signing_active_identity_network(
+    const SuiActiveIdentity& active_identity,
     const char* request_network)
 {
-    if (active_identity.kind == AgentQSuiActiveIdentityKind::error) {
-        return active_identity.error == AgentQSuiActiveIdentityError::native_account_unavailable
-                   ? AgentQSuiSigningActiveIdentityNetworkResult::account_unavailable
-                   : AgentQSuiSigningActiveIdentityNetworkResult::active_identity_unavailable;
+    if (active_identity.kind == SuiActiveIdentityKind::error) {
+        return active_identity.error == SuiActiveIdentityError::native_account_unavailable
+                   ? SuiSigningActiveIdentityNetworkResult::account_unavailable
+                   : SuiSigningActiveIdentityNetworkResult::active_identity_unavailable;
     }
-    if (active_identity.kind == AgentQSuiActiveIdentityKind::zklogin) {
+    if (active_identity.kind == SuiActiveIdentityKind::zklogin) {
         if (request_network == nullptr || request_network[0] == '\0') {
-            return AgentQSuiSigningActiveIdentityNetworkResult::network_mismatch;
+            return SuiSigningActiveIdentityNetworkResult::network_mismatch;
         }
         return strcmp(active_identity.zklogin.network, request_network) == 0
-                   ? AgentQSuiSigningActiveIdentityNetworkResult::ok
-                   : AgentQSuiSigningActiveIdentityNetworkResult::network_mismatch;
+                   ? SuiSigningActiveIdentityNetworkResult::ok
+                   : SuiSigningActiveIdentityNetworkResult::network_mismatch;
     }
-    return active_identity.kind == AgentQSuiActiveIdentityKind::native
-               ? AgentQSuiSigningActiveIdentityNetworkResult::ok
-               : AgentQSuiSigningActiveIdentityNetworkResult::active_identity_unavailable;
+    return active_identity.kind == SuiActiveIdentityKind::native
+               ? SuiSigningActiveIdentityNetworkResult::ok
+               : SuiSigningActiveIdentityNetworkResult::active_identity_unavailable;
 }
 
-AgentQSuiSigningActiveIdentityNetworkResult verify_sui_signing_active_identity_network(
+SuiSigningActiveIdentityNetworkResult verify_sui_signing_active_identity_network(
     const char* request_network)
 {
     return verify_sui_signing_active_identity_network(resolve_active_sui_identity(), request_network);
@@ -669,29 +669,29 @@ SuiAccountDerivationResult derive_sui_ed25519_account_from_stored_root(
     return SuiAccountDerivationResult::ok;
 }
 
-AgentQSuiActiveIdentity resolve_active_sui_identity()
+SuiActiveIdentity resolve_active_sui_identity()
 {
-    AgentQSuiActiveIdentity identity = {};
+    SuiActiveIdentity identity = {};
     identity.kind = g_active_identity_kind;
-    identity.error = AgentQSuiActiveIdentityError::none;
+    identity.error = SuiActiveIdentityError::none;
     snprintf(identity.address,
              sizeof(identity.address),
              "%s",
              "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    identity.public_key[0] = identity.kind == AgentQSuiActiveIdentityKind::zklogin
-                                 ? kAgentQSuiSignatureSchemeFlagZkLogin
-                                 : kAgentQSuiSignatureSchemeFlagEd25519;
+    identity.public_key[0] = identity.kind == SuiActiveIdentityKind::zklogin
+                                 ? kSuiSignatureSchemeFlagZkLogin
+                                 : kSuiSignatureSchemeFlagEd25519;
     memset(identity.public_key + 1, 0xA5, kSuiEd25519PublicKeyBytes);
-    identity.public_key_size = identity.kind == AgentQSuiActiveIdentityKind::zklogin
-                                   ? kAgentQSuiZkLoginPublicKeyMinBytes
+    identity.public_key_size = identity.kind == SuiActiveIdentityKind::zklogin
+                                   ? kSuiZkLoginPublicKeyMinBytes
                                    : kSuiEd25519PublicKeyBytes + 1;
-    if (identity.kind == AgentQSuiActiveIdentityKind::zklogin) {
+    if (identity.kind == SuiActiveIdentityKind::zklogin) {
         snprintf(identity.zklogin.network, sizeof(identity.zklogin.network), "%s", g_zklogin_network);
     }
     return identity;
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 int main(int argc, char** argv)
 {
@@ -872,7 +872,7 @@ int main(int argc, char** argv)
     }
 
     reset_counters();
-    g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::zklogin;
+    g_active_identity_kind = signing::SuiActiveIdentityKind::zklogin;
     snprintf(g_zklogin_network, sizeof(g_zklogin_network), "%s", "testnet");
     expect_case(
         "zkLogin network mismatch stops before transaction preparation",
@@ -944,8 +944,8 @@ int main(int argc, char** argv)
 }
 CPP
 
-"${CC_BIN}" -std=c99 -I"${SIGNING_CORE}" \
-  -c "${SIGNING_CORE}/byte_conversions.c" \
+"${CC_BIN}" -std=c99 -I"${MICROSUI_CORE}" \
+  -c "${MICROSUI_CORE}/byte_conversions.c" \
   -o "${TMP_DIR}/byte_conversions.o"
 "${CC_BIN}" -std=c99 -I"${MBEDTLS_INCLUDE_DIR}" \
   -c "${MBEDTLS_LIBRARY_DIR}/sha256.c" \
@@ -956,35 +956,35 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${ARDUINOJSON_ROOT}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   -I"${TMP_DIR}" \
   -I"${COMMON_ROOT}" \
   -I"${COMMON_SUI_DIR}" \
-  -I"${SIGNING_CORE}" \
+  -I"${MICROSUI_CORE}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_base64.cpp" \
-  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
-  "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
-  "${AGENT_Q_DIR}/agent_q_session.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_request_identity.cpp" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_admission.cpp" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_store.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_signing_outcome_writer.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signing_preflight.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signing_retry_response.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_personal_message_user_ingress.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_personal_message_user_validation.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signing_retry_delivery.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_transaction_user_ingress.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_transaction_user_validation.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signing_response_store.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sui_signing_preparation.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_offline_policy_facts.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_sign_transaction_adapter.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
+  "${RUNTIME_DIR}/base64.cpp" \
+  "${RUNTIME_DIR}/device_contract.cpp" \
+  "${RUNTIME_DIR}/request_id.cpp" \
+  "${RUNTIME_DIR}/session.cpp" \
+  "${RUNTIME_DIR}/sign_request_identity.cpp" \
+  "${RUNTIME_DIR}/payload_delivery_admission.cpp" \
+  "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
+  "${RUNTIME_DIR}/payload_delivery_store.cpp" \
+  "${RUNTIME_DIR}/usb_signing_outcome_writer.cpp" \
+  "${RUNTIME_DIR}/signing_preflight.cpp" \
+  "${RUNTIME_DIR}/signing_retry_response.cpp" \
+  "${RUNTIME_DIR}/sign_personal_message_user_ingress.cpp" \
+  "${RUNTIME_DIR}/sign_personal_message_user_validation.cpp" \
+  "${RUNTIME_DIR}/signing_retry_delivery.cpp" \
+  "${RUNTIME_DIR}/sign_transaction_user_ingress.cpp" \
+  "${RUNTIME_DIR}/sign_transaction_user_validation.cpp" \
+  "${RUNTIME_DIR}/signing_response_store.cpp" \
+  "${RUNTIME_DIR}/sui_signing_preparation.cpp" \
+  "${COMMON_SUI_DIR}/offline_policy_facts.cpp" \
+  "${COMMON_SUI_DIR}/sign_transaction_adapter.cpp" \
+  "${COMMON_SUI_DIR}/transaction_facts.cpp" \
+  "${COMMON_SUI_DIR}/bcs_reader.cpp" \
   "${TMP_DIR}/byte_conversions.o" \
   "${TMP_DIR}/sha256.o" \
   "${TMP_DIR}/platform_util.o" \

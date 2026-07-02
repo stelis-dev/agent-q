@@ -20,30 +20,30 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-DEFAULT_SIGNING_DIR="${REPO_ROOT}/.firmware-cache/signing-crypto/microsui-lib"
-SIGNING_ROOT="${AGENT_Q_SIGNING_CRYPTO_ROOT:-${DEFAULT_SIGNING_DIR}}"
-SIGNING_CORE="${SIGNING_ROOT}/src/microsui_core"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
-FIXTURE_DIR="${REPO_ROOT}/firmware/src/common/agent_q/sui/testdata/sui_transaction_facts"
+DEFAULT_RUNTIME_DIR="${REPO_ROOT}/.firmware-cache/signing-crypto/microsui-lib"
+CRYPTO_ROOT="${SIGNING_CRYPTO_ROOT:-${DEFAULT_RUNTIME_DIR}}"
+MICROSUI_CORE="${CRYPTO_ROOT}/src/microsui_core"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+FIXTURE_DIR="${REPO_ROOT}/firmware/src/common/sui/testdata/sui_transaction_facts"
 
 for required in \
-  "${SIGNING_CORE}/lib/monocypher/monocypher.c" \
-  "${SIGNING_CORE}/byte_conversions.c" \
-  "${SIGNING_CORE}/key_management.c" \
-  "${SIGNING_CORE}/sign.c" \
+  "${MICROSUI_CORE}/lib/monocypher/monocypher.c" \
+  "${MICROSUI_CORE}/byte_conversions.c" \
+  "${MICROSUI_CORE}/key_management.c" \
+  "${MICROSUI_CORE}/sign.c" \
   "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex" \
-  "${AGENT_Q_DIR}/agent_q_sui_key_derivation.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sui_signing_service.cpp"; do
+  "${RUNTIME_DIR}/sui_key_derivation.cpp" \
+  "${RUNTIME_DIR}/sui_signing_service.cpp"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
-    echo "Run firmware/tools/stackchan-cores3/build.sh first, or set AGENT_Q_SIGNING_CRYPTO_ROOT." >&2
+    echo "Run firmware/tools/stackchan-cores3/build.sh first, or set SIGNING_CRYPTO_ROOT." >&2
     exit 1
   fi
 done
 
 CC_BIN="${CC:-cc}"
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-sui-signing.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sui-signing.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 cat >"${TMP_DIR}/sui_signing_service_test.cpp" <<'CPP'
@@ -53,11 +53,11 @@ cat >"${TMP_DIR}/sui_signing_service_test.cpp" <<'CPP'
 #include <string>
 #include <vector>
 
-#include "agent_q_bip39.h"
-#include "agent_q_root_material.h"
-#include "agent_q_sui_signing_service.h"
-#include "agent_q_sui_zklogin_proof_store.h"
-#include "agent_q_sui_zklogin_signature.h"
+#include "bip39.h"
+#include "root_material.h"
+#include "sui_signing_service.h"
+#include "sui_zklogin_proof_store.h"
+#include "sui_zklogin_signature.h"
 
 extern "C" {
 #include "byte_conversions.h"
@@ -82,10 +82,10 @@ constexpr const uint8_t kExpectedPersonalMessageDigest[32] = {
 int failures = 0;
 bool g_root_available = true;
 bool g_mnemonic_available = true;
-agent_q::AgentQSuiActiveIdentityKind g_active_identity_kind =
-    agent_q::AgentQSuiActiveIdentityKind::native;
+signing::SuiActiveIdentityKind g_active_identity_kind =
+    signing::SuiActiveIdentityKind::native;
 int g_zklogin_envelope_build_calls = 0;
-uint8_t g_last_zklogin_user_signature[agent_q::kSuiEd25519SignatureBytes] = {};
+uint8_t g_last_zklogin_user_signature[signing::kSuiEd25519SignatureBytes] = {};
 
 void expect(bool condition, const char* label)
 {
@@ -133,7 +133,7 @@ std::vector<uint8_t> read_hex_fixture(const char* path)
 
 void expect_signature_cleared(const uint8_t* signature)
 {
-    for (size_t index = 0; index < agent_q::kSuiEd25519SignatureBytes; ++index) {
+    for (size_t index = 0; index < signing::kSuiEd25519SignatureBytes; ++index) {
         if (signature[index] != 0) {
             std::fprintf(stderr, "FAILED: signature output not cleared at byte %zu\n", index);
             ++failures;
@@ -144,7 +144,7 @@ void expect_signature_cleared(const uint8_t* signature)
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 void wipe_sensitive_buffer(void* data, size_t size)
 {
@@ -179,25 +179,25 @@ bool make_bip39_mnemonic_12_words(
     return true;
 }
 
-AgentQSuiActiveIdentity resolve_active_sui_identity()
+SuiActiveIdentity resolve_active_sui_identity()
 {
-    AgentQSuiActiveIdentity identity = {};
+    SuiActiveIdentity identity = {};
     identity.kind = g_active_identity_kind;
-    identity.error = AgentQSuiActiveIdentityError::none;
+    identity.error = SuiActiveIdentityError::none;
     strcpy(identity.address, "0x1111111111111111111111111111111111111111111111111111111111111111");
-    identity.public_key[0] = identity.kind == AgentQSuiActiveIdentityKind::zklogin
-                                 ? kAgentQSuiSignatureSchemeFlagZkLogin
-                                 : kAgentQSuiSignatureSchemeFlagEd25519;
+    identity.public_key[0] = identity.kind == SuiActiveIdentityKind::zklogin
+                                 ? kSuiSignatureSchemeFlagZkLogin
+                                 : kSuiSignatureSchemeFlagEd25519;
     memset(identity.public_key + 1, 0x42, 32);
-    identity.public_key_size = identity.kind == AgentQSuiActiveIdentityKind::zklogin
-                                   ? kAgentQSuiZkLoginPublicKeyMinBytes
-                                   : kAgentQSuiSchemePrefixedEd25519PublicKeyBytes;
+    identity.public_key_size = identity.kind == SuiActiveIdentityKind::zklogin
+                                   ? kSuiZkLoginPublicKeyMinBytes
+                                   : kSuiSchemePrefixedEd25519PublicKeyBytes;
     strcpy(identity.zklogin.max_epoch, "12");
     return identity;
 }
 
-AgentQSuiZkLoginSignatureBuildResult build_sui_zklogin_signature_envelope(
-    const AgentQSuiZkLoginSignatureInputs&,
+SuiZkLoginSignatureBuildResult build_sui_zklogin_signature_envelope(
+    const SuiZkLoginSignatureInputs&,
     const char*,
     const uint8_t* user_signature,
     size_t user_signature_size,
@@ -210,18 +210,18 @@ AgentQSuiZkLoginSignatureBuildResult build_sui_zklogin_signature_envelope(
         output == nullptr ||
         output_size < kSuiEd25519SignatureBytes + 8 ||
         output_size_out == nullptr) {
-        return AgentQSuiZkLoginSignatureBuildResult::invalid_input;
+        return SuiZkLoginSignatureBuildResult::invalid_input;
     }
     ++g_zklogin_envelope_build_calls;
     memcpy(g_last_zklogin_user_signature, user_signature, kSuiEd25519SignatureBytes);
     memset(output, 0, output_size);
-    output[0] = kAgentQSuiSignatureSchemeFlagZkLogin;
+    output[0] = kSuiSignatureSchemeFlagZkLogin;
     memcpy(output + 1, user_signature, kSuiEd25519SignatureBytes);
     *output_size_out = kSuiEd25519SignatureBytes + 8;
-    return AgentQSuiZkLoginSignatureBuildResult::ok;
+    return SuiZkLoginSignatureBuildResult::ok;
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 int main(int argc, char** argv)
 {
@@ -231,13 +231,13 @@ int main(int argc, char** argv)
     }
     const std::vector<uint8_t> tx_bytes = read_hex_fixture(argv[1]);
 
-    uint8_t signature[agent_q::kSuiEd25519SignatureBytes] = {};
+    uint8_t signature[signing::kSuiEd25519SignatureBytes] = {};
     g_root_available = true;
     g_mnemonic_available = true;
-    const agent_q::SuiSigningStatus result =
-        agent_q::sign_sui_ed25519_transaction_from_stored_root(
+    const signing::SuiSigningStatus result =
+        signing::sign_sui_ed25519_transaction_from_stored_root(
             tx_bytes.data(), tx_bytes.size(), signature);
-    expect(result == agent_q::SuiSigningStatus::ok, "stored-root signing succeeds");
+    expect(result == signing::SuiSigningStatus::ok, "stored-root signing succeeds");
     expect(signature[0] == 0x00, "Sui signature uses Ed25519 scheme byte");
     expect(
         sui_signing_verify_signature_ed25519(
@@ -246,7 +246,7 @@ int main(int argc, char** argv)
 
     uint8_t personal_digest[32] = {};
     expect(
-        agent_q::build_sui_personal_message_intent_digest(
+        signing::build_sui_personal_message_intent_digest(
             kPersonalMessage,
             sizeof(kPersonalMessage) - 1,
             personal_digest),
@@ -255,61 +255,61 @@ int main(int argc, char** argv)
         memcmp(personal_digest, kExpectedPersonalMessageDigest, sizeof(personal_digest)) == 0,
         "personal-message digest matches Sui SDK vector");
 
-    uint8_t personal_signature[agent_q::kSuiEd25519SignatureBytes] = {};
+    uint8_t personal_signature[signing::kSuiEd25519SignatureBytes] = {};
     expect(
-        agent_q::sign_sui_ed25519_personal_message_from_stored_root(
+        signing::sign_sui_ed25519_personal_message_from_stored_root(
             kPersonalMessage,
             sizeof(kPersonalMessage) - 1,
-            personal_signature) == agent_q::SuiSigningStatus::ok,
+            personal_signature) == signing::SuiSigningStatus::ok,
         "stored-root personal-message signing succeeds");
     expect(personal_signature[0] == 0x00, "Sui personal-message signature uses Ed25519 scheme byte");
     expect(
         sui_signing_verify_signature_ed25519_from_digest(personal_signature, personal_digest) == 0,
         "personal-message signature verifies against Sui SDK digest vector");
 
-    uint8_t active_personal_signature[agent_q::kSuiSignatureEnvelopeMaxBytes] = {};
+    uint8_t active_personal_signature[signing::kSuiSignatureEnvelopeMaxBytes] = {};
     size_t active_personal_signature_size = 0;
-    ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::native;
+    ::g_active_identity_kind = signing::SuiActiveIdentityKind::native;
     expect(
-        agent_q::sign_sui_personal_message_from_active_identity(
+        signing::sign_sui_personal_message_from_active_identity(
             kPersonalMessage,
             sizeof(kPersonalMessage) - 1,
             active_personal_signature,
-            &active_personal_signature_size) == agent_q::SuiSigningStatus::ok,
+            &active_personal_signature_size) == signing::SuiSigningStatus::ok,
         "active native personal-message signing succeeds");
-    expect(active_personal_signature_size == agent_q::kSuiEd25519SignatureBytes,
+    expect(active_personal_signature_size == signing::kSuiEd25519SignatureBytes,
            "active native personal-message signature keeps Ed25519 size");
-    expect(active_personal_signature[0] == agent_q::kAgentQSuiSignatureSchemeFlagEd25519,
+    expect(active_personal_signature[0] == signing::kSuiSignatureSchemeFlagEd25519,
            "active native personal-message signature uses Ed25519 scheme");
 
     memset(active_personal_signature, 0, sizeof(active_personal_signature));
     active_personal_signature_size = 0;
     ::g_zklogin_envelope_build_calls = 0;
     memset(::g_last_zklogin_user_signature, 0, sizeof(::g_last_zklogin_user_signature));
-    ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::zklogin;
+    ::g_active_identity_kind = signing::SuiActiveIdentityKind::zklogin;
     expect(
-        agent_q::sign_sui_personal_message_from_active_identity(
+        signing::sign_sui_personal_message_from_active_identity(
             kPersonalMessage,
             sizeof(kPersonalMessage) - 1,
             active_personal_signature,
-            &active_personal_signature_size) == agent_q::SuiSigningStatus::ok,
+            &active_personal_signature_size) == signing::SuiSigningStatus::ok,
         "active zkLogin personal-message signing succeeds");
     expect(::g_zklogin_envelope_build_calls == 1,
            "active zkLogin personal-message signing builds a zkLogin envelope");
-    expect(active_personal_signature_size > agent_q::kSuiEd25519SignatureBytes,
+    expect(active_personal_signature_size > signing::kSuiEd25519SignatureBytes,
            "active zkLogin personal-message signature is variable-size");
-    expect(active_personal_signature[0] == agent_q::kAgentQSuiSignatureSchemeFlagZkLogin,
+    expect(active_personal_signature[0] == signing::kSuiSignatureSchemeFlagZkLogin,
            "active zkLogin personal-message signature uses zkLogin scheme");
-    expect(::g_last_zklogin_user_signature[0] == agent_q::kAgentQSuiSignatureSchemeFlagEd25519,
+    expect(::g_last_zklogin_user_signature[0] == signing::kSuiSignatureSchemeFlagEd25519,
            "active zkLogin personal-message userSignature uses Ed25519 scheme");
     expect(
         sui_signing_verify_signature_ed25519_from_digest(
             ::g_last_zklogin_user_signature,
             personal_digest) == 0,
         "active zkLogin personal-message userSignature signs the personal-message digest");
-    ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::native;
+    ::g_active_identity_kind = signing::SuiActiveIdentityKind::native;
 
-    char signature_base64[agent_q::kSuiEd25519SignatureBase64Chars + 1] = {};
+    char signature_base64[signing::kSuiEd25519SignatureBase64Chars + 1] = {};
     expect(
         bytes_to_base64(signature, sizeof(signature), signature_base64, sizeof(signature_base64)) == 0,
         "signature base64 encodes");
@@ -321,39 +321,39 @@ int main(int argc, char** argv)
         ++failures;
     }
 
-    uint8_t invalid_signature[agent_q::kSuiEd25519SignatureBytes];
+    uint8_t invalid_signature[signing::kSuiEd25519SignatureBytes];
     memset(invalid_signature, 0xA5, sizeof(invalid_signature));
     expect(
-        agent_q::sign_sui_ed25519_transaction_from_stored_root(
+        signing::sign_sui_ed25519_transaction_from_stored_root(
             nullptr, tx_bytes.size(), invalid_signature) ==
-            agent_q::SuiSigningStatus::invalid_input,
+            signing::SuiSigningStatus::invalid_input,
         "null tx bytes are invalid");
     expect_signature_cleared(invalid_signature);
 
     memset(invalid_signature, 0xA5, sizeof(invalid_signature));
     expect(
-        agent_q::sign_sui_ed25519_transaction_from_stored_root(
+        signing::sign_sui_ed25519_transaction_from_stored_root(
             tx_bytes.data(), 0, invalid_signature) ==
-            agent_q::SuiSigningStatus::invalid_input,
+            signing::SuiSigningStatus::invalid_input,
         "zero tx size is invalid");
     expect_signature_cleared(invalid_signature);
 
-    uint8_t stored_root_signature[agent_q::kSuiEd25519SignatureBytes] = {};
+    uint8_t stored_root_signature[signing::kSuiEd25519SignatureBytes] = {};
     memset(stored_root_signature, 0xA5, sizeof(stored_root_signature));
     g_root_available = false;
     expect(
-        agent_q::sign_sui_ed25519_transaction_from_stored_root(
+        signing::sign_sui_ed25519_transaction_from_stored_root(
             tx_bytes.data(), tx_bytes.size(), stored_root_signature) ==
-            agent_q::SuiSigningStatus::root_material_unavailable,
+            signing::SuiSigningStatus::root_material_unavailable,
         "missing root material is reported");
     expect_signature_cleared(stored_root_signature);
 
     g_root_available = true;
     g_mnemonic_available = false;
     expect(
-        agent_q::sign_sui_ed25519_transaction_from_stored_root(
+        signing::sign_sui_ed25519_transaction_from_stored_root(
             tx_bytes.data(), tx_bytes.size(), stored_root_signature) ==
-            agent_q::SuiSigningStatus::mnemonic_error,
+            signing::SuiSigningStatus::mnemonic_error,
         "mnemonic derivation failure is reported");
 
     if (failures != 0) {
@@ -364,7 +364,7 @@ int main(int argc, char** argv)
 }
 CPP
 
-"${CC_BIN}" -std=c99 -I"${SIGNING_CORE}" \
+"${CC_BIN}" -std=c99 -I"${MICROSUI_CORE}" \
   -Dmicrosui_sign=sui_signing_sign \
   -Dmicrosui_sign_ed25519=sui_signing_sign_ed25519 \
   -Dmicrosui_sign_ed25519_with_keys=sui_signing_sign_ed25519_with_keys \
@@ -376,25 +376,25 @@ CPP
   -Dmicrosui_verify_signature_ed25519_with_public_key=sui_signing_verify_signature_ed25519_with_public_key \
   -Dmicrosui_verify_signature_ed25519_with_public_key_from_digest=sui_signing_verify_signature_ed25519_with_public_key_from_digest \
   -Dmicrosui_sign_message=sui_signing_sign_message \
-  -c "${SIGNING_CORE}/sign.c" -o "${TMP_DIR}/sign.o"
-"${CC_BIN}" -std=c99 -I"${SIGNING_CORE}" \
-  -c "${SIGNING_CORE}/lib/monocypher/monocypher.c" -o "${TMP_DIR}/monocypher.o"
-"${CC_BIN}" -std=c99 -I"${SIGNING_CORE}" \
-  -c "${SIGNING_CORE}/byte_conversions.c" -o "${TMP_DIR}/byte_conversions.o"
-"${CC_BIN}" -std=c99 -I"${SIGNING_CORE}" \
-  -c "${SIGNING_CORE}/key_management.c" -o "${TMP_DIR}/key_management.o"
+  -c "${MICROSUI_CORE}/sign.c" -o "${TMP_DIR}/sign.o"
+"${CC_BIN}" -std=c99 -I"${MICROSUI_CORE}" \
+  -c "${MICROSUI_CORE}/lib/monocypher/monocypher.c" -o "${TMP_DIR}/monocypher.o"
+"${CC_BIN}" -std=c99 -I"${MICROSUI_CORE}" \
+  -c "${MICROSUI_CORE}/byte_conversions.c" -o "${TMP_DIR}/byte_conversions.o"
+"${CC_BIN}" -std=c99 -I"${MICROSUI_CORE}" \
+  -c "${MICROSUI_CORE}/key_management.c" -o "${TMP_DIR}/key_management.o"
 
 "${CXX_BIN}" -std=c++17 \
   -I"${REPO_ROOT}/firmware/src/stackchan-cores3/components/signing_crypto" \
-  -I"${SIGNING_CORE}" -I"${AGENT_Q_DIR}" \
-  -c "${AGENT_Q_DIR}/agent_q_sui_key_derivation.cpp" -o "${TMP_DIR}/agent_q_sui_key_derivation.o"
+  -I"${MICROSUI_CORE}" -I"${RUNTIME_DIR}" \
+  -c "${RUNTIME_DIR}/sui_key_derivation.cpp" -o "${TMP_DIR}/sui_key_derivation.o"
 "${CXX_BIN}" -std=c++17 \
   -I"${REPO_ROOT}/firmware/src/stackchan-cores3/components/signing_crypto" \
-  -I"${SIGNING_CORE}" -I"${AGENT_Q_DIR}" \
-  -c "${AGENT_Q_DIR}/agent_q_sui_signing_service.cpp" -o "${TMP_DIR}/agent_q_sui_signing_service.o"
+  -I"${MICROSUI_CORE}" -I"${RUNTIME_DIR}" \
+  -c "${RUNTIME_DIR}/sui_signing_service.cpp" -o "${TMP_DIR}/sui_signing_service.o"
 "${CXX_BIN}" -std=c++17 \
   -I"${REPO_ROOT}/firmware/src/stackchan-cores3/components/signing_crypto" \
-  -I"${SIGNING_CORE}" -I"${AGENT_Q_DIR}" \
+  -I"${MICROSUI_CORE}" -I"${RUNTIME_DIR}" \
   -c "${TMP_DIR}/sui_signing_service_test.cpp" -o "${TMP_DIR}/sui_signing_service_test.o"
 
 "${CXX_BIN}" \
@@ -402,8 +402,8 @@ CPP
   "${TMP_DIR}/byte_conversions.o" \
   "${TMP_DIR}/key_management.o" \
   "${TMP_DIR}/sign.o" \
-  "${TMP_DIR}/agent_q_sui_key_derivation.o" \
-  "${TMP_DIR}/agent_q_sui_signing_service.o" \
+  "${TMP_DIR}/sui_key_derivation.o" \
+  "${TMP_DIR}/sui_signing_service.o" \
   "${TMP_DIR}/sui_signing_service_test.o" \
   -o "${TMP_DIR}/sui_signing_service_test"
 

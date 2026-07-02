@@ -18,15 +18,15 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
-ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_device_handlers.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_device_handlers.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_response_writer.h"; do
+  "${RUNTIME_DIR}/usb_device_handlers.cpp" \
+  "${RUNTIME_DIR}/usb_device_handlers.h" \
+  "${RUNTIME_DIR}/usb_operation_response_writer.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -35,7 +35,7 @@ for required in \
 done
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-device-handlers.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-usb-device-handlers.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 cat >"${TMP_DIR}/test.cpp" <<'CPP'
@@ -45,7 +45,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_usb_device_handlers.h"
+#include "usb_device_handlers.h"
 
 namespace {
 
@@ -94,11 +94,11 @@ void reset_state()
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 void usb_response_write_device_fields(
     JsonObject device,
-    const AgentQUsbDeviceResponseInfo& info)
+    const UsbDeviceResponseInfo& info)
 {
     device["deviceId"] = info.device_id;
     device["state"] = info.device_state;
@@ -145,7 +145,7 @@ bool usb_response_write_success_result(const char* id, const char* method, JsonO
     return g_write_json_ok;
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 namespace {
 
@@ -164,7 +164,7 @@ void log_write_failure(const char* response_type, const char* id)
     g_last_id = id;
 }
 
-bool write_busy(const char* id, const agent_q::AgentQUsbOperationResponseWriter& writer)
+bool write_busy(const char* id, const signing::UsbOperationResponseWriter& writer)
 {
     g_busy_calls += 1;
     g_last_id = id;
@@ -176,10 +176,10 @@ bool write_busy(const char* id, const agent_q::AgentQUsbOperationResponseWriter&
 
 bool write_payload_admission_error(
     const char* id,
-    agent_q::AgentQUsbOperationType operation,
-    const agent_q::AgentQUsbOperationResponseWriter& writer)
+    signing::UsbOperationType operation,
+    const signing::UsbOperationResponseWriter& writer)
 {
-    assert(operation == agent_q::AgentQUsbOperationType::get_status);
+    assert(operation == signing::UsbOperationType::get_status);
     g_payload_admission_calls += 1;
     g_last_id = id;
     if (!g_payload_admission_error) {
@@ -207,9 +207,9 @@ bool refresh_material()
     return true;
 }
 
-agent_q::AgentQUsbDeviceResponseInfo device_info()
+signing::UsbDeviceResponseInfo device_info()
 {
-    return agent_q::AgentQUsbDeviceResponseInfo{
+    return signing::UsbDeviceResponseInfo{
         "device-1",
         "idle",
         "Agent-Q Firmware",
@@ -219,26 +219,26 @@ agent_q::AgentQUsbDeviceResponseInfo device_info()
     };
 }
 
-agent_q::AgentQUsbOperationResponseWriter make_writer()
+signing::UsbOperationResponseWriter make_writer()
 {
-    return agent_q::AgentQUsbOperationResponseWriter{
+    return signing::UsbOperationResponseWriter{
         write_error,
         log_write_failure,
     };
 }
 
-agent_q::AgentQUsbGetStatusHandlerOps make_status_ops()
+signing::UsbGetStatusHandlerOps make_status_ops()
 {
-    return agent_q::AgentQUsbGetStatusHandlerOps{
+    return signing::UsbGetStatusHandlerOps{
         refresh_material,
         write_payload_admission_error,
         device_info,
     };
 }
 
-agent_q::AgentQUsbIdentifyDeviceHandlerOps make_identify_ops()
+signing::UsbIdentifyDeviceHandlerOps make_identify_ops()
 {
-    return agent_q::AgentQUsbIdentifyDeviceHandlerOps{
+    return signing::UsbIdentifyDeviceHandlerOps{
         write_busy,
         is_safe_code,
         show_code,
@@ -262,7 +262,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req_status\",\"version\":1,\"method\":\"get_status\"}");
-        agent_q::handle_usb_get_status_request("req_status", request, make_writer(), make_status_ops());
+        signing::handle_usb_get_status_request("req_status", request, make_writer(), make_status_ops());
         assert(g_payload_admission_calls == 1);
         assert(g_refresh_calls == 1);
         assert(g_write_json_calls == 1);
@@ -275,7 +275,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req_status\",\"version\":1,\"method\":\"get_status\",\"extra\":1}");
-        agent_q::handle_usb_get_status_request("req_status", request, make_writer(), make_status_ops());
+        signing::handle_usb_get_status_request("req_status", request, make_writer(), make_status_ops());
         assert(g_write_json_calls == 0);
         assert(g_write_error_calls == 1);
         assert(g_payload_admission_calls == 0);
@@ -287,7 +287,7 @@ int main()
         reset_state();
         g_payload_admission_error = true;
         JsonDocument request = parse_request("{\"id\":\"req_status\",\"version\":1,\"method\":\"get_status\"}");
-        agent_q::handle_usb_get_status_request("req_status", request, make_writer(), make_status_ops());
+        signing::handle_usb_get_status_request("req_status", request, make_writer(), make_status_ops());
         assert(g_payload_admission_calls == 1);
         assert(g_refresh_calls == 0);
         assert(g_write_json_calls == 0);
@@ -299,7 +299,7 @@ int main()
         reset_state();
         g_busy = true;
         JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"method\":\"identify_device\",\"payload\":{\"code\":\"1234\"}}");
-        agent_q::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
+        signing::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
         assert(g_busy_calls == 1);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "busy") == 0);
@@ -310,7 +310,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"method\":\"identify_device\",\"payload\":{\"code\":\"1234\"},\"extra\":1}");
-        agent_q::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
+        signing::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
     }
@@ -318,7 +318,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"method\":\"identify_device\",\"payload\":{\"code\":\"1234\",\"extra\":1}}");
-        agent_q::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
+        signing::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
     }
@@ -327,7 +327,7 @@ int main()
         reset_state();
         g_safe_code = false;
         JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"method\":\"identify_device\",\"payload\":{\"code\":\"abcd\"}}");
-        agent_q::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
+        signing::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_show_calls == 0);
@@ -337,7 +337,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"method\":\"identify_device\",\"payload\":{\"code\":\"1234\"}}");
-        agent_q::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
+        signing::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
         assert(g_write_error_calls == 0);
         assert(g_show_calls == 1);
         assert(g_write_json_calls == 1);
@@ -351,7 +351,7 @@ int main()
         reset_state();
         g_write_json_ok = false;
         JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"method\":\"identify_device\",\"payload\":{\"code\":\"1234\"}}");
-        agent_q::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
+        signing::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
         assert(g_show_calls == 1);
         assert(g_write_json_calls == 1);
         assert(g_log_write_failure_calls == 1);
@@ -365,9 +365,9 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${ARDUINOJSON_ROOT}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_device_handlers.cpp" \
+  "${RUNTIME_DIR}/usb_device_handlers.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

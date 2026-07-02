@@ -19,11 +19,11 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 
 for required in \
-  "${AGENT_Q_DIR}/agent_q_sui_account_settings.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sui_account_settings.h"; do
+  "${RUNTIME_DIR}/sui_account_settings.cpp" \
+  "${RUNTIME_DIR}/sui_account_settings.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
@@ -32,7 +32,7 @@ done
 
 CXX_BIN="${CXX:-c++}"
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-sui-account-settings.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-sui-account-settings.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/stubs"
@@ -86,13 +86,13 @@ cat >"${TMP_DIR}/sui_account_settings_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_sui_account_settings.h"
+#include "sui_account_settings.h"
 #include "esp_err.h"
 #include "nvs.h"
 
 namespace {
 
-constexpr const char* kExpectedNamespace = "agent_q";
+constexpr const char* kExpectedNamespace = "signing";
 constexpr const char* kExpectedKey = "sui_acct_set";
 
 bool g_has_value = false;
@@ -192,69 +192,69 @@ esp_err_t nvs_commit(nvs_handle_t handle)
 
 int main()
 {
-    using Status = agent_q::AgentQSuiAccountSettingsStatus;
+    using Status = signing::SuiAccountSettingsStatus;
 
-    agent_q::AgentQSuiAccountSettings settings = {true};
+    signing::SuiAccountSettings settings = {true};
 
     reset_stubs();
-    expect(agent_q::sui_account_settings_status() == Status::missing,
+    expect(signing::sui_account_settings_status() == Status::missing,
            "missing Sui account settings report missing status");
-    expect(!agent_q::read_sui_account_settings(&settings),
+    expect(!signing::read_sui_account_settings(&settings),
            "missing Sui account settings read fails");
     expect(!settings.accept_gas_sponsor,
            "missing Sui account settings fail closed to rejecting gas sponsors");
 
-    expect(agent_q::store_sui_account_settings(agent_q::kDefaultSuiAccountSettings),
+    expect(signing::store_sui_account_settings(signing::kDefaultSuiAccountSettings),
            "store default Sui account settings");
-    expect(agent_q::sui_account_settings_status() == Status::active,
+    expect(signing::sui_account_settings_status() == Status::active,
            "stored default Sui account settings report active status");
     settings = {true};
-    expect(agent_q::read_sui_account_settings(&settings),
+    expect(signing::read_sui_account_settings(&settings),
            "stored default Sui account settings read succeeds");
     expect(!settings.accept_gas_sponsor,
            "stored default rejects gas sponsors");
 
     settings = {true};
-    expect(agent_q::store_sui_account_settings(settings),
+    expect(signing::store_sui_account_settings(settings),
            "store Sui account settings that accept gas sponsors");
     settings = {false};
-    expect(agent_q::read_sui_account_settings(&settings),
+    expect(signing::read_sui_account_settings(&settings),
            "stored accepting Sui account settings read succeeds");
     expect(settings.accept_gas_sponsor,
            "stored accepting Sui account settings are observed");
 
-    expect(agent_q::wipe_sui_account_settings(), "wipe Sui account settings");
-    expect(agent_q::sui_account_settings_status() == Status::missing,
+    expect(signing::wipe_sui_account_settings(), "wipe Sui account settings");
+    expect(signing::sui_account_settings_status() == Status::missing,
            "wiped Sui account settings report missing status");
 
     g_namespace_missing = true;
-    expect(agent_q::wipe_sui_account_settings(), "missing namespace wipe succeeds");
-    expect(agent_q::sui_account_settings_status() == Status::missing,
+    expect(signing::wipe_sui_account_settings(), "missing namespace wipe succeeds");
+    expect(signing::sui_account_settings_status() == Status::missing,
            "missing namespace reports missing status");
     g_namespace_missing = false;
 
     g_has_value = true;
     g_value = 2;
     settings = {true};
-    expect(agent_q::sui_account_settings_status() == Status::invalid,
+    expect(signing::sui_account_settings_status() == Status::invalid,
            "invalid Sui account settings report invalid status");
-    expect(!agent_q::read_sui_account_settings(&settings),
+    expect(!signing::read_sui_account_settings(&settings),
            "invalid Sui account settings read fails");
     expect(!settings.accept_gas_sponsor,
            "invalid Sui account settings fail closed to rejecting gas sponsors");
 
     g_open_fails = true;
     settings = {true};
-    expect(agent_q::sui_account_settings_status() == Status::unreadable,
+    expect(signing::sui_account_settings_status() == Status::unreadable,
            "unreadable Sui account settings report unreadable status");
-    expect(!agent_q::read_sui_account_settings(&settings),
+    expect(!signing::read_sui_account_settings(&settings),
            "unreadable Sui account settings read fails");
     expect(!settings.accept_gas_sponsor,
            "unreadable Sui account settings fail closed to rejecting gas sponsors");
     g_open_fails = false;
 
     g_commit_fails = true;
-    expect(!agent_q::store_sui_account_settings(agent_q::kDefaultSuiAccountSettings),
+    expect(!signing::store_sui_account_settings(signing::kDefaultSuiAccountSettings),
            "commit failure reports Sui account settings store failure");
 
     if (failures != 0) {
@@ -268,9 +268,9 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/sui_account_settings_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sui_account_settings.cpp" \
+  "${RUNTIME_DIR}/sui_account_settings.cpp" \
   -o "${TMP_DIR}/sui_account_settings_test"
 
 "${TMP_DIR}/sui_account_settings_test"

@@ -191,7 +191,7 @@ async function readSuiActiveEnvironment(): Promise<SuiSignTransactionNetwork | u
 }
 
 function configPath(): string {
-  return join(homedir(), ".agent-q", "sui-signer.json");
+  return join(homedir(), ".signing", "sui-signer.json");
 }
 
 function isSuiNetwork(value: unknown): value is SuiSignTransactionNetwork {

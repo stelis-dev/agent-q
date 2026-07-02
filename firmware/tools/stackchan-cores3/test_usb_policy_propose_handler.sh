@@ -18,11 +18,11 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 COMMON_POLICY_DIR="${COMMON_ROOT}/policy"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
-ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 if [[ -z "${IDF_PATH:-}" ]]; then
   echo "IDF_PATH is not set. Source ESP-IDF v5.5.4 export.sh before running this test." >&2
@@ -39,24 +39,24 @@ fi
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_admission.cpp" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_admission.h" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.h" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_store.cpp" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_store.h" \
-  "${AGENT_Q_DIR}/agent_q_session.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_policy_propose_handler.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_policy_propose_handler.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_policy_propose_outcome_writer.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_policy_propose_outcome_writer.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_response_writer.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_response_writer.h" \
-  "${AGENT_Q_DIR}/agent_q_policy_update_flow.h" \
-  "${AGENT_Q_DIR}/agent_q_timeout_window.h" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_document.h"; do
+  "${RUNTIME_DIR}/payload_delivery_admission.cpp" \
+  "${RUNTIME_DIR}/payload_delivery_admission.h" \
+  "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
+  "${RUNTIME_DIR}/payload_delivery_primitives.h" \
+  "${RUNTIME_DIR}/payload_delivery_store.cpp" \
+  "${RUNTIME_DIR}/payload_delivery_store.h" \
+  "${RUNTIME_DIR}/session.cpp" \
+  "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
+  "${RUNTIME_DIR}/usb_active_session_request_guard.h" \
+  "${RUNTIME_DIR}/usb_policy_propose_handler.cpp" \
+  "${RUNTIME_DIR}/usb_policy_propose_handler.h" \
+  "${RUNTIME_DIR}/usb_policy_propose_outcome_writer.cpp" \
+  "${RUNTIME_DIR}/usb_policy_propose_outcome_writer.h" \
+  "${RUNTIME_DIR}/usb_operation_response_writer.h" \
+  "${RUNTIME_DIR}/usb_response_writer.h" \
+  "${RUNTIME_DIR}/policy_update_flow.h" \
+  "${RUNTIME_DIR}/timeout_window.h" \
+  "${COMMON_POLICY_DIR}/document.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -66,11 +66,11 @@ done
 
 CXX_BIN="${CXX:-c++}"
 CC_BIN="${CC:-cc}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-policy-propose-handler.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-usb-policy-propose-handler.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
-mkdir -p "${TMP_DIR}/agent_q_common"
+mkdir -p "${TMP_DIR}/firmware_common"
 mkdir -p "${TMP_DIR}/freertos"
-ln -s "${COMMON_POLICY_DIR}" "${TMP_DIR}/agent_q_common/policy"
+ln -s "${COMMON_POLICY_DIR}" "${TMP_DIR}/firmware_common/policy"
 
 cat >"${TMP_DIR}/freertos/FreeRTOS.h" <<'H'
 #pragma once
@@ -88,10 +88,10 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_payload_delivery_admission.h"
-#include "agent_q_payload_delivery_store.h"
-#include "agent_q_usb_policy_propose_handler.h"
-#include "agent_q_usb_policy_propose_outcome_writer.h"
+#include "payload_delivery_admission.h"
+#include "payload_delivery_store.h"
+#include "usb_policy_propose_handler.h"
+#include "usb_policy_propose_outcome_writer.h"
 #include "mbedtls/sha256.h"
 
 namespace {
@@ -114,10 +114,10 @@ bool g_busy = false;
 bool g_session_valid = true;
 bool g_json_write_ok = true;
 bool g_show_review_ok = true;
-agent_q::AgentQPolicyUpdateFlowBeginResult g_begin_result =
-    agent_q::AgentQPolicyUpdateFlowBeginResult::ok;
-agent_q::AgentQPolicyUpdateFlowTerminalResult g_ui_error_result =
-    agent_q::AgentQPolicyUpdateFlowTerminalResult::ui_error;
+signing::PolicyUpdateFlowBeginResult g_begin_result =
+    signing::PolicyUpdateFlowBeginResult::ok;
+signing::PolicyUpdateFlowTerminalResult g_ui_error_result =
+    signing::PolicyUpdateFlowTerminalResult::ui_error;
 const char* g_last_id = nullptr;
 const char* g_last_session = nullptr;
 const char* g_last_error_code = nullptr;
@@ -130,11 +130,11 @@ char g_last_policy_hash[80] = {};
 size_t g_last_policy_count = 0;
 size_t g_last_policy_condition_count = 0;
 char g_last_policy_highest_action[16] = {};
-agent_q::AgentQTimeoutWindow g_last_window = {};
+signing::TimeoutWindow g_last_window = {};
 
 void reset_state()
 {
-    agent_q::payload_delivery_store_reset();
+    signing::payload_delivery_store_reset();
     g_write_error_calls = 0;
     g_log_write_failure_calls = 0;
     g_material_calls = 0;
@@ -153,8 +153,8 @@ void reset_state()
     g_session_valid = true;
     g_json_write_ok = true;
     g_show_review_ok = true;
-    g_begin_result = agent_q::AgentQPolicyUpdateFlowBeginResult::ok;
-    g_ui_error_result = agent_q::AgentQPolicyUpdateFlowTerminalResult::ui_error;
+    g_begin_result = signing::PolicyUpdateFlowBeginResult::ok;
+    g_ui_error_result = signing::PolicyUpdateFlowTerminalResult::ui_error;
     g_last_id = nullptr;
     g_last_session = nullptr;
     g_last_error_code = nullptr;
@@ -167,7 +167,7 @@ void reset_state()
     g_last_policy_count = 0;
     g_last_policy_condition_count = 0;
     g_last_policy_highest_action[0] = '\0';
-    g_last_window = agent_q::AgentQTimeoutWindow{0, 0};
+    g_last_window = signing::TimeoutWindow{0, 0};
 }
 
 bool write_error(const char* id, const char* code)
@@ -191,7 +191,7 @@ bool material_ready()
     return g_material_ready;
 }
 
-bool write_busy(const char* id, const agent_q::AgentQUsbOperationResponseWriter& writer)
+bool write_busy(const char* id, const signing::UsbOperationResponseWriter& writer)
 {
     g_busy_calls += 1;
     g_last_id = id;
@@ -203,15 +203,15 @@ bool write_busy(const char* id, const agent_q::AgentQUsbOperationResponseWriter&
 
 bool write_busy_from_payload_delivery(
     const char* id,
-    const agent_q::AgentQUsbOperationResponseWriter& writer)
+    const signing::UsbOperationResponseWriter& writer)
 {
     g_busy_calls += 1;
-    if (agent_q::payload_delivery_admit_operation(
-            agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                agent_q::AgentQPayloadDeliveryOperationKind::policy_propose,
+    if (signing::payload_delivery_admit_operation(
+            signing::PayloadDeliveryOperationAdmissionInput{0,
+                signing::PayloadDeliveryOperationKind::policy_propose,
                 nullptr,
             }) !=
-        agent_q::AgentQPayloadDeliveryAdmissionResult::busy) {
+        signing::PayloadDeliveryAdmissionResult::busy) {
         return false;
     }
     return writer.write_error(id, "busy");
@@ -220,7 +220,7 @@ bool write_busy_from_payload_delivery(
 bool require_session(
     const char* id,
     const char* session_id,
-    const agent_q::AgentQUsbOperationResponseWriter& writer)
+    const signing::UsbOperationResponseWriter& writer)
 {
     g_require_session_calls += 1;
     g_last_id = id;
@@ -231,23 +231,23 @@ bool require_session(
     return g_session_valid;
 }
 
-agent_q::AgentQTimeoutTick current_tick()
+signing::TimeoutTick current_tick()
 {
     return 10;
 }
 
-agent_q::AgentQTimeoutWindow make_review_window(agent_q::AgentQTimeoutTick now)
+signing::TimeoutWindow make_review_window(signing::TimeoutTick now)
 {
     g_make_window_calls += 1;
-    return agent_q::AgentQTimeoutWindow{now, static_cast<agent_q::AgentQTimeoutTick>(now + 10)};
+    return signing::TimeoutWindow{now, static_cast<signing::TimeoutTick>(now + 10)};
 }
 
-agent_q::AgentQPolicyUpdateFlowBeginResult begin_policy_update(
+signing::PolicyUpdateFlowBeginResult begin_policy_update(
     JsonVariantConst policy,
     const char* request_id,
     const char* session_id,
     TickType_t now,
-    agent_q::AgentQTimeoutWindow review_window)
+    signing::TimeoutWindow review_window)
 {
     g_begin_calls += 1;
     assert(now == 10);
@@ -258,13 +258,13 @@ agent_q::AgentQPolicyUpdateFlowBeginResult begin_policy_update(
     return g_begin_result;
 }
 
-const char* begin_result_reason(agent_q::AgentQPolicyUpdateFlowBeginResult result)
+const char* begin_result_reason(signing::PolicyUpdateFlowBeginResult result)
 {
     g_reason_calls += 1;
     switch (result) {
-        case agent_q::AgentQPolicyUpdateFlowBeginResult::too_large:
+        case signing::PolicyUpdateFlowBeginResult::too_large:
             return "too_large";
-        case agent_q::AgentQPolicyUpdateFlowBeginResult::ok:
+        case signing::PolicyUpdateFlowBeginResult::ok:
             return "ok";
         default:
             return "invalid_policy";
@@ -277,7 +277,7 @@ bool show_policy_update_review()
     return g_show_review_ok;
 }
 
-agent_q::AgentQPolicyUpdateFlowTerminalResult record_ui_error()
+signing::PolicyUpdateFlowTerminalResult record_ui_error()
 {
     g_record_ui_error_calls += 1;
     return g_ui_error_result;
@@ -285,7 +285,7 @@ agent_q::AgentQPolicyUpdateFlowTerminalResult record_ui_error()
 
 void finish_policy_update_terminal(
     const char* id,
-    agent_q::AgentQPolicyUpdateFlowTerminalResult result)
+    signing::PolicyUpdateFlowTerminalResult result)
 {
     g_finish_terminal_calls += 1;
     g_last_id = id;
@@ -298,17 +298,17 @@ void record_waiting(const char* id)
     g_last_id = id;
 }
 
-agent_q::AgentQUsbOperationResponseWriter make_writer()
+signing::UsbOperationResponseWriter make_writer()
 {
-    return agent_q::AgentQUsbOperationResponseWriter{
+    return signing::UsbOperationResponseWriter{
         write_error,
         log_write_failure,
     };
 }
 
-agent_q::AgentQUsbPolicyProposeHandlerOps make_ops()
+signing::UsbPolicyProposeHandlerOps make_ops()
 {
-    return agent_q::AgentQUsbPolicyProposeHandlerOps{
+    return signing::UsbPolicyProposeHandlerOps{
         material_ready,
         write_busy,
         require_session,
@@ -323,9 +323,9 @@ agent_q::AgentQUsbPolicyProposeHandlerOps make_ops()
     };
 }
 
-agent_q::AgentQUsbPolicyProposeHandlerOps make_payload_admission_ops()
+signing::UsbPolicyProposeHandlerOps make_payload_admission_ops()
 {
-    return agent_q::AgentQUsbPolicyProposeHandlerOps{
+    return signing::UsbPolicyProposeHandlerOps{
         material_ready,
         write_busy_from_payload_delivery,
         require_session,
@@ -343,40 +343,40 @@ agent_q::AgentQUsbPolicyProposeHandlerOps make_payload_admission_ops()
 void stage_finalized_payload()
 {
     const uint8_t payload[] = {0x31, 0x41, 0x59, 0x26};
-    char digest[agent_q::kAgentQApprovalHistoryDigestSize] = {};
-    assert(agent_q::approval_history_digest_payload(
+    char digest[signing::kApprovalHistoryDigestSize] = {};
+    assert(signing::approval_history_digest_payload(
         payload,
         sizeof(payload),
         digest,
         sizeof(digest)));
-    agent_q::AgentQPayloadDeliveryBeginOutput begin = {};
-    assert(agent_q::payload_delivery_begin(0,
-        agent_q::AgentQPayloadDeliveryBeginInput{
+    signing::PayloadDeliveryBeginOutput begin = {};
+    assert(signing::payload_delivery_begin(0,
+        signing::PayloadDeliveryBeginInput{
             "session_abcdef",
             sizeof(payload),
             digest,
-            agent_q::AgentQPayloadDeliveryLimits{16, 128},
-            agent_q::timeout_window_from_deadline(0, 1000),
+            signing::PayloadDeliveryLimits{16, 128},
+            signing::timeout_window_from_deadline(0, 1000),
         },
-        &begin) == agent_q::AgentQPayloadDeliveryResult::ok);
+        &begin) == signing::PayloadDeliveryResult::ok);
     size_t received = 0;
-    assert(agent_q::payload_delivery_append_chunk(0,
-        agent_q::AgentQPayloadDeliveryChunkInput{
+    assert(signing::payload_delivery_append_chunk(0,
+        signing::PayloadDeliveryChunkInput{
             "session_abcdef",
             begin.transfer_id,
             0,
             payload,
             sizeof(payload),
         },
-        &received) == agent_q::AgentQPayloadDeliveryResult::ok);
+        &received) == signing::PayloadDeliveryResult::ok);
     assert(received == sizeof(payload));
-    agent_q::AgentQPayloadDeliveryFinishOutput finish = {};
-    assert(agent_q::payload_delivery_finish(0,
-        agent_q::AgentQPayloadDeliveryFinishInput{
+    signing::PayloadDeliveryFinishOutput finish = {};
+    assert(signing::payload_delivery_finish(0,
+        signing::PayloadDeliveryFinishInput{
             "session_abcdef",
             begin.transfer_id,
         },
-        &finish) == agent_q::AgentQPayloadDeliveryResult::ok);
+        &finish) == signing::PayloadDeliveryResult::ok);
 }
 
 JsonDocument parse_request(const char* json)
@@ -394,7 +394,7 @@ const char* valid_request()
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 void wipe_sensitive_buffer(void* data, size_t size)
 {
@@ -414,7 +414,7 @@ bool approval_history_digest_payload(
     size_t output_size)
 {
     if (payload == nullptr || payload_size == 0 || output == nullptr ||
-        output_size != kAgentQApprovalHistoryDigestSize) {
+        output_size != kApprovalHistoryDigestSize) {
         return false;
     }
     uint8_t digest[32] = {};
@@ -467,7 +467,7 @@ bool usb_response_write_success_result(const char* id, const char* method, JsonO
     return usb_response_write_json(response);
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 int main()
 {
@@ -475,7 +475,7 @@ int main()
         reset_state();
         g_material_ready = false;
         JsonDocument request = parse_request(valid_request());
-        agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
         assert(g_busy_calls == 0);
@@ -487,7 +487,7 @@ int main()
         reset_state();
         g_busy = true;
         JsonDocument request = parse_request(valid_request());
-        agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_busy_calls == 1);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "busy") == 0);
@@ -499,7 +499,7 @@ int main()
         reset_state();
         stage_finalized_payload();
         JsonDocument request = parse_request(valid_request());
-        agent_q::handle_usb_policy_propose_request(
+        signing::handle_usb_policy_propose_request(
             "req",
             request,
             make_writer(),
@@ -514,7 +514,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_propose\",\"sessionId\":7,\"payload\":{\"policy\":{}}}");
-        agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
         assert(g_require_session_calls == 0);
@@ -525,7 +525,7 @@ int main()
         reset_state();
         g_session_valid = false;
         JsonDocument request = parse_request(valid_request());
-        agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_require_session_calls == 1);
         assert(strcmp(g_last_session, "session") == 0);
         assert(g_write_error_calls == 1);
@@ -536,7 +536,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_propose\",\"sessionId\":\"session\",\"payload\":{\"policy\":{}},\"extra\":true}");
-        agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_require_session_calls == 1);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
@@ -546,7 +546,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_propose\",\"sessionId\":\"session\",\"payload\":7}");
-        agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
@@ -555,7 +555,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_propose\",\"sessionId\":\"session\",\"payload\":{\"policy\":{},\"extra\":true}}");
-        agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
@@ -564,7 +564,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_propose\",\"sessionId\":\"session\",\"payload\":{}}");
-        agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
@@ -572,9 +572,9 @@ int main()
 
     {
         reset_state();
-        g_begin_result = agent_q::AgentQPolicyUpdateFlowBeginResult::too_large;
+        g_begin_result = signing::PolicyUpdateFlowBeginResult::too_large;
         JsonDocument request = parse_request(valid_request());
-        agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_make_window_calls == 1);
         assert(g_begin_calls == 1);
         assert(g_reason_calls == 1);
@@ -590,10 +590,10 @@ int main()
 
     {
         reset_state();
-        g_begin_result = agent_q::AgentQPolicyUpdateFlowBeginResult::invalid_policy;
+        g_begin_result = signing::PolicyUpdateFlowBeginResult::invalid_policy;
         g_json_write_ok = false;
         JsonDocument request = parse_request(valid_request());
-        agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_json_write_calls == 1);
         assert(g_log_write_failure_calls == 1);
         assert(g_show_review_calls == 0);
@@ -601,12 +601,12 @@ int main()
 
     {
         reset_state();
-        const agent_q::AgentQPolicyUpdateFlowSnapshot snapshot{
+        const signing::PolicyUpdateFlowSnapshot snapshot{
             true,
-            agent_q::AgentQPolicyUpdateFlowStage::committing,
+            signing::PolicyUpdateFlowStage::committing,
             "req",
             "session",
-            agent_q::AgentQTimeoutWindow{10, 20},
+            signing::TimeoutWindow{10, 20},
             "sha256:policy",
             1,
             1,
@@ -617,7 +617,7 @@ int main()
             "scopes=1/1 policies=3 conditions=7",
             "Update policy",
         };
-        assert(agent_q::usb_policy_propose_outcome_write("req", "applied", "applied", &snapshot));
+        assert(signing::usb_policy_propose_outcome_write("req", "applied", "applied", &snapshot));
         assert(g_json_write_calls == 1);
         assert(strcmp(g_last_response_id, "req") == 0);
         assert(strcmp(g_last_response_type, "policy_propose") == 0);
@@ -634,7 +634,7 @@ int main()
         reset_state();
         g_show_review_ok = false;
         JsonDocument request = parse_request(valid_request());
-        agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_begin_calls == 1);
         assert(g_show_review_calls == 1);
         assert(g_record_ui_error_calls == 1);
@@ -645,7 +645,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request(valid_request());
-        agent_q::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_begin_calls == 1);
         assert(g_last_window.started_at == 10);
         assert(g_last_window.deadline == 20);
@@ -665,36 +665,36 @@ CPP
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
-  -c "${AGENT_Q_DIR}/agent_q_payload_delivery_admission.cpp" \
+  -c "${RUNTIME_DIR}/payload_delivery_admission.cpp" \
   -o "${TMP_DIR}/payload_delivery_admission.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
-  -c "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
+  -c "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
   -o "${TMP_DIR}/payload_delivery_primitives.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
-  -c "${AGENT_Q_DIR}/agent_q_payload_delivery_store.cpp" \
+  -c "${RUNTIME_DIR}/payload_delivery_store.cpp" \
   -o "${TMP_DIR}/payload_delivery_store.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
-  -c "${AGENT_Q_DIR}/agent_q_session.cpp" \
+  -c "${RUNTIME_DIR}/session.cpp" \
   -o "${TMP_DIR}/session.o"
 
 "${CC_BIN}" -std=c99 -Wall -Wextra -Werror \
@@ -711,7 +711,7 @@ CPP
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
   "${TMP_DIR}/payload_delivery_admission.o" \
@@ -720,9 +720,9 @@ CPP
   "${TMP_DIR}/session.o" \
   "${TMP_DIR}/sha256.o" \
   "${TMP_DIR}/platform_util.o" \
-  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_policy_propose_handler.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_policy_propose_outcome_writer.cpp" \
+  "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
+  "${RUNTIME_DIR}/usb_policy_propose_handler.cpp" \
+  "${RUNTIME_DIR}/usb_policy_propose_outcome_writer.cpp" \
   -o "${TMP_DIR}/test_usb_policy_propose_handler"
 
 "${TMP_DIR}/test_usb_policy_propose_handler"

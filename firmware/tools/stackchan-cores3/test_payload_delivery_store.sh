@@ -20,18 +20,18 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 TARGET_ROOT="${REPO_ROOT}/firmware/src/stackchan-cores3"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
-USB_REQUEST_SERVER_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_request_server.cpp"
-USB_OPERATION_MANIFEST_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_operation_manifest.cpp"
-USB_DEVICE_HANDLER_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_device_handlers.cpp"
-USB_SESSION_READ_HANDLER_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_session_read_handlers.cpp"
-USB_APPROVAL_HISTORY_HANDLER_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_approval_history_handler.cpp"
-USB_RETAINED_RESPONSE_HANDLER_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_retained_response_handlers.cpp"
-USB_DISCONNECT_HANDLER_SOURCE="${TARGET_ROOT}/agent_q/agent_q_usb_disconnect_handler.cpp"
-USB_CONNECT_HANDLER_HEADER="${TARGET_ROOT}/agent_q/agent_q_usb_connect_handler.h"
-USB_DEVICE_HANDLER_HEADER="${TARGET_ROOT}/agent_q/agent_q_usb_device_handlers.h"
-USB_POLICY_PROPOSE_HANDLER_HEADER="${TARGET_ROOT}/agent_q/agent_q_usb_policy_propose_handler.h"
-USB_SUI_ZKLOGIN_CREDENTIAL_HANDLER_HEADER="${TARGET_ROOT}/agent_q/agent_q_usb_sui_zklogin_credential_handlers.h"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
+USB_REQUEST_SERVER_SOURCE="${TARGET_ROOT}/runtime/usb_request_server.cpp"
+USB_OPERATION_MANIFEST_SOURCE="${TARGET_ROOT}/runtime/usb_operation_manifest.cpp"
+USB_DEVICE_HANDLER_SOURCE="${TARGET_ROOT}/runtime/usb_device_handlers.cpp"
+USB_SESSION_READ_HANDLER_SOURCE="${TARGET_ROOT}/runtime/usb_session_read_handlers.cpp"
+USB_APPROVAL_HISTORY_HANDLER_SOURCE="${TARGET_ROOT}/runtime/usb_approval_history_handler.cpp"
+USB_RETAINED_RESPONSE_HANDLER_SOURCE="${TARGET_ROOT}/runtime/usb_retained_response_handlers.cpp"
+USB_DISCONNECT_HANDLER_SOURCE="${TARGET_ROOT}/runtime/usb_disconnect_handler.cpp"
+USB_CONNECT_HANDLER_HEADER="${TARGET_ROOT}/runtime/usb_connect_handler.h"
+USB_DEVICE_HANDLER_HEADER="${TARGET_ROOT}/runtime/usb_device_handlers.h"
+USB_POLICY_PROPOSE_HANDLER_HEADER="${TARGET_ROOT}/runtime/usb_policy_propose_handler.h"
+USB_SUI_ZKLOGIN_CREDENTIAL_HANDLER_HEADER="${TARGET_ROOT}/runtime/usb_sui_zklogin_credential_handlers.h"
 
 if [[ -z "${IDF_PATH:-}" ]]; then
   echo "IDF_PATH is not set. Source ESP-IDF v5.5.4 export.sh before running this test." >&2
@@ -47,24 +47,24 @@ if [[ ! -f "${MBEDTLS_INCLUDE_DIR}/mbedtls/sha256.h" || ! -f "${MBEDTLS_LIBRARY_
 fi
 
 for required in \
-  "${TARGET_ROOT}/agent_q/agent_q_payload_delivery_primitives.cpp" \
-  "${TARGET_ROOT}/agent_q/agent_q_payload_delivery_primitives.h" \
-  "${TARGET_ROOT}/agent_q/agent_q_payload_delivery_store.cpp" \
-  "${TARGET_ROOT}/agent_q/agent_q_payload_delivery_store.h" \
-  "${TARGET_ROOT}/agent_q/agent_q_payload_delivery_admission.cpp" \
-  "${TARGET_ROOT}/agent_q/agent_q_payload_delivery_admission.h" \
-  "${TARGET_ROOT}/agent_q/agent_q_usb_operation_manifest.cpp" \
-  "${TARGET_ROOT}/agent_q/agent_q_usb_operation_manifest.h" \
+  "${TARGET_ROOT}/runtime/payload_delivery_primitives.cpp" \
+  "${TARGET_ROOT}/runtime/payload_delivery_primitives.h" \
+  "${TARGET_ROOT}/runtime/payload_delivery_store.cpp" \
+  "${TARGET_ROOT}/runtime/payload_delivery_store.h" \
+  "${TARGET_ROOT}/runtime/payload_delivery_admission.cpp" \
+  "${TARGET_ROOT}/runtime/payload_delivery_admission.h" \
+  "${TARGET_ROOT}/runtime/usb_operation_manifest.cpp" \
+  "${TARGET_ROOT}/runtime/usb_operation_manifest.h" \
   "${USB_DEVICE_HANDLER_SOURCE}" \
   "${USB_SESSION_READ_HANDLER_SOURCE}" \
   "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" \
   "${USB_RETAINED_RESPONSE_HANDLER_SOURCE}" \
   "${USB_DISCONNECT_HANDLER_SOURCE}" \
   "${USB_REQUEST_SERVER_SOURCE}" \
-  "${TARGET_ROOT}/agent_q/agent_q_session.cpp" \
-  "${TARGET_ROOT}/agent_q/agent_q_approval_history.h" \
+  "${TARGET_ROOT}/runtime/session.cpp" \
+  "${TARGET_ROOT}/runtime/approval_history.h" \
   "${USB_SUI_ZKLOGIN_CREDENTIAL_HANDLER_HEADER}" \
-  "${COMMON_ROOT}/agent_q_sign_route.h"; do
+  "${COMMON_ROOT}/protocol/sign_route.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
@@ -151,53 +151,53 @@ expect_request_server_wiring \
   'write_payload_delivery_identify_device_busy' \
   "identify_device production ops must use payload delivery admission"
 expect_request_server_wiring \
-  'AgentQUsbOperationType::identify_device' \
+  'UsbOperationType::identify_device' \
   "identify_device admission must use its named USB operation"
 expect_request_server_wiring \
   'usb_operation_manifest_entry\(operation\)' \
   "operation-aware busy gate must consume the USB operation manifest"
 expect_manifest_operation_wiring \
-  'AgentQUsbOperationType::identify_device' \
-  'AgentQUsbOperationHandlerSlot::identify_device' \
-  'AgentQPayloadDeliveryOperationKind::identify_device' \
+  'UsbOperationType::identify_device' \
+  'UsbOperationHandlerSlot::identify_device' \
+  'PayloadDeliveryOperationKind::identify_device' \
   "identify_device manifest entry must bind USB operation to payload admission kind"
 expect_request_server_wiring \
   'write_payload_delivery_connect_busy' \
   "connect production ops must use payload delivery admission"
 expect_request_server_wiring \
-  'AgentQUsbOperationType::connect' \
+  'UsbOperationType::connect' \
   "connect admission must use its named USB operation"
 expect_manifest_operation_wiring \
-  'AgentQUsbOperationType::connect' \
-  'AgentQUsbOperationHandlerSlot::connect' \
-  'AgentQPayloadDeliveryOperationKind::connect' \
+  'UsbOperationType::connect' \
+  'UsbOperationHandlerSlot::connect' \
+  'PayloadDeliveryOperationKind::connect' \
   "connect manifest entry must bind USB operation to payload admission kind"
 expect_request_server_wiring \
   'write_payload_delivery_policy_propose_busy' \
   "policy_propose production ops must use payload delivery admission"
 expect_request_server_wiring \
-  'AgentQUsbOperationType::policy_propose' \
+  'UsbOperationType::policy_propose' \
   "policy_propose admission must use its named USB operation"
 expect_manifest_operation_wiring \
-  'AgentQUsbOperationType::policy_propose' \
-  'AgentQUsbOperationHandlerSlot::policy_propose' \
-  'AgentQPayloadDeliveryOperationKind::policy_propose' \
+  'UsbOperationType::policy_propose' \
+  'UsbOperationHandlerSlot::policy_propose' \
+  'PayloadDeliveryOperationKind::policy_propose' \
   "policy_propose manifest entry must bind USB operation to payload admission kind"
 expect_request_server_wiring \
   'write_payload_delivery_credential_propose_busy' \
   "credential_propose production ops must use payload delivery admission"
 expect_request_server_wiring \
-  'AgentQUsbOperationType::credential_propose' \
+  'UsbOperationType::credential_propose' \
   "credential_propose admission must use its named USB operation"
 expect_manifest_operation_wiring \
-  'AgentQUsbOperationType::credential_prepare' \
-  'AgentQUsbOperationHandlerSlot::credential_prepare' \
-  'AgentQPayloadDeliveryOperationKind::safe_read' \
+  'UsbOperationType::credential_prepare' \
+  'UsbOperationHandlerSlot::credential_prepare' \
+  'PayloadDeliveryOperationKind::safe_read' \
   "credential_prepare manifest entry must bind USB operation to safe-read payload admission"
 expect_manifest_operation_wiring \
-  'AgentQUsbOperationType::credential_propose' \
-  'AgentQUsbOperationHandlerSlot::credential_propose' \
-  'AgentQPayloadDeliveryOperationKind::credential_propose' \
+  'UsbOperationType::credential_propose' \
+  'UsbOperationHandlerSlot::credential_propose' \
+  'PayloadDeliveryOperationKind::credential_propose' \
   "credential_propose manifest entry must bind USB operation to payload admission kind"
 expect_request_server_wiring \
   'write_payload_delivery_safe_read_admission_error' \
@@ -215,48 +215,48 @@ expect_request_server_block_wiring \
   "approval history production ops must use payload delivery safe-read admission"
 expect_source_wiring \
   "${USB_DEVICE_HANDLER_SOURCE}" \
-  'AgentQUsbOperationType::get_status' \
+  'UsbOperationType::get_status' \
   "get_status handler must pass its own USB operation to safe-read admission"
 expect_source_wiring \
   "${USB_SESSION_READ_HANDLER_SOURCE}" \
-  'AgentQUsbOperationType::get_capabilities' \
+  'UsbOperationType::get_capabilities' \
   "get_capabilities handler must pass its own USB operation to safe-read admission"
 expect_source_wiring \
   "${USB_SESSION_READ_HANDLER_SOURCE}" \
-  'AgentQUsbOperationType::get_accounts' \
+  'UsbOperationType::get_accounts' \
   "get_accounts handler must pass its own USB operation to safe-read admission"
 expect_source_wiring \
   "${USB_SESSION_READ_HANDLER_SOURCE}" \
-  'AgentQUsbOperationType::policy_get' \
+  'UsbOperationType::policy_get' \
   "policy_get handler must pass its own USB operation to safe-read admission"
 expect_source_wiring \
   "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" \
-  'AgentQUsbOperationType::get_approval_history' \
+  'UsbOperationType::get_approval_history' \
   "get_approval_history handler must pass its own USB operation to safe-read admission"
 expect_manifest_operation_wiring \
-  'AgentQUsbOperationType::get_status' \
-  'AgentQUsbOperationHandlerSlot::get_status' \
-  'AgentQPayloadDeliveryOperationKind::safe_read' \
+  'UsbOperationType::get_status' \
+  'UsbOperationHandlerSlot::get_status' \
+  'PayloadDeliveryOperationKind::safe_read' \
   "get_status manifest entry must bind USB operation to safe-read payload admission"
 expect_manifest_operation_wiring \
-  'AgentQUsbOperationType::get_capabilities' \
-  'AgentQUsbOperationHandlerSlot::get_capabilities' \
-  'AgentQPayloadDeliveryOperationKind::safe_read' \
+  'UsbOperationType::get_capabilities' \
+  'UsbOperationHandlerSlot::get_capabilities' \
+  'PayloadDeliveryOperationKind::safe_read' \
   "get_capabilities manifest entry must bind USB operation to safe-read payload admission"
 expect_manifest_operation_wiring \
-  'AgentQUsbOperationType::get_accounts' \
-  'AgentQUsbOperationHandlerSlot::get_accounts' \
-  'AgentQPayloadDeliveryOperationKind::safe_read' \
+  'UsbOperationType::get_accounts' \
+  'UsbOperationHandlerSlot::get_accounts' \
+  'PayloadDeliveryOperationKind::safe_read' \
   "get_accounts manifest entry must bind USB operation to safe-read payload admission"
 expect_manifest_operation_wiring \
-  'AgentQUsbOperationType::policy_get' \
-  'AgentQUsbOperationHandlerSlot::policy_get' \
-  'AgentQPayloadDeliveryOperationKind::safe_read' \
+  'UsbOperationType::policy_get' \
+  'UsbOperationHandlerSlot::policy_get' \
+  'PayloadDeliveryOperationKind::safe_read' \
   "policy_get manifest entry must bind USB operation to safe-read payload admission"
 expect_manifest_operation_wiring \
-  'AgentQUsbOperationType::get_approval_history' \
-  'AgentQUsbOperationHandlerSlot::get_approval_history' \
-  'AgentQPayloadDeliveryOperationKind::safe_read' \
+  'UsbOperationType::get_approval_history' \
+  'UsbOperationHandlerSlot::get_approval_history' \
+  'PayloadDeliveryOperationKind::safe_read' \
   "get_approval_history manifest entry must bind USB operation to safe-read payload admission"
 expect_request_server_wiring \
   'write_payload_delivery_retained_response_admission_error' \
@@ -266,36 +266,36 @@ expect_request_server_wiring \
   "retained response production ops must consume the payload delivery retained-response predicate"
 expect_source_wiring \
   "${USB_RETAINED_RESPONSE_HANDLER_SOURCE}" \
-  'AgentQUsbOperationType::get_result' \
+  'UsbOperationType::get_result' \
   "get_result handler must pass its own USB operation to retained-response admission"
 expect_source_wiring \
   "${USB_RETAINED_RESPONSE_HANDLER_SOURCE}" \
-  'AgentQUsbOperationType::ack_result' \
+  'UsbOperationType::ack_result' \
   "ack_result handler must pass its own USB operation to retained-response admission"
 expect_manifest_operation_wiring \
-  'AgentQUsbOperationType::get_result' \
-  'AgentQUsbOperationHandlerSlot::get_result' \
-  'AgentQPayloadDeliveryOperationKind::retained_response_read_cleanup' \
+  'UsbOperationType::get_result' \
+  'UsbOperationHandlerSlot::get_result' \
+  'PayloadDeliveryOperationKind::retained_response_read_cleanup' \
   "get_result manifest entry must bind USB operation to retained-response payload admission"
 expect_manifest_operation_wiring \
-  'AgentQUsbOperationType::ack_result' \
-  'AgentQUsbOperationHandlerSlot::ack_result' \
-  'AgentQPayloadDeliveryOperationKind::retained_response_read_cleanup' \
+  'UsbOperationType::ack_result' \
+  'UsbOperationHandlerSlot::ack_result' \
+  'PayloadDeliveryOperationKind::retained_response_read_cleanup' \
   "ack_result manifest entry must bind USB operation to retained-response payload admission"
 expect_request_server_wiring \
   'payload_delivery_admission_allows_disconnect_cleanup' \
   "disconnect production ops must consume the payload delivery disconnect predicate"
 expect_source_wiring \
   "${USB_DISCONNECT_HANDLER_SOURCE}" \
-  'AgentQUsbOperationType::disconnect' \
+  'UsbOperationType::disconnect' \
   "disconnect handler must pass its own USB operation to disconnect admission"
 expect_request_server_wiring \
-  'AgentQUsbOperationType::sign_personal_message' \
+  'UsbOperationType::sign_personal_message' \
   "sign_personal_message admission must use its named USB operation"
 expect_manifest_operation_wiring \
-  'AgentQUsbOperationType::sign_personal_message' \
-  'AgentQUsbOperationHandlerSlot::sign_personal_message' \
-  'AgentQPayloadDeliveryOperationKind::sign_personal_message' \
+  'UsbOperationType::sign_personal_message' \
+  'UsbOperationHandlerSlot::sign_personal_message' \
+  'PayloadDeliveryOperationKind::sign_personal_message' \
   "sign_personal_message manifest entry must bind USB operation to payload admission kind"
 
 if grep -Eq 'write_busy_if_pending_or_local_flow_active' \
@@ -324,11 +324,11 @@ grep -q 'write_credential_propose_admission_error' "${USB_SUI_ZKLOGIN_CREDENTIAL
   exit 1
 }
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-payload-delivery-store.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-payload-delivery-store.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-mkdir -p "${TMP_DIR}/agent_q_common" "${TMP_DIR}/freertos"
-ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
+mkdir -p "${TMP_DIR}/firmware_common" "${TMP_DIR}/freertos"
+ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
 
 cat >"${TMP_DIR}/freertos/FreeRTOS.h" <<'H'
 #pragma once
@@ -345,11 +345,11 @@ cat >"${TMP_DIR}/payload_delivery_store_test.cpp" <<'CPP'
 
 #include <vector>
 
-#include "agent_q_payload_delivery_admission.h"
-#include "agent_q_payload_delivery_store.h"
+#include "payload_delivery_admission.h"
+#include "payload_delivery_store.h"
 #include "mbedtls/sha256.h"
 
-namespace agent_q {
+namespace signing {
 
 void wipe_sensitive_buffer(void* data, size_t size)
 {
@@ -369,7 +369,7 @@ bool approval_history_digest_payload(
     size_t output_size)
 {
     if (payload == nullptr || payload_size == 0 || output == nullptr ||
-        output_size != kAgentQApprovalHistoryDigestSize) {
+        output_size != kApprovalHistoryDigestSize) {
         return false;
     }
     uint8_t digest[32] = {};
@@ -388,7 +388,7 @@ bool approval_history_digest_payload(
     return true;
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 namespace {
 
@@ -403,12 +403,12 @@ void expect(bool condition, const char* label)
 }
 
 void expect_admission(
-    agent_q::AgentQPayloadDeliveryOperationKind operation,
-    agent_q::AgentQPayloadDeliveryAdmissionResult expected,
+    signing::PayloadDeliveryOperationKind operation,
+    signing::PayloadDeliveryAdmissionResult expected,
     const char* label)
 {
-    expect(agent_q::payload_delivery_admit_operation(
-               agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
+    expect(signing::payload_delivery_admit_operation(
+               signing::PayloadDeliveryOperationAdmissionInput{0,
                    operation,
                    "session_abcdef",
                }) == expected,
@@ -416,14 +416,14 @@ void expect_admission(
 }
 
 void expect_admission_decision(
-    agent_q::AgentQPayloadDeliveryOperationKind operation,
-    agent_q::AgentQPayloadDeliveryAdmissionResult expected_result,
-    agent_q::AgentQPayloadDeliveryAdmissionReason expected_reason,
+    signing::PayloadDeliveryOperationKind operation,
+    signing::PayloadDeliveryAdmissionResult expected_result,
+    signing::PayloadDeliveryAdmissionReason expected_reason,
     const char* label)
 {
-    const agent_q::AgentQPayloadDeliveryAdmissionDecision decision =
-        agent_q::payload_delivery_admit_operation(
-            agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
+    const signing::PayloadDeliveryAdmissionDecision decision =
+        signing::payload_delivery_admit_operation(
+            signing::PayloadDeliveryOperationAdmissionInput{0,
                 operation,
                 "session_abcdef",
             });
@@ -431,14 +431,14 @@ void expect_admission_decision(
     if (decision.reason != expected_reason) {
         fprintf(stderr, "FAILED: %s reason expected %s got %s\n",
                 label,
-                agent_q::payload_delivery_admission_reason_name(expected_reason),
-                agent_q::payload_delivery_admission_reason_name(decision.reason));
+                signing::payload_delivery_admission_reason_name(expected_reason),
+                signing::payload_delivery_admission_reason_name(decision.reason));
         ++failures;
     }
 }
 
 void expect_operation_blocked(
-    agent_q::AgentQPayloadDeliveryOperationKind operation,
+    signing::PayloadDeliveryOperationKind operation,
     const char* operation_name,
     const char* state_name)
 {
@@ -446,30 +446,30 @@ void expect_operation_blocked(
     snprintf(label, sizeof(label), "%s blocks %s", state_name, operation_name);
     expect_admission(
         operation,
-        agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
+        signing::PayloadDeliveryAdmissionResult::busy,
         label);
 }
 
 void expect_sensitive_operations_blocked(const char* state_name)
 {
     expect_operation_blocked(
-        agent_q::AgentQPayloadDeliveryOperationKind::sign_personal_message,
+        signing::PayloadDeliveryOperationKind::sign_personal_message,
         "sign_personal_message",
         state_name);
     expect_operation_blocked(
-        agent_q::AgentQPayloadDeliveryOperationKind::policy_propose,
+        signing::PayloadDeliveryOperationKind::policy_propose,
         "policy_propose",
         state_name);
     expect_operation_blocked(
-        agent_q::AgentQPayloadDeliveryOperationKind::credential_propose,
+        signing::PayloadDeliveryOperationKind::credential_propose,
         "credential_propose",
         state_name);
     expect_operation_blocked(
-        agent_q::AgentQPayloadDeliveryOperationKind::connect,
+        signing::PayloadDeliveryOperationKind::connect,
         "connect",
         state_name);
     expect_operation_blocked(
-        agent_q::AgentQPayloadDeliveryOperationKind::identify_device,
+        signing::PayloadDeliveryOperationKind::identify_device,
         "identify_device",
         state_name);
 }
@@ -485,8 +485,8 @@ std::vector<uint8_t> bytes(size_t size)
 
 std::string digest_for(const std::vector<uint8_t>& value)
 {
-    char digest[agent_q::kAgentQApprovalHistoryDigestSize] = {};
-    expect(agent_q::approval_history_digest_payload(
+    char digest[signing::kApprovalHistoryDigestSize] = {};
+    expect(signing::approval_history_digest_payload(
                value.data(),
                value.size(),
                digest,
@@ -495,7 +495,7 @@ std::string digest_for(const std::vector<uint8_t>& value)
     return digest;
 }
 
-agent_q::AgentQPayloadDeliveryBeginInput begin_input(
+signing::PayloadDeliveryBeginInput begin_input(
     const char* session_id,
     const std::vector<uint8_t>& payload,
     size_t chunk_max = 5,
@@ -505,14 +505,14 @@ agent_q::AgentQPayloadDeliveryBeginInput begin_input(
 {
     static std::string last_digest;
     last_digest = digest_for(payload);
-    return agent_q::AgentQPayloadDeliveryBeginInput{
+    return signing::PayloadDeliveryBeginInput{
         session_id,
         payload.size(),
         last_digest.c_str(),
-        agent_q::AgentQPayloadDeliveryLimits{chunk_max, payload_max},
-        agent_q::timeout_window_from_deadline(
-            static_cast<agent_q::AgentQTimeoutTick>(started_at),
-            static_cast<agent_q::AgentQTimeoutTick>(deadline)),
+        signing::PayloadDeliveryLimits{chunk_max, payload_max},
+        signing::timeout_window_from_deadline(
+            static_cast<signing::TimeoutTick>(started_at),
+            static_cast<signing::TimeoutTick>(deadline)),
     };
 }
 
@@ -526,9 +526,9 @@ void append_all(
     while (offset < payload.size()) {
         const size_t next_size = std::min(chunk_size, payload.size() - offset);
         size_t received = 0;
-        const agent_q::AgentQPayloadDeliveryResult result =
-            agent_q::payload_delivery_append_chunk(0,
-                agent_q::AgentQPayloadDeliveryChunkInput{
+        const signing::PayloadDeliveryResult result =
+            signing::payload_delivery_append_chunk(0,
+                signing::PayloadDeliveryChunkInput{
                     session_id,
                     transfer_id,
                     offset,
@@ -536,7 +536,7 @@ void append_all(
                     next_size,
                 },
                 &received);
-        expect(result == agent_q::AgentQPayloadDeliveryResult::ok, "chunk append succeeds");
+        expect(result == signing::PayloadDeliveryResult::ok, "chunk append succeeds");
         offset += next_size;
         expect(received == offset, "received bytes advances monotonically");
     }
@@ -544,30 +544,30 @@ void append_all(
 
 void test_successful_finalize_and_resolve()
 {
-    agent_q::payload_delivery_store_reset();
+    signing::payload_delivery_store_reset();
     const std::vector<uint8_t> payload = bytes(12);
-    agent_q::AgentQPayloadDeliveryBeginOutput begin = {};
-    expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload), &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::ok,
+    signing::PayloadDeliveryBeginOutput begin = {};
+    expect(signing::payload_delivery_begin(0, begin_input("session_abcdef", payload), &begin) ==
+               signing::PayloadDeliveryResult::ok,
            "begin succeeds");
     expect(begin.received_bytes == 0, "begin starts at zero bytes");
     expect(begin.chunk_max_bytes == 5, "begin returns chunk limit");
     append_all("session_abcdef", begin.transfer_id, payload, 5);
 
-    agent_q::AgentQPayloadDeliveryFinishOutput finish = {};
-    expect(agent_q::payload_delivery_finish(0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
-               &finish) == agent_q::AgentQPayloadDeliveryResult::ok,
+    signing::PayloadDeliveryFinishOutput finish = {};
+    expect(signing::payload_delivery_finish(0,
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               &finish) == signing::PayloadDeliveryResult::ok,
            "finish succeeds");
     expect(finish.descriptor.size_bytes == payload.size(), "descriptor stores payload size");
     expect(strcmp(finish.descriptor.payload_digest, digest_for(payload).c_str()) == 0,
            "descriptor stores digest");
 
-    agent_q::AgentQPayloadDeliveryView view = {};
-    expect(agent_q::payload_delivery_resolve_finalized(0,
+    signing::PayloadDeliveryView view = {};
+    expect(signing::payload_delivery_resolve_finalized(0,
                "session_abcdef",
                finish.descriptor.payload_ref,
-               &view) == agent_q::AgentQPayloadDeliveryResult::ok,
+               &view) == signing::PayloadDeliveryResult::ok,
            "finalized payload resolves");
     expect(view.bytes != nullptr, "resolved view borrows bytes");
     expect(view.size_bytes == payload.size(), "resolved view size");
@@ -576,39 +576,39 @@ void test_successful_finalize_and_resolve()
 
 void test_default_max_payload_round_trip()
 {
-    agent_q::payload_delivery_store_reset();
+    signing::payload_delivery_store_reset();
     const std::vector<uint8_t> payload =
-        bytes(agent_q::kAgentQPayloadDeliveryDefaultMaxBytes);
-    agent_q::AgentQPayloadDeliveryBeginOutput begin = {};
-    expect(agent_q::payload_delivery_begin(0,
+        bytes(signing::kPayloadDeliveryDefaultMaxBytes);
+    signing::PayloadDeliveryBeginOutput begin = {};
+    expect(signing::payload_delivery_begin(0,
                begin_input(
                    "session_abcdef",
                    payload,
-                   agent_q::kAgentQPayloadDeliveryDefaultChunkMaxBytes,
-                   agent_q::kAgentQPayloadDeliveryDefaultMaxBytes),
-               &begin) == agent_q::AgentQPayloadDeliveryResult::ok,
+                   signing::kPayloadDeliveryDefaultChunkMaxBytes,
+                   signing::kPayloadDeliveryDefaultMaxBytes),
+               &begin) == signing::PayloadDeliveryResult::ok,
            "default max payload begin succeeds");
     append_all(
         "session_abcdef",
         begin.transfer_id,
         payload,
-        agent_q::kAgentQPayloadDeliveryDefaultChunkMaxBytes);
+        signing::kPayloadDeliveryDefaultChunkMaxBytes);
 
-    agent_q::AgentQPayloadDeliveryFinishOutput finish = {};
-    expect(agent_q::payload_delivery_finish(0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
-               &finish) == agent_q::AgentQPayloadDeliveryResult::ok,
+    signing::PayloadDeliveryFinishOutput finish = {};
+    expect(signing::payload_delivery_finish(0,
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               &finish) == signing::PayloadDeliveryResult::ok,
            "default max payload finish succeeds");
     expect(finish.descriptor.size_bytes == payload.size(),
            "default max descriptor preserves size");
     expect(strcmp(finish.descriptor.payload_digest, digest_for(payload).c_str()) == 0,
            "default max descriptor preserves digest");
 
-    agent_q::AgentQPayloadDeliveryView view = {};
-    expect(agent_q::payload_delivery_resolve_finalized(0,
+    signing::PayloadDeliveryView view = {};
+    expect(signing::payload_delivery_resolve_finalized(0,
                "session_abcdef",
                finish.descriptor.payload_ref,
-               &view) == agent_q::AgentQPayloadDeliveryResult::ok,
+               &view) == signing::PayloadDeliveryResult::ok,
            "default max finalized payload resolves");
     expect(view.bytes != nullptr && view.size_bytes == payload.size(),
            "default max resolved payload size is preserved");
@@ -618,25 +618,25 @@ void test_default_max_payload_round_trip()
 
 void test_take_finalized_transfers_ownership_and_clears_store()
 {
-    agent_q::payload_delivery_store_reset();
+    signing::payload_delivery_store_reset();
     const std::vector<uint8_t> payload = bytes(16);
-    agent_q::AgentQPayloadDeliveryBeginOutput begin = {};
-    expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload), &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::ok,
+    signing::PayloadDeliveryBeginOutput begin = {};
+    expect(signing::payload_delivery_begin(0, begin_input("session_abcdef", payload), &begin) ==
+               signing::PayloadDeliveryResult::ok,
            "begin before take succeeds");
     append_all("session_abcdef", begin.transfer_id, payload, 5);
 
-    agent_q::AgentQPayloadDeliveryFinishOutput finish = {};
-    expect(agent_q::payload_delivery_finish(0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
-               &finish) == agent_q::AgentQPayloadDeliveryResult::ok,
+    signing::PayloadDeliveryFinishOutput finish = {};
+    expect(signing::payload_delivery_finish(0,
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               &finish) == signing::PayloadDeliveryResult::ok,
            "finish before take succeeds");
 
-    agent_q::AgentQPayloadDeliveryOwnedPayload owned = {};
-    expect(agent_q::payload_delivery_take_finalized(0,
+    signing::PayloadDeliveryOwnedPayload owned = {};
+    expect(signing::payload_delivery_take_finalized(0,
                "session_abcdef",
                finish.descriptor.payload_ref,
-               &owned) == agent_q::AgentQPayloadDeliveryResult::ok,
+               &owned) == signing::PayloadDeliveryResult::ok,
            "take finalized succeeds");
     expect(owned.bytes != nullptr, "take returns owned bytes");
     expect(owned.size_bytes == payload.size(), "take returns owned byte size");
@@ -644,633 +644,633 @@ void test_take_finalized_transfers_ownership_and_clears_store()
            "taken bytes match finalized payload");
     expect(strcmp(owned.descriptor.payload_ref, finish.descriptor.payload_ref) == 0,
            "take preserves descriptor payloadRef");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "take clears store to idle");
 
-    agent_q::AgentQPayloadDeliveryView view = {};
-    expect(agent_q::payload_delivery_resolve_finalized(0,
+    signing::PayloadDeliveryView view = {};
+    expect(signing::payload_delivery_resolve_finalized(0,
                "session_abcdef",
                finish.descriptor.payload_ref,
-               &view) == agent_q::AgentQPayloadDeliveryResult::not_found,
+               &view) == signing::PayloadDeliveryResult::not_found,
            "taken payload is no longer live in the store");
-    agent_q::wipe_sensitive_buffer(owned.bytes, owned.size_bytes);
+    signing::wipe_sensitive_buffer(owned.bytes, owned.size_bytes);
     free(owned.bytes);
 }
 
 void test_admission_matrix()
 {
-    agent_q::payload_delivery_store_reset();
+    signing::payload_delivery_store_reset();
     const std::vector<uint8_t> payload = bytes(12);
 
-    expect(agent_q::payload_delivery_admit_operation(
-               agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_begin,
+    expect(signing::payload_delivery_admit_operation(
+               signing::PayloadDeliveryOperationAdmissionInput{0,
+                   signing::PayloadDeliveryOperationKind::payload_transfer_begin,
                    "session_abcdef",
-               }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
+               }) == signing::PayloadDeliveryAdmissionResult::ok,
            "idle allows transfer begin");
-    expect(agent_q::payload_delivery_admit_operation(
-               agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::sign_transaction,
+    expect(signing::payload_delivery_admit_operation(
+               signing::PayloadDeliveryOperationAdmissionInput{0,
+                   signing::PayloadDeliveryOperationKind::sign_transaction,
                    "session_abcdef",
-               }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
+               }) == signing::PayloadDeliveryAdmissionResult::ok,
            "idle allows inline sign transaction");
     expect_admission_decision(
-        agent_q::AgentQPayloadDeliveryOperationKind::sign_transaction,
-        agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
-        agent_q::AgentQPayloadDeliveryAdmissionReason::idle_passthrough,
+        signing::PayloadDeliveryOperationKind::sign_transaction,
+        signing::PayloadDeliveryAdmissionResult::ok,
+        signing::PayloadDeliveryAdmissionReason::idle_passthrough,
         "idle inline sign transaction is passthrough");
     expect_admission_decision(
-        agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_chunk,
-        agent_q::AgentQPayloadDeliveryAdmissionResult::unknown_request,
-        agent_q::AgentQPayloadDeliveryAdmissionReason::missing_active_payload,
+        signing::PayloadDeliveryOperationKind::payload_transfer_chunk,
+        signing::PayloadDeliveryAdmissionResult::unknown_request,
+        signing::PayloadDeliveryAdmissionReason::missing_active_payload,
         "idle rejects transfer chunk before store lookup");
     expect_admission_decision(
-        agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_finish,
-        agent_q::AgentQPayloadDeliveryAdmissionResult::unknown_request,
-        agent_q::AgentQPayloadDeliveryAdmissionReason::missing_active_payload,
+        signing::PayloadDeliveryOperationKind::payload_transfer_finish,
+        signing::PayloadDeliveryAdmissionResult::unknown_request,
+        signing::PayloadDeliveryAdmissionReason::missing_active_payload,
         "idle rejects transfer finish before store lookup");
     expect_admission_decision(
-        agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_abort,
-        agent_q::AgentQPayloadDeliveryAdmissionResult::unknown_request,
-        agent_q::AgentQPayloadDeliveryAdmissionReason::missing_active_payload,
+        signing::PayloadDeliveryOperationKind::payload_transfer_abort,
+        signing::PayloadDeliveryAdmissionResult::unknown_request,
+        signing::PayloadDeliveryAdmissionReason::missing_active_payload,
         "idle rejects transfer abort before store lookup");
 
-    agent_q::AgentQPayloadDeliveryBeginOutput begin = {};
-    expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload), &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::ok,
+    signing::PayloadDeliveryBeginOutput begin = {};
+    expect(signing::payload_delivery_begin(0, begin_input("session_abcdef", payload), &begin) ==
+               signing::PayloadDeliveryResult::ok,
            "begin for admission test succeeds");
-    expect(agent_q::payload_delivery_admit_operation(
-               agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::safe_read,
+    expect(signing::payload_delivery_admit_operation(
+               signing::PayloadDeliveryOperationAdmissionInput{0,
+                   signing::PayloadDeliveryOperationKind::safe_read,
                    "session_abcdef",
-               }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
+               }) == signing::PayloadDeliveryAdmissionResult::ok,
            "receiving allows safe reads");
     expect_admission_decision(
-        agent_q::AgentQPayloadDeliveryOperationKind::safe_read,
-        agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
-        agent_q::AgentQPayloadDeliveryAdmissionReason::receiving_safe_read,
+        signing::PayloadDeliveryOperationKind::safe_read,
+        signing::PayloadDeliveryAdmissionResult::ok,
+        signing::PayloadDeliveryAdmissionReason::receiving_safe_read,
         "receiving safe read has explicit exception reason");
-    expect(agent_q::payload_delivery_admission_allows_safe_read(
-               agent_q::payload_delivery_admit_operation(
-                   agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                       agent_q::AgentQPayloadDeliveryOperationKind::safe_read,
+    expect(signing::payload_delivery_admission_allows_safe_read(
+               signing::payload_delivery_admit_operation(
+                   signing::PayloadDeliveryOperationAdmissionInput{0,
+                       signing::PayloadDeliveryOperationKind::safe_read,
                        "session_abcdef",
                    })),
            "receiving safe read is exposed through contract predicate");
-    expect(agent_q::payload_delivery_admit_operation(
-               agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::retained_response_read_cleanup,
+    expect(signing::payload_delivery_admit_operation(
+               signing::PayloadDeliveryOperationAdmissionInput{0,
+                   signing::PayloadDeliveryOperationKind::retained_response_read_cleanup,
                    "session_abcdef",
-               }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
+               }) == signing::PayloadDeliveryAdmissionResult::ok,
            "receiving allows retained response read/cleanup");
-    expect(agent_q::payload_delivery_admission_allows_retained_response_cleanup(
-               agent_q::payload_delivery_admit_operation(
-                   agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                       agent_q::AgentQPayloadDeliveryOperationKind::retained_response_read_cleanup,
+    expect(signing::payload_delivery_admission_allows_retained_response_cleanup(
+               signing::payload_delivery_admit_operation(
+                   signing::PayloadDeliveryOperationAdmissionInput{0,
+                       signing::PayloadDeliveryOperationKind::retained_response_read_cleanup,
                        "session_abcdef",
                    })),
            "receiving retained-response cleanup is exposed through contract predicate");
-    expect(agent_q::payload_delivery_admit_operation(
-               agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::disconnect,
+    expect(signing::payload_delivery_admit_operation(
+               signing::PayloadDeliveryOperationAdmissionInput{0,
+                   signing::PayloadDeliveryOperationKind::disconnect,
                    "session_abcdef",
-               }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
+               }) == signing::PayloadDeliveryAdmissionResult::ok,
            "receiving allows disconnect cleanup");
-    expect(agent_q::payload_delivery_admission_allows_disconnect_cleanup(
-               agent_q::payload_delivery_admit_operation(
-                   agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                       agent_q::AgentQPayloadDeliveryOperationKind::disconnect,
+    expect(signing::payload_delivery_admission_allows_disconnect_cleanup(
+               signing::payload_delivery_admit_operation(
+                   signing::PayloadDeliveryOperationAdmissionInput{0,
+                       signing::PayloadDeliveryOperationKind::disconnect,
                        "session_abcdef",
                    })),
            "receiving disconnect cleanup is exposed through contract predicate");
-    expect(agent_q::payload_delivery_admit_operation(
-               agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_begin,
+    expect(signing::payload_delivery_admit_operation(
+               signing::PayloadDeliveryOperationAdmissionInput{0,
+                   signing::PayloadDeliveryOperationKind::payload_transfer_begin,
                    "session_abcdef",
-               }) == agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
+               }) == signing::PayloadDeliveryAdmissionResult::busy,
            "receiving blocks nested transfer begin");
-    expect(agent_q::payload_delivery_admit_operation(
-               agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_chunk,
+    expect(signing::payload_delivery_admit_operation(
+               signing::PayloadDeliveryOperationAdmissionInput{0,
+                   signing::PayloadDeliveryOperationKind::payload_transfer_chunk,
                    "session_abcdef",
-               }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
+               }) == signing::PayloadDeliveryAdmissionResult::ok,
            "receiving allows transfer chunk");
-    expect(agent_q::payload_delivery_admit_operation(
-               agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_finish,
+    expect(signing::payload_delivery_admit_operation(
+               signing::PayloadDeliveryOperationAdmissionInput{0,
+                   signing::PayloadDeliveryOperationKind::payload_transfer_finish,
                    "session_abcdef",
-               }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
+               }) == signing::PayloadDeliveryAdmissionResult::ok,
            "receiving allows transfer finish");
-    expect(agent_q::payload_delivery_admit_operation(
-               agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_abort,
+    expect(signing::payload_delivery_admit_operation(
+               signing::PayloadDeliveryOperationAdmissionInput{0,
+                   signing::PayloadDeliveryOperationKind::payload_transfer_abort,
                    "session_abcdef",
-               }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
+               }) == signing::PayloadDeliveryAdmissionResult::ok,
            "receiving allows transfer abort");
     expect_sensitive_operations_blocked("receiving");
     expect_admission_decision(
-        agent_q::AgentQPayloadDeliveryOperationKind::sign_transaction,
-        agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
-        agent_q::AgentQPayloadDeliveryAdmissionReason::blocked_incomplete_transfer,
+        signing::PayloadDeliveryOperationKind::sign_transaction,
+        signing::PayloadDeliveryAdmissionResult::busy,
+        signing::PayloadDeliveryAdmissionReason::blocked_incomplete_transfer,
         "receiving blocks signing because transfer is incomplete");
-    expect(agent_q::payload_delivery_admission_blocks_sensitive_flow(
-               agent_q::payload_delivery_admit_operation(
-                   agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                       agent_q::AgentQPayloadDeliveryOperationKind::sign_transaction,
+    expect(signing::payload_delivery_admission_blocks_sensitive_flow(
+               signing::payload_delivery_admit_operation(
+                   signing::PayloadDeliveryOperationAdmissionInput{0,
+                       signing::PayloadDeliveryOperationKind::sign_transaction,
                        "session_abcdef",
                    })),
            "receiving signing block is exposed through sensitive-flow predicate");
 
     append_all("session_abcdef", begin.transfer_id, payload, 5);
-    agent_q::AgentQPayloadDeliveryFinishOutput finish = {};
-    expect(agent_q::payload_delivery_finish(0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
-               &finish) == agent_q::AgentQPayloadDeliveryResult::ok,
+    signing::PayloadDeliveryFinishOutput finish = {};
+    expect(signing::payload_delivery_finish(0,
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               &finish) == signing::PayloadDeliveryResult::ok,
            "finish for admission test succeeds");
-    expect(agent_q::payload_delivery_admit_operation(
-               agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::safe_read,
+    expect(signing::payload_delivery_admit_operation(
+               signing::PayloadDeliveryOperationAdmissionInput{0,
+                   signing::PayloadDeliveryOperationKind::safe_read,
                    "session_abcdef",
-               }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
+               }) == signing::PayloadDeliveryAdmissionResult::ok,
            "finalized allows safe reads");
     expect_admission_decision(
-        agent_q::AgentQPayloadDeliveryOperationKind::sign_transaction,
-        agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
-        agent_q::AgentQPayloadDeliveryAdmissionReason::blocked_unrelated_sensitive_flow,
+        signing::PayloadDeliveryOperationKind::sign_transaction,
+        signing::PayloadDeliveryAdmissionResult::busy,
+        signing::PayloadDeliveryAdmissionReason::blocked_unrelated_sensitive_flow,
         "finalized blocks direct signing while payload is pending");
-    expect(agent_q::payload_delivery_admission_blocks_sensitive_flow(
-               agent_q::payload_delivery_admit_operation(
-                   agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                       agent_q::AgentQPayloadDeliveryOperationKind::sign_transaction,
+    expect(signing::payload_delivery_admission_blocks_sensitive_flow(
+               signing::payload_delivery_admit_operation(
+                   signing::PayloadDeliveryOperationAdmissionInput{0,
+                       signing::PayloadDeliveryOperationKind::sign_transaction,
                        "session_abcdef",
                    })),
            "finalized inline signing block is exposed through sensitive-flow predicate");
-    expect(agent_q::payload_delivery_admit_operation(
-               agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::retained_response_read_cleanup,
+    expect(signing::payload_delivery_admit_operation(
+               signing::PayloadDeliveryOperationAdmissionInput{0,
+                   signing::PayloadDeliveryOperationKind::retained_response_read_cleanup,
                    "session_abcdef",
-               }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
+               }) == signing::PayloadDeliveryAdmissionResult::ok,
            "finalized allows retained response read/cleanup");
-    expect(agent_q::payload_delivery_admit_operation(
-               agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::disconnect,
+    expect(signing::payload_delivery_admit_operation(
+               signing::PayloadDeliveryOperationAdmissionInput{0,
+                   signing::PayloadDeliveryOperationKind::disconnect,
                    "session_abcdef",
-               }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
+               }) == signing::PayloadDeliveryAdmissionResult::ok,
            "finalized allows disconnect cleanup");
-    expect(agent_q::payload_delivery_admit_operation(
-               agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_begin,
+    expect(signing::payload_delivery_admit_operation(
+               signing::PayloadDeliveryOperationAdmissionInput{0,
+                   signing::PayloadDeliveryOperationKind::payload_transfer_begin,
                    "session_abcdef",
-               }) == agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
+               }) == signing::PayloadDeliveryAdmissionResult::busy,
            "finalized blocks nested transfer begin");
-    expect(agent_q::payload_delivery_admit_operation(
-               agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_chunk,
+    expect(signing::payload_delivery_admit_operation(
+               signing::PayloadDeliveryOperationAdmissionInput{0,
+                   signing::PayloadDeliveryOperationKind::payload_transfer_chunk,
                    "session_abcdef",
-               }) == agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
+               }) == signing::PayloadDeliveryAdmissionResult::busy,
            "finalized blocks transfer chunk");
-    expect(agent_q::payload_delivery_admit_operation(
-               agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_finish,
+    expect(signing::payload_delivery_admit_operation(
+               signing::PayloadDeliveryOperationAdmissionInput{0,
+                   signing::PayloadDeliveryOperationKind::payload_transfer_finish,
                    "session_abcdef",
-               }) == agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
+               }) == signing::PayloadDeliveryAdmissionResult::busy,
            "finalized blocks transfer finish");
-    expect(agent_q::payload_delivery_admit_operation(
-               agent_q::AgentQPayloadDeliveryOperationAdmissionInput{0,
-                   agent_q::AgentQPayloadDeliveryOperationKind::payload_transfer_abort,
+    expect(signing::payload_delivery_admit_operation(
+               signing::PayloadDeliveryOperationAdmissionInput{0,
+                   signing::PayloadDeliveryOperationKind::payload_transfer_abort,
                    "session_abcdef",
-               }) == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
+               }) == signing::PayloadDeliveryAdmissionResult::ok,
            "finalized allows transfer abort");
     expect_sensitive_operations_blocked("finalized");
 }
 
 void test_guards_and_cleanup()
 {
-    agent_q::payload_delivery_store_reset();
+    signing::payload_delivery_store_reset();
     const std::vector<uint8_t> payload = bytes(8);
     const uint8_t first_chunk[2] = {1, 2};
 
-    expect(agent_q::payload_delivery_append_chunk(0,
-               agent_q::AgentQPayloadDeliveryChunkInput{
+    expect(signing::payload_delivery_append_chunk(0,
+               signing::PayloadDeliveryChunkInput{
                    "session_abcdef",
                    "transfer_0000000000000001",
                    0,
                    first_chunk,
                    sizeof(first_chunk),
                },
-               nullptr) == agent_q::AgentQPayloadDeliveryResult::not_found,
+               nullptr) == signing::PayloadDeliveryResult::not_found,
            "chunk without active transfer is not found");
-    agent_q::AgentQPayloadDeliveryFinishOutput idle_finish = {};
-    expect(agent_q::payload_delivery_finish(0,
-               agent_q::AgentQPayloadDeliveryFinishInput{
+    signing::PayloadDeliveryFinishOutput idle_finish = {};
+    expect(signing::payload_delivery_finish(0,
+               signing::PayloadDeliveryFinishInput{
                    "session_abcdef",
                    "transfer_0000000000000001",
                },
-               &idle_finish) == agent_q::AgentQPayloadDeliveryResult::not_found,
+               &idle_finish) == signing::PayloadDeliveryResult::not_found,
            "finish without active transfer is not found");
 
-    agent_q::AgentQPayloadDeliveryBeginOutput begin = {};
-    expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8, 50), &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::ok,
+    signing::PayloadDeliveryBeginOutput begin = {};
+    expect(signing::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8, 50), &begin) ==
+               signing::PayloadDeliveryResult::ok,
            "begin for guard tests succeeds");
 
     const uint8_t too_large[5] = {1, 2, 3, 4, 5};
-    expect(agent_q::payload_delivery_append_chunk(0,
-               agent_q::AgentQPayloadDeliveryChunkInput{
+    expect(signing::payload_delivery_append_chunk(0,
+               signing::PayloadDeliveryChunkInput{
                    "session_abcdef",
                    begin.transfer_id,
                    0,
                    too_large,
                    sizeof(too_large),
                },
-               nullptr) == agent_q::AgentQPayloadDeliveryResult::chunk_too_large,
+               nullptr) == signing::PayloadDeliveryResult::chunk_too_large,
            "chunk max+1 rejected");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "chunk too large wipes owned active transfer");
 
-    expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8, 50), &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::ok,
+    expect(signing::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8, 50), &begin) ==
+               signing::PayloadDeliveryResult::ok,
            "begin for reported chunk oversize succeeds");
-    expect(agent_q::payload_delivery_reject_chunk_too_large(0,
+    expect(signing::payload_delivery_reject_chunk_too_large(0,
                "session_abcdef",
-               begin.transfer_id) == agent_q::AgentQPayloadDeliveryResult::chunk_too_large,
+               begin.transfer_id) == signing::PayloadDeliveryResult::chunk_too_large,
            "reported chunk oversize rejected by store owner");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "reported chunk oversize wipes owned active transfer");
 
-    expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8, 50), &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::ok,
+    expect(signing::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8, 50), &begin) ==
+               signing::PayloadDeliveryResult::ok,
            "begin for offset mismatch succeeds");
 
-    expect(agent_q::payload_delivery_append_chunk(0,
-               agent_q::AgentQPayloadDeliveryChunkInput{
+    expect(signing::payload_delivery_append_chunk(0,
+               signing::PayloadDeliveryChunkInput{
                    "session_abcdef",
                    begin.transfer_id,
                    1,
                    payload.data(),
                    2,
                },
-               nullptr) == agent_q::AgentQPayloadDeliveryResult::offset_mismatch,
+               nullptr) == signing::PayloadDeliveryResult::offset_mismatch,
            "offset mismatch rejected");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "offset mismatch wipes owned active transfer");
 
-    expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8, 50), &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::ok,
+    expect(signing::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8, 50), &begin) ==
+               signing::PayloadDeliveryResult::ok,
            "begin for different session mismatch succeeds");
 
-    expect(agent_q::payload_delivery_append_chunk(0,
-               agent_q::AgentQPayloadDeliveryChunkInput{
+    expect(signing::payload_delivery_append_chunk(0,
+               signing::PayloadDeliveryChunkInput{
                    "session_other",
                    begin.transfer_id,
                    0,
                    payload.data(),
                    2,
                },
-               nullptr) == agent_q::AgentQPayloadDeliveryResult::invalid_session,
+               nullptr) == signing::PayloadDeliveryResult::invalid_session,
            "different session cannot append");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state ==
-               agent_q::AgentQPayloadDeliveryState::receiving,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state ==
+               signing::PayloadDeliveryState::receiving,
            "different session failure does not wipe active transfer");
-    expect(agent_q::payload_delivery_reject_chunk_too_large(0,
+    expect(signing::payload_delivery_reject_chunk_too_large(0,
                "session_other",
-               begin.transfer_id) == agent_q::AgentQPayloadDeliveryResult::invalid_session,
+               begin.transfer_id) == signing::PayloadDeliveryResult::invalid_session,
            "different session reported oversize cannot clear active transfer");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state ==
-               agent_q::AgentQPayloadDeliveryState::receiving,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state ==
+               signing::PayloadDeliveryState::receiving,
            "different session reported oversize preserves active transfer");
 
-    expect(agent_q::payload_delivery_append_chunk(0,
-               agent_q::AgentQPayloadDeliveryChunkInput{
+    expect(signing::payload_delivery_append_chunk(0,
+               signing::PayloadDeliveryChunkInput{
                    "session_abcdef",
                    "bad-transfer",
                    0,
                    payload.data(),
                    2,
                },
-               nullptr) == agent_q::AgentQPayloadDeliveryResult::invalid_transfer_id,
+               nullptr) == signing::PayloadDeliveryResult::invalid_transfer_id,
            "malformed transfer id is separated from session mismatch");
 
-    agent_q::payload_delivery_store_reset();
-    agent_q::AgentQPayloadDeliveryBeginInput inactive_deadline =
+    signing::payload_delivery_store_reset();
+    signing::PayloadDeliveryBeginInput inactive_deadline =
         begin_input("session_abcdef", payload, 4, 8, 0, 0);
-    expect(agent_q::payload_delivery_begin(0, inactive_deadline, &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::invalid_argument,
+    expect(signing::payload_delivery_begin(0, inactive_deadline, &begin) ==
+               signing::PayloadDeliveryResult::invalid_argument,
            "begin rejects inactive timeout window");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "inactive timeout rejection leaves store idle");
 
-    agent_q::AgentQPayloadDeliveryBeginInput zero_wrapped_deadline =
+    signing::PayloadDeliveryBeginInput zero_wrapped_deadline =
         begin_input("session_abcdef", payload, 4, 8, 0, UINT32_MAX - 5);
-    expect(agent_q::payload_delivery_begin(0, zero_wrapped_deadline, &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::invalid_argument,
+    expect(signing::payload_delivery_begin(0, zero_wrapped_deadline, &begin) ==
+               signing::PayloadDeliveryResult::invalid_argument,
            "begin rejects deadline that wraps to inactive zero");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "zero-wrapped timeout rejection leaves store idle");
 
-    expect(agent_q::payload_delivery_begin(50,
+    expect(signing::payload_delivery_begin(50,
                begin_input("session_abcdef", payload, 4, 8, 50),
-               &begin) == agent_q::AgentQPayloadDeliveryResult::invalid_argument,
+               &begin) == signing::PayloadDeliveryResult::invalid_argument,
            "begin rejects timeout window closed at operation tick");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "closed timeout begin rejection leaves store idle");
 
-    expect(agent_q::payload_delivery_begin(49,
+    expect(signing::payload_delivery_begin(49,
                begin_input("session_abcdef", payload, 4, 8, 50),
-               &begin) == agent_q::AgentQPayloadDeliveryResult::ok,
+               &begin) == signing::PayloadDeliveryResult::ok,
            "begin accepts timeout window open at operation tick");
-    expect(agent_q::payload_delivery_advance_and_snapshot(49).state ==
-               agent_q::AgentQPayloadDeliveryState::receiving,
+    expect(signing::payload_delivery_advance_and_snapshot(49).state ==
+               signing::PayloadDeliveryState::receiving,
            "open timeout begin enters receiving");
-    agent_q::payload_delivery_store_reset();
+    signing::payload_delivery_store_reset();
 
-    expect(agent_q::payload_delivery_begin(5,
+    expect(signing::payload_delivery_begin(5,
                begin_input("session_abcdef", payload, 4, 8, 5, UINT32_MAX - 10),
-               &begin) == agent_q::AgentQPayloadDeliveryResult::invalid_argument,
+               &begin) == signing::PayloadDeliveryResult::invalid_argument,
            "begin rejects wrapped timeout window closed at operation tick");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "closed wrapped timeout begin rejection leaves store idle");
 
-    expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8, 50), &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::ok,
+    expect(signing::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8, 50), &begin) ==
+               signing::PayloadDeliveryResult::ok,
            "begin for deadline cleanup succeeds");
-    expect(!agent_q::payload_delivery_clear_expired(49), "deadline before expiry keeps transfer");
-    expect(agent_q::payload_delivery_clear_expired(50), "deadline expiry clears transfer");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(!signing::payload_delivery_clear_expired(49), "deadline before expiry keeps transfer");
+    expect(signing::payload_delivery_clear_expired(50), "deadline expiry clears transfer");
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "expired transfer returns to idle");
 
-    agent_q::AgentQPayloadDeliveryBeginOutput wrap_begin = {};
-    expect(agent_q::payload_delivery_begin(0,
+    signing::PayloadDeliveryBeginOutput wrap_begin = {};
+    expect(signing::payload_delivery_begin(0,
                begin_input("session_abcdef", payload, 4, 8, 5, UINT32_MAX - 10),
                &wrap_begin) ==
-               agent_q::AgentQPayloadDeliveryResult::ok,
+               signing::PayloadDeliveryResult::ok,
            "begin for wrapped deadline succeeds");
-    expect(!agent_q::payload_delivery_clear_expired(UINT32_MAX - 2),
+    expect(!signing::payload_delivery_clear_expired(UINT32_MAX - 2),
            "wrapped deadline keeps transfer before deadline");
-    expect(agent_q::payload_delivery_clear_expired(5),
+    expect(signing::payload_delivery_clear_expired(5),
            "wrapped deadline clears transfer at deadline");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "wrapped expired transfer returns to idle");
 }
 
 void test_timeout_operation_boundaries()
 {
-    agent_q::payload_delivery_store_reset();
+    signing::payload_delivery_store_reset();
     const std::vector<uint8_t> payload = bytes(6);
-    agent_q::AgentQPayloadDeliveryBeginOutput begin = {};
+    signing::PayloadDeliveryBeginOutput begin = {};
 
-    expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8, 50), &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::ok,
+    expect(signing::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8, 50), &begin) ==
+               signing::PayloadDeliveryResult::ok,
            "begin for expired append boundary succeeds");
     size_t received = 0;
-    expect(agent_q::payload_delivery_append_chunk(
+    expect(signing::payload_delivery_append_chunk(
                50,
-               agent_q::AgentQPayloadDeliveryChunkInput{
+               signing::PayloadDeliveryChunkInput{
                    "session_abcdef",
                    begin.transfer_id,
                    0,
                    payload.data(),
                    payload.size(),
                },
-               &received) == agent_q::AgentQPayloadDeliveryResult::not_found,
+               &received) == signing::PayloadDeliveryResult::not_found,
            "expired append clears store before accepting chunk");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "expired append boundary leaves store idle");
 
-    expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 8, 8, 50), &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::ok,
+    expect(signing::payload_delivery_begin(0, begin_input("session_abcdef", payload, 8, 8, 50), &begin) ==
+               signing::PayloadDeliveryResult::ok,
            "begin for expired finish boundary succeeds");
     append_all("session_abcdef", begin.transfer_id, payload, 8);
-    agent_q::AgentQPayloadDeliveryFinishOutput finish = {};
-    expect(agent_q::payload_delivery_finish(
+    signing::PayloadDeliveryFinishOutput finish = {};
+    expect(signing::payload_delivery_finish(
                50,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
-               &finish) == agent_q::AgentQPayloadDeliveryResult::not_found,
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               &finish) == signing::PayloadDeliveryResult::not_found,
            "expired finish clears store before finalizing");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "expired finish boundary leaves store idle");
 
-    expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 8, 8, 50), &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::ok,
+    expect(signing::payload_delivery_begin(0, begin_input("session_abcdef", payload, 8, 8, 50), &begin) ==
+               signing::PayloadDeliveryResult::ok,
            "begin for expired finalized boundary succeeds");
     append_all("session_abcdef", begin.transfer_id, payload, 8);
-    expect(agent_q::payload_delivery_finish(
+    expect(signing::payload_delivery_finish(
                0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
-               &finish) == agent_q::AgentQPayloadDeliveryResult::ok,
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               &finish) == signing::PayloadDeliveryResult::ok,
            "finish before deadline succeeds");
     const std::string payload_ref = finish.descriptor.payload_ref;
-    agent_q::AgentQPayloadDeliveryView view = {};
-    expect(agent_q::payload_delivery_resolve_finalized(
+    signing::PayloadDeliveryView view = {};
+    expect(signing::payload_delivery_resolve_finalized(
                50,
                "session_abcdef",
                payload_ref.c_str(),
-               &view) == agent_q::AgentQPayloadDeliveryResult::not_found,
+               &view) == signing::PayloadDeliveryResult::not_found,
            "expired resolve clears finalized payload before borrowing bytes");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "expired resolve boundary leaves store idle");
 
-    expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 8, 8, 50), &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::ok,
+    expect(signing::payload_delivery_begin(0, begin_input("session_abcdef", payload, 8, 8, 50), &begin) ==
+               signing::PayloadDeliveryResult::ok,
            "begin for expired take boundary succeeds");
     append_all("session_abcdef", begin.transfer_id, payload, 8);
-    expect(agent_q::payload_delivery_finish(
+    expect(signing::payload_delivery_finish(
                0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
-               &finish) == agent_q::AgentQPayloadDeliveryResult::ok,
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               &finish) == signing::PayloadDeliveryResult::ok,
            "finish before expired take succeeds");
     const std::string take_payload_ref = finish.descriptor.payload_ref;
-    agent_q::AgentQPayloadDeliveryOwnedPayload owned = {};
-    expect(agent_q::payload_delivery_take_finalized(
+    signing::PayloadDeliveryOwnedPayload owned = {};
+    expect(signing::payload_delivery_take_finalized(
                50,
                "session_abcdef",
                take_payload_ref.c_str(),
-               &owned) == agent_q::AgentQPayloadDeliveryResult::not_found,
+               &owned) == signing::PayloadDeliveryResult::not_found,
            "expired take clears finalized payload before ownership transfer");
     expect(owned.bytes == nullptr, "expired take does not return owned bytes");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "expired take boundary leaves store idle");
 
-    expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 8, 8, 50), &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::ok,
+    expect(signing::payload_delivery_begin(0, begin_input("session_abcdef", payload, 8, 8, 50), &begin) ==
+               signing::PayloadDeliveryResult::ok,
            "begin for expired admission boundary succeeds");
     append_all("session_abcdef", begin.transfer_id, payload, 8);
-    expect(agent_q::payload_delivery_finish(
+    expect(signing::payload_delivery_finish(
                0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
-               &finish) == agent_q::AgentQPayloadDeliveryResult::ok,
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               &finish) == signing::PayloadDeliveryResult::ok,
            "finish before expired admission succeeds");
-    const agent_q::AgentQPayloadDeliveryAdmissionDecision expired_admission =
-        agent_q::payload_delivery_admit_operation(
-            agent_q::AgentQPayloadDeliveryOperationAdmissionInput{
+    const signing::PayloadDeliveryAdmissionDecision expired_admission =
+        signing::payload_delivery_admit_operation(
+            signing::PayloadDeliveryOperationAdmissionInput{
                 50,
-                agent_q::AgentQPayloadDeliveryOperationKind::sign_transaction,
+                signing::PayloadDeliveryOperationKind::sign_transaction,
                 "session_abcdef",
             });
-    expect(expired_admission.result == agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
+    expect(expired_admission.result == signing::PayloadDeliveryAdmissionResult::ok,
            "expired finalized payload is cleared before sign transaction admission");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "expired admission boundary leaves store idle");
 }
 
 void test_oversize_and_digest_mismatch()
 {
-    agent_q::payload_delivery_store_reset();
+    signing::payload_delivery_store_reset();
     const std::vector<uint8_t> payload = bytes(9);
-    agent_q::AgentQPayloadDeliveryBeginOutput begin = {};
-    expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8), &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::payload_too_large,
+    signing::PayloadDeliveryBeginOutput begin = {};
+    expect(signing::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8), &begin) ==
+               signing::PayloadDeliveryResult::payload_too_large,
            "payload max+1 rejected at begin");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "begin max+1 leaves store idle");
 
     const std::vector<uint8_t> valid = bytes(4);
     std::string wrong_digest =
         "sha256:0000000000000000000000000000000000000000000000000000000000000000";
-    agent_q::AgentQPayloadDeliveryBeginInput input =
+    signing::PayloadDeliveryBeginInput input =
         begin_input("session_abcdef", valid, 4, 8);
     input.payload_digest = wrong_digest.c_str();
-    expect(agent_q::payload_delivery_begin(0, input, &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::ok,
+    expect(signing::payload_delivery_begin(0, input, &begin) ==
+               signing::PayloadDeliveryResult::ok,
            "begin with well-formed wrong digest succeeds");
     append_all("session_abcdef", begin.transfer_id, valid, 4);
-    agent_q::AgentQPayloadDeliveryFinishOutput finish = {};
-    expect(agent_q::payload_delivery_finish(0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
-               &finish) == agent_q::AgentQPayloadDeliveryResult::digest_mismatch,
+    signing::PayloadDeliveryFinishOutput finish = {};
+    expect(signing::payload_delivery_finish(0,
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               &finish) == signing::PayloadDeliveryResult::digest_mismatch,
            "digest mismatch rejected at finish");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "digest mismatch wipes transfer");
 }
 
 void test_size_mismatch_and_payload_overflow()
 {
-    agent_q::payload_delivery_store_reset();
+    signing::payload_delivery_store_reset();
     const std::vector<uint8_t> payload = bytes(8);
-    agent_q::AgentQPayloadDeliveryBeginOutput begin = {};
-    expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8), &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::ok,
+    signing::PayloadDeliveryBeginOutput begin = {};
+    expect(signing::payload_delivery_begin(0, begin_input("session_abcdef", payload, 4, 8), &begin) ==
+               signing::PayloadDeliveryResult::ok,
            "begin for size mismatch succeeds");
 
     size_t received = 0;
-    expect(agent_q::payload_delivery_append_chunk(0,
-               agent_q::AgentQPayloadDeliveryChunkInput{
+    expect(signing::payload_delivery_append_chunk(0,
+               signing::PayloadDeliveryChunkInput{
                    "session_abcdef",
                    begin.transfer_id,
                    0,
                    payload.data(),
                    4,
                },
-               &received) == agent_q::AgentQPayloadDeliveryResult::ok,
+               &received) == signing::PayloadDeliveryResult::ok,
            "partial chunk append succeeds");
     expect(received == 4, "partial append reports received bytes");
 
-    agent_q::AgentQPayloadDeliveryFinishOutput finish = {};
-    expect(agent_q::payload_delivery_finish(0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
-               &finish) == agent_q::AgentQPayloadDeliveryResult::size_mismatch,
+    signing::PayloadDeliveryFinishOutput finish = {};
+    expect(signing::payload_delivery_finish(0,
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               &finish) == signing::PayloadDeliveryResult::size_mismatch,
            "early finish returns size mismatch");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "size mismatch wipes owned active transfer");
-    expect(agent_q::payload_delivery_append_chunk(0,
-               agent_q::AgentQPayloadDeliveryChunkInput{
+    expect(signing::payload_delivery_append_chunk(0,
+               signing::PayloadDeliveryChunkInput{
                    "session_abcdef",
                    begin.transfer_id,
                    4,
                    payload.data() + 4,
                    4,
                },
-               &received) == agent_q::AgentQPayloadDeliveryResult::not_found,
+               &received) == signing::PayloadDeliveryResult::not_found,
            "stale transfer cannot continue after size mismatch");
 
-    agent_q::payload_delivery_store_reset();
-    expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload, 6, 8), &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::ok,
+    signing::payload_delivery_store_reset();
+    expect(signing::payload_delivery_begin(0, begin_input("session_abcdef", payload, 6, 8), &begin) ==
+               signing::PayloadDeliveryResult::ok,
            "begin for payload overflow succeeds");
-    expect(agent_q::payload_delivery_append_chunk(0,
-               agent_q::AgentQPayloadDeliveryChunkInput{
+    expect(signing::payload_delivery_append_chunk(0,
+               signing::PayloadDeliveryChunkInput{
                    "session_abcdef",
                    begin.transfer_id,
                    0,
                    payload.data(),
                    6,
                },
-               &received) == agent_q::AgentQPayloadDeliveryResult::ok,
+               &received) == signing::PayloadDeliveryResult::ok,
            "first overflow setup chunk succeeds");
     const uint8_t overflow_chunk[3] = {1, 2, 3};
-    expect(agent_q::payload_delivery_append_chunk(0,
-               agent_q::AgentQPayloadDeliveryChunkInput{
+    expect(signing::payload_delivery_append_chunk(0,
+               signing::PayloadDeliveryChunkInput{
                    "session_abcdef",
                    begin.transfer_id,
                    6,
                    overflow_chunk,
                    sizeof(overflow_chunk),
                },
-               nullptr) == agent_q::AgentQPayloadDeliveryResult::payload_overflow,
+               nullptr) == signing::PayloadDeliveryResult::payload_overflow,
            "declared-size overflow is rejected");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "declared-size overflow wipes transfer");
 }
 
 void test_abort_active_and_finalized()
 {
-    agent_q::payload_delivery_store_reset();
+    signing::payload_delivery_store_reset();
     const std::vector<uint8_t> payload = bytes(6);
-    agent_q::AgentQPayloadDeliveryBeginOutput begin = {};
-    expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload), &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::ok,
+    signing::PayloadDeliveryBeginOutput begin = {};
+    expect(signing::payload_delivery_begin(0, begin_input("session_abcdef", payload), &begin) ==
+               signing::PayloadDeliveryResult::ok,
            "begin active abort succeeds");
-    expect(agent_q::payload_delivery_abort(0,
-               agent_q::AgentQPayloadDeliveryAbortInput{
+    expect(signing::payload_delivery_abort(0,
+               signing::PayloadDeliveryAbortInput{
                    "session_abcdef",
                    begin.transfer_id,
                    nullptr,
-               }) == agent_q::AgentQPayloadDeliveryResult::ok,
+               }) == signing::PayloadDeliveryResult::ok,
            "active transfer abort succeeds");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
            "active abort clears store");
 
-    expect(agent_q::payload_delivery_begin(0, begin_input("session_abcdef", payload), &begin) ==
-               agent_q::AgentQPayloadDeliveryResult::ok,
+    expect(signing::payload_delivery_begin(0, begin_input("session_abcdef", payload), &begin) ==
+               signing::PayloadDeliveryResult::ok,
            "begin finalized abort succeeds");
     append_all("session_abcdef", begin.transfer_id, payload, 5);
-    agent_q::AgentQPayloadDeliveryFinishOutput finish = {};
-    expect(agent_q::payload_delivery_finish(0,
-               agent_q::AgentQPayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
-               &finish) == agent_q::AgentQPayloadDeliveryResult::ok,
+    signing::PayloadDeliveryFinishOutput finish = {};
+    expect(signing::payload_delivery_finish(0,
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               &finish) == signing::PayloadDeliveryResult::ok,
            "finish for abort succeeds");
-    expect(agent_q::payload_delivery_abort(0,
-               agent_q::AgentQPayloadDeliveryAbortInput{
+    expect(signing::payload_delivery_abort(0,
+               signing::PayloadDeliveryAbortInput{
                    "session_other",
                    nullptr,
                    finish.descriptor.payload_ref,
-               }) == agent_q::AgentQPayloadDeliveryResult::invalid_session,
+               }) == signing::PayloadDeliveryResult::invalid_session,
            "different session cannot abort finalized payload");
-    expect(agent_q::payload_delivery_advance_and_snapshot(0).state ==
-               agent_q::AgentQPayloadDeliveryState::finalized,
+    expect(signing::payload_delivery_advance_and_snapshot(0).state ==
+               signing::PayloadDeliveryState::finalized,
            "different session finalized abort does not wipe");
-    agent_q::AgentQPayloadDeliveryView view = {};
-    expect(agent_q::payload_delivery_resolve_finalized(0,
+    signing::PayloadDeliveryView view = {};
+    expect(signing::payload_delivery_resolve_finalized(0,
                "session_abcdef",
                "bad-payload",
-               &view) == agent_q::AgentQPayloadDeliveryResult::invalid_payload_ref,
+               &view) == signing::PayloadDeliveryResult::invalid_payload_ref,
            "malformed payload ref is separated from session mismatch");
-    expect(agent_q::payload_delivery_abort(0,
-               agent_q::AgentQPayloadDeliveryAbortInput{
+    expect(signing::payload_delivery_abort(0,
+               signing::PayloadDeliveryAbortInput{
                    "session_abcdef",
                    nullptr,
                    finish.descriptor.payload_ref,
-               }) == agent_q::AgentQPayloadDeliveryResult::ok,
+               }) == signing::PayloadDeliveryResult::ok,
            "same session finalized abort succeeds");
 }
 
 void test_descriptor_and_view_are_small()
 {
-    static_assert(sizeof(agent_q::AgentQPayloadDeliveryDescriptor) < 512,
+    static_assert(sizeof(signing::PayloadDeliveryDescriptor) < 512,
                   "payload descriptor must not carry payload bytes");
-    static_assert(sizeof(agent_q::AgentQPayloadDeliveryView) < 576,
+    static_assert(sizeof(signing::PayloadDeliveryView) < 576,
                   "payload view must not copy payload bytes");
-    static_assert(sizeof(agent_q::AgentQPayloadDeliverySnapshot) < 320,
+    static_assert(sizeof(signing::PayloadDeliverySnapshot) < 320,
                   "payload snapshot must not copy payload bytes");
 }
 
@@ -1288,7 +1288,7 @@ int main()
     test_oversize_and_digest_mismatch();
     test_size_mismatch_and_payload_overflow();
     test_abort_active_and_finalized();
-    agent_q::payload_delivery_store_reset();
+    signing::payload_delivery_store_reset();
 
     if (failures != 0) {
         fprintf(stderr, "%d payload delivery store test(s) failed\n", failures);
@@ -1300,35 +1300,35 @@ int main()
 CPP
 
 c++ -std=c++17 -Wall -Wextra -Werror \
-  -I"${TARGET_ROOT}/agent_q" \
+  -I"${TARGET_ROOT}/runtime" \
   -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${TARGET_ROOT}/agent_q/agent_q_payload_delivery_primitives.cpp" \
+  -c "${TARGET_ROOT}/runtime/payload_delivery_primitives.cpp" \
   -o "${TMP_DIR}/payload_delivery_primitives.o"
 
 c++ -std=c++17 -Wall -Wextra -Werror \
-  -I"${TARGET_ROOT}/agent_q" \
+  -I"${TARGET_ROOT}/runtime" \
   -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${TARGET_ROOT}/agent_q/agent_q_payload_delivery_store.cpp" \
+  -c "${TARGET_ROOT}/runtime/payload_delivery_store.cpp" \
   -o "${TMP_DIR}/payload_delivery_store.o"
 
 c++ -std=c++17 -Wall -Wextra -Werror \
-  -I"${TARGET_ROOT}/agent_q" \
+  -I"${TARGET_ROOT}/runtime" \
   -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${TARGET_ROOT}/agent_q/agent_q_payload_delivery_admission.cpp" \
+  -c "${TARGET_ROOT}/runtime/payload_delivery_admission.cpp" \
   -o "${TMP_DIR}/payload_delivery_admission.o"
 
 c++ -std=c++17 -Wall -Wextra -Werror \
-  -I"${TARGET_ROOT}/agent_q" \
+  -I"${TARGET_ROOT}/runtime" \
   -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${TARGET_ROOT}/agent_q/agent_q_session.cpp" \
+  -c "${TARGET_ROOT}/runtime/session.cpp" \
   -o "${TMP_DIR}/session.o"
 
 cc -std=c99 -Wall -Wextra -Werror \
@@ -1342,7 +1342,7 @@ cc -std=c99 -Wall -Wextra -Werror \
   -o "${TMP_DIR}/platform_util.o"
 
 c++ -std=c++17 -Wall -Wextra -Werror \
-  -I"${TARGET_ROOT}/agent_q" \
+  -I"${TARGET_ROOT}/runtime" \
   -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \

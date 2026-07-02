@@ -3,10 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 VECTOR_FILE="${REPO_ROOT}/specs/sign-route-vectors.tsv"
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-sign-route.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-sign-route.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 cat >"${TMP_DIR}/sign_route_test.cpp" <<'CPP'
@@ -14,34 +14,34 @@ cat >"${TMP_DIR}/sign_route_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_sign_route.h"
+#include "protocol/sign_route.h"
 
-using agent_q::AgentQSignOperation;
-using agent_q::AgentQSupportedSignRoute;
-using agent_q::AgentQSignRouteResult;
+using signing::SignOperation;
+using signing::SupportedSignRoute;
+using signing::SignRouteResult;
 
-AgentQSignOperation operation_from_name(const char* value)
+SignOperation operation_from_name(const char* value)
 {
     if (strcmp(value, "sign_transaction") == 0) {
-        return AgentQSignOperation::sign_transaction;
+        return SignOperation::sign_transaction;
     }
     assert(strcmp(value, "sign_personal_message") == 0);
-    return AgentQSignOperation::sign_personal_message;
+    return SignOperation::sign_personal_message;
 }
 
-AgentQSignRouteResult result_from_name(const char* value)
+SignRouteResult result_from_name(const char* value)
 {
     if (strcmp(value, "ok") == 0) {
-        return AgentQSignRouteResult::ok;
+        return SignRouteResult::ok;
     }
     if (strcmp(value, "invalid_params") == 0) {
-        return AgentQSignRouteResult::invalid_params;
+        return SignRouteResult::invalid_params;
     }
     if (strcmp(value, "unsupported_chain") == 0) {
-        return AgentQSignRouteResult::unsupported_chain;
+        return SignRouteResult::unsupported_chain;
     }
     assert(strcmp(value, "unsupported_method") == 0);
-    return AgentQSignRouteResult::unsupported_method;
+    return SignRouteResult::unsupported_method;
 }
 
 int main(int argc, char** argv)
@@ -61,24 +61,24 @@ int main(int argc, char** argv)
         char* expected = strtok(nullptr, "\t\r\n");
         assert(operation != nullptr && chain != nullptr && method != nullptr && expected != nullptr);
         const auto classification =
-            agent_q::classify_sign_route(operation_from_name(operation), chain, method);
+            signing::classify_sign_route(operation_from_name(operation), chain, method);
         assert(classification.result == result_from_name(expected));
-        if (classification.result == AgentQSignRouteResult::ok) {
-            assert(classification.route != AgentQSupportedSignRoute::unsupported);
+        if (classification.result == SignRouteResult::ok) {
+            assert(classification.route != SupportedSignRoute::unsupported);
         } else {
-            assert(classification.route == AgentQSupportedSignRoute::unsupported);
+            assert(classification.route == SupportedSignRoute::unsupported);
         }
         ++vector_count;
     }
     fclose(vectors);
     assert(vector_count > 0);
 
-    assert(agent_q::classify_sign_route(
-        AgentQSignOperation::sign_transaction, nullptr, "sign_transaction").result ==
-        AgentQSignRouteResult::invalid_params);
-    assert(agent_q::classify_sign_route(
-        AgentQSignOperation::sign_transaction, "sui", nullptr).result ==
-        AgentQSignRouteResult::invalid_params);
+    assert(signing::classify_sign_route(
+        SignOperation::sign_transaction, nullptr, "sign_transaction").result ==
+        SignRouteResult::invalid_params);
+    assert(signing::classify_sign_route(
+        SignOperation::sign_transaction, "sui", nullptr).result ==
+        SignRouteResult::invalid_params);
     return 0;
 }
 CPP

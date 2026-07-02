@@ -1,6 +1,6 @@
 import {
-  createDefaultAgentQDeviceClient,
-  type AgentQDeviceClient,
+  createDefaultDeviceClient,
+  type DeviceClient,
 } from "@stelis/agent-q-core/device";
 import {
   connectDeviceSuccessOutputShape,
@@ -52,8 +52,8 @@ export type CredentialProposeInput = {
   purpose?: string;
 } & CredentialProposeParams;
 
-export type AgentQSuiProviderCore = Pick<
-  AgentQDeviceClient,
+export type SuiDeviceProviderCore = Pick<
+  DeviceClient,
   | "scanDevices"
   | "identifyDevices"
   | "selectDevice"
@@ -68,8 +68,8 @@ export type AgentQSuiProviderCore = Pick<
   | "signPersonalMessage"
 >;
 
-export interface AgentQSuiProviderOptions {
-  core?: AgentQSuiProviderCore;
+export interface SuiDeviceProviderOptions {
+  core?: SuiDeviceProviderCore;
 }
 
 const FORBIDDEN_PROVIDER_OUTPUT_FIELDS = new Set(
@@ -115,11 +115,11 @@ export type {
   SignTransactionResult,
 };
 
-export class AgentQSuiProvider {
-  private readonly core: AgentQSuiProviderCore;
+export class SuiDeviceProvider {
+  private readonly core: SuiDeviceProviderCore;
 
-  constructor(options: AgentQSuiProviderOptions = {}) {
-    this.core = options.core ?? createDefaultAgentQDeviceClient();
+  constructor(options: SuiDeviceProviderOptions = {}) {
+    this.core = options.core ?? createDefaultDeviceClient();
   }
 
   async scanDevices(input: Record<string, never> = {}): Promise<ScanDevicesResult> {
@@ -199,6 +199,6 @@ export class AgentQSuiProvider {
   }
 }
 
-export function createAgentQSuiProvider(options: AgentQSuiProviderOptions = {}): AgentQSuiProvider {
-  return new AgentQSuiProvider(options);
+export function createSuiDeviceProvider(options: SuiDeviceProviderOptions = {}): SuiDeviceProvider {
+  return new SuiDeviceProvider(options);
 }

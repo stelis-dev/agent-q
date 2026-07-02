@@ -19,17 +19,17 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 CXX_BIN="${CXX:-c++}"
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-session.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-session.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 cat >"${TMP_DIR}/session_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_session.h"
+#include "session.h"
 
 namespace {
 
@@ -58,7 +58,7 @@ bool random_bytes(void* output, size_t size, void*)
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 void wipe_sensitive_buffer(void* data, size_t size)
 {
@@ -69,58 +69,58 @@ void wipe_sensitive_buffer(void* data, size_t size)
     }
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 int main()
 {
-    using Result = agent_q::AgentQSessionValidationResult;
+    using Result = signing::SessionValidationResult;
 
-    agent_q::session_init();
-    expect(!agent_q::session_active(), "session init clears session");
-    expect(agent_q::kAgentQSessionAdvertisedTtlMs == 0xffffffffu,
+    signing::session_init();
+    expect(!signing::session_active(), "session init clears session");
+    expect(signing::kSessionAdvertisedTtlMs == 0xffffffffu,
            "link-bound target advertises maximum session ttl");
-    expect(agent_q::session_replace(random_bytes, nullptr) ==
-               agent_q::AgentQSessionStartResult::ok,
+    expect(signing::session_replace(random_bytes, nullptr) ==
+               signing::SessionStartResult::ok,
            "session replace succeeds with random bytes");
-    char id[agent_q::kAgentQSessionIdSize] = {};
-    snprintf(id, sizeof(id), "%s", agent_q::session_id());
+    char id[signing::kSessionIdSize] = {};
+    snprintf(id, sizeof(id), "%s", signing::session_id());
     expect(strcmp(id, "session_0102030405060708") == 0,
            "session id is generated from random bytes");
-    expect(agent_q::session_id_format_valid(id),
+    expect(signing::session_id_format_valid(id),
            "generated session id satisfies public format helper");
-    expect(!agent_q::session_id_format_valid("x"),
+    expect(!signing::session_id_format_valid("x"),
            "format helper rejects wrong prefix");
-    expect(!agent_q::session_id_format_valid("session_AAAAAAAAAAAAAAAA"),
+    expect(!signing::session_id_format_valid("session_AAAAAAAAAAAAAAAA"),
            "format helper rejects uppercase hex");
-    expect(!agent_q::session_id_format_valid("session_"),
+    expect(!signing::session_id_format_valid("session_"),
            "format helper rejects empty suffix");
-    expect(!agent_q::session_id_format_valid(
+    expect(!signing::session_id_format_valid(
                "session_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
            "format helper rejects overlong ids");
-    expect(agent_q::session_validate(id) == Result::ok,
+    expect(signing::session_validate(id) == Result::ok,
            "matching session validates");
-    expect(agent_q::session_validate("not-a-session") == Result::invalid_format,
+    expect(signing::session_validate("not-a-session") == Result::invalid_format,
            "invalid session format is rejected distinctly");
-    expect(agent_q::session_validate("session_aaaaaaaaaaaaaaaa") == Result::mismatch,
+    expect(signing::session_validate("session_aaaaaaaaaaaaaaaa") == Result::mismatch,
            "mismatched session is rejected without clearing active session");
-    expect(agent_q::session_active(), "mismatch does not clear session");
-    agent_q::session_clear();
-    expect(!agent_q::session_active(), "explicit clear ends session");
-    expect(agent_q::session_validate(id) == Result::missing,
+    expect(signing::session_active(), "mismatch does not clear session");
+    signing::session_clear();
+    expect(!signing::session_active(), "explicit clear ends session");
+    expect(signing::session_validate(id) == Result::missing,
            "cleared session rejects previous id");
 
-    agent_q::session_init();
-    expect(agent_q::session_replace(random_bytes, nullptr) ==
-               agent_q::AgentQSessionStartResult::ok,
+    signing::session_init();
+    expect(signing::session_replace(random_bytes, nullptr) ==
+               signing::SessionStartResult::ok,
            "second session starts");
-    expect(agent_q::session_active(), "session remains active until explicit cleanup");
+    expect(signing::session_active(), "session remains active until explicit cleanup");
 
-    agent_q::session_init();
+    signing::session_init();
     g_rng_fails = true;
-    expect(agent_q::session_replace(random_bytes, nullptr) ==
-               agent_q::AgentQSessionStartResult::rng_error,
+    expect(signing::session_replace(random_bytes, nullptr) ==
+               signing::SessionStartResult::rng_error,
            "rng failure is reported without creating session");
-    expect(!agent_q::session_active(), "rng failure leaves session inactive");
+    expect(!signing::session_active(), "rng failure leaves session inactive");
 
     if (failures != 0) {
         fprintf(stderr, "%d session test(s) failed\n", failures);
@@ -132,9 +132,9 @@ int main()
 CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/session_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_session.cpp" \
+  "${RUNTIME_DIR}/session.cpp" \
   -o "${TMP_DIR}/session_test"
 
 "${TMP_DIR}/session_test"

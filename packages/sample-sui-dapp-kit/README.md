@@ -18,7 +18,7 @@ sample does not create a fake provider, fake account, fake signature, or fake
 device state. It creates the package's Web Serial browser runtime and registers
 the Agent-Q Wallet Standard wallet from that runtime.
 
-The current repository provider factory, `createAgentQSuiProvider()`, is
+The current repository provider factory, `createSuiDeviceProvider()`, is
 Node/host-local and must not be used as a browser dapp provider.
 
 ## Quick Start
@@ -39,7 +39,7 @@ npm run build:sample-sui-dapp-kit
 For local development, start the Vite server from the repository root:
 
 ```sh
-npm --workspace @stelis/agent-q-sample-sui-dapp-kit run dev
+npm --workspace @stelis/sample-sui-dapp-kit run dev
 ```
 
 Open the URL printed by Vite. With the default script, this is usually
@@ -50,7 +50,7 @@ Agent-Q wallet remains visible in the connect modal for ordinary users. It
 requests a USB device only when `connectDevice()` runs from the dapp-kit connect
 flow. If Web Serial is unavailable, connect/read/signing fail closed as
 `unavailable` instead of hiding the wallet. The runtime implements only the
-`AgentQSuiWalletProvider` contract; broader management APIs are not part of this
+`SuiDeviceWalletProvider` contract; broader management APIs are not part of this
 dapp-facing sample. That is sample/provider API projection, not a security
 barrier against direct imports of broader core or local-server APIs.
 

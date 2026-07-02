@@ -40,7 +40,7 @@ import {
   type SigningOutcomeErrorCode,
 } from "./device-contract.js";
 import {
-  AGENT_Q_POLICY_SCHEMA,
+  SIGNING_POLICY_SCHEMA,
   APPROVAL_HISTORY_HIGHEST_ACTIONS,
   APPROVAL_HISTORY_POLICY_UPDATE_RESULTS,
   APPROVAL_HISTORY_REASON_CODE_PATTERN,
@@ -135,7 +135,7 @@ import {
 // that applies them; existing importers and tests resolve them via protocol.ts.
 export { isClientName, isSafeDeviceId, isSafeRequestId, isSessionId, sanitizeDisplayText };
 export {
-  AGENT_Q_POLICY_SCHEMA,
+  SIGNING_POLICY_SCHEMA,
   APPROVAL_HISTORY_HIGHEST_ACTIONS,
   APPROVAL_HISTORY_POLICY_UPDATE_RESULTS,
   APPROVAL_HISTORY_REASON_CODE_PATTERN,
@@ -1355,7 +1355,7 @@ export function sanitizeCurrentPolicyDocument(value: unknown): PolicyDocument | 
     throw new ProtocolError("invalid_response", "Policy document contains unsupported fields.");
   }
   if (
-    value.schema !== AGENT_Q_POLICY_SCHEMA ||
+    value.schema !== SIGNING_POLICY_SCHEMA ||
     typeof value.policyId !== "string" ||
     !POLICY_ID_PATTERN.test(value.policyId) ||
     value.defaultAction !== "reject" ||

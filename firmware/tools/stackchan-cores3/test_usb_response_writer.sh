@@ -17,17 +17,17 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
-ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
-  "${AGENT_Q_DIR}/agent_q_device_contract.h" \
-  "${AGENT_Q_DIR}/agent_q_protocol_constants.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_response_writer.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_response_writer.h"; do
+  "${RUNTIME_DIR}/device_contract.cpp" \
+  "${RUNTIME_DIR}/device_contract.h" \
+  "${RUNTIME_DIR}/protocol_constants.h" \
+  "${RUNTIME_DIR}/usb_response_writer.cpp" \
+  "${RUNTIME_DIR}/usb_response_writer.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -36,7 +36,7 @@ for required in \
 done
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-response-writer.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-usb-response-writer.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 mkdir -p "${TMP_DIR}/driver" "${TMP_DIR}/freertos"
 
@@ -92,8 +92,8 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_protocol_constants.h"
-#include "agent_q_usb_response_writer.h"
+#include "protocol_constants.h"
+#include "usb_response_writer.h"
 #include "driver/usb_serial_jtag.h"
 
 namespace {
@@ -136,7 +136,7 @@ int main()
 {
     {
         reset_written();
-        const agent_q::AgentQUsbDeviceResponseInfo info{
+        const signing::UsbDeviceResponseInfo info{
             "device-1",
             "idle",
             "Agent-Q Firmware",
@@ -144,14 +144,14 @@ int main()
             "0.0.0",
             nullptr,
         };
-        assert(agent_q::usb_response_write_connect_approved(
+        assert(signing::usb_response_write_connect_approved(
             "req",
             "session_aaaaaaaaaaaaaaaa",
             30000,
             info));
         JsonDocument parsed = parse_written_json();
         assert(strcmp(parsed["id"] | "", "req") == 0);
-        assert(parsed["version"].as<int>() == agent_q::kAgentQProtocolVersion);
+        assert(parsed["version"].as<int>() == signing::kProtocolVersion);
         assert(parsed["success"].as<bool>());
         assert(strcmp(parsed["method"] | "", "connect") == 0);
         assert(strcmp(parsed["result"]["sessionId"] | "", "session_aaaaaaaaaaaaaaaa") == 0);
@@ -165,13 +165,13 @@ int main()
 
     {
         reset_written();
-        assert(agent_q::usb_response_write_method_error(
+        assert(signing::usb_response_write_method_error(
             "req",
             "connect",
             "user_rejected"));
         JsonDocument parsed = parse_written_json();
         assert(strcmp(parsed["id"] | "", "req") == 0);
-        assert(parsed["version"].as<int>() == agent_q::kAgentQProtocolVersion);
+        assert(parsed["version"].as<int>() == signing::kProtocolVersion);
         assert(!(parsed["success"] | true));
         assert(strcmp(parsed["method"] | "", "connect") == 0);
         assert(strcmp(parsed["error"]["code"] | "", "user_rejected") == 0);
@@ -187,10 +187,10 @@ CPP
 "${CXX_BIN}" -std=c++17 \
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_response_writer.cpp" \
-  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
+  "${RUNTIME_DIR}/usb_response_writer.cpp" \
+  "${RUNTIME_DIR}/device_contract.cpp" \
   -o "${TMP_DIR}/test_usb_response_writer"
 
 "${TMP_DIR}/test_usb_response_writer"

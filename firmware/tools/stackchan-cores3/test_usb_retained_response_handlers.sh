@@ -17,21 +17,21 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
-ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_retained_response_handlers.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_retained_response_handlers.h" \
-  "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
-  "${AGENT_Q_DIR}/agent_q_request_id.h" \
-  "${AGENT_Q_DIR}/agent_q_signing_response_store.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signing_response_store.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_response_writer.h"; do
+  "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
+  "${RUNTIME_DIR}/usb_active_session_request_guard.h" \
+  "${RUNTIME_DIR}/usb_retained_response_handlers.cpp" \
+  "${RUNTIME_DIR}/usb_retained_response_handlers.h" \
+  "${RUNTIME_DIR}/request_id.cpp" \
+  "${RUNTIME_DIR}/request_id.h" \
+  "${RUNTIME_DIR}/signing_response_store.cpp" \
+  "${RUNTIME_DIR}/signing_response_store.h" \
+  "${RUNTIME_DIR}/usb_operation_response_writer.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -40,7 +40,7 @@ for required in \
 done
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-retained-response-handlers.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-usb-retained-response-handlers.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 cat >"${TMP_DIR}/test.cpp" <<'CPP'
@@ -50,8 +50,8 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_signing_response_store.h"
-#include "agent_q_usb_retained_response_handlers.h"
+#include "signing_response_store.h"
+#include "usb_retained_response_handlers.h"
 
 namespace {
 
@@ -90,7 +90,7 @@ void reset_state()
     g_last_method = nullptr;
     g_last_json_status[0] = '\0';
     g_last_json_signature[0] = '\0';
-    agent_q::signing_response_clear_all();
+    signing::signing_response_clear_all();
 }
 
 bool write_error(const char* id, const char* code)
@@ -109,7 +109,7 @@ bool write_method_error(const char* id, const char* method, const char* code)
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 bool usb_response_write_success_result(const char* id, const char* method, JsonObjectConst result)
 {
@@ -136,7 +136,7 @@ bool usb_response_write_ack_result(const char* id)
     return g_ack_write_ok;
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 namespace {
 
@@ -154,11 +154,11 @@ bool material_ready()
 
 bool write_payload_admission_error(
     const char* id,
-    agent_q::AgentQUsbOperationType operation,
-    const agent_q::AgentQUsbOperationResponseWriter& writer)
+    signing::UsbOperationType operation,
+    const signing::UsbOperationResponseWriter& writer)
 {
-    assert(operation == agent_q::AgentQUsbOperationType::get_result ||
-           operation == agent_q::AgentQUsbOperationType::ack_result);
+    assert(operation == signing::UsbOperationType::get_result ||
+           operation == signing::UsbOperationType::ack_result);
     g_payload_admission_calls += 1;
     g_last_id = id;
     if (!g_payload_admission_error) {
@@ -170,7 +170,7 @@ bool write_payload_admission_error(
 bool require_session(
     const char* id,
     const char* session_id,
-    const agent_q::AgentQUsbOperationResponseWriter& writer)
+    const signing::UsbOperationResponseWriter& writer)
 {
     g_require_session_calls += 1;
     g_last_id = id;
@@ -181,22 +181,22 @@ bool require_session(
     return g_session_valid;
 }
 
-agent_q::AgentQUsbOperationResponseWriter make_writer()
+signing::UsbOperationResponseWriter make_writer()
 {
-    return agent_q::AgentQUsbOperationResponseWriter{
+    return signing::UsbOperationResponseWriter{
         write_method_error,
         log_write_failure,
     };
 }
 
-agent_q::AgentQUsbOperationResponseWriter make_writer_for(const char* method)
+signing::UsbOperationResponseWriter make_writer_for(const char* method)
 {
     return make_writer().for_method(method);
 }
 
-agent_q::AgentQUsbRetainedResponseHandlerOps make_ops()
+signing::UsbRetainedResponseHandlerOps make_ops()
 {
-    return agent_q::AgentQUsbRetainedResponseHandlerOps{
+    return signing::UsbRetainedResponseHandlerOps{
         material_ready,
         write_payload_admission_error,
         require_session,
@@ -213,33 +213,33 @@ JsonDocument parse_request(const char* json)
 
 void store_response(const char* session_id, const char* request_id)
 {
-    const uint8_t identity[agent_q::kAgentQSignRequestIdentitySize] = {1};
+    const uint8_t identity[signing::kSignRequestIdentitySize] = {1};
     const char* const result =
         "{\"id\":\"req\",\"version\":1,\"success\":true,\"method\":\"sign_transaction\","
         "\"result\":{\"authorization\":\"user\",\"chain\":\"sui\","
         "\"method\":\"sign_transaction\",\"signature\":\"sig\",\"status\":\"signed\"}}";
-    const agent_q::SigningResponseStoreOutcome outcome = agent_q::signing_response_store(
+    const signing::ResponseStoreOutcome outcome = signing::signing_response_store(
         session_id,
         request_id,
         identity,
         sizeof(identity),
         result,
         strlen(result));
-    assert(outcome == agent_q::SigningResponseStoreOutcome::stored);
+    assert(outcome == signing::ResponseStoreOutcome::stored);
 }
 
 void store_malformed_result(const char* session_id, const char* request_id)
 {
-    const uint8_t identity[agent_q::kAgentQSignRequestIdentitySize] = {2};
+    const uint8_t identity[signing::kSignRequestIdentitySize] = {2};
     const char* const result = "{";
-    const agent_q::SigningResponseStoreOutcome outcome = agent_q::signing_response_store(
+    const signing::ResponseStoreOutcome outcome = signing::signing_response_store(
         session_id,
         request_id,
         identity,
         sizeof(identity),
         result,
         strlen(result));
-    assert(outcome == agent_q::SigningResponseStoreOutcome::stored);
+    assert(outcome == signing::ResponseStoreOutcome::stored);
 }
 
 }  // namespace
@@ -250,7 +250,7 @@ int main()
         reset_state();
         g_material_ready = false;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"}}");
-        agent_q::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
+        signing::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
         assert(strcmp(g_last_method, "get_result") == 0);
@@ -263,7 +263,7 @@ int main()
         reset_state();
         g_payload_admission_error = true;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"}}");
-        agent_q::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
+        signing::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
         assert(g_payload_admission_calls == 1);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "busy") == 0);
@@ -274,7 +274,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_result\",\"sessionId\":7,\"payload\":{\"retainedRequestId\":\"req\"}}");
-        agent_q::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
+        signing::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
         assert(g_payload_admission_calls == 1);
@@ -286,7 +286,7 @@ int main()
         reset_state();
         g_session_valid = false;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"}}");
-        agent_q::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
+        signing::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
         assert(strcmp(g_last_method, "get_result") == 0);
@@ -297,7 +297,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"},\"extra\":1}");
-        agent_q::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
+        signing::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_write_json_calls == 0);
@@ -307,7 +307,7 @@ int main()
         reset_state();
         store_response("session", "req");
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"}}");
-        agent_q::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
+        signing::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_require_session_calls == 1);
         assert(strcmp(g_last_session, "session") == 0);
@@ -320,7 +320,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"}}");
-        agent_q::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
+        signing::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
         assert(g_write_json_calls == 0);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "unknown_request") == 0);
@@ -330,7 +330,7 @@ int main()
         reset_state();
         store_malformed_result("session", "req");
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"}}");
-        agent_q::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
+        signing::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
         assert(g_write_json_calls == 0);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "unknown_request") == 0);
@@ -339,7 +339,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"ack_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"},\"extra\":1}");
-        agent_q::handle_usb_ack_result_request("req", request, make_writer_for("ack_result"), make_ops());
+        signing::handle_usb_ack_result_request("req", request, make_writer_for("ack_result"), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_payload_admission_calls == 1);
@@ -350,7 +350,7 @@ int main()
         reset_state();
         g_payload_admission_error = true;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"ack_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"}}");
-        agent_q::handle_usb_ack_result_request("req", request, make_writer_for("ack_result"), make_ops());
+        signing::handle_usb_ack_result_request("req", request, make_writer_for("ack_result"), make_ops());
         assert(g_payload_admission_calls == 1);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "busy") == 0);
@@ -362,14 +362,14 @@ int main()
         reset_state();
         store_response("session", "req");
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"ack_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"}}");
-        agent_q::handle_usb_ack_result_request("req", request, make_writer_for("ack_result"), make_ops());
+        signing::handle_usb_ack_result_request("req", request, make_writer_for("ack_result"), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_ack_result_calls == 1);
         assert(strcmp(g_last_session, "session") == 0);
         assert(strcmp(g_last_id, "req") == 0);
-        char out[agent_q::kSigningResponseMaxSize];
+        char out[signing::kResponseMaxSize];
         size_t out_len = 0;
-        assert(!agent_q::signing_response_find("session", "req", out, sizeof(out), &out_len));
+        assert(!signing::signing_response_find("session", "req", out, sizeof(out), &out_len));
     }
 
     {
@@ -377,13 +377,13 @@ int main()
         store_response("session", "req");
         g_ack_write_ok = false;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"ack_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"}}");
-        agent_q::handle_usb_ack_result_request("req", request, make_writer_for("ack_result"), make_ops());
+        signing::handle_usb_ack_result_request("req", request, make_writer_for("ack_result"), make_ops());
         assert(g_ack_result_calls == 1);
         assert(g_log_write_failure_calls == 1);
         assert(strcmp(g_last_id, "req") == 0);
-        char out[agent_q::kSigningResponseMaxSize];
+        char out[signing::kResponseMaxSize];
         size_t out_len = 0;
-        assert(!agent_q::signing_response_find("session", "req", out, sizeof(out), &out_len));
+        assert(!signing::signing_response_find("session", "req", out, sizeof(out), &out_len));
     }
 
     printf("USB retained-response handler tests passed\n");
@@ -393,13 +393,13 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${ARDUINOJSON_ROOT}" \
-  -I"${AGENT_Q_DIR}" \
-  -I"${AGENT_Q_DIR}/../../common/agent_q" \
+  -I"${RUNTIME_DIR}" \
+  -I"${RUNTIME_DIR}/../../common" \
   "${TMP_DIR}/test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_retained_response_handlers.cpp" \
-  "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signing_response_store.cpp" \
+  "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
+  "${RUNTIME_DIR}/usb_retained_response_handlers.cpp" \
+  "${RUNTIME_DIR}/request_id.cpp" \
+  "${RUNTIME_DIR}/signing_response_store.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

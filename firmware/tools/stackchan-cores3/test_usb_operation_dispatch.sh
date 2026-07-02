@@ -17,18 +17,18 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
-ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_dispatch.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_dispatch.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_response_writer.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_type.h"; do
+  "${RUNTIME_DIR}/usb_operation_dispatch.cpp" \
+  "${RUNTIME_DIR}/usb_operation_dispatch.h" \
+  "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
+  "${RUNTIME_DIR}/usb_operation_manifest.h" \
+  "${RUNTIME_DIR}/usb_operation_response_writer.h" \
+  "${RUNTIME_DIR}/usb_operation_type.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -37,7 +37,7 @@ for required in \
 done
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-operation-dispatch.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-usb-operation-dispatch.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/freertos"
@@ -55,7 +55,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_usb_operation_dispatch.h"
+#include "usb_operation_dispatch.h"
 
 namespace {
 
@@ -119,7 +119,7 @@ void log_write_failure(const char* response_type, const char* id)
 }
 
 #define DEFINE_HANDLER(name, slot) \
-    void name(const char* id, JsonDocument& request, const agent_q::AgentQUsbOperationResponseWriter& writer) \
+    void name(const char* id, JsonDocument& request, const signing::UsbOperationResponseWriter& writer) \
     { \
         (void)request; \
         (void)writer; \
@@ -148,9 +148,9 @@ DEFINE_HANDLER(handle_payload_transfer_abort, HandlerSlot::payload_transfer_abor
 
 #undef DEFINE_HANDLER
 
-agent_q::AgentQUsbOperationHandlers make_handlers()
+signing::UsbOperationHandlers make_handlers()
 {
-    return agent_q::AgentQUsbOperationHandlers{
+    return signing::UsbOperationHandlers{
         handle_get_status,
         handle_identify_device,
         handle_connect,
@@ -173,23 +173,23 @@ agent_q::AgentQUsbOperationHandlers make_handlers()
     };
 }
 
-agent_q::AgentQUsbOperationResponseWriter make_writer()
+signing::UsbOperationResponseWriter make_writer()
 {
-    return agent_q::AgentQUsbOperationResponseWriter{
+    return signing::UsbOperationResponseWriter{
         write_error,
         log_write_failure,
     };
 }
 
 void expect_dispatch(
-    agent_q::AgentQUsbOperationType operation_type,
+    signing::UsbOperationType operation_type,
     HandlerSlot expected_handler)
 {
     reset_state();
     JsonDocument request;
     const auto writer = make_writer();
     const auto handlers = make_handlers();
-    const bool handled = agent_q::dispatch_usb_operation(
+    const bool handled = signing::dispatch_usb_operation(
         "req_dispatch",
         operation_type,
         request,
@@ -206,7 +206,7 @@ void expect_dispatch(
 
 int main()
 {
-    using Type = agent_q::AgentQUsbOperationType;
+    using Type = signing::UsbOperationType;
 
     expect_dispatch(Type::get_status, HandlerSlot::get_status);
     expect_dispatch(Type::identify_device, HandlerSlot::identify_device);
@@ -231,7 +231,7 @@ int main()
     {
         reset_state();
         JsonDocument request;
-        const bool handled = agent_q::dispatch_usb_operation(
+        const bool handled = signing::dispatch_usb_operation(
             "req_unsupported",
             Type::unsupported,
             request,
@@ -249,7 +249,7 @@ int main()
         JsonDocument request;
         auto handlers = make_handlers();
         handlers.sign_transaction = nullptr;
-        const bool handled = agent_q::dispatch_usb_operation(
+        const bool handled = signing::dispatch_usb_operation(
             "req_missing_handler",
             Type::sign_transaction,
             request,
@@ -270,10 +270,10 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_dispatch.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.cpp" \
+  "${RUNTIME_DIR}/usb_operation_dispatch.cpp" \
+  "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

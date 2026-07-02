@@ -22,7 +22,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 TARGET_ROOT="${REPO_ROOT}/firmware/src/stackchan-cores3"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 CXX_BIN="${CXX:-c++}"
 CC_BIN="${CC:-cc}"
 
@@ -40,22 +40,22 @@ if [[ ! -f "${MBEDTLS_INCLUDE_DIR}/mbedtls/sha256.h" || ! -f "${MBEDTLS_LIBRARY_
 fi
 
 for required in \
-  "${TARGET_ROOT}/agent_q/agent_q_policy_store.cpp" \
-  "${TARGET_ROOT}/agent_q/agent_q_policy_store.h" \
-  "${COMMON_ROOT}/policy/agent_q_policy_document.cpp" \
-  "${COMMON_ROOT}/policy/agent_q_policy_document.h" \
-  "${COMMON_ROOT}/policy/agent_q_policy_u64.h"; do
+  "${TARGET_ROOT}/runtime/policy_store.cpp" \
+  "${TARGET_ROOT}/runtime/policy_store.h" \
+  "${COMMON_ROOT}/policy/document.cpp" \
+  "${COMMON_ROOT}/policy/document.h" \
+  "${COMMON_ROOT}/policy/u64.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
   fi
 done
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-policy-store.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-policy-store.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-mkdir -p "${TMP_DIR}/agent_q_common" "${TMP_DIR}/stubs"
-ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
+mkdir -p "${TMP_DIR}/firmware_common" "${TMP_DIR}/stubs"
+ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
 
 cat >"${TMP_DIR}/stubs/esp_err.h" <<'H'
 #pragma once
@@ -113,8 +113,8 @@ cat >"${TMP_DIR}/policy_store_test.cpp" <<'CPP'
 
 #include "esp_err.h"
 #include "nvs.h"
-#include "agent_q_common/policy/agent_q_policy_document.h"
-#include "agent_q_policy_store.h"
+#include "firmware_common/policy/document.h"
+#include "policy_store.h"
 
 namespace {
 
@@ -150,39 +150,39 @@ bool make_scoped_empty_policy_record(std::vector<uint8_t>* output)
         return false;
     }
 
-    const agent_q::AgentQCurrentPolicyNetworkScope networks[] = {
+    const signing::CurrentPolicyNetworkScope networks[] = {
         {
             "testnet",
             nullptr,
             0,
         },
     };
-    const agent_q::AgentQCurrentPolicyBlockchainScope blockchains[] = {
+    const signing::CurrentPolicyBlockchainScope blockchains[] = {
         {
             "sui",
             networks,
             sizeof(networks) / sizeof(networks[0]),
         },
     };
-    const agent_q::AgentQCurrentPolicyDocument policy = {
-        agent_q::kAgentQCurrentPolicySchema,
-        agent_q::AgentQCurrentPolicyAction::reject,
+    const signing::CurrentPolicyDocument policy = {
+        signing::kCurrentPolicySchema,
+        signing::CurrentPolicyAction::reject,
         blockchains,
         sizeof(blockchains) / sizeof(blockchains[0]),
     };
 
-    auto* canonical = new agent_q::AgentQCurrentPolicyCanonicalDocument();
-    uint8_t bytes[agent_q::kAgentQCurrentPolicyMaxCanonicalRecordBytes] = {};
+    auto* canonical = new signing::CurrentPolicyCanonicalDocument();
+    uint8_t bytes[signing::kCurrentPolicyMaxCanonicalRecordBytes] = {};
     size_t size = 0;
     const bool ok =
-        agent_q::canonicalize_agent_q_current_policy_document(policy, canonical) ==
-            agent_q::AgentQCurrentPolicyDocumentStatus::ok &&
-        agent_q::encode_agent_q_current_policy_canonical_record(
+        signing::canonicalize_current_policy_document(policy, canonical) ==
+            signing::CurrentPolicyDocumentStatus::ok &&
+        signing::encode_current_policy_canonical_record(
             *canonical,
             bytes,
             sizeof(bytes),
-            &size) == agent_q::AgentQCurrentPolicyDocumentStatus::ok &&
-        size > agent_q::kAgentQCurrentPolicyDefaultCanonicalRecordBytes;
+            &size) == signing::CurrentPolicyDocumentStatus::ok &&
+        size > signing::kCurrentPolicyDefaultCanonicalRecordBytes;
     if (ok) {
         output->assign(bytes, bytes + size);
     }
@@ -199,56 +199,56 @@ bool make_non_empty_policy_record(std::vector<uint8_t>* output)
     constexpr const char* kSuiTypeTag =
         "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI";
     const char* amount_values[] = {"1000000000"};
-    const agent_q::AgentQCurrentPolicyCondition conditions[] = {
+    const signing::CurrentPolicyCondition conditions[] = {
         {
             "sui.token_totals_by_type.amount_raw",
-            agent_q::AgentQCurrentPolicyOperator::lte,
+            signing::CurrentPolicyOperator::lte,
             amount_values,
             sizeof(amount_values) / sizeof(amount_values[0]),
             kSuiTypeTag,
         },
     };
-    const agent_q::AgentQCurrentPolicy policies[] = {
+    const signing::CurrentPolicy policies[] = {
         {
             "sui-testnet-max-one-sui",
-            agent_q::AgentQCurrentPolicyAction::sign,
+            signing::CurrentPolicyAction::sign,
             conditions,
             sizeof(conditions) / sizeof(conditions[0]),
         },
     };
-    const agent_q::AgentQCurrentPolicyNetworkScope networks[] = {
+    const signing::CurrentPolicyNetworkScope networks[] = {
         {
             "testnet",
             policies,
             sizeof(policies) / sizeof(policies[0]),
         },
     };
-    const agent_q::AgentQCurrentPolicyBlockchainScope blockchains[] = {
+    const signing::CurrentPolicyBlockchainScope blockchains[] = {
         {
             "sui",
             networks,
             sizeof(networks) / sizeof(networks[0]),
         },
     };
-    const agent_q::AgentQCurrentPolicyDocument policy = {
-        agent_q::kAgentQCurrentPolicySchema,
-        agent_q::AgentQCurrentPolicyAction::reject,
+    const signing::CurrentPolicyDocument policy = {
+        signing::kCurrentPolicySchema,
+        signing::CurrentPolicyAction::reject,
         blockchains,
         sizeof(blockchains) / sizeof(blockchains[0]),
     };
 
-    auto* canonical = new agent_q::AgentQCurrentPolicyCanonicalDocument();
-    uint8_t bytes[agent_q::kAgentQCurrentPolicyMaxCanonicalRecordBytes] = {};
+    auto* canonical = new signing::CurrentPolicyCanonicalDocument();
+    uint8_t bytes[signing::kCurrentPolicyMaxCanonicalRecordBytes] = {};
     size_t size = 0;
     const bool ok =
-        agent_q::canonicalize_agent_q_current_policy_document(policy, canonical) ==
-            agent_q::AgentQCurrentPolicyDocumentStatus::ok &&
-        agent_q::encode_agent_q_current_policy_canonical_record(
+        signing::canonicalize_current_policy_document(policy, canonical) ==
+            signing::CurrentPolicyDocumentStatus::ok &&
+        signing::encode_current_policy_canonical_record(
             *canonical,
             bytes,
             sizeof(bytes),
-            &size) == agent_q::AgentQCurrentPolicyDocumentStatus::ok &&
-        size > agent_q::kAgentQCurrentPolicyDefaultCanonicalRecordBytes;
+            &size) == signing::CurrentPolicyDocumentStatus::ok &&
+        size > signing::kCurrentPolicyDefaultCanonicalRecordBytes;
     if (ok) {
         output->assign(bytes, bytes + size);
     }
@@ -261,10 +261,10 @@ bool make_default_record(std::vector<uint8_t>* output)
     if (output == nullptr) {
         return false;
     }
-    uint8_t bytes[agent_q::kAgentQCurrentPolicyDefaultCanonicalRecordBytes] = {};
+    uint8_t bytes[signing::kCurrentPolicyDefaultCanonicalRecordBytes] = {};
     size_t size = 0;
-    if (agent_q::encode_agent_q_current_policy_default_record(bytes, sizeof(bytes), &size) !=
-            agent_q::AgentQCurrentPolicyDocumentStatus::ok ||
+    if (signing::encode_current_policy_default_record(bytes, sizeof(bytes), &size) !=
+            signing::CurrentPolicyDocumentStatus::ok ||
         size != sizeof(bytes)) {
         return false;
     }
@@ -340,15 +340,15 @@ esp_err_t nvs_commit(nvs_handle_t)
 int main()
 {
     reset_store_stubs();
-    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::missing,
+    expect(signing::active_policy_status() == signing::PolicyStoreStatus::missing,
            "empty NVS reports missing policy");
 
-    expect(agent_q::store_default_policy(), "store default current policy");
-    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::active,
+    expect(signing::store_default_policy(), "store default current policy");
+    expect(signing::active_policy_status() == signing::PolicyStoreStatus::active,
            "default current policy is active");
-    agent_q::AgentQStoredPolicySummary summary = {};
-    expect(agent_q::read_active_policy_summary(&summary), "read default policy summary");
-    expect(strcmp(summary.schema, agent_q::kAgentQCurrentPolicySchema) == 0,
+    signing::StoredPolicySummary summary = {};
+    expect(signing::read_active_policy_summary(&summary), "read default policy summary");
+    expect(strcmp(summary.schema, signing::kCurrentPolicySchema) == 0,
            "default policy schema");
     expect(strcmp(summary.default_action, "reject") == 0, "default action is reject");
     expect(summary.blockchain_count == 0, "default blockchain count");
@@ -356,22 +356,22 @@ int main()
     expect(summary.policy_count == 0, "default policy count");
     expect(summary.condition_count == 0, "default condition count");
 
-    agent_q::AgentQStoredPolicyDocument document = {};
-    expect(agent_q::read_active_policy_document(&document), "read default policy document");
+    signing::StoredPolicyDocument document = {};
+    expect(signing::read_active_policy_document(&document), "read default policy document");
     expect(document.document != nullptr, "default policy runtime document exists");
     expect(document.document->blockchain_count == 0, "default runtime document has no scopes");
 
     std::vector<uint8_t> scoped_record;
     expect(make_scoped_empty_policy_record(&scoped_record), "build scoped empty current policy record");
-    expect(agent_q::store_active_policy_record(scoped_record.data(), scoped_record.size()) ==
-               agent_q::AgentQPolicyStoreWriteResult::applied,
+    expect(signing::store_active_policy_record(scoped_record.data(), scoped_record.size()) ==
+               signing::PolicyStoreWriteResult::applied,
            "store scoped empty current policy record");
-    expect(agent_q::read_active_policy_summary(&summary), "read scoped empty policy summary");
+    expect(signing::read_active_policy_summary(&summary), "read scoped empty policy summary");
     expect(summary.blockchain_count == 1, "scoped empty blockchain count");
     expect(summary.network_count == 1, "scoped empty network count");
     expect(summary.policy_count == 0, "scoped empty policy count");
     expect(summary.condition_count == 0, "scoped empty condition count");
-    expect(agent_q::read_active_policy_document(&document), "read scoped empty policy document");
+    expect(signing::read_active_policy_document(&document), "read scoped empty policy document");
     expect(document.document != nullptr, "scoped empty policy runtime document exists");
     expect(document.document->blockchain_count == 1, "scoped empty runtime blockchain count");
     expect(strcmp(document.document->blockchains[0].blockchain, "sui") == 0,
@@ -384,15 +384,15 @@ int main()
 
     std::vector<uint8_t> non_empty_record;
     expect(make_non_empty_policy_record(&non_empty_record), "build non-empty current policy record");
-    expect(agent_q::store_active_policy_record(non_empty_record.data(), non_empty_record.size()) ==
-               agent_q::AgentQPolicyStoreWriteResult::applied,
+    expect(signing::store_active_policy_record(non_empty_record.data(), non_empty_record.size()) ==
+               signing::PolicyStoreWriteResult::applied,
            "store non-empty current policy record");
-    expect(agent_q::read_active_policy_summary(&summary), "read non-empty policy summary");
+    expect(signing::read_active_policy_summary(&summary), "read non-empty policy summary");
     expect(summary.blockchain_count == 1, "non-empty blockchain count");
     expect(summary.network_count == 1, "non-empty network count");
     expect(summary.policy_count == 1, "non-empty policy count");
     expect(summary.condition_count == 1, "non-empty condition count");
-    expect(agent_q::read_active_policy_document(&document), "read non-empty policy document");
+    expect(signing::read_active_policy_document(&document), "read non-empty policy document");
     expect(document.document != nullptr, "non-empty policy runtime document exists");
     expect(document.document->blockchains[0].networks[0].policy_count == 1,
            "non-empty runtime policy count");
@@ -400,30 +400,30 @@ int main()
                   "sui-testnet-max-one-sui") == 0,
            "non-empty runtime policy id");
     expect(document.document->blockchains[0].networks[0].policies[0].action ==
-               agent_q::AgentQCurrentPolicyAction::sign,
+               signing::CurrentPolicyAction::sign,
            "non-empty runtime policy action");
     expect(document.document->blockchains[0].networks[0].policies[0].condition_count == 1,
            "non-empty runtime condition count");
 
     const uint8_t previous_shape_record[] = {'A', 'Q', 'P', '0', 0, 0, 0, 0};
-    expect(agent_q::store_active_policy_record(previous_shape_record, sizeof(previous_shape_record)) ==
-               agent_q::AgentQPolicyStoreWriteResult::invalid_record,
+    expect(signing::store_active_policy_record(previous_shape_record, sizeof(previous_shape_record)) ==
+               signing::PolicyStoreWriteResult::invalid_record,
            "previous policy material is not active current policy");
-    expect(agent_q::read_active_policy_summary(&summary), "previous invalid write preserves active policy");
+    expect(signing::read_active_policy_summary(&summary), "previous invalid write preserves active policy");
     expect(summary.policy_count == 1, "active policy unchanged after invalid record");
 
     std::vector<uint8_t> default_record;
     expect(make_default_record(&default_record), "build default current record");
     g_commit_metadata_write_fails = true;
-    expect(agent_q::store_active_policy_record(default_record.data(), default_record.size()) !=
-               agent_q::AgentQPolicyStoreWriteResult::applied,
+    expect(signing::store_active_policy_record(default_record.data(), default_record.size()) !=
+               signing::PolicyStoreWriteResult::applied,
            "commit metadata write failure does not report applied");
     g_commit_metadata_write_fails = false;
-    expect(agent_q::read_active_policy_summary(&summary), "policy remains readable after failed commit");
+    expect(signing::read_active_policy_summary(&summary), "policy remains readable after failed commit");
     expect(summary.policy_count == 1, "failed commit preserves previous active policy");
 
-    expect(agent_q::wipe_policy(), "wipe policy material");
-    expect(agent_q::active_policy_status() == agent_q::AgentQPolicyStoreStatus::missing,
+    expect(signing::wipe_policy(), "wipe policy material");
+    expect(signing::active_policy_status() == signing::PolicyStoreStatus::missing,
            "wipe removes policy material");
 
     if (failures != 0) {
@@ -447,12 +447,12 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
   -I"${TMP_DIR}" \
-  -I"${TARGET_ROOT}/agent_q" \
+  -I"${TARGET_ROOT}/runtime" \
   -I"${COMMON_ROOT}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
   "${TMP_DIR}/policy_store_test.cpp" \
-  "${TARGET_ROOT}/agent_q/agent_q_policy_store.cpp" \
-  "${COMMON_ROOT}/policy/agent_q_policy_document.cpp" \
+  "${TARGET_ROOT}/runtime/policy_store.cpp" \
+  "${COMMON_ROOT}/policy/document.cpp" \
   "${TMP_DIR}/sha256.o" \
   "${TMP_DIR}/platform_util.o" \
   -o "${TMP_DIR}/policy_store_test"

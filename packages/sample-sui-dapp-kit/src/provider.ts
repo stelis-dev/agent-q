@@ -1,11 +1,11 @@
-import type { AgentQSuiWalletProvider } from "@stelis/agent-q-provider-sui/wallet-standard";
-import { createAgentQSuiBrowserProvider } from "@stelis/agent-q-provider-sui/browser";
+import type { SuiDeviceWalletProvider } from "@stelis/agent-q-provider-sui/wallet-standard";
+import { createSuiBrowserDeviceProvider } from "@stelis/agent-q-provider-sui/browser";
 
-export function createAgentQProvider(): AgentQSuiWalletProvider | null {
+export function createDeviceProvider(): SuiDeviceWalletProvider | null {
   if (typeof window === "undefined") {
     return null;
   }
-  return createAgentQSuiBrowserProvider({
+  return createSuiBrowserDeviceProvider({
     clientName: "Agent-Q Sui dapp-kit Sample",
   });
 }

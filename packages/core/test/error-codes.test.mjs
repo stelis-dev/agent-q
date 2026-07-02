@@ -6,7 +6,7 @@ import { normalizeErrorCode, PUBLIC_ERROR_MESSAGES } from "../dist/public-error.
 
 // Drift guard: derive the set of literal error codes Agent-Q can throw straight
 // from production sources, and assert each one is a current DeviceErrorCode.
-// A new `new AgentQError("x", ...)` or provider-visible error that forgets to
+// A new `new DeviceRequestError("x", ...)` or provider-visible error that forgets to
 // use a current DeviceErrorCode would otherwise silently collapse to
 // unknown_error at every output boundary.
 // Codes built from a variable (e.g. a parsed Firmware error code) are not matched
@@ -35,7 +35,7 @@ const SRC_DIRS = [
   sourcePath("../../provider-sui/src"),
 ];
 const SRC_FILES = SRC_DIRS.flatMap((dir) => listTsFiles(dir)).sort();
-const LITERAL_CODE = /new\s+(?:AgentQError|ConfigError|ProtocolError|AgentQSuiBrowserProviderError)\(\s*"([a-z_]+)"/g;
+const LITERAL_CODE = /new\s+(?:DeviceRequestError|ConfigError|ProtocolError|SuiBrowserDeviceProviderError)\(\s*"([a-z_]+)"/g;
 
 const producedCodes = new Set();
 for (const file of SRC_FILES) {

@@ -1,12 +1,12 @@
-if(NOT DEFINED ENV{AGENT_Q_SIGNING_CRYPTO_ROOT})
-    message(FATAL_ERROR "AGENT_Q_SIGNING_CRYPTO_ROOT must point to the pinned signing source checkout.")
+if(NOT DEFINED ENV{SIGNING_CRYPTO_ROOT})
+    message(FATAL_ERROR "SIGNING_CRYPTO_ROOT must point to the pinned signing source checkout.")
 endif()
 
-set(SIGNING_CRYPTO_ROOT "$ENV{AGENT_Q_SIGNING_CRYPTO_ROOT}")
+set(SIGNING_CRYPTO_ROOT "$ENV{SIGNING_CRYPTO_ROOT}")
 set(SIGNING_CRYPTO_CORE "${SIGNING_CRYPTO_ROOT}/src/microsui_core")
 
 if(NOT EXISTS "${SIGNING_CRYPTO_CORE}/sign.c")
-    message(FATAL_ERROR "AGENT_Q_SIGNING_CRYPTO_ROOT does not contain src/microsui_core/sign.c: ${SIGNING_CRYPTO_ROOT}")
+    message(FATAL_ERROR "SIGNING_CRYPTO_ROOT does not contain src/microsui_core/sign.c: ${SIGNING_CRYPTO_ROOT}")
 endif()
 
 idf_component_register(

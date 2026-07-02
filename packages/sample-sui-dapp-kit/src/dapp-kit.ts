@@ -1,14 +1,14 @@
 import { createDAppKit } from "@mysten/dapp-kit-react";
 import { SuiGrpcClient } from "@mysten/sui/grpc";
-import { createAgentQSuiWalletInitializer } from "@stelis/agent-q-provider-sui/wallet-standard";
-import { createAgentQProvider } from "./provider";
+import { createSuiDeviceWalletInitializer } from "@stelis/agent-q-provider-sui/wallet-standard";
+import { createDeviceProvider } from "./provider";
 
 const NETWORKS = ["devnet"] as const;
 const GRPC_URLS: Record<(typeof NETWORKS)[number], string> = {
   devnet: "https://fullnode.devnet.sui.io:443",
 };
 
-export const agentQProvider = createAgentQProvider();
+export const deviceProvider = createDeviceProvider();
 
 export const dAppKit = createDAppKit({
   autoConnect: false,
@@ -20,9 +20,9 @@ export const dAppKit = createDAppKit({
   createClient(network) {
     return new SuiGrpcClient({ network, baseUrl: GRPC_URLS[network] });
   },
-  walletInitializers: agentQProvider === null
+  walletInitializers: deviceProvider === null
     ? []
-    : [createAgentQSuiWalletInitializer({ provider: agentQProvider })],
+    : [createSuiDeviceWalletInitializer({ provider: deviceProvider })],
 });
 
 declare module "@mysten/dapp-kit-react" {

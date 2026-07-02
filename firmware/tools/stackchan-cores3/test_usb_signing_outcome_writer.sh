@@ -3,20 +3,20 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
-ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
-  "${AGENT_Q_DIR}/agent_q_device_contract.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_signing_outcome_writer.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_signing_outcome_writer.h" \
-  "${AGENT_Q_DIR}/agent_q_signing_response_store.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signing_response_store.h" \
-  "${COMMON_ROOT}/agent_q_sign_route.h"; do
+  "${RUNTIME_DIR}/device_contract.cpp" \
+  "${RUNTIME_DIR}/device_contract.h" \
+  "${RUNTIME_DIR}/usb_signing_outcome_writer.cpp" \
+  "${RUNTIME_DIR}/usb_signing_outcome_writer.h" \
+  "${RUNTIME_DIR}/signing_response_store.cpp" \
+  "${RUNTIME_DIR}/signing_response_store.h" \
+  "${COMMON_ROOT}/protocol/sign_route.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -25,12 +25,12 @@ for required in \
 done
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-signing-outcome-writer.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-usb-signing-outcome-writer.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
-mkdir -p "${TMP_DIR}/agent_q_common"
+mkdir -p "${TMP_DIR}/firmware_common"
 mkdir -p "${TMP_DIR}/freertos"
-ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
-ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/agent_q_common/sui"
+ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
+ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/firmware_common/sui"
 
 cat >"${TMP_DIR}/freertos/FreeRTOS.h" <<'H'
 #pragma once
@@ -87,11 +87,11 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 
 #include <string>
 
-#include "agent_q_usb_signing_outcome_writer.h"
-#include "agent_q_device_contract.h"
-#include "agent_q_protocol_constants.h"
-#include "agent_q_signing_response_store.h"
-#include "agent_q_sui_zklogin_proof_store.h"
+#include "usb_signing_outcome_writer.h"
+#include "device_contract.h"
+#include "protocol_constants.h"
+#include "signing_response_store.h"
+#include "sui_zklogin_proof_store.h"
 
 namespace {
 
@@ -119,9 +119,9 @@ JsonDocument parse_json(const std::string& json)
 
 JsonDocument stored_json(const char* session_id, const char* request_id)
 {
-    char stored[agent_q::kSigningResponseMaxSize] = {};
+    char stored[signing::kResponseMaxSize] = {};
     size_t stored_len = 0;
-    assert(agent_q::signing_response_find(session_id, request_id, stored, sizeof(stored), &stored_len));
+    assert(signing::signing_response_find(session_id, request_id, stored, sizeof(stored), &stored_len));
     JsonDocument document;
     assert(!deserializeJson(document, stored, stored_len));
     return document;
@@ -129,19 +129,19 @@ JsonDocument stored_json(const char* session_id, const char* request_id)
 
 void fill_native_signature(uint8_t* signature, size_t signature_size)
 {
-    assert(signature_size >= agent_q::kSuiEd25519SignatureBytes);
+    assert(signature_size >= signing::kSuiEd25519SignatureBytes);
     memset(signature, 0, signature_size);
-    signature[0] = agent_q::kAgentQSuiSignatureSchemeFlagEd25519;
-    for (size_t index = 1; index < agent_q::kSuiEd25519SignatureBytes; ++index) {
+    signature[0] = signing::kSuiSignatureSchemeFlagEd25519;
+    for (size_t index = 1; index < signing::kSuiEd25519SignatureBytes; ++index) {
         signature[index] = static_cast<uint8_t>(index + 1);
     }
 }
 
 void fill_zklogin_signature(uint8_t* signature, size_t signature_size)
 {
-    assert(signature_size > agent_q::kSuiEd25519SignatureBytes);
+    assert(signature_size > signing::kSuiEd25519SignatureBytes);
     memset(signature, 0, signature_size);
-    signature[0] = agent_q::kAgentQSuiSignatureSchemeFlagZkLogin;
+    signature[0] = signing::kSuiSignatureSchemeFlagZkLogin;
     for (size_t index = 0; index < signature_size; ++index) {
         if (index != 0) {
             signature[index] = static_cast<uint8_t>(index + 1);
@@ -151,7 +151,7 @@ void fill_zklogin_signature(uint8_t* signature, size_t signature_size)
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 bool usb_response_write_json(JsonDocument& response)
 {
@@ -172,7 +172,7 @@ bool usb_response_prepare_success_result(
     }
     response.clear();
     response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
+    response["version"] = kProtocolVersion;
     response["success"] = true;
     response["method"] = method;
     response["result"].set(result);
@@ -185,7 +185,7 @@ bool usb_response_prepare_method_error(
     const char* method,
     const char* code)
 {
-    const AgentQDeviceErrorRow* error = device_error_row(code);
+    const DeviceErrorRow* error = device_error_row(code);
     if (error == nullptr) {
         error = device_error_row("unknown_error");
     }
@@ -194,7 +194,7 @@ bool usb_response_prepare_method_error(
     }
     response.clear();
     response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
+    response["version"] = kProtocolVersion;
     response["success"] = false;
     if (method != nullptr && method[0] != '\0') {
         response["method"] = method;
@@ -225,61 +225,61 @@ bool usb_response_write_error(const char* id, const char* code)
     return true;
 }
 
-const char* user_signing_flow_terminal_status(AgentQUserSigningTerminalResult result)
+const char* user_signing_flow_terminal_status(UserSigningTerminalResult result)
 {
     switch (result) {
-        case AgentQUserSigningTerminalResult::rejected:
+        case UserSigningTerminalResult::rejected:
             return "user_rejected";
-        case AgentQUserSigningTerminalResult::timed_out:
+        case UserSigningTerminalResult::timed_out:
             return "user_timed_out";
-        case AgentQUserSigningTerminalResult::signing_failed:
+        case UserSigningTerminalResult::signing_failed:
             return "signing_failed";
-        case AgentQUserSigningTerminalResult::signed_success:
+        case UserSigningTerminalResult::signed_success:
             return "signed";
-        case AgentQUserSigningTerminalResult::canceled:
-        case AgentQUserSigningTerminalResult::history_error:
-        case AgentQUserSigningTerminalResult::none:
+        case UserSigningTerminalResult::canceled:
+        case UserSigningTerminalResult::history_error:
+        case UserSigningTerminalResult::none:
         default:
             return "";
     }
 }
 
-const char* user_signing_flow_terminal_reason(AgentQUserSigningTerminalResult result)
+const char* user_signing_flow_terminal_reason(UserSigningTerminalResult result)
 {
     switch (result) {
-        case AgentQUserSigningTerminalResult::rejected:
+        case UserSigningTerminalResult::rejected:
             return "user_rejected";
-        case AgentQUserSigningTerminalResult::timed_out:
+        case UserSigningTerminalResult::timed_out:
             return "user_timed_out";
-        case AgentQUserSigningTerminalResult::signing_failed:
+        case UserSigningTerminalResult::signing_failed:
             return "signing_failed";
-        case AgentQUserSigningTerminalResult::signed_success:
+        case UserSigningTerminalResult::signed_success:
             return "device_confirmed";
-        case AgentQUserSigningTerminalResult::canceled:
-        case AgentQUserSigningTerminalResult::history_error:
-        case AgentQUserSigningTerminalResult::none:
+        case UserSigningTerminalResult::canceled:
+        case UserSigningTerminalResult::history_error:
+        case UserSigningTerminalResult::none:
         default:
             return "";
     }
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 int main()
 {
-    agent_q::signing_response_clear_all();
+    signing::signing_response_clear_all();
 
-    uint8_t identity[agent_q::kAgentQSignRequestIdentitySize] = {};
+    uint8_t identity[signing::kSignRequestIdentitySize] = {};
     identity[0] = 0xA1;
 
     {
         reset_capture();
-        agent_q::AgentQPolicySigningExecutionResult result = {};
-        result.status = agent_q::AgentQPolicySigningExecutionStatus::signed_success;
-        result.signing_route = agent_q::AgentQSigningRoute::sui_sign_transaction;
+        signing::PolicySigningExecutionResult result = {};
+        result.status = signing::PolicySigningExecutionStatus::signed_success;
+        result.signing_route = signing::Route::sui_sign_transaction;
         fill_native_signature(result.signature, sizeof(result.signature));
-        result.signature_size = agent_q::kSuiEd25519SignatureBytes;
-        assert(agent_q::usb_signing_outcome_write_policy_execution(
+        result.signature_size = signing::kSuiEd25519SignatureBytes;
+        assert(signing::usb_signing_outcome_write_policy_execution(
             "req-policy-signed",
             "session-a",
             identity,
@@ -300,12 +300,12 @@ int main()
 
     {
         reset_capture();
-        agent_q::AgentQPolicySigningExecutionResult result = {};
-        result.status = agent_q::AgentQPolicySigningExecutionStatus::signed_success;
-        result.signing_route = agent_q::AgentQSigningRoute::sui_sign_transaction;
+        signing::PolicySigningExecutionResult result = {};
+        result.status = signing::PolicySigningExecutionStatus::signed_success;
+        result.signing_route = signing::Route::sui_sign_transaction;
         fill_zklogin_signature(result.signature, sizeof(result.signature));
-        result.signature_size = agent_q::kSuiEd25519SignatureBytes + 48;
-        assert(agent_q::usb_signing_outcome_write_policy_execution(
+        result.signature_size = signing::kSuiEd25519SignatureBytes + 48;
+        assert(signing::usb_signing_outcome_write_policy_execution(
             "req-policy-zklogin-signed",
             "session-a",
             identity,
@@ -321,22 +321,22 @@ int main()
 
     {
         reset_capture();
-        agent_q::AgentQUserSigningFlowSnapshot snapshot = {};
-        snapshot.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+        signing::UserSigningFlowSnapshot snapshot = {};
+        snapshot.signing_route = signing::Route::sui_sign_personal_message;
         memcpy(snapshot.request_identity, identity, sizeof(identity));
-        agent_q::AgentQUserSigningOutput output = {};
-        output.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+        signing::UserSigningOutput output = {};
+        output.signing_route = signing::Route::sui_sign_personal_message;
         fill_native_signature(output.signature, sizeof(output.signature));
-        output.signature_size = agent_q::kSuiEd25519SignatureBytes;
+        output.signature_size = signing::kSuiEd25519SignatureBytes;
         output.message_bytes[0] = 'h';
         output.message_bytes[1] = 'i';
         output.message_bytes_size = 2;
-        assert(agent_q::usb_signing_outcome_user_signed_response_fits(
+        assert(signing::usb_signing_outcome_user_signed_response_fits(
             "req-user-signed",
             "user",
             snapshot,
             output));
-        assert(agent_q::usb_signing_outcome_write_user_signed(
+        assert(signing::usb_signing_outcome_write_user_signed(
             "req-user-signed",
             "session-a",
             "user",
@@ -355,17 +355,17 @@ int main()
 
     {
         reset_capture();
-        agent_q::AgentQUserSigningFlowSnapshot snapshot = {};
-        snapshot.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+        signing::UserSigningFlowSnapshot snapshot = {};
+        snapshot.signing_route = signing::Route::sui_sign_personal_message;
         memcpy(snapshot.request_identity, identity, sizeof(identity));
-        agent_q::AgentQUserSigningOutput output = {};
-        output.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+        signing::UserSigningOutput output = {};
+        output.signing_route = signing::Route::sui_sign_personal_message;
         fill_zklogin_signature(output.signature, sizeof(output.signature));
-        output.signature_size = agent_q::kSuiEd25519SignatureBytes + 48;
+        output.signature_size = signing::kSuiEd25519SignatureBytes + 48;
         output.message_bytes[0] = 'h';
         output.message_bytes[1] = 'i';
         output.message_bytes_size = 2;
-        assert(agent_q::usb_signing_outcome_write_user_signed(
+        assert(signing::usb_signing_outcome_write_user_signed(
             "req-user-zklogin-personal-message",
             "session-a",
             "user",
@@ -383,36 +383,36 @@ int main()
 
     {
         reset_capture();
-        agent_q::AgentQUserSigningFlowSnapshot snapshot = {};
-        snapshot.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+        signing::UserSigningFlowSnapshot snapshot = {};
+        snapshot.signing_route = signing::Route::sui_sign_personal_message;
         memcpy(snapshot.request_identity, identity, sizeof(identity));
-        agent_q::AgentQUserSigningOutput output = {};
-        output.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+        signing::UserSigningOutput output = {};
+        output.signing_route = signing::Route::sui_sign_personal_message;
         fill_zklogin_signature(output.signature, sizeof(output.signature));
         output.signature_size = sizeof(output.signature);
-        for (size_t index = 0; index < agent_q::kAgentQSuiSignPersonalMessageMaxBytes; ++index) {
+        for (size_t index = 0; index < signing::kSuiSignPersonalMessageMaxBytes; ++index) {
             output.message_bytes[index] = static_cast<uint8_t>('A' + (index % 26));
         }
-        output.message_bytes_size = agent_q::kAgentQSuiSignPersonalMessageMaxBytes;
-        assert(agent_q::usb_signing_outcome_user_signed_response_fits(
+        output.message_bytes_size = signing::kSuiSignPersonalMessageMaxBytes;
+        assert(signing::usb_signing_outcome_user_signed_response_fits(
             "req-user-max-personal-message",
             "user",
             snapshot,
             output));
-        assert(agent_q::usb_signing_outcome_write_user_signed(
+        assert(signing::usb_signing_outcome_write_user_signed(
             "req-user-max-personal-message",
             "session-a",
             "user",
             snapshot,
             output));
         assert(g_json_writes == 1);
-        assert(g_last_json.size() < agent_q::kSigningResponseMaxSize);
+        assert(g_last_json.size() < signing::kResponseMaxSize);
         JsonDocument response = parse_json(g_last_json);
         assert(response["success"] == true);
         assert(strcmp(response["method"], "sign_personal_message") == 0);
         const char* message_bytes = response["result"]["messageBytes"];
         assert(message_bytes != nullptr);
-        assert(strlen(message_bytes) == agent_q::kAgentQSuiSignPersonalMessageMaxBase64Size);
+        assert(strlen(message_bytes) == signing::kSuiSignPersonalMessageMaxBase64Size);
         JsonDocument stored = stored_json("session-a", "req-user-max-personal-message");
         assert(stored["success"] == true);
         assert(strcmp(stored["method"], "sign_personal_message") == 0);
@@ -421,23 +421,23 @@ int main()
 
     {
         reset_capture();
-        agent_q::AgentQUserSigningFlowSnapshot snapshot = {};
-        snapshot.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+        signing::UserSigningFlowSnapshot snapshot = {};
+        snapshot.signing_route = signing::Route::sui_sign_personal_message;
         memcpy(snapshot.request_identity, identity, sizeof(identity));
-        agent_q::AgentQUserSigningOutput output = {};
-        output.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+        signing::UserSigningOutput output = {};
+        output.signing_route = signing::Route::sui_sign_personal_message;
         fill_native_signature(output.signature, sizeof(output.signature));
-        output.signature_size = agent_q::kSuiEd25519SignatureBytes;
+        output.signature_size = signing::kSuiEd25519SignatureBytes;
         output.message_bytes[0] = 'h';
         output.message_bytes[1] = 'i';
         output.message_bytes_size = 2;
-        std::string oversized_id(agent_q::kSigningResponseMaxSize, 'r');
-        assert(!agent_q::usb_signing_outcome_user_signed_response_fits(
+        std::string oversized_id(signing::kResponseMaxSize, 'r');
+        assert(!signing::usb_signing_outcome_user_signed_response_fits(
             oversized_id.c_str(),
             "user",
             snapshot,
             output));
-        assert(!agent_q::usb_signing_outcome_write_user_signed(
+        assert(!signing::usb_signing_outcome_write_user_signed(
             oversized_id.c_str(),
             "session-too-large",
             "user",
@@ -447,31 +447,31 @@ int main()
     }
 
     {
-        uint8_t conflicting_identity[agent_q::kAgentQSignRequestIdentitySize] = {};
+        uint8_t conflicting_identity[signing::kSignRequestIdentitySize] = {};
         conflicting_identity[0] = 0xB2;
         const char existing_response[] =
             "{\"id\":\"req-conflict\",\"version\":1,\"success\":true,"
             "\"method\":\"sign_personal_message\",\"result\":{}}";
-        assert(agent_q::signing_response_store(
+        assert(signing::signing_response_store(
             "session-conflict",
             "req-conflict",
             conflicting_identity,
             sizeof(conflicting_identity),
             existing_response,
             strlen(existing_response)) ==
-            agent_q::SigningResponseStoreOutcome::stored);
+            signing::ResponseStoreOutcome::stored);
         reset_capture();
-        agent_q::AgentQUserSigningFlowSnapshot snapshot = {};
-        snapshot.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+        signing::UserSigningFlowSnapshot snapshot = {};
+        snapshot.signing_route = signing::Route::sui_sign_personal_message;
         memcpy(snapshot.request_identity, identity, sizeof(identity));
-        agent_q::AgentQUserSigningOutput output = {};
-        output.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+        signing::UserSigningOutput output = {};
+        output.signing_route = signing::Route::sui_sign_personal_message;
         fill_native_signature(output.signature, sizeof(output.signature));
-        output.signature_size = agent_q::kSuiEd25519SignatureBytes;
+        output.signature_size = signing::kSuiEd25519SignatureBytes;
         output.message_bytes[0] = 'h';
         output.message_bytes[1] = 'i';
         output.message_bytes_size = 2;
-        assert(!agent_q::usb_signing_outcome_write_user_signed(
+        assert(!signing::usb_signing_outcome_write_user_signed(
             "req-conflict",
             "session-conflict",
             "user",
@@ -482,12 +482,12 @@ int main()
 
     {
         reset_capture();
-        assert(agent_q::usb_signing_outcome_write_user_terminal(
+        assert(signing::usb_signing_outcome_write_user_terminal(
             "req-user-rejected",
             "session-b",
             identity,
             "sign_personal_message",
-            agent_q::AgentQUserSigningTerminalResult::rejected));
+            signing::UserSigningTerminalResult::rejected));
         JsonDocument response = parse_json(g_last_json);
         assert(response["success"] == false);
         assert(strcmp(response["method"], "sign_personal_message") == 0);
@@ -501,11 +501,11 @@ int main()
 
     {
         reset_capture();
-        agent_q::AgentQPolicySigningExecutionResult result = {};
-        result.status = agent_q::AgentQPolicySigningExecutionStatus::account_error;
+        signing::PolicySigningExecutionResult result = {};
+        result.status = signing::PolicySigningExecutionStatus::account_error;
         result.code = "account_unavailable";
         result.message = "Signing account is unavailable.";
-        assert(agent_q::usb_signing_outcome_write_policy_execution(
+        assert(signing::usb_signing_outcome_write_policy_execution(
             "req-policy-error",
             "session-c",
             identity,
@@ -526,12 +526,12 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_signing_outcome_writer.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signing_response_store.cpp" \
+  "${RUNTIME_DIR}/device_contract.cpp" \
+  "${RUNTIME_DIR}/usb_signing_outcome_writer.cpp" \
+  "${RUNTIME_DIR}/signing_response_store.cpp" \
   -o "${TMP_DIR}/test_usb_signing_outcome_writer"
 
 "${TMP_DIR}/test_usb_signing_outcome_writer"

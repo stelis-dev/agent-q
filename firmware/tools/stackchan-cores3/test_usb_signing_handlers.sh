@@ -18,22 +18,22 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
-ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_signing_handlers.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_signing_handlers.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_response_writer.h" \
-  "${AGENT_Q_DIR}/agent_q_signing_preflight.h" \
-  "${AGENT_Q_DIR}/agent_q_sign_personal_message_limits.h" \
-  "${AGENT_Q_DIR}/agent_q_signing_response_store.h" \
-  "${AGENT_Q_DIR}/agent_q_sui_signing_service.h" \
-  "${AGENT_Q_DIR}/agent_q_policy_signing_execution.h" \
-  "${COMMON_ROOT}/sui/agent_q_sui_transaction_facts.h"; do
+  "${RUNTIME_DIR}/usb_signing_handlers.cpp" \
+  "${RUNTIME_DIR}/usb_signing_handlers.h" \
+  "${RUNTIME_DIR}/usb_operation_response_writer.h" \
+  "${RUNTIME_DIR}/signing_preflight.h" \
+  "${RUNTIME_DIR}/sign_personal_message_limits.h" \
+  "${RUNTIME_DIR}/signing_response_store.h" \
+  "${RUNTIME_DIR}/sui_signing_service.h" \
+  "${RUNTIME_DIR}/policy_signing_execution.h" \
+  "${COMMON_ROOT}/sui/transaction_facts.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -42,12 +42,12 @@ for required in \
 done
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-signing-handler.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-usb-signing-handler.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
-mkdir -p "${TMP_DIR}/agent_q_common"
+mkdir -p "${TMP_DIR}/firmware_common"
 mkdir -p "${TMP_DIR}/freertos"
-ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/agent_q_common/sui"
-ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
+ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/firmware_common/sui"
+ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
 
 cat >"${TMP_DIR}/freertos/FreeRTOS.h" <<'H'
 #pragma once
@@ -67,10 +67,10 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 
 #include <string>
 
-#include "agent_q_sign_personal_message_limits.h"
-#include "agent_q_signing_response_store.h"
-#include "agent_q_sui_signing_service.h"
-#include "agent_q_usb_signing_handlers.h"
+#include "sign_personal_message_limits.h"
+#include "signing_response_store.h"
+#include "sui_signing_service.h"
+#include "usb_signing_handlers.h"
 
 namespace {
 
@@ -103,24 +103,24 @@ int g_log_policy_rejected_calls = 0;
 int g_log_policy_failed_calls = 0;
 int g_log_policy_signed_calls = 0;
 
-agent_q::AgentQSigningAuthorizationMode g_mode =
-    agent_q::AgentQSigningAuthorizationMode::user;
-agent_q::AgentQSigningPreflightResult g_tx_preflight_result =
-    agent_q::AgentQSigningPreflightResult::ok;
-agent_q::AgentQSigningPreflightResult g_pm_preflight_result =
-    agent_q::AgentQSigningPreflightResult::ok;
-agent_q::AgentQSignTransactionUserIngressResult g_tx_ingress_result =
-    agent_q::AgentQSignTransactionUserIngressResult::ok;
-agent_q::AgentQSignPersonalMessageUserIngressResult g_pm_ingress_result =
-    agent_q::AgentQSignPersonalMessageUserIngressResult::ok;
-agent_q::AgentQSuiSigningPreparationResult g_preparation_result =
-    agent_q::AgentQSuiSigningPreparationResult::ok;
-agent_q::AgentQSignTransactionPolicyRuntimeStatus g_policy_status =
-    agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_authorized;
-agent_q::AgentQPolicySigningExecutionStatus g_execution_status =
-    agent_q::AgentQPolicySigningExecutionStatus::signed_success;
-agent_q::AgentQUserSigningFlowBeginResult g_begin_result =
-    agent_q::AgentQUserSigningFlowBeginResult::ok;
+signing::AuthorizationMode g_mode =
+    signing::AuthorizationMode::user;
+signing::PreflightResult g_tx_preflight_result =
+    signing::PreflightResult::ok;
+signing::PreflightResult g_pm_preflight_result =
+    signing::PreflightResult::ok;
+signing::SignTransactionUserIngressResult g_tx_ingress_result =
+    signing::SignTransactionUserIngressResult::ok;
+signing::SignPersonalMessageUserIngressResult g_pm_ingress_result =
+    signing::SignPersonalMessageUserIngressResult::ok;
+signing::SuiSigningPreparationResult g_preparation_result =
+    signing::SuiSigningPreparationResult::ok;
+signing::SignTransactionPolicyRuntimeStatus g_policy_status =
+    signing::SignTransactionPolicyRuntimeStatus::policy_authorized;
+signing::PolicySigningExecutionStatus g_execution_status =
+    signing::PolicySigningExecutionStatus::signed_success;
+signing::UserSigningFlowBeginResult g_begin_result =
+    signing::UserSigningFlowBeginResult::ok;
 bool g_policy_response_ok = true;
 bool g_show_review_ok = true;
 const char* g_policy_code = "policy_signed";
@@ -131,10 +131,10 @@ const char* g_last_error_code = nullptr;
 const char* g_last_policy_response_code = nullptr;
 const char* g_last_policy_response_message = nullptr;
 const char* g_last_notice_message = nullptr;
-agent_q::AgentQSigningRoute g_last_waiting_route =
-    agent_q::AgentQSigningRoute::sui_sign_transaction;
-agent_q::AgentQUsbSigningNoticeKind g_last_notice_kind =
-    agent_q::AgentQUsbSigningNoticeKind::info;
+signing::Route g_last_waiting_route =
+    signing::Route::sui_sign_transaction;
+signing::UsbSigningNoticeKind g_last_notice_kind =
+    signing::UsbSigningNoticeKind::info;
 
 char g_retry_buffer[512] = {};
 
@@ -168,15 +168,15 @@ void reset_state()
     g_log_policy_rejected_calls = 0;
     g_log_policy_failed_calls = 0;
     g_log_policy_signed_calls = 0;
-    g_mode = agent_q::AgentQSigningAuthorizationMode::user;
-    g_tx_preflight_result = agent_q::AgentQSigningPreflightResult::ok;
-    g_pm_preflight_result = agent_q::AgentQSigningPreflightResult::ok;
-    g_tx_ingress_result = agent_q::AgentQSignTransactionUserIngressResult::ok;
-    g_pm_ingress_result = agent_q::AgentQSignPersonalMessageUserIngressResult::ok;
-    g_preparation_result = agent_q::AgentQSuiSigningPreparationResult::ok;
-    g_policy_status = agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_authorized;
-    g_execution_status = agent_q::AgentQPolicySigningExecutionStatus::signed_success;
-    g_begin_result = agent_q::AgentQUserSigningFlowBeginResult::ok;
+    g_mode = signing::AuthorizationMode::user;
+    g_tx_preflight_result = signing::PreflightResult::ok;
+    g_pm_preflight_result = signing::PreflightResult::ok;
+    g_tx_ingress_result = signing::SignTransactionUserIngressResult::ok;
+    g_pm_ingress_result = signing::SignPersonalMessageUserIngressResult::ok;
+    g_preparation_result = signing::SuiSigningPreparationResult::ok;
+    g_policy_status = signing::SignTransactionPolicyRuntimeStatus::policy_authorized;
+    g_execution_status = signing::PolicySigningExecutionStatus::signed_success;
+    g_begin_result = signing::UserSigningFlowBeginResult::ok;
     g_policy_response_ok = true;
     g_show_review_ok = true;
     g_policy_code = "policy_signed";
@@ -186,8 +186,8 @@ void reset_state()
     g_last_policy_response_code = nullptr;
     g_last_policy_response_message = nullptr;
     g_last_notice_message = nullptr;
-    g_last_waiting_route = agent_q::AgentQSigningRoute::sui_sign_transaction;
-    g_last_notice_kind = agent_q::AgentQUsbSigningNoticeKind::info;
+    g_last_waiting_route = signing::Route::sui_sign_transaction;
+    g_last_notice_kind = signing::UsbSigningNoticeKind::info;
     memset(g_retry_buffer, 0, sizeof(g_retry_buffer));
 }
 
@@ -216,43 +216,43 @@ bool busy()
     return false;
 }
 
-agent_q::AgentQPayloadDeliveryAdmissionDecision admit_tx_payload_delivery(
-    const agent_q::AgentQPayloadDeliveryOperationAdmissionInput&)
+signing::PayloadDeliveryAdmissionDecision admit_tx_payload_delivery(
+    const signing::PayloadDeliveryOperationAdmissionInput&)
 {
     return {
-        agent_q::AgentQPayloadDeliveryAdmissionResult::ok,
-        agent_q::AgentQPayloadDeliveryAdmissionReason::idle_passthrough,
+        signing::PayloadDeliveryAdmissionResult::ok,
+        signing::PayloadDeliveryAdmissionReason::idle_passthrough,
     };
 }
 
-agent_q::AgentQSessionValidationResult validate_session(const char*, void*)
+signing::SessionValidationResult validate_session(const char*, void*)
 {
     g_validate_session_calls += 1;
-    return agent_q::AgentQSessionValidationResult::ok;
+    return signing::SessionValidationResult::ok;
 }
 
-bool read_mode(agent_q::AgentQSigningAuthorizationMode* mode, void*)
+bool read_mode(signing::AuthorizationMode* mode, void*)
 {
     g_read_mode_calls += 1;
     *mode = g_mode;
     return true;
 }
 
-agent_q::AgentQSigningPreflightRetryDisposition retry_responder(
+signing::PreflightRetryDisposition retry_responder(
     const char*,
     const char*,
-    const agent_q::AgentQSigningRetryDeliveryResult&,
+    const signing::RetryDeliveryResult&,
     const char*,
     void*)
 {
     g_retry_calls += 1;
-    return agent_q::AgentQSigningPreflightRetryDisposition::continue_preflight;
+    return signing::PreflightRetryDisposition::continue_preflight;
 }
 
-void fill_tx_preflight_output(agent_q::AgentQSignTransactionPreflightOutput* output)
+void fill_tx_preflight_output(signing::SignTransactionPreflightOutput* output)
 {
     memset(output, 0, sizeof(*output));
-    output->route = agent_q::AgentQSigningRoute::sui_sign_transaction;
+    output->route = signing::Route::sui_sign_transaction;
     output->ingress_result = g_tx_ingress_result;
     output->preparation_result = g_preparation_result;
     output->signing_mode = g_mode;
@@ -261,10 +261,10 @@ void fill_tx_preflight_output(agent_q::AgentQSignTransactionPreflightOutput* out
     output->request_identity[0] = 0x42;
 }
 
-void fill_pm_preflight_output(agent_q::AgentQSignPersonalMessagePreflightOutput* output)
+void fill_pm_preflight_output(signing::SignPersonalMessagePreflightOutput* output)
 {
     memset(output, 0, sizeof(*output));
-    output->route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+    output->route = signing::Route::sui_sign_personal_message;
     output->ingress_result = g_pm_ingress_result;
     output->preparation_result = g_preparation_result;
     output->signing_mode = g_mode;
@@ -273,11 +273,11 @@ void fill_pm_preflight_output(agent_q::AgentQSignPersonalMessagePreflightOutput*
     output->request_identity[0] = 0x43;
 }
 
-agent_q::AgentQSigningPreflightResult evaluate_tx_preflight(
+signing::PreflightResult evaluate_tx_preflight(
     JsonDocument&,
-    const agent_q::AgentQSignTransactionUserIngressState& state,
-    const agent_q::AgentQSigningPreflightRuntime& runtime,
-    agent_q::AgentQSignTransactionPreflightOutput* output)
+    const signing::SignTransactionUserIngressState& state,
+    const signing::PreflightRuntime& runtime,
+    signing::SignTransactionPreflightOutput* output)
 {
     g_tx_preflight_calls += 1;
     assert(state.material_ready);
@@ -291,11 +291,11 @@ agent_q::AgentQSigningPreflightResult evaluate_tx_preflight(
     return g_tx_preflight_result;
 }
 
-agent_q::AgentQSigningPreflightResult evaluate_pm_preflight(
+signing::PreflightResult evaluate_pm_preflight(
     JsonDocument&,
-    const agent_q::AgentQSignPersonalMessageUserIngressState& state,
-    const agent_q::AgentQSigningPreflightRuntime& runtime,
-    agent_q::AgentQSignPersonalMessagePreflightOutput* output)
+    const signing::SignPersonalMessageUserIngressState& state,
+    const signing::PreflightRuntime& runtime,
+    signing::SignPersonalMessagePreflightOutput* output)
 {
     g_pm_preflight_calls += 1;
     assert(state.material_ready);
@@ -313,11 +313,11 @@ void record_runtime_failure()
     g_record_runtime_failure_calls += 1;
 }
 
-agent_q::AgentQSignTransactionPolicyRuntimeResult evaluate_policy(
-    const agent_q::AgentQSuiPreparedSignTransaction&)
+signing::SignTransactionPolicyRuntimeResult evaluate_policy(
+    const signing::SuiPreparedSignTransaction&)
 {
     g_policy_eval_calls += 1;
-    agent_q::AgentQSignTransactionPolicyRuntimeResult result = {};
+    signing::SignTransactionPolicyRuntimeResult result = {};
     result.status = g_policy_status;
     result.code = g_policy_code;
     result.message = g_policy_message;
@@ -327,11 +327,11 @@ agent_q::AgentQSignTransactionPolicyRuntimeResult evaluate_policy(
     return result;
 }
 
-agent_q::AgentQPolicySigningExecutionResult execute_policy(
-    const agent_q::AgentQSignTransactionPolicyRuntimeResult& policy_result)
+signing::PolicySigningExecutionResult execute_policy(
+    const signing::SignTransactionPolicyRuntimeResult& policy_result)
 {
     g_policy_execute_calls += 1;
-    agent_q::AgentQPolicySigningExecutionResult result = {};
+    signing::PolicySigningExecutionResult result = {};
     result.status = g_execution_status;
     result.code = policy_result.code;
     result.message = policy_result.message;
@@ -341,7 +341,7 @@ agent_q::AgentQPolicySigningExecutionResult execute_policy(
 bool write_policy_response(
     const char* id,
     const uint8_t* request_identity,
-    const agent_q::AgentQPolicySigningExecutionResult& result)
+    const signing::PolicySigningExecutionResult& result)
 {
     g_policy_response_calls += 1;
     assert(strcmp(id, "id-1") == 0);
@@ -351,58 +351,58 @@ bool write_policy_response(
     return g_policy_response_ok;
 }
 
-void clear_policy_execution(agent_q::AgentQPolicySigningExecutionResult*)
+void clear_policy_execution(signing::PolicySigningExecutionResult*)
 {
     g_clear_policy_execution_calls += 1;
 }
 
-void clear_policy_runtime(agent_q::AgentQSignTransactionPolicyRuntimeResult*)
+void clear_policy_runtime(signing::SignTransactionPolicyRuntimeResult*)
 {
     g_clear_policy_runtime_calls += 1;
 }
 
-agent_q::AgentQTimeoutWindow make_window(agent_q::AgentQTimeoutTick now)
+signing::TimeoutWindow make_window(signing::TimeoutTick now)
 {
     g_make_window_calls += 1;
-    return agent_q::AgentQTimeoutWindow{now, static_cast<agent_q::AgentQTimeoutTick>(now + 10)};
+    return signing::TimeoutWindow{now, static_cast<signing::TimeoutTick>(now + 10)};
 }
 
-agent_q::AgentQUserSigningFlowBeginResult begin_tx(
-    agent_q::AgentQTimeoutTick now,
-    const agent_q::AgentQUserSigningTransactionBeginInput& input)
+signing::UserSigningFlowBeginResult begin_tx(
+    signing::TimeoutTick now,
+    const signing::UserSigningTransactionBeginInput& input)
 {
     g_begin_tx_calls += 1;
     assert(now == 10);
     assert(strcmp(input.request_id, "req-1") == 0);
     assert(strcmp(input.session_id, "session-1") == 0);
     assert(input.request_identity[0] == 0x42);
-    assert(input.route == agent_q::AgentQSigningRoute::sui_sign_transaction);
+    assert(input.route == signing::Route::sui_sign_transaction);
     assert(input.prepared != nullptr);
     assert(input.request_window.started_at == 10);
     return g_begin_result;
 }
 
-agent_q::AgentQUserSigningFlowBeginResult begin_pm(
-    agent_q::AgentQTimeoutTick now,
-    const agent_q::AgentQUserSigningPersonalMessageBeginInput& input)
+signing::UserSigningFlowBeginResult begin_pm(
+    signing::TimeoutTick now,
+    const signing::UserSigningPersonalMessageBeginInput& input)
 {
     g_begin_pm_calls += 1;
     assert(now == 10);
     assert(strcmp(input.request_id, "req-2") == 0);
     assert(strcmp(input.session_id, "session-2") == 0);
     assert(input.request_identity[0] == 0x43);
-    assert(input.route == agent_q::AgentQSigningRoute::sui_sign_personal_message);
+    assert(input.route == signing::Route::sui_sign_personal_message);
     assert(input.prepared != nullptr);
     assert(input.request_window.deadline == 20);
     return g_begin_result;
 }
 
-void clear_tx_prepared(agent_q::AgentQSuiPreparedSignTransaction*)
+void clear_tx_prepared(signing::SuiPreparedSignTransaction*)
 {
     g_clear_tx_prepared_calls += 1;
 }
 
-void clear_pm_prepared(agent_q::AgentQSuiPreparedPersonalMessage*)
+void clear_pm_prepared(signing::SuiPreparedPersonalMessage*)
 {
     g_clear_pm_prepared_calls += 1;
 }
@@ -423,14 +423,14 @@ void show_display_error()
     g_display_error_calls += 1;
 }
 
-void record_waiting(const char* id, agent_q::AgentQSigningRoute route)
+void record_waiting(const char* id, signing::Route route)
 {
     g_waiting_calls += 1;
     g_last_id = id;
     g_last_waiting_route = route;
 }
 
-void show_notice(const char* message, agent_q::AgentQUsbSigningNoticeKind kind)
+void show_notice(const char* message, signing::UsbSigningNoticeKind kind)
 {
     g_notice_calls += 1;
     g_last_notice_message = message;
@@ -452,14 +452,14 @@ void log_policy_signed(const char*, const char*, const char*, const char*)
     g_log_policy_signed_calls += 1;
 }
 
-agent_q::AgentQTimeoutTick current_tick()
+signing::TimeoutTick current_tick()
 {
     return 10;
 }
 
-agent_q::AgentQUsbSigningHandlerOps make_ops()
+signing::UsbSigningHandlerOps make_ops()
 {
-    return agent_q::AgentQUsbSigningHandlerOps{
+    return signing::UsbSigningHandlerOps{
         material_ready,
         busy,
         busy,
@@ -498,9 +498,9 @@ agent_q::AgentQUsbSigningHandlerOps make_ops()
     };
 }
 
-agent_q::AgentQUsbOperationResponseWriter make_writer()
+signing::UsbOperationResponseWriter make_writer()
 {
-    return agent_q::AgentQUsbOperationResponseWriter{
+    return signing::UsbOperationResponseWriter{
         write_error,
         log_write_failure,
     };
@@ -510,8 +510,8 @@ void test_unavailable_ops()
 {
     reset_state();
     JsonDocument request;
-    agent_q::AgentQUsbSigningHandlerOps ops = {};
-    agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), ops);
+    signing::UsbSigningHandlerOps ops = {};
+    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), ops);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "internal_output_error") == 0);
     assert(g_tx_preflight_calls == 0);
@@ -520,10 +520,10 @@ void test_unavailable_ops()
 void test_transaction_ingress_error_mapping()
 {
     reset_state();
-    g_tx_preflight_result = agent_q::AgentQSigningPreflightResult::transaction_ingress_error;
-    g_tx_ingress_result = agent_q::AgentQSignTransactionUserIngressResult::invalid_tx_bytes;
+    g_tx_preflight_result = signing::PreflightResult::transaction_ingress_error;
+    g_tx_ingress_result = signing::SignTransactionUserIngressResult::invalid_tx_bytes;
     JsonDocument request;
-    agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_tx_preflight_calls == 1);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "invalid_params") == 0);
@@ -533,10 +533,10 @@ void test_transaction_ingress_error_mapping()
 void test_personal_message_ingress_error_mapping()
 {
     reset_state();
-    g_pm_preflight_result = agent_q::AgentQSigningPreflightResult::personal_message_ingress_error;
-    g_pm_ingress_result = agent_q::AgentQSignPersonalMessageUserIngressResult::invalid_message;
+    g_pm_preflight_result = signing::PreflightResult::personal_message_ingress_error;
+    g_pm_ingress_result = signing::SignPersonalMessageUserIngressResult::invalid_message;
     JsonDocument request;
-    agent_q::handle_usb_sign_personal_message_request("id-2", request, make_writer(), make_ops());
+    signing::handle_usb_sign_personal_message_request("id-2", request, make_writer(), make_ops());
     assert(g_pm_preflight_calls == 1);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "invalid_params") == 0);
@@ -546,10 +546,10 @@ void test_personal_message_ingress_error_mapping()
 void test_personal_message_capacity_ingress_error_mapping()
 {
     reset_state();
-    g_pm_preflight_result = agent_q::AgentQSigningPreflightResult::personal_message_ingress_error;
-    g_pm_ingress_result = agent_q::AgentQSignPersonalMessageUserIngressResult::message_too_large;
+    g_pm_preflight_result = signing::PreflightResult::personal_message_ingress_error;
+    g_pm_ingress_result = signing::SignPersonalMessageUserIngressResult::message_too_large;
     JsonDocument request;
-    agent_q::handle_usb_sign_personal_message_request("id-2", request, make_writer(), make_ops());
+    signing::handle_usb_sign_personal_message_request("id-2", request, make_writer(), make_ops());
     assert(g_pm_preflight_calls == 1);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "payload_too_large") == 0);
@@ -562,8 +562,8 @@ void test_max_personal_message_success_response_fits_retained_budget()
     result["authorization"] = "user";
     result["chain"] = "sui";
     result["method"] = "sign_personal_message";
-    result["signature"] = std::string(agent_q::kSuiSignatureEnvelopeBase64MaxChars, 'A');
-    result["messageBytes"] = std::string(agent_q::kAgentQSuiSignPersonalMessageMaxBase64Size, 'A');
+    result["signature"] = std::string(signing::kSuiSignatureEnvelopeBase64MaxChars, 'A');
+    result["messageBytes"] = std::string(signing::kSuiSignPersonalMessageMaxBase64Size, 'A');
 
     JsonDocument response;
     response["id"] = "req_sign_budget";
@@ -574,16 +574,16 @@ void test_max_personal_message_success_response_fits_retained_budget()
 
     std::string serialized;
     serializeJson(response, serialized);
-    assert(serialized.size() < agent_q::kSigningResponseMaxSize);
+    assert(serialized.size() < signing::kResponseMaxSize);
 }
 
 void test_preparation_account_failure_mapping()
 {
     reset_state();
-    g_tx_preflight_result = agent_q::AgentQSigningPreflightResult::transaction_preparation_error;
-    g_preparation_result = agent_q::AgentQSuiSigningPreparationResult::account_unavailable;
+    g_tx_preflight_result = signing::PreflightResult::transaction_preparation_error;
+    g_preparation_result = signing::SuiSigningPreparationResult::account_unavailable;
     JsonDocument request;
-    agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_record_runtime_failure_calls == 1);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "account_unavailable") == 0);
@@ -593,10 +593,10 @@ void test_preparation_account_failure_mapping()
 void test_preparation_active_identity_failure_mapping()
 {
     reset_state();
-    g_tx_preflight_result = agent_q::AgentQSigningPreflightResult::transaction_preparation_error;
-    g_preparation_result = agent_q::AgentQSuiSigningPreparationResult::active_identity_unavailable;
+    g_tx_preflight_result = signing::PreflightResult::transaction_preparation_error;
+    g_preparation_result = signing::SuiSigningPreparationResult::active_identity_unavailable;
     JsonDocument request;
-    agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_record_runtime_failure_calls == 0);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "account_unavailable") == 0);
@@ -606,10 +606,10 @@ void test_preparation_active_identity_failure_mapping()
 void test_preparation_invalid_account_mapping()
 {
     reset_state();
-    g_tx_preflight_result = agent_q::AgentQSigningPreflightResult::transaction_preparation_error;
-    g_preparation_result = agent_q::AgentQSuiSigningPreparationResult::invalid_account;
+    g_tx_preflight_result = signing::PreflightResult::transaction_preparation_error;
+    g_preparation_result = signing::SuiSigningPreparationResult::invalid_account;
     JsonDocument request;
-    agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_record_runtime_failure_calls == 0);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "account_unavailable") == 0);
@@ -620,10 +620,10 @@ void test_personal_message_preparation_account_failure_mapping()
 {
     reset_state();
     g_pm_preflight_result =
-        agent_q::AgentQSigningPreflightResult::personal_message_preparation_error;
-    g_preparation_result = agent_q::AgentQSuiSigningPreparationResult::account_unavailable;
+        signing::PreflightResult::personal_message_preparation_error;
+    g_preparation_result = signing::SuiSigningPreparationResult::account_unavailable;
     JsonDocument request;
-    agent_q::handle_usb_sign_personal_message_request("id-2", request, make_writer(), make_ops());
+    signing::handle_usb_sign_personal_message_request("id-2", request, make_writer(), make_ops());
     assert(g_record_runtime_failure_calls == 1);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "account_unavailable") == 0);
@@ -634,14 +634,14 @@ void test_transaction_preparation_unsupported_notifies()
 {
     reset_state();
     g_tx_preflight_result =
-        agent_q::AgentQSigningPreflightResult::transaction_preparation_error;
-    g_preparation_result = agent_q::AgentQSuiSigningPreparationResult::unsupported_transaction;
+        signing::PreflightResult::transaction_preparation_error;
+    g_preparation_result = signing::SuiSigningPreparationResult::unsupported_transaction;
     JsonDocument request;
-    agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "unsupported_transaction") == 0);
     assert(g_notice_calls == 1);
-    assert(g_last_notice_kind == agent_q::AgentQUsbSigningNoticeKind::error);
+    assert(g_last_notice_kind == signing::UsbSigningNoticeKind::error);
     assert(strcmp(g_last_notice_message, "Unsupported transaction") == 0);
     assert(g_begin_tx_calls == 0);
 }
@@ -650,14 +650,14 @@ void test_transaction_preparation_payload_too_large_notifies()
 {
     reset_state();
     g_tx_preflight_result =
-        agent_q::AgentQSigningPreflightResult::transaction_preparation_error;
-    g_preparation_result = agent_q::AgentQSuiSigningPreparationResult::payload_too_large;
+        signing::PreflightResult::transaction_preparation_error;
+    g_preparation_result = signing::SuiSigningPreparationResult::payload_too_large;
     JsonDocument request;
-    agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "payload_too_large") == 0);
     assert(g_notice_calls == 1);
-    assert(g_last_notice_kind == agent_q::AgentQUsbSigningNoticeKind::error);
+    assert(g_last_notice_kind == signing::UsbSigningNoticeKind::error);
     assert(strcmp(g_last_notice_message, "Payload too large") == 0);
     assert(g_begin_tx_calls == 0);
 }
@@ -665,9 +665,9 @@ void test_transaction_preparation_payload_too_large_notifies()
 void test_retry_consumed_writes_no_error()
 {
     reset_state();
-    g_tx_preflight_result = agent_q::AgentQSigningPreflightResult::retry_consumed;
+    g_tx_preflight_result = signing::PreflightResult::retry_consumed;
     JsonDocument request;
-    agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_tx_preflight_calls == 1);
     assert(g_write_error_calls == 0);
     assert(g_begin_tx_calls == 0);
@@ -676,16 +676,16 @@ void test_retry_consumed_writes_no_error()
 void test_policy_signed_path_cleans_outputs()
 {
     reset_state();
-    g_mode = agent_q::AgentQSigningAuthorizationMode::policy;
-    g_execution_status = agent_q::AgentQPolicySigningExecutionStatus::signed_success;
+    g_mode = signing::AuthorizationMode::policy;
+    g_execution_status = signing::PolicySigningExecutionStatus::signed_success;
     JsonDocument request;
-    agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_policy_eval_calls == 1);
     assert(g_policy_execute_calls == 1);
     assert(g_policy_response_calls == 1);
     assert(g_log_policy_signed_calls == 1);
     assert(g_notice_calls == 2);
-    assert(g_last_notice_kind == agent_q::AgentQUsbSigningNoticeKind::success);
+    assert(g_last_notice_kind == signing::UsbSigningNoticeKind::success);
     assert(g_clear_policy_execution_calls == 1);
     assert(g_clear_policy_runtime_calls == 1);
     assert(g_clear_tx_prepared_calls == 2);
@@ -695,15 +695,15 @@ void test_policy_signed_path_cleans_outputs()
 void test_policy_response_failure_logs_and_cleans()
 {
     reset_state();
-    g_mode = agent_q::AgentQSigningAuthorizationMode::policy;
-    g_execution_status = agent_q::AgentQPolicySigningExecutionStatus::policy_rejected;
+    g_mode = signing::AuthorizationMode::policy;
+    g_execution_status = signing::PolicySigningExecutionStatus::policy_rejected;
     g_policy_response_ok = false;
     JsonDocument request;
-    agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_policy_response_calls == 1);
     assert(g_log_write_failure_calls == 1);
     assert(g_notice_calls == 2);
-    assert(g_last_notice_kind == agent_q::AgentQUsbSigningNoticeKind::error);
+    assert(g_last_notice_kind == signing::UsbSigningNoticeKind::error);
     assert(g_clear_policy_execution_calls == 1);
     assert(g_clear_policy_runtime_calls == 1);
     assert(g_clear_tx_prepared_calls == 2);
@@ -712,16 +712,16 @@ void test_policy_response_failure_logs_and_cleans()
 void test_policy_signing_failed_path_cleans_outputs()
 {
     reset_state();
-    g_mode = agent_q::AgentQSigningAuthorizationMode::policy;
-    g_execution_status = agent_q::AgentQPolicySigningExecutionStatus::signing_failed;
+    g_mode = signing::AuthorizationMode::policy;
+    g_execution_status = signing::PolicySigningExecutionStatus::signing_failed;
     JsonDocument request;
-    agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_policy_eval_calls == 1);
     assert(g_policy_execute_calls == 1);
     assert(g_policy_response_calls == 1);
     assert(g_log_policy_failed_calls == 1);
     assert(g_notice_calls == 2);
-    assert(g_last_notice_kind == agent_q::AgentQUsbSigningNoticeKind::error);
+    assert(g_last_notice_kind == signing::UsbSigningNoticeKind::error);
     assert(g_clear_policy_execution_calls == 1);
     assert(g_clear_policy_runtime_calls == 1);
     assert(g_clear_tx_prepared_calls == 2);
@@ -731,20 +731,20 @@ void test_policy_signing_failed_path_cleans_outputs()
 void test_policy_unsupported_transaction_notifies()
 {
     reset_state();
-    g_mode = agent_q::AgentQSigningAuthorizationMode::policy;
-    g_policy_status = agent_q::AgentQSignTransactionPolicyRuntimeStatus::unsupported_transaction;
-    g_execution_status = agent_q::AgentQPolicySigningExecutionStatus::request_error;
+    g_mode = signing::AuthorizationMode::policy;
+    g_policy_status = signing::SignTransactionPolicyRuntimeStatus::unsupported_transaction;
+    g_execution_status = signing::PolicySigningExecutionStatus::request_error;
     g_policy_code = "unsupported_transaction";
     g_policy_message = "Policy cannot evaluate this transaction.";
     JsonDocument request;
-    agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_policy_eval_calls == 1);
     assert(g_policy_execute_calls == 1);
     assert(g_policy_response_calls == 1);
     assert(strcmp(g_last_policy_response_code, "unsupported_transaction") == 0);
     assert(strcmp(g_last_policy_response_message, "Policy cannot evaluate this transaction.") == 0);
     assert(g_notice_calls == 1);
-    assert(g_last_notice_kind == agent_q::AgentQUsbSigningNoticeKind::error);
+    assert(g_last_notice_kind == signing::UsbSigningNoticeKind::error);
     assert(strcmp(g_last_notice_message, "Policy cannot evaluate") == 0);
     assert(g_clear_policy_execution_calls == 1);
     assert(g_clear_policy_runtime_calls == 1);
@@ -756,28 +756,28 @@ void test_transaction_user_success()
 {
     reset_state();
     JsonDocument request;
-    agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_begin_tx_calls == 1);
     assert(g_clear_tx_prepared_calls == 2);
     assert(g_show_review_calls == 1);
     assert(g_waiting_calls == 1);
-    assert(g_last_waiting_route == agent_q::AgentQSigningRoute::sui_sign_transaction);
+    assert(g_last_waiting_route == signing::Route::sui_sign_transaction);
     assert(g_write_error_calls == 0);
 }
 
 void test_transaction_begin_failure_cleans_prepared()
 {
     reset_state();
-    g_begin_result = agent_q::AgentQUserSigningFlowBeginResult::malformed_transaction;
+    g_begin_result = signing::UserSigningFlowBeginResult::malformed_transaction;
     JsonDocument request;
-    agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_begin_tx_calls == 1);
     assert(g_clear_tx_prepared_calls == 2);
     assert(g_show_review_calls == 0);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "malformed_transaction") == 0);
     assert(g_notice_calls == 1);
-    assert(g_last_notice_kind == agent_q::AgentQUsbSigningNoticeKind::error);
+    assert(g_last_notice_kind == signing::UsbSigningNoticeKind::error);
     assert(strcmp(g_last_notice_message, "Malformed transaction") == 0);
 }
 
@@ -786,7 +786,7 @@ void test_transaction_ui_failure_cleans_flow()
     reset_state();
     g_show_review_ok = false;
     JsonDocument request;
-    agent_q::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_begin_tx_calls == 1);
     assert(g_clear_tx_prepared_calls == 2);
     assert(g_show_review_calls == 1);
@@ -800,9 +800,9 @@ void test_transaction_ui_failure_cleans_flow()
 void test_personal_message_policy_mode_error()
 {
     reset_state();
-    g_pm_preflight_result = agent_q::AgentQSigningPreflightResult::personal_message_policy_mode;
+    g_pm_preflight_result = signing::PreflightResult::personal_message_policy_mode;
     JsonDocument request;
-    agent_q::handle_usb_sign_personal_message_request("id-2", request, make_writer(), make_ops());
+    signing::handle_usb_sign_personal_message_request("id-2", request, make_writer(), make_ops());
     assert(g_pm_preflight_calls == 1);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "unsupported_method") == 0);
@@ -813,12 +813,12 @@ void test_personal_message_user_success()
 {
     reset_state();
     JsonDocument request;
-    agent_q::handle_usb_sign_personal_message_request("id-2", request, make_writer(), make_ops());
+    signing::handle_usb_sign_personal_message_request("id-2", request, make_writer(), make_ops());
     assert(g_begin_pm_calls == 1);
     assert(g_clear_pm_prepared_calls == 1);
     assert(g_show_review_calls == 1);
     assert(g_waiting_calls == 1);
-    assert(g_last_waiting_route == agent_q::AgentQSigningRoute::sui_sign_personal_message);
+    assert(g_last_waiting_route == signing::Route::sui_sign_personal_message);
     assert(g_write_error_calls == 0);
 }
 
@@ -854,11 +854,11 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${ARDUINOJSON_ROOT}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_signing_handlers.cpp" \
+  "${RUNTIME_DIR}/usb_signing_handlers.cpp" \
   -o "${TMP_DIR}/test_usb_signing_handlers"
 
 "${TMP_DIR}/test_usb_signing_handlers"

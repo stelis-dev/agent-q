@@ -31,7 +31,7 @@ on the device through `Settings > Accounts > Sui`.
 ## Run
 
 ```sh
-npm --workspace @stelis/agent-q-sample-zklogin-test-web run dev
+npm --workspace @stelis/sample-zklogin-test-web run dev
 ```
 
 For Enoki-backed testing, copy `.env.example` to `.env.local` and set an Enoki

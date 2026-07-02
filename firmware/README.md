@@ -41,7 +41,7 @@ firmware/src/stackchan-cores3/
 Build the StackChan CoreS3 target:
 
 ```bash
-AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
+FIRMWARE_IDF_PATH=/path/to/esp-idf-v5.5.4 \
   firmware/tools/stackchan-cores3/with-idf.sh \
   firmware/tools/stackchan-cores3/build.sh
 ```
@@ -124,7 +124,7 @@ appear in user-facing build commands or GitHub workflows.
 For the current StackChan CoreS3 target:
 
 ```bash
-AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
+FIRMWARE_IDF_PATH=/path/to/esp-idf-v5.5.4 \
   firmware/tools/stackchan-cores3/with-idf.sh \
   firmware/tools/stackchan-cores3/build.sh
 ```
@@ -136,10 +136,10 @@ run directly, while ESP-IDF-dependent target checks should be passed through the
 same launcher.
 
 ```bash
-AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
+FIRMWARE_IDF_PATH=/path/to/esp-idf-v5.5.4 \
   firmware/tools/stackchan-cores3/with-idf.sh \
   firmware/tools/stackchan-cores3/test_signing_preflight_order.sh
-AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
+FIRMWARE_IDF_PATH=/path/to/esp-idf-v5.5.4 \
   firmware/tools/stackchan-cores3/with-idf.sh \
   firmware/tools/stackchan-cores3/test_sign_request_identity_vectors.sh
 ```
@@ -157,7 +157,7 @@ firmware/tools/stackchan-cores3/test_sui_signing_preparation.sh
 
 The build script downloads the pinned host firmware and signing source into the
 ignored `.firmware-cache/` directory when needed, applies the tracked hardware
-overlay, and then builds. `AGENT_Q_SIGNING_CRYPTO_ROOT` may be used to point at
+overlay, and then builds. `SIGNING_CRYPTO_ROOT` may be used to point at
 a different local signing-source checkout for investigation, but the default
 tracked build path uses the pinned cache. GitHub Actions uses the same tracked
 script.

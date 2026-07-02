@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
-import { createDefaultAgentQCore } from "@stelis/agent-q-core";
+import { createDefaultDeviceCore } from "@stelis/agent-q-core";
 import {
   type ConnectDeviceResult,
   type DeviceListResult,
@@ -80,7 +80,7 @@ const signNetworkSchema = z.string().describe(
 
 const requirePackageJson = createRequire(import.meta.url);
 
-function readAgentQMcpServerVersion(): string {
+function readMcpServerVersion(): string {
   const packageJson = requirePackageJson("../package.json") as { version?: unknown };
   if (typeof packageJson.version !== "string" || packageJson.version.length === 0) {
     throw new Error("@stelis/agent-q package.json must define a non-empty version");
@@ -88,7 +88,7 @@ function readAgentQMcpServerVersion(): string {
   return packageJson.version;
 }
 
-const AGENT_Q_MCP_SERVER_VERSION = readAgentQMcpServerVersion();
+const MCP_SERVER_VERSION = readMcpServerVersion();
 
 function strictInputSchema<Shape extends z.ZodRawShape>(shape: Shape) {
   return z.object(shape).strict();
@@ -283,10 +283,10 @@ export const hostToolDefinitions = {
   },
 } as const;
 
-export function createAgentQMcpServer(core = createDefaultAgentQCore()): McpServer {
+export function createMcpServer(core = createDefaultDeviceCore()): McpServer {
   const server = new McpServer({
     name: "agent-q",
-    version: AGENT_Q_MCP_SERVER_VERSION,
+    version: MCP_SERVER_VERSION,
   });
 
   // run() is the single MCP output boundary. It sanitizes every result so that
@@ -306,7 +306,7 @@ export function createAgentQMcpServer(core = createDefaultAgentQCore()): McpServ
       raw = await work();
     } catch (error) {
       const publicError = toPublicErrorFromUnknown(error);
-      logToolDiagnostic("agent_q_tool_error", publicError.code, publicError.retryable);
+      logToolDiagnostic("tool_error", publicError.code, publicError.retryable);
       return withStructuredContent(toPublicErrorToolResult(publicError), true);
     }
 
@@ -316,7 +316,7 @@ export function createAgentQMcpServer(core = createDefaultAgentQCore()): McpServ
     } catch {
       // An unsanitizable success is an internal contract bug. Surface a fixed
       // generic error instead of the raw value or the ZodError details.
-      logToolDiagnostic("agent_q_output_sanitize_failed", "internal_output_error", false);
+      logToolDiagnostic("tool_output_sanitize_failed", "internal_output_error", false);
       return withStructuredContent(
         toPublicErrorToolResult(toPublicError("internal_output_error", false)),
         true,
@@ -563,10 +563,10 @@ export function createAgentQMcpServer(core = createDefaultAgentQCore()): McpServ
 }
 
 export async function startStdioMcpServer(
-  core = createDefaultAgentQCore(),
+  core = createDefaultDeviceCore(),
   options: { onClose?: () => void } = {},
 ): Promise<void> {
-  const server = createAgentQMcpServer(core);
+  const server = createMcpServer(core);
   const transport = new StdioServerTransport();
   if (options.onClose !== undefined) {
     transport.onclose = options.onClose;

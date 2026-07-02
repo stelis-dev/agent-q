@@ -1,5 +1,5 @@
 {
-  "name": "@stelis/agent-q-sample-zklogin-test-web",
+  "name": "@stelis/sample-zklogin-test-web",
   "version": "0.2.2",
   "description": "Private Agent-Q zkLogin sample test app for Web Serial proof proposal and sign-only transaction checks.",
   "private": true,

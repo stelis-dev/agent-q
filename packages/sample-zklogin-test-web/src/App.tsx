@@ -22,13 +22,13 @@ import type {
   CredentialProposeInput,
 } from "@stelis/agent-q-provider-sui/provider-sui";
 import {
-  createAgentQSuiBrowserProvider,
-  isAgentQSuiBrowserProviderAvailable,
+  createSuiBrowserDeviceProvider,
+  isSuiBrowserDeviceProviderAvailable,
 } from "@stelis/agent-q-provider-sui/browser";
 import type {
-  AgentQSuiWalletGetCapabilitiesResult,
-  AgentQSuiWalletSignTransactionResult,
-  AgentQSuiWalletSuiAccount,
+  SuiDeviceWalletGetCapabilitiesResult,
+  SuiDeviceWalletSignResult,
+  SuiDeviceWalletAccount,
 } from "@stelis/agent-q-provider-sui/wallet-standard";
 
 type NoticeTone = "neutral" | "success" | "error";
@@ -46,10 +46,10 @@ type CredentialCapabilityView = {
   operations: string[];
 };
 type LiveDeviceState = {
-  capabilities: AgentQSuiWalletGetCapabilitiesResult;
-  accounts: AgentQSuiWalletSuiAccount[];
+  capabilities: SuiDeviceWalletGetCapabilitiesResult;
+  accounts: SuiDeviceWalletAccount[];
   credentialCapability: CredentialCapabilityView | null;
-  activeAccount: AgentQSuiWalletSuiAccount | null;
+  activeAccount: SuiDeviceWalletAccount | null;
 };
 type PendingEnokiLogin = {
   version: 1;
@@ -73,15 +73,15 @@ const DEFAULT_GOOGLE_CLIENT_ID = envString("VITE_ZKLOGIN_GOOGLE_CLIENT_ID", "");
 const DEFAULT_REDIRECT_URI = envString("VITE_ZKLOGIN_REDIRECT_URI", defaultCallbackUrl());
 const CLIENT_NAME = "Agent-Q zkLogin test web";
 const PROVIDER_PURPOSE = "sample-zklogin-test-web";
-const ENOKI_LOGIN_STORAGE_KEY = "agent-q:sample-zklogin-test-web:enoki-login";
-const OAUTH_CALLBACK_MESSAGE_TYPE = "agent-q:sample-zklogin-test-web:oauth-token";
+const ENOKI_LOGIN_STORAGE_KEY = "sui-device:sample-zklogin-test-web:enoki-login";
+const OAUTH_CALLBACK_MESSAGE_TYPE = "sui-device:sample-zklogin-test-web:oauth-token";
 
 function App() {
-  const [provider] = useState(() => createAgentQSuiBrowserProvider({ clientName: CLIENT_NAME }));
+  const [provider] = useState(() => createSuiBrowserDeviceProvider({ clientName: CLIENT_NAME }));
   const [busy, setBusy] = useState<string | null>(null);
   const [session, setSession] = useState<ConnectDeviceResult | null>(null);
-  const [capabilities, setCapabilities] = useState<AgentQSuiWalletGetCapabilitiesResult | null>(null);
-  const [accounts, setAccounts] = useState<AgentQSuiWalletSuiAccount[]>([]);
+  const [capabilities, setCapabilities] = useState<SuiDeviceWalletGetCapabilitiesResult | null>(null);
+  const [accounts, setAccounts] = useState<SuiDeviceWalletAccount[]>([]);
   const [enokiApiUrl, setEnokiApiUrl] = useState(DEFAULT_ENOKI_API_URL);
   const [enokiApiKey, setEnokiApiKey] = useState(DEFAULT_ENOKI_API_KEY);
   const [enokiAdditionalEpochs, setEnokiAdditionalEpochs] = useState("2");
@@ -91,14 +91,14 @@ function App() {
   const [amountMist, setAmountMist] = useState(DEFAULT_TRANSFER_AMOUNT_MIST);
   const [gasBudgetMist, setGasBudgetMist] = useState(DEFAULT_GAS_BUDGET_MIST);
   const [lastTxBytes, setLastTxBytes] = useState("");
-  const [lastSignature, setLastSignature] = useState<AgentQSuiWalletSignTransactionResult | null>(null);
+  const [lastSignature, setLastSignature] = useState<SuiDeviceWalletSignResult | null>(null);
   const [notice, setNotice] = useState<Notice>({
     tone: "neutral",
     title: "Idle",
     lines: ["Ready to set up zkLogin with Enoki."],
   });
 
-  const providerAvailable = isAgentQSuiBrowserProviderAvailable();
+  const providerAvailable = isSuiBrowserDeviceProviderAvailable();
   const activeAccount = accounts.find((account) => account.chain === "sui") ?? null;
   const credentialCapability = useMemo(() => {
     return findCredentialCapability(capabilities);
@@ -157,7 +157,7 @@ function App() {
       throw new Error(`Device session is not live: ${resultSummary(nextCapabilities)} / ${resultSummary(nextAccounts)}.`);
     }
     const nextCredentialCapability = findCredentialCapability(nextCapabilities);
-    const nextAccountsList = nextAccounts.accounts.filter((account): account is AgentQSuiWalletSuiAccount => {
+    const nextAccountsList = nextAccounts.accounts.filter((account): account is SuiDeviceWalletAccount => {
       return account.chain === "sui" && (account.keyScheme === "ed25519" || account.keyScheme === "zklogin");
     });
     const nextActiveAccount = nextAccountsList.find((account) => account.chain === "sui") ?? null;
@@ -608,7 +608,7 @@ function App() {
 
 function getSetupBlockedReason(
   session: ConnectDeviceResult | null,
-  account: AgentQSuiWalletSuiAccount | null,
+  account: SuiDeviceWalletAccount | null,
   credentialCapability: CredentialCapabilityView | null,
 ): string | null {
   if (session === null) {
@@ -646,7 +646,7 @@ function parseConnectedDevice(value: unknown): ConnectDeviceResult {
 }
 
 function findCredentialCapability(
-  capabilities: AgentQSuiWalletGetCapabilitiesResult | null,
+  capabilities: SuiDeviceWalletGetCapabilitiesResult | null,
 ): CredentialCapabilityView | null {
   if (capabilities === null || capabilities.source !== "live" || !Array.isArray(capabilities.credentials)) {
     return null;
@@ -681,7 +681,7 @@ function openEnokiOAuth(input: {
   url.searchParams.set("nonce", input.pending.nonce);
   const popup = globalThis.open(
     url.toString(),
-    "agent-q-zklogin-oauth",
+    "signing-zklogin-oauth",
     "popup,width=520,height=720",
   );
   if (popup === null) {
@@ -898,7 +898,7 @@ function resultSummary(value: unknown): string {
   return `${source}${reason}`;
 }
 
-function signResultLines(response: AgentQSuiWalletSignTransactionResult, txBytes: string): string[] {
+function signResultLines(response: SuiDeviceWalletSignResult, txBytes: string): string[] {
   if (response.source !== "live") {
     return [
       `Source: ${response.source}`,
@@ -922,7 +922,7 @@ function signResultLines(response: AgentQSuiWalletSignTransactionResult, txBytes
   return [`Status: ${response.status}`];
 }
 
-function signStatusLabel(response: AgentQSuiWalletSignTransactionResult): string {
+function signStatusLabel(response: SuiDeviceWalletSignResult): string {
   return response.source === "live" ? response.status ?? "unknown" : response.source;
 }
 

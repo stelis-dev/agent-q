@@ -12,19 +12,19 @@ import {
   SuiSignPersonalMessage,
   SuiSignTransaction,
 } from "@mysten/wallet-standard";
-import { createAgentQSuiProvider, AgentQSuiProvider } from "../dist/provider-sui.js";
+import { createSuiDeviceProvider, SuiDeviceProvider } from "../dist/provider-sui.js";
 import {
-  AGENT_Q_SUI_WALLET_ID,
-  AGENT_Q_SUI_WALLET_NAME,
-  AgentQSuiWallet,
-  createAgentQSuiWallet,
-  createAgentQSuiWalletInitializer,
-  registerAgentQSuiWallet,
+  SUI_DEVICE_WALLET_ID,
+  SUI_DEVICE_WALLET_NAME,
+  SuiDeviceWallet,
+  createSuiDeviceWallet,
+  createSuiDeviceWalletInitializer,
+  registerSuiDeviceWallet,
 } from "../dist/wallet-standard.js";
 import {
-  AgentQSuiBrowserProvider,
-  createAgentQSuiBrowserProvider,
-  isAgentQSuiBrowserProviderAvailable,
+  SuiBrowserDeviceProvider,
+  createSuiBrowserDeviceProvider,
+  isSuiBrowserDeviceProviderAvailable,
 } from "../dist/browser.js";
 import {
   FORBIDDEN_SECRET_FIELD_NAMES,
@@ -34,8 +34,8 @@ import {
   SUI_DERIVATION_PATH,
 } from "@stelis/agent-q-core/protocol";
 import {
-  AGENT_Q_USB_PRODUCT_ID_NUMBER,
-  AGENT_Q_USB_VENDOR_ID_NUMBER,
+  FIRMWARE_USB_PRODUCT_ID_NUMBER,
+  FIRMWARE_USB_VENDOR_ID_NUMBER,
   PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES,
 } from "@stelis/agent-q-core/provider-protocol";
 import {
@@ -307,7 +307,7 @@ function createFakeCore() {
   };
 }
 
-function createSigningCore() {
+function createDeviceCore() {
   const calls = [];
   return {
     calls,
@@ -427,8 +427,8 @@ class FakeBrowserSerialPort {
   #responseForRequest;
 
   constructor(responseForRequest, info = {
-    usbVendorId: AGENT_Q_USB_VENDOR_ID_NUMBER,
-    usbProductId: AGENT_Q_USB_PRODUCT_ID_NUMBER,
+    usbVendorId: FIRMWARE_USB_VENDOR_ID_NUMBER,
+    usbProductId: FIRMWARE_USB_PRODUCT_ID_NUMBER,
   }) {
     this.#responseForRequest = responseForRequest;
     this.#info = info;
@@ -658,15 +658,15 @@ test("provider-sui package self-reference resolves Sui provider only", async () 
   const provider = await import("@stelis/agent-q-provider-sui/provider-sui");
   const walletStandard = await import("@stelis/agent-q-provider-sui/wallet-standard");
   const browser = await import("@stelis/agent-q-provider-sui/browser");
-  assert.equal(typeof root.createAgentQSuiProvider, "function");
-  assert.equal(typeof provider.AgentQSuiProvider, "function");
-  assert.equal(walletStandard.AGENT_Q_SUI_WALLET_ID, AGENT_Q_SUI_WALLET_ID);
-  assert.equal(walletStandard.AGENT_Q_SUI_WALLET_NAME, AGENT_Q_SUI_WALLET_NAME);
-  assert.equal(typeof walletStandard.createAgentQSuiWallet, "function");
-  assert.equal(typeof walletStandard.registerAgentQSuiWallet, "function");
-  assert.equal(typeof walletStandard.createAgentQSuiWalletInitializer, "function");
-  assert.equal(typeof browser.createAgentQSuiBrowserProvider, "function");
-  assert.equal(typeof browser.isAgentQSuiBrowserProviderAvailable, "function");
+  assert.equal(typeof root.createSuiDeviceProvider, "function");
+  assert.equal(typeof provider.SuiDeviceProvider, "function");
+  assert.equal(walletStandard.SUI_DEVICE_WALLET_ID, SUI_DEVICE_WALLET_ID);
+  assert.equal(walletStandard.SUI_DEVICE_WALLET_NAME, SUI_DEVICE_WALLET_NAME);
+  assert.equal(typeof walletStandard.createSuiDeviceWallet, "function");
+  assert.equal(typeof walletStandard.registerSuiDeviceWallet, "function");
+  assert.equal(typeof walletStandard.createSuiDeviceWalletInitializer, "function");
+  assert.equal(typeof browser.createSuiBrowserDeviceProvider, "function");
+  assert.equal(typeof browser.isSuiBrowserDeviceProviderAvailable, "function");
   await assert.rejects(() => import("@stelis/agent-q-provider-sui/provider"), {
     code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
   });
@@ -755,7 +755,7 @@ test("browser provider runtime defers Web Serial port selection until connectDev
       configurable: true,
       value: {},
     });
-    assert.equal(isAgentQSuiBrowserProviderAvailable(), false);
+    assert.equal(isSuiBrowserDeviceProviderAvailable(), false);
 
     Object.defineProperty(globalThis, "navigator", {
       configurable: true,
@@ -768,11 +768,11 @@ test("browser provider runtime defers Web Serial port selection until connectDev
         },
       },
     });
-    const provider = createAgentQSuiBrowserProvider({ clientName: "Agent-Q Sui dapp-kit Sample" });
-    assert.equal(provider instanceof AgentQSuiBrowserProvider, true);
+    const provider = createSuiBrowserDeviceProvider({ clientName: "Agent-Q Sui dapp-kit Sample" });
+    assert.equal(provider instanceof SuiBrowserDeviceProvider, true);
     assert.equal(typeof provider.credentialPrepare, "function");
     assert.equal(typeof provider.credentialPropose, "function");
-    assert.equal(isAgentQSuiBrowserProviderAvailable(), true);
+    assert.equal(isSuiBrowserDeviceProviderAvailable(), true);
     assert.equal(requestPortCalls, 0);
 
     const notConnected = await provider.getCapabilities();
@@ -860,7 +860,7 @@ test("browser provider sends app-web-sized signing payloads through the current 
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
 
     const transactionResult = await provider.signTransaction({
@@ -904,7 +904,7 @@ test("browser provider sends credential setup over the active Web Serial session
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
 
     const prepare = await provider.credentialPrepare({
@@ -992,7 +992,7 @@ test("browser provider credential setup returns not_connected before connect", a
         },
       },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.deepEqual(await provider.credentialPrepare({ chain: "sui", credential: "zklogin" }), {
       source: "not_connected",
       deviceId: "browser",
@@ -1027,7 +1027,7 @@ test("browser provider credential setup clears stale sessions on invalid_session
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
     assert.deepEqual(await provider.credentialPrepare({ chain: "sui", credential: "zklogin" }), {
       source: "session_ended",
@@ -1070,7 +1070,7 @@ test("browser provider credential setup rejects malformed and secret-bearing res
         configurable: true,
         value: { serial: { requestPort: async () => port } },
       });
-      const provider = createAgentQSuiBrowserProvider();
+      const provider = createSuiBrowserDeviceProvider();
       assert.equal((await provider.connectDevice()).source, "connected");
       await assert.rejects(
         () => provider.credentialPrepare({ chain: "sui", credential: "zklogin" }),
@@ -1101,7 +1101,7 @@ test("browser provider credential setup rejects malformed and secret-bearing res
         configurable: true,
         value: { serial: { requestPort: async () => port } },
       });
-      const provider = createAgentQSuiBrowserProvider();
+      const provider = createSuiBrowserDeviceProvider();
       assert.equal((await provider.connectDevice()).source, "connected");
       await assert.rejects(
         () => provider.credentialPropose(validCredentialProposeInput()),
@@ -1118,10 +1118,10 @@ test("browser provider credential setup rejects malformed and secret-bearing res
 });
 
 test("Wallet Standard does not project browser provider credential setup methods", () => {
-  const provider = createAgentQSuiBrowserProvider();
+  const provider = createSuiBrowserDeviceProvider();
   assert.equal(typeof provider.credentialPrepare, "function");
   assert.equal(typeof provider.credentialPropose, "function");
-  const wallet = createAgentQSuiWallet({
+  const wallet = createSuiDeviceWallet({
     provider,
     getClient: fakeClient,
     chains: ["sui:devnet"],
@@ -1133,8 +1133,8 @@ test("Wallet Standard does not project browser provider credential setup methods
     "sui:signPersonalMessage",
     "sui:signTransaction",
   ]);
-  assert.equal(wallet.features["agentq:credentialPrepare"], undefined);
-  assert.equal(wallet.features["agentq:credentialPropose"], undefined);
+  assert.equal(wallet.features["signing:credentialPrepare"], undefined);
+  assert.equal(wallet.features["signing:credentialPropose"], undefined);
   assert.equal(wallet.credentialPrepare, undefined);
   assert.equal(wallet.credentialPropose, undefined);
   assert.equal(wallet.signerKind, undefined);
@@ -1165,7 +1165,7 @@ test("browser provider reuses a single granted Agent-Q Web Serial port before pr
         },
       },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     const connected = await provider.connectDevice();
     assert.equal(connected.source, "connected");
     assert.equal(connected.deviceId, "device-1");
@@ -1205,7 +1205,7 @@ test("browser provider falls back to requestPort when granted Agent-Q ports are 
         },
       },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     const connected = await provider.connectDevice();
     assert.equal(connected.source, "connected");
     assert.equal(connected.deviceId, "device-1");
@@ -1293,7 +1293,7 @@ test("browser provider transfers a synthetic large transaction payload before si
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
     const result = await provider.signTransaction({
       chain: "sui",
@@ -1366,7 +1366,7 @@ test("browser provider aborts active payload transfer after progress mismatch", 
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
     await assert.rejects(
       () => provider.signTransaction({
@@ -1423,7 +1423,7 @@ test("browser provider preserves transfer failure and clears session when abort 
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
     await assert.rejects(
       () => provider.signTransaction({
@@ -1457,7 +1457,7 @@ test("browser provider rejects payloads above the common transfer max before upl
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
     await assert.rejects(
       () => provider.signTransaction({
@@ -1514,7 +1514,7 @@ test("browser provider disconnects approved sessions that fail requested device 
         },
       },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     await assert.rejects(
       () => provider.connectDevice({ deviceId: "device-1" }),
       { code: "device_mismatch" },
@@ -1681,7 +1681,7 @@ test("browser provider serializes concurrent Web Serial requests through one ope
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
 
     // Without the request queue, the second open() would throw on the already-open
@@ -1728,7 +1728,7 @@ test("browser provider invalidates queued requests when the device disconnects m
       configurable: true,
       value: { serial: mock.serial },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
 
     // The first request is held mid-write (already opened + past its generation
@@ -1774,7 +1774,7 @@ test("browser provider keeps serving requests after one request rejects", async 
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
 
     // A failing request must not wedge the queue: the following request still runs.
@@ -1814,7 +1814,7 @@ test("browser provider recovers a buffered signing response when the signing res
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
 
     const result = await provider.signTransaction({
@@ -1854,7 +1854,7 @@ for (const status of ["user_rejected", "user_timed_out", "signing_failed", "poli
         configurable: true,
         value: { serial: { requestPort: async () => port } },
       });
-      const provider = createAgentQSuiBrowserProvider();
+      const provider = createSuiBrowserDeviceProvider();
       assert.equal((await provider.connectDevice()).source, "connected");
 
       const expectedError = makeDeviceError(terminalStatusDeviceErrorCode(status));
@@ -1901,7 +1901,7 @@ for (const status of ["user_rejected", "user_timed_out", "signing_failed"]) {
         configurable: true,
         value: { serial: { requestPort: async () => port } },
       });
-      const provider = createAgentQSuiBrowserProvider();
+      const provider = createSuiBrowserDeviceProvider();
       assert.equal((await provider.connectDevice()).source, "connected");
 
       const expectedError = makeDeviceError(terminalStatusDeviceErrorCode(status));
@@ -1945,7 +1945,7 @@ test("browser provider surfaces the original error when no buffered result exist
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
 
     await assert.rejects(
@@ -1975,7 +1975,7 @@ test("browser provider uses a caller-provided requestId for idempotent retries",
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
 
     const stableId = `req_${"ab".repeat(12)}`;
@@ -2035,7 +2035,7 @@ test("browser provider releases a recovered result with ack_result", async () =>
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
     const result = await provider.signTransaction({
       chain: "sui", method: "sign_transaction", network: "mainnet", txBytes: "AQID",
@@ -2076,7 +2076,7 @@ test("browser provider recovery still returns the result when the ack fails", as
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
     const result = await provider.signTransaction({
       chain: "sui", method: "sign_transaction", network: "mainnet", txBytes: "AQID",
@@ -2108,7 +2108,7 @@ test("browser provider returns session_ended when get_result reports invalid_ses
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
     const result = await provider.signTransaction({
       chain: "sui", method: "sign_transaction", network: "mainnet", txBytes: "AQID",
@@ -2151,7 +2151,7 @@ test("browser provider returns recovered result and clears the session when ack_
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
     const result = await provider.signTransaction({
       chain: "sui", method: "sign_transaction", network: "mainnet", txBytes: "AQID",
@@ -2191,7 +2191,7 @@ test("browser provider keeps signing recovery as one queued transaction", async 
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
 
     const [signed, capabilities] = await Promise.all([
@@ -2249,7 +2249,7 @@ test("browser provider does not resolve recovered signing outcome before ack_res
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
 
     const signPromise = provider.signTransaction({
@@ -2312,7 +2312,7 @@ test("browser provider abandons a stale port when writer.write hangs and recover
         },
       },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
 
     const signPromise = provider.signTransaction({
@@ -2377,7 +2377,7 @@ test("browser provider does not reuse the same stale port object for recovery", 
         },
       },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
 
     const signPromise = provider.signTransaction({
@@ -2453,7 +2453,7 @@ test("browser provider attempts retained recovery after post-write disconnect", 
         },
       },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
 
     const resultPromise = provider.signTransaction({
@@ -2532,7 +2532,7 @@ test("browser provider stale queued request cannot clear a recovered physical-di
         },
       },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
 
     const signPromise = provider.signTransaction({
@@ -2602,7 +2602,7 @@ test("browser provider does not recover signing after dispose tears down the tra
         },
       },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
 
     const signPromise = provider.signTransaction({
@@ -2638,7 +2638,7 @@ test("browser provider invalidates a queued request when disconnectDevice tears 
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
     // Fire a disconnect and a request together: the request queues behind the disconnect.
     const disconnectP = provider.disconnectDevice();
@@ -2669,7 +2669,7 @@ test("browser provider clears a prior session when a later connect mismatches th
       configurable: true,
       value: { serial: { requestPort: async () => port } },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
     // A subsequent connect for a different deviceId mismatches (the device reports device-1).
     await assert.rejects(() => provider.connectDevice({ deviceId: "device-2" }), { code: "device_mismatch" });
@@ -2707,7 +2707,7 @@ test("browser provider clears stale port after session-ended responses", async (
         },
       },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal((await provider.connectDevice()).source, "connected");
     assert.deepEqual(await provider.getCapabilities(), {
       source: "session_ended",
@@ -2746,7 +2746,7 @@ test("browser provider clears stale port after connect transport failure", async
         },
       },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     await assert.rejects(
       () => provider.connectDevice(),
       { code: "transport_closed" },
@@ -2773,7 +2773,7 @@ test("browser provider connect fails closed when Web Serial is unavailable", asy
       configurable: true,
       value: {},
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.deepEqual(await provider.getCapabilities({ deviceId: "device-1" }), {
       source: "unavailable",
       deviceId: "device-1",
@@ -2805,7 +2805,7 @@ test("browser provider rejects oversized Web Serial response lines", async () =>
         },
       },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     await assert.rejects(
       () => provider.connectDevice(),
       { code: "invalid_response" },
@@ -2833,7 +2833,7 @@ test("browser provider settles a request even when Web Serial cleanup hangs", as
         },
       },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     // Must resolve (not hang forever) despite the hung close(); the cleanup step is timeout-guarded.
     const connected = await provider.connectDevice();
     assert.equal(connected.source, "connected");
@@ -2871,7 +2871,7 @@ test("browser provider clears the cached port when Web Serial reports a device d
         },
       },
     });
-    const provider = createAgentQSuiBrowserProvider();
+    const provider = createSuiBrowserDeviceProvider();
     assert.equal(typeof disconnectHandler, "function");
     assert.equal((await provider.connectDevice()).source, "connected");
     assert.equal(requestPortCalls, 1);
@@ -2894,11 +2894,11 @@ test("browser provider clears the cached port when Web Serial reports a device d
 });
 
 test("provider object presents the Sui dapp-facing adapter API including signing methods", () => {
-  const provider = createAgentQSuiProvider({ core: createFakeCore() });
+  const provider = createSuiDeviceProvider({ core: createFakeCore() });
   const methodNames = Object.getOwnPropertyNames(Object.getPrototypeOf(provider))
     .filter((name) => name !== "constructor")
     .sort();
-  assert.equal(provider instanceof AgentQSuiProvider, true);
+  assert.equal(provider instanceof SuiDeviceProvider, true);
   assert.deepEqual(methodNames, [
     "connectDevice",
     "credentialPrepare",
@@ -2927,7 +2927,7 @@ test("provider object presents the Sui dapp-facing adapter API including signing
 });
 
 test("provider delegates current methods and signing methods without exposing session ids or secrets", async () => {
-  const provider = createAgentQSuiProvider({ core: createFakeCore() });
+  const provider = createSuiDeviceProvider({ core: createFakeCore() });
   const outputs = [
     await provider.scanDevices(),
     await provider.identifyDevices(),
@@ -2997,7 +2997,7 @@ test("provider credential methods delegate through Core and expose no signer sel
       };
     },
   };
-  const provider = createAgentQSuiProvider({ core });
+  const provider = createSuiDeviceProvider({ core });
 
   const prepareInput = validCredentialPrepareInput({ purpose: "test-web" });
   const proposeInput = validCredentialProposeInput({ purpose: "test-web" });
@@ -3043,7 +3043,7 @@ test("provider getCapabilities applies the provider capability schema", async ()
       };
     },
   };
-  const provider = createAgentQSuiProvider({ core });
+  const provider = createSuiDeviceProvider({ core });
   await assert.rejects(
     () => provider.getCapabilities({ deviceId: "device-1" }),
   );
@@ -3060,7 +3060,7 @@ test("provider getCapabilities preserves credential capability metadata and reje
         };
       },
     };
-    const provider = createAgentQSuiProvider({ core });
+    const provider = createSuiDeviceProvider({ core });
     const capabilities = await provider.getCapabilities({ deviceId: "device-1" });
     assert.deepEqual(capabilities.credentials, [validCredentialCapability()]);
     assertNoSecretFields(capabilities);
@@ -3081,7 +3081,7 @@ test("provider getCapabilities preserves credential capability metadata and reje
         };
       },
     };
-    const provider = createAgentQSuiProvider({ core });
+    const provider = createSuiDeviceProvider({ core });
     await assert.rejects(() => provider.getCapabilities({ deviceId: "device-1" }));
   }
 
@@ -3095,7 +3095,7 @@ test("provider getCapabilities preserves credential capability metadata and reje
         };
       },
     };
-    const provider = createAgentQSuiProvider({ core });
+    const provider = createSuiDeviceProvider({ core });
     await assert.rejects(
       () => provider.getCapabilities({ deviceId: "device-1" }),
       /forbidden output field/,
@@ -3180,7 +3180,7 @@ test("provider applies output boundary to every custom core method", async () =>
         return { ...(await original(...args)), sessionId: "session_should_not_leak" };
       },
     };
-    const provider = createAgentQSuiProvider({ core });
+    const provider = createSuiDeviceProvider({ core });
     await assert.rejects(
       () => callProvider(provider),
       /forbidden output field/,
@@ -3191,7 +3191,7 @@ test("provider applies output boundary to every custom core method", async () =>
 
 test("provider output boundary rejects malformed signing and account projections", async () => {
   {
-    const provider = createAgentQSuiProvider({
+    const provider = createSuiDeviceProvider({
       core: {
         ...createFakeCore(),
         async getAccounts() {
@@ -3212,7 +3212,7 @@ test("provider output boundary rejects malformed signing and account projections
   }
 
   {
-    const provider = createAgentQSuiProvider({
+    const provider = createSuiDeviceProvider({
       core: {
         ...createFakeCore(),
         async signTransaction() {
@@ -3233,7 +3233,7 @@ test("provider output boundary rejects malformed signing and account projections
   }
 
   {
-    const provider = createAgentQSuiProvider({
+    const provider = createSuiDeviceProvider({
       core: {
         ...createFakeCore(),
         async signPersonalMessage() {
@@ -3272,7 +3272,7 @@ test("provider signTransaction returns Firmware-authored policy terminal results
       };
     },
   };
-  const provider = createAgentQSuiProvider({ core });
+  const provider = createSuiDeviceProvider({ core });
   const result = await provider.signTransaction({
     deviceId: "device-1",
     chain: "sui",
@@ -3286,7 +3286,7 @@ test("provider signTransaction returns Firmware-authored policy terminal results
 });
 
 test("provider object omits policy signing and Admin management entrypoints", () => {
-  const provider = createAgentQSuiProvider({ core: createFakeCore() });
+  const provider = createSuiDeviceProvider({ core: createFakeCore() });
   assert.equal(provider.signByUser, undefined);
   assert.equal(provider.signByPolicy, undefined);
   assert.equal(provider.policyPropose, undefined);
@@ -3302,13 +3302,13 @@ test("provider object omits policy signing and Admin management entrypoints", ()
 });
 
 test("Wallet Standard adapter advertises only current Agent-Q Sui signing features", () => {
-  const { core } = createSigningCore();
-  const wallet = createAgentQSuiWallet({
-    provider: createAgentQSuiProvider({ core }),
+  const { core } = createDeviceCore();
+  const wallet = createSuiDeviceWallet({
+    provider: createSuiDeviceProvider({ core }),
     getClient: fakeClient,
     chains: ["sui:devnet"],
   });
-  assert.equal(wallet instanceof AgentQSuiWallet, true);
+  assert.equal(wallet instanceof SuiDeviceWallet, true);
   assert.equal(wallet.name, "Agent-Q");
   assert.deepEqual(wallet.chains, ["sui:devnet"]);
   assert.deepEqual(Object.keys(wallet.features).sort(), [
@@ -3319,9 +3319,9 @@ test("Wallet Standard adapter advertises only current Agent-Q Sui signing featur
     "sui:signTransaction",
   ]);
   assert.equal(typeof wallet.features["sui:signPersonalMessage"].signPersonalMessage, "function");
-  assert.equal(wallet.features["agentq:credentialPrepare"], undefined);
-  assert.equal(wallet.features["agentq:credentialPropose"], undefined);
-  assert.equal(wallet.features["agentq:clearZkLoginProof"], undefined);
+  assert.equal(wallet.features["signing:credentialPrepare"], undefined);
+  assert.equal(wallet.features["signing:credentialPropose"], undefined);
+  assert.equal(wallet.features["signing:clearZkLoginProof"], undefined);
   assert.equal(wallet.credentialPrepare, undefined);
   assert.equal(wallet.credentialPropose, undefined);
   assert.equal(wallet.clearZkLoginProof, undefined);
@@ -3332,10 +3332,10 @@ test("Wallet Standard adapter advertises only current Agent-Q Sui signing featur
 });
 
 test("Wallet Standard adapter rejects malformed chain and initializer network inputs", () => {
-  const { core } = createSigningCore();
-  const provider = createAgentQSuiProvider({ core });
+  const { core } = createDeviceCore();
+  const provider = createSuiDeviceProvider({ core });
   assert.throws(
-    () => createAgentQSuiWallet({
+    () => createSuiDeviceWallet({
       provider,
       getClient: fakeClient,
       chains: ["evm:mainnet"],
@@ -3343,14 +3343,14 @@ test("Wallet Standard adapter rejects malformed chain and initializer network in
     /unsupported chain/,
   );
   assert.throws(
-    () => createAgentQSuiWallet({
+    () => createSuiDeviceWallet({
       provider,
       getClient: fakeClient,
       chains: [],
     }),
     /requires at least one Sui chain/,
   );
-  const initializer = createAgentQSuiWalletInitializer({ provider });
+  const initializer = createSuiDeviceWalletInitializer({ provider });
   assert.throws(
     () => initializer.initialize({
       networks: ["customnet"],
@@ -3368,9 +3368,9 @@ test("Wallet Standard adapter rejects malformed chain and initializer network in
 });
 
 test("Wallet Standard connect and disconnect delegate through provider-sui without leaking management APIs", async () => {
-  const { core } = createSigningCore();
-  const wallet = createAgentQSuiWallet({
-    provider: createAgentQSuiProvider({ core }),
+  const { core } = createDeviceCore();
+  const wallet = createSuiDeviceWallet({
+    provider: createSuiDeviceProvider({ core }),
     getClient: fakeClient,
     chains: ["sui:devnet"],
   });
@@ -3437,8 +3437,8 @@ test("Wallet Standard connect projects a zkLogin active account", async () => {
       };
     },
   };
-  const wallet = createAgentQSuiWallet({
-    provider: createAgentQSuiProvider({ core }),
+  const wallet = createSuiDeviceWallet({
+    provider: createSuiDeviceProvider({ core }),
     getClient: fakeClient,
     chains: ["sui:devnet"],
   });
@@ -3473,8 +3473,8 @@ test("Wallet Standard account features follow Firmware signing capability", asyn
       };
     },
   };
-  const wallet = createAgentQSuiWallet({
-    provider: createAgentQSuiProvider({ core }),
+  const wallet = createSuiDeviceWallet({
+    provider: createSuiDeviceProvider({ core }),
     getClient: fakeClient,
     chains: ["sui:devnet"],
   });
@@ -3512,7 +3512,7 @@ test("Wallet Standard direct capabilities exact validator maps current signing m
     },
   ];
   for (const { output, expectedFeatures, label } of cases) {
-    const wallet = createAgentQSuiWallet({
+    const wallet = createSuiDeviceWallet({
       provider: {
         ...createFakeCore(),
         async getCapabilities() {
@@ -3671,7 +3671,7 @@ test("Wallet Standard direct capabilities exact validator rejects malformed prov
   ];
   for (const { output, label } of cases) {
     let disconnectCalls = 0;
-    const wallet = createAgentQSuiWallet({
+    const wallet = createSuiDeviceWallet({
       provider: {
         ...createFakeCore(),
         async disconnectDevice() {
@@ -3730,7 +3730,7 @@ test("Wallet Standard connect fails closed when provider-sui returns no Sui acco
       return createFakeCore().signPersonalMessage();
     },
   };
-  const wallet = createAgentQSuiWallet({
+  const wallet = createSuiDeviceWallet({
     provider,
     getClient: fakeClient,
     chains: ["sui:devnet"],
@@ -3852,7 +3852,7 @@ test("Wallet Standard connect exact-validates directly injected Sui accounts", a
         return output;
       },
     };
-    const wallet = createAgentQSuiWallet({
+    const wallet = createSuiDeviceWallet({
       provider,
       getClient: fakeClient,
       chains: ["sui:devnet"],
@@ -3868,9 +3868,9 @@ test("Wallet Standard connect exact-validates directly injected Sui accounts", a
 });
 
 test("Wallet Standard signTransaction builds bytes and delegates to signTransaction only", async () => {
-  const { core, calls } = createSigningCore();
-  const wallet = createAgentQSuiWallet({
-    provider: createAgentQSuiProvider({ core }),
+  const { core, calls } = createDeviceCore();
+  const wallet = createSuiDeviceWallet({
+    provider: createSuiDeviceProvider({ core }),
     getClient: fakeClient,
     chains: ["sui:devnet"],
     deviceId: "device-1",
@@ -3899,13 +3899,13 @@ test("Wallet Standard signTransaction builds bytes and delegates to signTransact
 });
 
 test("Wallet Standard signTransaction accepts zkLogin transaction signatures", async () => {
-  const { core } = createSigningCore();
+  const { core } = createDeviceCore();
   core.signTransaction = async () => ({
     ...validSignedTransactionResult(),
     signature: ZKLOGIN_SIGNATURE,
   });
-  const wallet = createAgentQSuiWallet({
-    provider: createAgentQSuiProvider({ core }),
+  const wallet = createSuiDeviceWallet({
+    provider: createSuiDeviceProvider({ core }),
     getClient: fakeClient,
     chains: ["sui:devnet"],
   });
@@ -3921,9 +3921,9 @@ test("Wallet Standard signTransaction accepts zkLogin transaction signatures", a
 });
 
 test("Wallet Standard signPersonalMessage delegates to signPersonalMessage only", async () => {
-  const { core, calls } = createSigningCore();
-  const wallet = createAgentQSuiWallet({
-    provider: createAgentQSuiProvider({ core }),
+  const { core, calls } = createDeviceCore();
+  const wallet = createSuiDeviceWallet({
+    provider: createSuiDeviceProvider({ core }),
     getClient: fakeClient,
     chains: ["sui:devnet"],
     deviceId: "device-1",
@@ -3953,13 +3953,13 @@ test("Wallet Standard signPersonalMessage delegates to signPersonalMessage only"
 });
 
 test("Wallet Standard signPersonalMessage accepts zkLogin personal-message signatures", async () => {
-  const { core } = createSigningCore();
+  const { core } = createDeviceCore();
   core.signPersonalMessage = async (input) => ({
     ...validSignedPersonalMessageResult(input.message),
     signature: ZKLOGIN_SIGNATURE,
   });
-  const wallet = createAgentQSuiWallet({
-    provider: createAgentQSuiProvider({ core }),
+  const wallet = createSuiDeviceWallet({
+    provider: createSuiDeviceProvider({ core }),
     getClient: fakeClient,
     chains: ["sui:devnet"],
   });
@@ -3976,9 +3976,9 @@ test("Wallet Standard signPersonalMessage accepts zkLogin personal-message signa
 });
 
 test("Wallet Standard signTransaction fails closed for wrong account, wrong chain, and terminal results", async () => {
-  const { core } = createSigningCore();
-  const wallet = createAgentQSuiWallet({
-    provider: createAgentQSuiProvider({ core }),
+  const { core } = createDeviceCore();
+  const wallet = createSuiDeviceWallet({
+    provider: createSuiDeviceProvider({ core }),
     getClient: fakeClient,
     chains: ["sui:devnet"],
   });
@@ -4020,8 +4020,8 @@ test("Wallet Standard signTransaction fails closed for wrong account, wrong chai
       };
     },
   };
-  const rejectingWallet = createAgentQSuiWallet({
-    provider: createAgentQSuiProvider({ core: rejectingCore }),
+  const rejectingWallet = createSuiDeviceWallet({
+    provider: createSuiDeviceProvider({ core: rejectingCore }),
     getClient: fakeClient,
     chains: ["sui:devnet"],
   });
@@ -4053,7 +4053,7 @@ test("Wallet Standard signTransaction emits bounded canonical terminal errors", 
         };
       },
     };
-    const wallet = createAgentQSuiWallet({
+    const wallet = createSuiDeviceWallet({
       provider: core,
       getClient: fakeClient,
       chains: ["sui:devnet"],
@@ -4100,7 +4100,7 @@ test("Wallet Standard signTransaction bounds unknown injected provider result la
         return signResult;
       },
     };
-    const wallet = createAgentQSuiWallet({
+    const wallet = createSuiDeviceWallet({
       provider: core,
       getClient: fakeClient,
       chains: ["sui:devnet"],
@@ -4175,7 +4175,7 @@ test("Wallet Standard signTransaction exact-validates directly injected signed r
         return result;
       },
     };
-    const wallet = createAgentQSuiWallet({
+    const wallet = createSuiDeviceWallet({
       provider,
       getClient: fakeClient,
       chains: ["sui:devnet"],
@@ -4247,7 +4247,7 @@ test("Wallet Standard signPersonalMessage exact-validates directly injected sign
         return result;
       },
     };
-    const wallet = createAgentQSuiWallet({
+    const wallet = createSuiDeviceWallet({
       provider,
       getClient: fakeClient,
       chains: ["sui:devnet"],
@@ -4269,9 +4269,9 @@ test("Wallet Standard signPersonalMessage exact-validates directly injected sign
 });
 
 test("Wallet Standard signTransaction validates chain support against the connected account", async () => {
-  const { core, calls } = createSigningCore();
-  const wallet = createAgentQSuiWallet({
-    provider: createAgentQSuiProvider({ core }),
+  const { core, calls } = createDeviceCore();
+  const wallet = createSuiDeviceWallet({
+    provider: createSuiDeviceProvider({ core }),
     getClient: fakeClient,
     chains: ["sui:devnet"],
   });
@@ -4314,8 +4314,8 @@ test("Wallet Standard signTransaction clears connected accounts on non-live sign
         };
       },
     };
-    const wallet = createAgentQSuiWallet({
-      provider: createAgentQSuiProvider({ core }),
+    const wallet = createSuiDeviceWallet({
+      provider: createSuiDeviceProvider({ core }),
       getClient: fakeClient,
       chains: ["sui:devnet"],
     });
@@ -4343,10 +4343,10 @@ test("Wallet Standard signTransaction clears connected accounts on non-live sign
 });
 
 test("Wallet Standard registration functions register, initialize, and unregister Agent-Q wallets", () => {
-  const { core } = createSigningCore();
-  const provider = createAgentQSuiProvider({ core });
+  const { core } = createDeviceCore();
+  const provider = createSuiDeviceProvider({ core });
   const before = new Set(getWallets().get());
-  const registration = registerAgentQSuiWallet({
+  const registration = registerSuiDeviceWallet({
     provider,
     getClient: fakeClient,
     chains: ["sui:devnet"],
@@ -4355,8 +4355,8 @@ test("Wallet Standard registration functions register, initialize, and unregiste
   registration.unregister();
   assert.deepEqual(new Set(getWallets().get()), before);
 
-  const initializer = createAgentQSuiWalletInitializer({ provider, id: "agent-q-test" });
-  assert.equal(initializer.id, "agent-q-test");
+  const initializer = createSuiDeviceWalletInitializer({ provider, id: "signing-test" });
+  assert.equal(initializer.id, "signing-test");
   const initialized = initializer.initialize({
     networks: ["devnet"],
     getClient: fakeClient,

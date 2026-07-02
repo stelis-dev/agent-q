@@ -4,7 +4,7 @@ import {
   UINT_DECIMAL_STRING_PATTERN,
 } from "./protocol-primitives.js";
 
-export const AGENT_Q_POLICY_SCHEMA = "agentq.policy";
+export const SIGNING_POLICY_SCHEMA = "signing.policy";
 export const POLICY_ID_PATTERN = HASH_ID_PATTERN;
 export const MAX_POLICY_BLOCKCHAINS = 4;
 export const MAX_POLICY_NETWORKS_PER_BLOCKCHAIN = 8;

@@ -5,7 +5,7 @@ import {
   consumeFirmwareSessionInvalidated,
   deadlineEnforcingDriver,
   INTERNAL_USB_DEADLINE_MS,
-  isLikelyAgentQUsbPort,
+  isLikelyFirmwareUsbPort,
   markRequestMayHaveReachedFirmware,
   mapErrorToUnavailableReason,
   requestSigningOutcomeWithRecovery,
@@ -26,7 +26,7 @@ import {
 } from "../dist/protocol.js";
 import { makeDeviceFailureResponse, makeDeviceRequest } from "../dist/device-contract.js";
 import { PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES } from "../dist/provider-protocol.js";
-import { AgentQError } from "../dist/errors.js";
+import { DeviceRequestError } from "../dist/errors.js";
 
 const SUI_SIGNATURE_BYTES = Buffer.alloc(97, 1);
 SUI_SIGNATURE_BYTES[0] = 0;
@@ -104,7 +104,7 @@ test("resolves macOS tty usbmodem ports to callout cu ports when available", () 
 
 test("recognizes observed Espressif USB serial metadata", () => {
   assert.equal(
-    isLikelyAgentQUsbPort({
+    isLikelyFirmwareUsbPort({
       path: "/dev/cu.usbmodem1",
       vendorId: "0x303a",
       productId: "0x1001",
@@ -114,7 +114,7 @@ test("recognizes observed Espressif USB serial metadata", () => {
   );
 
   assert.equal(
-    isLikelyAgentQUsbPort({
+    isLikelyFirmwareUsbPort({
       path: "/dev/tty.usbmodem21301",
       manufacturer: "Espressif",
       serialNumber: "44:1B:F6:E4:05:24",
@@ -123,7 +123,7 @@ test("recognizes observed Espressif USB serial metadata", () => {
   );
 
   assert.equal(
-    isLikelyAgentQUsbPort({
+    isLikelyFirmwareUsbPort({
       path: "/dev/tty.usbmodem21301",
       manufacturer: "Espressif",
     }),
@@ -214,7 +214,7 @@ test("scan applies a shrinking per-candidate timeout under one shared deadline",
 test("scan surfaces a port-enumeration error instead of silently reporting no devices", async () => {
   const driver = {
     async listPorts() {
-      throw new AgentQError("transport_closed", "enumeration failed", true);
+      throw new DeviceRequestError("transport_closed", "enumeration failed", true);
     },
     async requestStatus() {
       return status;
@@ -224,7 +224,7 @@ test("scan surfaces a port-enumeration error instead of silently reporting no de
   // caller can distinguish "enumeration failed" from "no device present".
   await assert.rejects(
     () => scanUsbDeviceStatuses(driver, 2000),
-    (error) => error instanceof AgentQError && error.code === "transport_closed",
+    (error) => error instanceof DeviceRequestError && error.code === "transport_closed",
   );
 });
 
@@ -417,7 +417,7 @@ test("requestSigningOutcomeWithRecovery fetches and acks a retained signing outc
   const result = await requestSigningOutcomeWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, deadlineMs, assertResponse) => {
     requests.push({ request: wireRequest, deadlineMs });
     if (wireKind(wireRequest) === "sign_transaction") {
-      throw markRequestMayHaveReachedFirmware(new AgentQError("timeout", "Lost signing response.", true));
+      throw markRequestMayHaveReachedFirmware(new DeviceRequestError("timeout", "Lost signing response.", true));
     }
     if (wireKind(wireRequest) === "get_result") {
       return assertResponse(signedTransactionResult(wireRequest.id, "get_result"));
@@ -446,7 +446,7 @@ test("requestSigningOutcomeWithRecovery waits for ack_result ordering before res
   let resolved = false;
   const resultPromise = requestSigningOutcomeWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
     if (wireKind(wireRequest) === "sign_transaction") {
-      throw markRequestMayHaveReachedFirmware(new AgentQError("timeout", "Lost signing response.", true));
+      throw markRequestMayHaveReachedFirmware(new DeviceRequestError("timeout", "Lost signing response.", true));
     }
     if (wireKind(wireRequest) === "get_result") {
       return assertResponse(signedTransactionResult(wireRequest.id, "get_result"));
@@ -477,13 +477,13 @@ test("requestSigningOutcomeWithRecovery ignores ack_result failure after recover
   const request = signTransactionRequest();
   const result = await requestSigningOutcomeWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
     if (wireKind(wireRequest) === "sign_transaction") {
-      throw markRequestMayHaveReachedFirmware(new AgentQError("transport_closed", "Transport closed.", true));
+      throw markRequestMayHaveReachedFirmware(new DeviceRequestError("transport_closed", "Transport closed.", true));
     }
     if (wireKind(wireRequest) === "get_result") {
       return assertResponse(signedTransactionResult(wireRequest.id, "get_result"));
     }
     if (wireKind(wireRequest) === "ack_result") {
-      throw new AgentQError("transport_closed", "Ack failed.", true);
+      throw new DeviceRequestError("transport_closed", "Ack failed.", true);
     }
     throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
   }));
@@ -493,7 +493,7 @@ test("requestSigningOutcomeWithRecovery ignores ack_result failure after recover
 
 test("requestSigningOutcomeWithRecovery propagates get_result invalid_session", async () => {
   const request = signTransactionRequest();
-  const original = markRequestMayHaveReachedFirmware(new AgentQError("timeout", "Original sign timeout.", true));
+  const original = markRequestMayHaveReachedFirmware(new DeviceRequestError("timeout", "Original sign timeout.", true));
   const seen = [];
 
   await assert.rejects(
@@ -503,11 +503,11 @@ test("requestSigningOutcomeWithRecovery propagates get_result invalid_session", 
         throw original;
       }
       if (wireKind(wireRequest) === "get_result") {
-        throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
+        throw new DeviceRequestError("invalid_session", "Session is unknown or already ended.", false);
       }
       throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
     })),
-    (error) => error instanceof AgentQError && error.code === "invalid_session",
+    (error) => error instanceof DeviceRequestError && error.code === "invalid_session",
   );
   assert.deepEqual(seen, ["sign_transaction", "get_result"]);
 });
@@ -516,13 +516,13 @@ test("requestSigningOutcomeWithRecovery marks recovered result when ack_result i
   const request = signTransactionRequest();
   const result = await requestSigningOutcomeWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
     if (wireKind(wireRequest) === "sign_transaction") {
-      throw markRequestMayHaveReachedFirmware(new AgentQError("transport_closed", "Transport closed.", true));
+      throw markRequestMayHaveReachedFirmware(new DeviceRequestError("transport_closed", "Transport closed.", true));
     }
     if (wireKind(wireRequest) === "get_result") {
       return assertResponse(signedTransactionResult(wireRequest.id, "get_result"));
     }
     if (wireKind(wireRequest) === "ack_result") {
-      throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
+      throw new DeviceRequestError("invalid_session", "Session is unknown or already ended.", false);
     }
     throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
   }));
@@ -534,7 +534,7 @@ test("requestSigningOutcomeWithRecovery marks recovered result when ack_result i
 
 test("requestSigningOutcomeWithRecovery does not recover write-before-open failures", async () => {
   const request = signTransactionRequest();
-  const original = new AgentQError("port_not_found", "No port.", true);
+  const original = new DeviceRequestError("port_not_found", "No port.", true);
   const seen = [];
 
   await assert.rejects(
@@ -549,7 +549,7 @@ test("requestSigningOutcomeWithRecovery does not recover write-before-open failu
 
 test("requestSigningOutcomeWithRecovery preserves original sign error when get_result fails", async () => {
   const request = signTransactionRequest();
-  const original = markRequestMayHaveReachedFirmware(new AgentQError("timeout", "Original sign timeout.", true));
+  const original = markRequestMayHaveReachedFirmware(new DeviceRequestError("timeout", "Original sign timeout.", true));
   const seen = [];
 
   await assert.rejects(
@@ -559,7 +559,7 @@ test("requestSigningOutcomeWithRecovery preserves original sign error when get_r
         throw original;
       }
       if (wireKind(wireRequest) === "get_result") {
-        throw new AgentQError("unknown_request", "No retained response.", false);
+        throw new DeviceRequestError("unknown_request", "No retained response.", false);
       }
       throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
     })),
@@ -570,7 +570,7 @@ test("requestSigningOutcomeWithRecovery preserves original sign error when get_r
 
 test("requestSigningOutcomeWithRecovery preserves original sign error when get_result is malformed", async () => {
   const request = signTransactionRequest();
-  const original = markRequestMayHaveReachedFirmware(new AgentQError("timeout", "Original sign timeout.", true));
+  const original = markRequestMayHaveReachedFirmware(new DeviceRequestError("timeout", "Original sign timeout.", true));
 
   await assert.rejects(
     () => requestSigningOutcomeWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
@@ -590,7 +590,7 @@ test("withSerialPortTransaction keeps a queued request out of an active signing 
   const events = [];
   let releaseTransaction;
 
-  const signingTransaction = withSerialPortTransaction("/dev/cu.agentq-test", 1000, async () => {
+  const signingTransaction = withSerialPortTransaction("/dev/cu.signing-test", 1000, async () => {
     events.push("sign");
     await new Promise((resolve) => {
       releaseTransaction = resolve;
@@ -599,7 +599,7 @@ test("withSerialPortTransaction keeps a queued request out of an active signing 
     events.push("ack_result");
     return "signed";
   });
-  const queuedRequest = withSerialPortTransaction("/dev/cu.agentq-test", 1000, async () => {
+  const queuedRequest = withSerialPortTransaction("/dev/cu.signing-test", 1000, async () => {
     events.push("get_capabilities");
     return "capabilities";
   });
@@ -615,12 +615,12 @@ test("withSerialPortTransaction keeps a queued request out of an active signing 
 test("withSerialPortTransaction drops an expired queued request before the operation can write", async () => {
   let releaseTransaction;
   let lateOperationStarted = false;
-  const active = withSerialPortTransaction("/dev/cu.agentq-deadline", 1000, async () => {
+  const active = withSerialPortTransaction("/dev/cu.signing-deadline", 1000, async () => {
     await new Promise((resolve) => {
       releaseTransaction = resolve;
     });
   });
-  const expired = withSerialPortTransaction("/dev/cu.agentq-deadline", 5, async () => {
+  const expired = withSerialPortTransaction("/dev/cu.signing-deadline", 5, async () => {
     lateOperationStarted = true;
   });
 
@@ -629,7 +629,7 @@ test("withSerialPortTransaction drops an expired queued request before the opera
   await active;
   await assert.rejects(
     () => expired,
-    (error) => error instanceof AgentQError && error.code === "timeout",
+    (error) => error instanceof DeviceRequestError && error.code === "timeout",
   );
   assert.equal(lateOperationStarted, false, "expired queued requests must not run later and write to USB");
 });
@@ -649,17 +649,17 @@ test("node USB lease canceled after open timeout never writes and late open clos
   });
   try {
     const driver = new SerialPortUsbDriver();
-    const portPath = "/dev/cu.agentq-open-timeout";
+    const portPath = "/dev/cu.signing-open-timeout";
     await assert.rejects(
       () => driver.requestStatus(portPath, 5),
-      (error) => error instanceof AgentQError && error.code === "timeout",
+      (error) => error instanceof DeviceRequestError && error.code === "timeout",
     );
     assert.equal(ports.length, 1);
     assert.equal(ports[0].writeCalls, 0, "timed-out open must not continue into write");
 
     await assert.rejects(
       () => driver.requestStatus(portPath, 5),
-      (error) => error instanceof AgentQError && error.code === "port_in_use",
+      (error) => error instanceof DeviceRequestError && error.code === "port_in_use",
     );
     assert.equal(ports.length, 1, "quarantined portPath must not start another physical open");
 
@@ -690,8 +690,8 @@ test("node USB flush timeout does not start write", async () => {
   try {
     const driver = new SerialPortUsbDriver();
     await assert.rejects(
-      () => driver.requestStatus("/dev/cu.agentq-flush-timeout", 5),
-      (error) => error instanceof AgentQError && error.code === "timeout",
+      () => driver.requestStatus("/dev/cu.signing-flush-timeout", 5),
+      (error) => error instanceof DeviceRequestError && error.code === "timeout",
     );
     assert.equal(ports.length, 1);
     assert.equal(ports[0].flushCalls, 1);
@@ -725,7 +725,7 @@ test("node USB write-started failure is recovery eligible", async () => {
   try {
     const driver = new SerialPortUsbDriver();
     const result = await driver.signTransaction(
-      "/dev/cu.agentq-write-failed",
+      "/dev/cu.signing-write-failed",
       "session_abcdef",
       { operation: "sign_transaction", chain: "sui", method: "sign_transaction" },
       { network: "mainnet", txBytes: "AQID" },
@@ -748,7 +748,7 @@ test("node USB validates sign_transaction params before serial I/O", async () =>
     const driver = new SerialPortUsbDriver();
     await assert.rejects(
       () => driver.signTransaction(
-        "/dev/cu.agentq-invalid-sign-params",
+        "/dev/cu.signing-invalid-sign-params",
         "session_abcdef",
         { operation: "sign_transaction", chain: "sui", method: "sign_transaction" },
         { network: "mainnet", txBytes: "%%%" },
@@ -840,7 +840,7 @@ test("node USB transfers a synthetic large method payload before signing", async
   try {
     const driver = new SerialPortUsbDriver();
     const result = await driver.signTransaction(
-      "/dev/cu.agentq-staged-sign",
+      "/dev/cu.signing-staged-sign",
       "session_abcdef",
       { operation: "sign_transaction", chain: "sui", method: "sign_transaction" },
       { network: "mainnet", txBytes },
@@ -941,13 +941,13 @@ test("node USB aborts a transferred payload when the method request fails", asyn
     const driver = new SerialPortUsbDriver();
     await assert.rejects(
       () => driver.signTransaction(
-        "/dev/cu.agentq-method-failure",
+        "/dev/cu.signing-method-failure",
         "session_abcdef",
         { operation: "sign_transaction", chain: "sui", method: "sign_transaction" },
         { network: "mainnet", txBytes: payload.toString("base64") },
         1000,
       ),
-      (error) => error instanceof AgentQError && error.code === "invalid_session",
+      (error) => error instanceof DeviceRequestError && error.code === "invalid_session",
     );
     assert.equal(seen.at(-1), "payload_transfer:abort");
     assert.equal(abortRequest.transferId, "transfer_method_failure");
@@ -1037,7 +1037,7 @@ test("node USB preserves transfer failure and marks session invalidated when abo
     let thrown = null;
     try {
       await driver.signTransaction(
-        "/dev/cu.agentq-abort-invalid-session",
+        "/dev/cu.signing-abort-invalid-session",
         "session_abcdef",
         { operation: "sign_transaction", chain: "sui", method: "sign_transaction" },
         { network: "mainnet", txBytes: payload.toString("base64") },
@@ -1046,7 +1046,7 @@ test("node USB preserves transfer failure and marks session invalidated when abo
     } catch (error) {
       thrown = error;
     }
-    assert.ok(thrown instanceof AgentQError);
+    assert.ok(thrown instanceof DeviceRequestError);
     assert.equal(thrown.code, "invalid_response");
     assert.equal(consumeFirmwareSessionInvalidated(thrown), true);
     assert.equal(consumeFirmwareSessionInvalidated(thrown), false);
@@ -1104,13 +1104,13 @@ test("node USB aborts active payload transfer after progress mismatch", async ()
     const driver = new SerialPortUsbDriver();
     await assert.rejects(
       () => driver.signTransaction(
-        "/dev/cu.agentq-progress-mismatch",
+        "/dev/cu.signing-progress-mismatch",
         "session_abcdef",
         { operation: "sign_transaction", chain: "sui", method: "sign_transaction" },
         { network: "mainnet", txBytes: payload.toString("base64") },
         1000,
       ),
-      (error) => error instanceof AgentQError && error.code === "invalid_response",
+      (error) => error instanceof DeviceRequestError && error.code === "invalid_response",
     );
     assert.equal(abortRequest.transferId, "transfer_progress_mismatch");
   } finally {
@@ -1131,13 +1131,13 @@ test("node USB rejects payloads above the common transfer max before upload", as
     const driver = new SerialPortUsbDriver();
     await assert.rejects(
       () => driver.signTransaction(
-        "/dev/cu.agentq-payload-max-capability",
+        "/dev/cu.signing-payload-max-capability",
         "session_abcdef",
         { operation: "sign_transaction", chain: "sui", method: "sign_transaction" },
         { network: "mainnet", txBytes: payload.toString("base64") },
         1000,
       ),
-      (error) => error instanceof AgentQError && error.code === "payload_too_large",
+      (error) => error instanceof DeviceRequestError && error.code === "payload_too_large",
     );
     assert.deepEqual(seen, []);
   } finally {
@@ -1147,7 +1147,7 @@ test("node USB rejects payloads above the common transfer max before upload", as
 
 test("deadlineEnforcingDriver bounds a call whose driver ignores its deadline", async () => {
   // Single enforcement boundary: a hanging call is bounded by its deadline argument
-  // even though this driver ignores it. AgentQCore wraps its driver with this, so
+  // even though this driver ignores it. DeviceCore wraps its driver with this, so
   // every deadline-bearing transport call is bounded in one place.
   const driver = {
     requestStatus() {
@@ -1157,7 +1157,7 @@ test("deadlineEnforcingDriver bounds a call whose driver ignores its deadline", 
   const bounded = deadlineEnforcingDriver(driver);
   await assert.rejects(
     () => bounded.requestStatus("/dev/cu.usbmodem1", 50),
-    (error) => error instanceof AgentQError && error.code === "timeout",
+    (error) => error instanceof DeviceRequestError && error.code === "timeout",
   );
 });
 
@@ -1167,13 +1167,13 @@ test("deadlineEnforcingDriver preserves signing success metadata before its dead
       const request = signTransactionRequest();
       return requestSigningOutcomeWithRecovery(request, 1234, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
         if (wireKind(wireRequest) === "sign_transaction") {
-          throw markRequestMayHaveReachedFirmware(new AgentQError("transport_closed", "Transport closed.", true));
+          throw markRequestMayHaveReachedFirmware(new DeviceRequestError("transport_closed", "Transport closed.", true));
         }
         if (wireKind(wireRequest) === "get_result") {
           return assertResponse(signedTransactionResult(wireRequest.id, "get_result"));
         }
         if (wireKind(wireRequest) === "ack_result") {
-          throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
+          throw new DeviceRequestError("invalid_session", "Session is unknown or already ended.", false);
         }
         throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
       }));
@@ -1181,7 +1181,7 @@ test("deadlineEnforcingDriver preserves signing success metadata before its dead
   };
   const bounded = deadlineEnforcingDriver(driver);
   const result = await bounded.signTransaction(
-    "/dev/cu.agentq-metadata",
+    "/dev/cu.signing-metadata",
     "session_abcdef",
     { operation: "sign_transaction", chain: "sui", method: "sign_transaction" },
     { network: "mainnet", txBytes: "AQID" },
@@ -1193,7 +1193,7 @@ test("deadlineEnforcingDriver preserves signing success metadata before its dead
 });
 
 test("scanUsbDeviceStatuses self-enforces the scan budget on a raw driver", async () => {
-  // No AgentQCore wrapper here: the scan function owns its budget and must bound
+  // No DeviceCore wrapper here: the scan function owns its budget and must bound
   // a hanging handshake itself, so a direct/raw export caller is also safe.
   const driver = {
     async listPorts() {

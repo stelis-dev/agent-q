@@ -3,21 +3,21 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 COMMON_SUI_DIR="${COMMON_ROOT}/sui"
 FIXTURE_DIR="${COMMON_SUI_DIR}/testdata/sui_transaction_facts"
 COVERAGE_MATRIX="${COMMON_SUI_DIR}/testdata/sui_transaction_authorization_coverage.tsv"
-DEFAULT_SIGNING_DIR="${REPO_ROOT}/.firmware-cache/signing-crypto/microsui-lib"
-SIGNING_ROOT="${AGENT_Q_SIGNING_CRYPTO_ROOT:-${DEFAULT_SIGNING_DIR}}"
-SIGNING_CORE="${SIGNING_ROOT}/src/microsui_core"
+DEFAULT_RUNTIME_DIR="${REPO_ROOT}/.firmware-cache/signing-crypto/microsui-lib"
+CRYPTO_ROOT="${SIGNING_CRYPTO_ROOT:-${DEFAULT_RUNTIME_DIR}}"
+MICROSUI_CORE="${CRYPTO_ROOT}/src/microsui_core"
 CXX_BIN="${CXX:-c++}"
 CC_BIN="${CC:-cc}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-sui-signing-preparation.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-sui-signing-preparation.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
-mkdir -p "${TMP_DIR}/agent_q_common"
-ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
-ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/agent_q_common/sui"
+mkdir -p "${TMP_DIR}/firmware_common"
+ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
+ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/firmware_common/sui"
 
 cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <assert.h>
@@ -31,10 +31,10 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <string>
 #include <vector>
 
-#include "agent_q_sui_signing_preparation.h"
-#include "agent_q_sui_account_store.h"
-#include "agent_q_sui_signing_authority.h"
-#include "agent_q_sui_zklogin_proof_store.h"
+#include "sui_signing_preparation.h"
+#include "sui_account_store.h"
+#include "sui_signing_authority.h"
+#include "sui_zklogin_proof_store.h"
 
 extern "C" {
 #include "byte_conversions.h"
@@ -43,17 +43,17 @@ extern "C" {
 namespace {
 
 bool g_digest_ok = true;
-agent_q::SuiAccountDerivationResult g_derivation_result =
-    agent_q::SuiAccountDerivationResult::ok;
-agent_q::AgentQSuiActiveIdentityKind g_active_identity_kind =
-    agent_q::AgentQSuiActiveIdentityKind::native;
-agent_q::AgentQSuiActiveIdentityError g_active_identity_error =
-    agent_q::AgentQSuiActiveIdentityError::none;
-char g_derived_address[agent_q::kSuiAddressBufferSize] =
+signing::SuiAccountDerivationResult g_derivation_result =
+    signing::SuiAccountDerivationResult::ok;
+signing::SuiActiveIdentityKind g_active_identity_kind =
+    signing::SuiActiveIdentityKind::native;
+signing::SuiActiveIdentityError g_active_identity_error =
+    signing::SuiActiveIdentityError::none;
+char g_derived_address[signing::kSuiAddressBufferSize] =
     "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-char g_zklogin_network[agent_q::kAgentQSuiNetworkBufferSize] = "devnet";
+char g_zklogin_network[signing::kSuiNetworkBufferSize] = "devnet";
 bool g_read_account_settings_ok = true;
-agent_q::AgentQSuiAccountSettings g_account_settings = {false};
+signing::SuiAccountSettings g_account_settings = {false};
 
 int hex_value(char value)
 {
@@ -154,39 +154,39 @@ std::vector<MatrixRow> read_matrix(const std::string& path)
     return rows;
 }
 
-agent_q::AgentQSuiUserAuthorizationOutcome expected_user_authorization_outcome(
+signing::SuiUserAuthorizationOutcome expected_user_authorization_outcome(
     const MatrixRow& row)
 {
     const std::string& user_gate = field(row, "expected_user_gate_after_adapter");
     if (user_gate == "ok_review_pending") {
-        return agent_q::AgentQSuiUserAuthorizationOutcome::offline_facts_review;
+        return signing::SuiUserAuthorizationOutcome::offline_facts_review;
     }
     if (user_gate == "blind_signing_confirmation") {
-        return agent_q::AgentQSuiUserAuthorizationOutcome::blind_signing;
+        return signing::SuiUserAuthorizationOutcome::blind_signing;
     }
-    return agent_q::AgentQSuiUserAuthorizationOutcome::unavailable;
+    return signing::SuiUserAuthorizationOutcome::unavailable;
 }
 
-agent_q::AgentQSuiPolicyAuthorizationOutcome expected_policy_authorization_outcome(
+signing::SuiPolicyAuthorizationOutcome expected_policy_authorization_outcome(
     const MatrixRow& row)
 {
     const std::string& parse_result = field(row, "full_facts_parse_result");
     if (parse_result == "ok") {
-        return agent_q::AgentQSuiPolicyAuthorizationOutcome::policy_evaluation;
+        return signing::SuiPolicyAuthorizationOutcome::policy_evaluation;
     }
-    return agent_q::AgentQSuiPolicyAuthorizationOutcome::unavailable;
+    return signing::SuiPolicyAuthorizationOutcome::unavailable;
 }
 
-const char* preparation_result_outcome(agent_q::AgentQSuiSigningPreparationResult result)
+const char* preparation_result_outcome(signing::SuiSigningPreparationResult result)
 {
     switch (result) {
-        case agent_q::AgentQSuiSigningPreparationResult::ok:
+        case signing::SuiSigningPreparationResult::ok:
             return "ok";
-        case agent_q::AgentQSuiSigningPreparationResult::malformed_transaction:
+        case signing::SuiSigningPreparationResult::malformed_transaction:
             return "malformed_transaction";
-        case agent_q::AgentQSuiSigningPreparationResult::unsupported_transaction:
+        case signing::SuiSigningPreparationResult::unsupported_transaction:
             return "unsupported_transaction";
-        case agent_q::AgentQSuiSigningPreparationResult::invalid_account:
+        case signing::SuiSigningPreparationResult::invalid_account:
             return "invalid_account";
         default:
             return "other_error";
@@ -194,32 +194,32 @@ const char* preparation_result_outcome(agent_q::AgentQSuiSigningPreparationResul
 }
 
 std::string user_outcome_for_prepared(
-    agent_q::AgentQSuiSigningPreparationResult result,
-    const agent_q::AgentQSuiPreparedSignTransaction& prepared)
+    signing::SuiSigningPreparationResult result,
+    const signing::SuiPreparedSignTransaction& prepared)
 {
-    if (result != agent_q::AgentQSuiSigningPreparationResult::ok) {
+    if (result != signing::SuiSigningPreparationResult::ok) {
         return preparation_result_outcome(result);
     }
     if (!prepared.user_mode_authorization_covered) {
         return "unsupported_transaction";
     }
     if (prepared.user_authorization_outcome ==
-        agent_q::AgentQSuiUserAuthorizationOutcome::offline_facts_review) {
+        signing::SuiUserAuthorizationOutcome::offline_facts_review) {
         return "offline_facts_review_confirmation";
     }
     if (prepared.user_authorization_outcome ==
-        agent_q::AgentQSuiUserAuthorizationOutcome::blind_signing) {
+        signing::SuiUserAuthorizationOutcome::blind_signing) {
         return "blind_signing_confirmation";
     }
     return "unsupported_transaction";
 }
 
 std::string policy_outcome_for_prepared(
-    agent_q::AgentQSuiSigningPreparationResult result,
-    const agent_q::AgentQSuiPreparedSignTransaction& prepared)
+    signing::SuiSigningPreparationResult result,
+    const signing::SuiPreparedSignTransaction& prepared)
 {
     (void)prepared;
-    if (result != agent_q::AgentQSuiSigningPreparationResult::ok) {
+    if (result != signing::SuiSigningPreparationResult::ok) {
         return preparation_result_outcome(result);
     }
     return "policy_rejected";
@@ -230,10 +230,10 @@ void verify_matrix_final_outcomes(const std::string& root, const std::string& ma
     for (const MatrixRow& row : read_matrix(matrix_path)) {
         const std::string fixture = field(row, "fixture");
         const std::vector<uint8_t> bytes = read_hex((root + "/" + fixture + ".bcs.hex").c_str());
-        agent_q::AgentQSuiPreparedSignTransaction tx = {};
-        const agent_q::AgentQSuiSigningPreparationResult result =
-            agent_q::prepare_sui_sign_transaction(
-                agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+        signing::SuiPreparedSignTransaction tx = {};
+        const signing::SuiSigningPreparationResult result =
+            signing::prepare_sui_sign_transaction(
+                signing::SupportedSignRoute::sui_sign_transaction,
                 "devnet",
                 base64(bytes).c_str(),
                 bytes.size(),
@@ -243,17 +243,17 @@ void verify_matrix_final_outcomes(const std::string& root, const std::string& ma
         const std::string policy_outcome = policy_outcome_for_prepared(result, tx);
         assert(user_outcome == field(row, "final_user_mode_outcome"));
         assert(policy_outcome == field(row, "final_policy_mode_outcome"));
-        if (result == agent_q::AgentQSuiSigningPreparationResult::ok) {
+        if (result == signing::SuiSigningPreparationResult::ok) {
             assert(tx.user_authorization_outcome == expected_user_authorization_outcome(row));
             assert(tx.policy_authorization_outcome == expected_policy_authorization_outcome(row));
         }
-        agent_q::clear_prepared_sui_sign_transaction(&tx);
+        signing::clear_prepared_sui_sign_transaction(&tx);
     }
 }
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 void wipe_sensitive_buffer(void* data, size_t size)
 {
@@ -291,82 +291,82 @@ SuiAccountDerivationResult derive_sui_ed25519_account_from_stored_root(
     return SuiAccountDerivationResult::ok;
 }
 
-AgentQSuiActiveIdentity resolve_active_sui_identity()
+SuiActiveIdentity resolve_active_sui_identity()
 {
-    AgentQSuiActiveIdentity identity = {};
-    if (::g_active_identity_kind == AgentQSuiActiveIdentityKind::error) {
-        identity.kind = AgentQSuiActiveIdentityKind::error;
+    SuiActiveIdentity identity = {};
+    if (::g_active_identity_kind == SuiActiveIdentityKind::error) {
+        identity.kind = SuiActiveIdentityKind::error;
         identity.error = ::g_active_identity_error;
         return identity;
     }
     if (::g_derivation_result != SuiAccountDerivationResult::ok) {
-        identity.kind = AgentQSuiActiveIdentityKind::error;
-        identity.error = AgentQSuiActiveIdentityError::native_account_unavailable;
+        identity.kind = SuiActiveIdentityKind::error;
+        identity.error = SuiActiveIdentityError::native_account_unavailable;
         return identity;
     }
     identity.kind = ::g_active_identity_kind;
-    identity.error = AgentQSuiActiveIdentityError::none;
+    identity.error = SuiActiveIdentityError::none;
     snprintf(identity.address, sizeof(identity.address), "%s", ::g_derived_address);
-    identity.public_key[0] = identity.kind == AgentQSuiActiveIdentityKind::zklogin
-                                 ? kAgentQSuiSignatureSchemeFlagZkLogin
-                                 : kAgentQSuiSignatureSchemeFlagEd25519;
-    identity.public_key_size = identity.kind == AgentQSuiActiveIdentityKind::zklogin
-                                   ? kAgentQSuiZkLoginPublicKeyMinBytes
-                                   : kAgentQSuiSchemePrefixedEd25519PublicKeyBytes;
-    if (identity.kind == AgentQSuiActiveIdentityKind::zklogin) {
+    identity.public_key[0] = identity.kind == SuiActiveIdentityKind::zklogin
+                                 ? kSuiSignatureSchemeFlagZkLogin
+                                 : kSuiSignatureSchemeFlagEd25519;
+    identity.public_key_size = identity.kind == SuiActiveIdentityKind::zklogin
+                                   ? kSuiZkLoginPublicKeyMinBytes
+                                   : kSuiSchemePrefixedEd25519PublicKeyBytes;
+    if (identity.kind == SuiActiveIdentityKind::zklogin) {
         snprintf(identity.zklogin.network, sizeof(identity.zklogin.network), "%s", ::g_zklogin_network);
     }
     return identity;
 }
 
-AgentQSuiSigningAccountBindingResult verify_sui_signing_active_account_binding(
+SuiSigningAccountBindingResult verify_sui_signing_active_account_binding(
     const SuiPolicySubjectFacts& facts,
-    const AgentQSuiActiveIdentity& active_identity,
-    const AgentQSuiAccountSettings& account_settings)
+    const SuiActiveIdentity& active_identity,
+    const SuiAccountSettings& account_settings)
 {
-    if (active_identity.kind == AgentQSuiActiveIdentityKind::error) {
-        return active_identity.error == AgentQSuiActiveIdentityError::native_account_unavailable
-                   ? AgentQSuiSigningAccountBindingResult::account_unavailable
-                   : AgentQSuiSigningAccountBindingResult::active_identity_unavailable;
+    if (active_identity.kind == SuiActiveIdentityKind::error) {
+        return active_identity.error == SuiActiveIdentityError::native_account_unavailable
+                   ? SuiSigningAccountBindingResult::account_unavailable
+                   : SuiSigningAccountBindingResult::active_identity_unavailable;
     }
     if (strcmp(facts.sender, active_identity.address) != 0) {
-        return AgentQSuiSigningAccountBindingResult::account_mismatch;
+        return SuiSigningAccountBindingResult::account_mismatch;
     }
     return strcmp(facts.gas_owner, active_identity.address) == 0 ||
                    account_settings.accept_gas_sponsor
-               ? AgentQSuiSigningAccountBindingResult::ok
-               : AgentQSuiSigningAccountBindingResult::account_mismatch;
+               ? SuiSigningAccountBindingResult::ok
+               : SuiSigningAccountBindingResult::account_mismatch;
 }
 
-AgentQSuiSigningActiveIdentityNetworkResult verify_sui_signing_active_identity_network(
-    const AgentQSuiActiveIdentity& active_identity,
+SuiSigningActiveIdentityNetworkResult verify_sui_signing_active_identity_network(
+    const SuiActiveIdentity& active_identity,
     const char* request_network)
 {
-    if (active_identity.kind == AgentQSuiActiveIdentityKind::error) {
-        return active_identity.error == AgentQSuiActiveIdentityError::native_account_unavailable
-                   ? AgentQSuiSigningActiveIdentityNetworkResult::account_unavailable
-                   : AgentQSuiSigningActiveIdentityNetworkResult::active_identity_unavailable;
+    if (active_identity.kind == SuiActiveIdentityKind::error) {
+        return active_identity.error == SuiActiveIdentityError::native_account_unavailable
+                   ? SuiSigningActiveIdentityNetworkResult::account_unavailable
+                   : SuiSigningActiveIdentityNetworkResult::active_identity_unavailable;
     }
-    if (active_identity.kind == AgentQSuiActiveIdentityKind::zklogin) {
+    if (active_identity.kind == SuiActiveIdentityKind::zklogin) {
         if (request_network == nullptr || request_network[0] == '\0') {
-            return AgentQSuiSigningActiveIdentityNetworkResult::network_mismatch;
+            return SuiSigningActiveIdentityNetworkResult::network_mismatch;
         }
         return strcmp(active_identity.zklogin.network, request_network) == 0
-                   ? AgentQSuiSigningActiveIdentityNetworkResult::ok
-                   : AgentQSuiSigningActiveIdentityNetworkResult::network_mismatch;
+                   ? SuiSigningActiveIdentityNetworkResult::ok
+                   : SuiSigningActiveIdentityNetworkResult::network_mismatch;
     }
-    return active_identity.kind == AgentQSuiActiveIdentityKind::native
-               ? AgentQSuiSigningActiveIdentityNetworkResult::ok
-               : AgentQSuiSigningActiveIdentityNetworkResult::active_identity_unavailable;
+    return active_identity.kind == SuiActiveIdentityKind::native
+               ? SuiSigningActiveIdentityNetworkResult::ok
+               : SuiSigningActiveIdentityNetworkResult::active_identity_unavailable;
 }
 
-AgentQSuiSigningActiveIdentityNetworkResult verify_sui_signing_active_identity_network(
+SuiSigningActiveIdentityNetworkResult verify_sui_signing_active_identity_network(
     const char* request_network)
 {
     return verify_sui_signing_active_identity_network(resolve_active_sui_identity(), request_network);
 }
 
-bool read_sui_account_settings(AgentQSuiAccountSettings* settings)
+bool read_sui_account_settings(SuiAccountSettings* settings)
 {
     if (settings != nullptr) {
         *settings = kDefaultSuiAccountSettings;
@@ -378,7 +378,7 @@ bool read_sui_account_settings(AgentQSuiAccountSettings* settings)
     return true;
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 int main(int argc, char** argv)
 {
@@ -395,140 +395,140 @@ int main(int argc, char** argv)
     const std::vector<uint8_t> sponsored =
         read_hex((root + "/sponsored_gas_owner_tx.bcs.hex").c_str());
 
-    agent_q::AgentQSuiPreparedSignTransaction tx = {};
-    assert(agent_q::prepare_sui_sign_transaction(
-               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+    signing::SuiPreparedSignTransaction tx = {};
+    assert(signing::prepare_sui_sign_transaction(
+               signing::SupportedSignRoute::sui_sign_transaction,
                "devnet",
                base64(valid).c_str(),
                valid.size(),
-               &tx) == agent_q::AgentQSuiSigningPreparationResult::ok);
+               &tx) == signing::SuiSigningPreparationResult::ok);
     assert(tx.tx_bytes_size == valid.size());
     assert(strcmp(tx.network, "devnet") == 0);
     assert(tx.sui_policy_subject.command_count == 2);
-    assert(tx.sui_policy_subject.commands[0].kind == agent_q::SuiCommandFactKind::split_coins);
-    assert(tx.sui_policy_subject.commands[1].kind == agent_q::SuiCommandFactKind::transfer_objects);
-    assert(tx.sui_review.status == agent_q::SuiReviewSummaryStatus::ok);
+    assert(tx.sui_policy_subject.commands[0].kind == signing::SuiCommandFactKind::split_coins);
+    assert(tx.sui_policy_subject.commands[1].kind == signing::SuiCommandFactKind::transfer_objects);
+    assert(tx.sui_review.status == signing::SuiReviewSummaryStatus::ok);
     assert(tx.sui_review.row_count > 0);
     assert(tx.user_mode_authorization_covered);
     assert(tx.policy_mode_authorization_covered);
     assert(tx.sui_offline_policy_facts != nullptr);
     assert(tx.sui_offline_policy_facts->completeness ==
-           agent_q::SuiOfflinePolicyFactsCompleteness::complete);
+           signing::SuiOfflinePolicyFactsCompleteness::complete);
     assert(tx.user_authorization_outcome ==
-           agent_q::AgentQSuiUserAuthorizationOutcome::offline_facts_review);
+           signing::SuiUserAuthorizationOutcome::offline_facts_review);
     assert(tx.policy_authorization_outcome ==
-           agent_q::AgentQSuiPolicyAuthorizationOutcome::policy_evaluation);
-    agent_q::clear_prepared_sui_sign_transaction(&tx);
+           signing::SuiPolicyAuthorizationOutcome::policy_evaluation);
+    signing::clear_prepared_sui_sign_transaction(&tx);
     assert(tx.tx_bytes_size == 0);
     assert(tx.sui_offline_policy_facts == nullptr);
 
-    assert(agent_q::prepare_sui_sign_transaction(
-               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+    assert(signing::prepare_sui_sign_transaction(
+               signing::SupportedSignRoute::sui_sign_transaction,
                "devnet",
                base64(malformed).c_str(),
                malformed.size(),
-               &tx) == agent_q::AgentQSuiSigningPreparationResult::malformed_transaction);
-    assert(agent_q::prepare_sui_sign_transaction(
-               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+               &tx) == signing::SuiSigningPreparationResult::malformed_transaction);
+    assert(signing::prepare_sui_sign_transaction(
+               signing::SupportedSignRoute::sui_sign_transaction,
                "devnet",
                base64(result_reference_transfer).c_str(),
                result_reference_transfer.size(),
-               &tx) == agent_q::AgentQSuiSigningPreparationResult::ok);
+               &tx) == signing::SuiSigningPreparationResult::ok);
     assert(tx.sui_policy_subject.command_count > 0);
-    assert(tx.sui_review.status == agent_q::SuiReviewSummaryStatus::ok);
+    assert(tx.sui_review.status == signing::SuiReviewSummaryStatus::ok);
     assert(tx.user_mode_authorization_covered);
     assert(tx.policy_mode_authorization_covered);
     assert(tx.user_authorization_outcome ==
-           agent_q::AgentQSuiUserAuthorizationOutcome::offline_facts_review);
+           signing::SuiUserAuthorizationOutcome::offline_facts_review);
     assert(tx.policy_authorization_outcome ==
-           agent_q::AgentQSuiPolicyAuthorizationOutcome::policy_evaluation);
-    agent_q::clear_prepared_sui_sign_transaction(&tx);
-    assert(agent_q::prepare_sui_sign_transaction(
-               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+           signing::SuiPolicyAuthorizationOutcome::policy_evaluation);
+    signing::clear_prepared_sui_sign_transaction(&tx);
+    assert(signing::prepare_sui_sign_transaction(
+               signing::SupportedSignRoute::sui_sign_transaction,
                "devnet",
                base64(publish).c_str(),
                publish.size(),
-               &tx) == agent_q::AgentQSuiSigningPreparationResult::ok);
+               &tx) == signing::SuiSigningPreparationResult::ok);
     assert(tx.tx_bytes_size == publish.size());
-    assert(tx.sui_review.status == agent_q::SuiReviewSummaryStatus::insufficient_review);
+    assert(tx.sui_review.status == signing::SuiReviewSummaryStatus::insufficient_review);
     assert(tx.user_mode_authorization_covered);
     assert(tx.policy_mode_authorization_covered);
     assert(tx.user_authorization_outcome ==
-           agent_q::AgentQSuiUserAuthorizationOutcome::blind_signing);
+           signing::SuiUserAuthorizationOutcome::blind_signing);
     assert(tx.policy_authorization_outcome ==
-           agent_q::AgentQSuiPolicyAuthorizationOutcome::policy_evaluation);
-    agent_q::clear_prepared_sui_sign_transaction(&tx);
-    assert(agent_q::prepare_sui_sign_transaction(
-               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+           signing::SuiPolicyAuthorizationOutcome::policy_evaluation);
+    signing::clear_prepared_sui_sign_transaction(&tx);
+    assert(signing::prepare_sui_sign_transaction(
+               signing::SupportedSignRoute::sui_sign_transaction,
                "devnet",
                base64(valid).c_str(),
                valid.size() - 1,
-               &tx) == agent_q::AgentQSuiSigningPreparationResult::invalid_params);
-    assert(agent_q::prepare_sui_sign_transaction(
-               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+               &tx) == signing::SuiSigningPreparationResult::invalid_params);
+    assert(signing::prepare_sui_sign_transaction(
+               signing::SupportedSignRoute::sui_sign_transaction,
                "devnet",
                base64(valid).c_str(),
                valid.size() + 1,
-               &tx) == agent_q::AgentQSuiSigningPreparationResult::invalid_params);
+               &tx) == signing::SuiSigningPreparationResult::invalid_params);
     const std::vector<uint8_t> max_sized_malformed_tx(
-        agent_q::kAgentQSuiSignTransactionTxBytesMaxBytes,
+        signing::kSuiSignTransactionTxBytesMaxBytes,
         0xA5);
-    assert(agent_q::prepare_sui_sign_transaction(
-               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+    assert(signing::prepare_sui_sign_transaction(
+               signing::SupportedSignRoute::sui_sign_transaction,
                "devnet",
                base64(max_sized_malformed_tx).c_str(),
                max_sized_malformed_tx.size(),
-               &tx) == agent_q::AgentQSuiSigningPreparationResult::malformed_transaction);
-    const std::vector<uint8_t> oversized_tx(agent_q::kAgentQSuiSignTransactionTxBytesMaxBytes + 1, 0xA5);
-    assert(agent_q::prepare_sui_sign_transaction(
-               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+               &tx) == signing::SuiSigningPreparationResult::malformed_transaction);
+    const std::vector<uint8_t> oversized_tx(signing::kSuiSignTransactionTxBytesMaxBytes + 1, 0xA5);
+    assert(signing::prepare_sui_sign_transaction(
+               signing::SupportedSignRoute::sui_sign_transaction,
                "devnet",
                base64(oversized_tx).c_str(),
                oversized_tx.size(),
-               &tx) == agent_q::AgentQSuiSigningPreparationResult::payload_too_large);
+               &tx) == signing::SuiSigningPreparationResult::payload_too_large);
 
-    assert(agent_q::prepare_sui_sign_transaction(
-               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+    assert(signing::prepare_sui_sign_transaction(
+               signing::SupportedSignRoute::sui_sign_transaction,
                "devnet",
                base64(sponsored).c_str(),
                sponsored.size(),
-               &tx) == agent_q::AgentQSuiSigningPreparationResult::invalid_account);
+               &tx) == signing::SuiSigningPreparationResult::invalid_account);
 
     ::g_account_settings.accept_gas_sponsor = true;
-    assert(agent_q::prepare_sui_sign_transaction(
-               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+    assert(signing::prepare_sui_sign_transaction(
+               signing::SupportedSignRoute::sui_sign_transaction,
                "devnet",
                base64(sponsored).c_str(),
                sponsored.size(),
-               &tx) == agent_q::AgentQSuiSigningPreparationResult::ok);
+               &tx) == signing::SuiSigningPreparationResult::ok);
     assert(strcmp(tx.sui_policy_subject.sender,
                   "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0);
     assert(strcmp(tx.sui_policy_subject.gas_owner,
                   "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") == 0);
     assert(tx.user_mode_authorization_covered);
     assert(tx.user_authorization_outcome ==
-           agent_q::AgentQSuiUserAuthorizationOutcome::offline_facts_review);
+           signing::SuiUserAuthorizationOutcome::offline_facts_review);
     assert(tx.policy_mode_authorization_covered);
     assert(tx.policy_authorization_outcome ==
-           agent_q::AgentQSuiPolicyAuthorizationOutcome::policy_evaluation);
+           signing::SuiPolicyAuthorizationOutcome::policy_evaluation);
     assert(tx.sui_offline_policy_facts != nullptr);
     assert(tx.sui_offline_policy_facts->sponsored);
     assert(strcmp(tx.sui_offline_policy_facts->gas_owner,
                   "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") == 0);
     assert(strcmp(tx.sui_offline_policy_facts->gas_budget_raw, "50000000") == 0);
     assert(strcmp(tx.sui_offline_policy_facts->gas_price_raw, "1000") == 0);
-    agent_q::clear_prepared_sui_sign_transaction(&tx);
+    signing::clear_prepared_sui_sign_transaction(&tx);
 
     snprintf(::g_derived_address,
              sizeof(::g_derived_address),
              "%s",
              "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
-    assert(agent_q::prepare_sui_sign_transaction(
-               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+    assert(signing::prepare_sui_sign_transaction(
+               signing::SupportedSignRoute::sui_sign_transaction,
                "devnet",
                base64(sponsored).c_str(),
                sponsored.size(),
-               &tx) == agent_q::AgentQSuiSigningPreparationResult::invalid_account);
+               &tx) == signing::SuiSigningPreparationResult::invalid_account);
     snprintf(::g_derived_address,
              sizeof(::g_derived_address),
              "%s",
@@ -536,142 +536,142 @@ int main(int argc, char** argv)
     ::g_account_settings.accept_gas_sponsor = false;
 
     ::g_read_account_settings_ok = false;
-    assert(agent_q::prepare_sui_sign_transaction(
-               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+    assert(signing::prepare_sui_sign_transaction(
+               signing::SupportedSignRoute::sui_sign_transaction,
                "devnet",
                base64(valid).c_str(),
                valid.size(),
-               &tx) == agent_q::AgentQSuiSigningPreparationResult::invalid_account);
+               &tx) == signing::SuiSigningPreparationResult::invalid_account);
     ::g_read_account_settings_ok = true;
 
     snprintf(::g_derived_address,
              sizeof(::g_derived_address),
              "%s",
              "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
-    assert(agent_q::prepare_sui_sign_transaction(
-               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+    assert(signing::prepare_sui_sign_transaction(
+               signing::SupportedSignRoute::sui_sign_transaction,
                "devnet",
                base64(valid).c_str(),
                valid.size(),
-               &tx) == agent_q::AgentQSuiSigningPreparationResult::invalid_account);
+               &tx) == signing::SuiSigningPreparationResult::invalid_account);
     snprintf(::g_derived_address,
              sizeof(::g_derived_address),
              "%s",
              "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 
-    ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::error;
-    ::g_active_identity_error = agent_q::AgentQSuiActiveIdentityError::proof_storage_error;
-    assert(agent_q::prepare_sui_sign_transaction(
-               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+    ::g_active_identity_kind = signing::SuiActiveIdentityKind::error;
+    ::g_active_identity_error = signing::SuiActiveIdentityError::proof_storage_error;
+    assert(signing::prepare_sui_sign_transaction(
+               signing::SupportedSignRoute::sui_sign_transaction,
                "devnet",
                base64(valid).c_str(),
                valid.size(),
-               &tx) == agent_q::AgentQSuiSigningPreparationResult::active_identity_unavailable);
-    ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::native;
-    ::g_active_identity_error = agent_q::AgentQSuiActiveIdentityError::none;
-    assert(agent_q::verify_sui_signing_active_identity_network(
-               agent_q::resolve_active_sui_identity(),
-               nullptr) == agent_q::AgentQSuiSigningActiveIdentityNetworkResult::ok);
+               &tx) == signing::SuiSigningPreparationResult::active_identity_unavailable);
+    ::g_active_identity_kind = signing::SuiActiveIdentityKind::native;
+    ::g_active_identity_error = signing::SuiActiveIdentityError::none;
+    assert(signing::verify_sui_signing_active_identity_network(
+               signing::resolve_active_sui_identity(),
+               nullptr) == signing::SuiSigningActiveIdentityNetworkResult::ok);
 
-    ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::zklogin;
+    ::g_active_identity_kind = signing::SuiActiveIdentityKind::zklogin;
     snprintf(::g_zklogin_network, sizeof(::g_zklogin_network), "%s", "testnet");
-    assert(agent_q::prepare_sui_sign_transaction(
-               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+    assert(signing::prepare_sui_sign_transaction(
+               signing::SupportedSignRoute::sui_sign_transaction,
                "devnet",
                base64(valid).c_str(),
                valid.size(),
-               &tx) == agent_q::AgentQSuiSigningPreparationResult::invalid_network);
-    ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::native;
+               &tx) == signing::SuiSigningPreparationResult::invalid_network);
+    ::g_active_identity_kind = signing::SuiActiveIdentityKind::native;
 
     ::g_digest_ok = false;
-    assert(agent_q::prepare_sui_sign_transaction(
-               agent_q::AgentQSupportedSignRoute::sui_sign_transaction,
+    assert(signing::prepare_sui_sign_transaction(
+               signing::SupportedSignRoute::sui_sign_transaction,
                "devnet",
                base64(valid).c_str(),
                valid.size(),
-               &tx) == agent_q::AgentQSuiSigningPreparationResult::digest_error);
+               &tx) == signing::SuiSigningPreparationResult::digest_error);
     ::g_digest_ok = true;
 
-    agent_q::AgentQSuiPreparedPersonalMessage message = {};
+    signing::SuiPreparedPersonalMessage message = {};
     const std::string personal = "SGVsbG8=";
-    assert(agent_q::prepare_sui_sign_personal_message(
-               agent_q::AgentQSupportedSignRoute::sui_sign_personal_message,
+    assert(signing::prepare_sui_sign_personal_message(
+               signing::SupportedSignRoute::sui_sign_personal_message,
                "devnet",
                personal.c_str(),
                5,
-               &message) == agent_q::AgentQSuiSigningPreparationResult::ok);
+               &message) == signing::SuiSigningPreparationResult::ok);
     assert(message.message_size == 5);
     assert(strcmp(message.account_address,
                   "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0);
-    agent_q::clear_prepared_sui_sign_personal_message(&message);
+    signing::clear_prepared_sui_sign_personal_message(&message);
 
-    ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::zklogin;
+    ::g_active_identity_kind = signing::SuiActiveIdentityKind::zklogin;
     snprintf(::g_zklogin_network, sizeof(::g_zklogin_network), "%s", "testnet");
-    assert(agent_q::prepare_sui_sign_personal_message(
-               agent_q::AgentQSupportedSignRoute::sui_sign_personal_message,
+    assert(signing::prepare_sui_sign_personal_message(
+               signing::SupportedSignRoute::sui_sign_personal_message,
                "devnet",
                personal.c_str(),
                5,
-               &message) == agent_q::AgentQSuiSigningPreparationResult::invalid_network);
+               &message) == signing::SuiSigningPreparationResult::invalid_network);
     snprintf(::g_zklogin_network, sizeof(::g_zklogin_network), "%s", "devnet");
-    assert(agent_q::prepare_sui_sign_personal_message(
-               agent_q::AgentQSupportedSignRoute::sui_sign_personal_message,
+    assert(signing::prepare_sui_sign_personal_message(
+               signing::SupportedSignRoute::sui_sign_personal_message,
                "devnet",
                personal.c_str(),
                5,
-               &message) == agent_q::AgentQSuiSigningPreparationResult::ok);
+               &message) == signing::SuiSigningPreparationResult::ok);
     assert(message.message_size == 5);
     assert(strcmp(message.account_address,
                   "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0);
-    agent_q::clear_prepared_sui_sign_personal_message(&message);
-    ::g_active_identity_kind = agent_q::AgentQSuiActiveIdentityKind::native;
+    signing::clear_prepared_sui_sign_personal_message(&message);
+    ::g_active_identity_kind = signing::SuiActiveIdentityKind::native;
 
-    assert(agent_q::prepare_sui_sign_personal_message(
-               agent_q::AgentQSupportedSignRoute::sui_sign_personal_message,
+    assert(signing::prepare_sui_sign_personal_message(
+               signing::SupportedSignRoute::sui_sign_personal_message,
                "devnet",
                personal.c_str(),
                4,
-               &message) == agent_q::AgentQSuiSigningPreparationResult::invalid_params);
-    assert(agent_q::prepare_sui_sign_personal_message(
-               agent_q::AgentQSupportedSignRoute::sui_sign_personal_message,
+               &message) == signing::SuiSigningPreparationResult::invalid_params);
+    assert(signing::prepare_sui_sign_personal_message(
+               signing::SupportedSignRoute::sui_sign_personal_message,
                "devnet",
                personal.c_str(),
                6,
-               &message) == agent_q::AgentQSuiSigningPreparationResult::invalid_params);
-    const std::vector<uint8_t> oversized_message(agent_q::kAgentQSuiSignPersonalMessageMaxBytes + 1, 0x5A);
-    assert(agent_q::prepare_sui_sign_personal_message(
-               agent_q::AgentQSupportedSignRoute::sui_sign_personal_message,
+               &message) == signing::SuiSigningPreparationResult::invalid_params);
+    const std::vector<uint8_t> oversized_message(signing::kSuiSignPersonalMessageMaxBytes + 1, 0x5A);
+    assert(signing::prepare_sui_sign_personal_message(
+               signing::SupportedSignRoute::sui_sign_personal_message,
                "devnet",
                base64(oversized_message).c_str(),
                oversized_message.size(),
-               &message) == agent_q::AgentQSuiSigningPreparationResult::payload_too_large);
+               &message) == signing::SuiSigningPreparationResult::payload_too_large);
 
-    ::g_derivation_result = agent_q::SuiAccountDerivationResult::root_material_unavailable;
-    assert(agent_q::prepare_sui_sign_personal_message(
-               agent_q::AgentQSupportedSignRoute::sui_sign_personal_message,
+    ::g_derivation_result = signing::SuiAccountDerivationResult::root_material_unavailable;
+    assert(signing::prepare_sui_sign_personal_message(
+               signing::SupportedSignRoute::sui_sign_personal_message,
                "devnet",
                personal.c_str(),
                5,
-               &message) == agent_q::AgentQSuiSigningPreparationResult::account_unavailable);
+               &message) == signing::SuiSigningPreparationResult::account_unavailable);
     return 0;
 }
 CPP
 
-"${CC_BIN}" -c "${SIGNING_CORE}/byte_conversions.c" -o "${TMP_DIR}/byte_conversions.o"
+"${CC_BIN}" -c "${MICROSUI_CORE}/byte_conversions.c" -o "${TMP_DIR}/byte_conversions.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   -I"${TMP_DIR}" \
   -I"${COMMON_ROOT}" \
   -I"${COMMON_SUI_DIR}" \
-  -I"${SIGNING_CORE}" \
+  -I"${MICROSUI_CORE}" \
   "${TMP_DIR}/test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sui_signing_preparation.cpp" \
-  "${AGENT_Q_DIR}/agent_q_base64.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_sign_transaction_adapter.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_offline_policy_facts.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
+  "${RUNTIME_DIR}/sui_signing_preparation.cpp" \
+  "${RUNTIME_DIR}/base64.cpp" \
+  "${COMMON_SUI_DIR}/sign_transaction_adapter.cpp" \
+  "${COMMON_SUI_DIR}/offline_policy_facts.cpp" \
+  "${COMMON_SUI_DIR}/transaction_facts.cpp" \
+  "${COMMON_SUI_DIR}/bcs_reader.cpp" \
   "${TMP_DIR}/byte_conversions.o" \
   -o "${TMP_DIR}/test"
 

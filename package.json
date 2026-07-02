@@ -1,4 +1,5 @@
 {
+  "name": "local-workspace",
   "private": true,
   "version": "0.2.2",
   "workspaces": [
@@ -6,8 +7,8 @@
   ],
   "scripts": {
     "build": "npm --workspace @stelis/agent-q-core run build:self && npm --workspace @stelis/agent-q run build:self && npm --workspace @stelis/agent-q-provider-sui run build:self",
-    "build:sample-sui-dapp-kit": "npm --workspace @stelis/agent-q-sample-sui-dapp-kit run build",
-    "build:sample-zklogin-test-web": "npm --workspace @stelis/agent-q-sample-zklogin-test-web run build",
+    "build:sample-sui-dapp-kit": "npm --workspace @stelis/sample-sui-dapp-kit run build",
+    "build:sample-zklogin-test-web": "npm --workspace @stelis/sample-zklogin-test-web run build",
     "build:samples": "npm run build:sample-sui-dapp-kit && npm run build:sample-zklogin-test-web",
     "test": "npm run build && npm --workspace @stelis/agent-q-core run test:self && npm --workspace @stelis/agent-q run test:self && npm --workspace @stelis/agent-q-provider-sui run test:self"
   }

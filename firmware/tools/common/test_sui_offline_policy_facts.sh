@@ -17,15 +17,15 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 COMMON_SUI_DIR="${COMMON_ROOT}/sui"
 FIXTURE_DIR="${COMMON_SUI_DIR}/testdata/sui_transaction_facts"
 
 for required in \
-  "${COMMON_ROOT}/agent_q_u64_decimal.h" \
-  "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_offline_policy_facts.cpp" \
+  "${COMMON_ROOT}/numeric/u64_decimal.h" \
+  "${COMMON_SUI_DIR}/bcs_reader.cpp" \
+  "${COMMON_SUI_DIR}/transaction_facts.cpp" \
+  "${COMMON_SUI_DIR}/offline_policy_facts.cpp" \
   "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex" \
   "${FIXTURE_DIR}/funds_withdrawal_tx.bcs.hex" \
   "${FIXTURE_DIR}/non_sui_funds_withdrawal_tx.bcs.hex" \
@@ -48,7 +48,7 @@ for required in \
 done
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-sui-offline-policy-facts.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-sui-offline-policy-facts.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 cat >"${TMP_DIR}/sui_offline_policy_facts_test.cpp" <<'CPP'
@@ -61,7 +61,7 @@ cat >"${TMP_DIR}/sui_offline_policy_facts_test.cpp" <<'CPP'
 #include <string>
 #include <vector>
 
-#include "agent_q_sui_offline_policy_facts.h"
+#include "offline_policy_facts.h"
 
 namespace {
 
@@ -181,26 +181,26 @@ void expect_equal(const char* label, const char* expected, const char* actual, i
     }
 }
 
-agent_q::SuiOfflinePolicyConditionFacts parse_fixture(
+signing::SuiOfflinePolicyConditionFacts parse_fixture(
     const std::string& fixture_dir,
     const char* name,
     int* failures)
 {
     const std::string path = fixture_dir + "/" + name + ".bcs.hex";
     const std::vector<uint8_t> bytes = read_hex_fixture(path.c_str());
-    agent_q::SuiOfflinePolicyConditionFacts facts = {};
-    const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_offline_policy_condition_facts(bytes.data(), bytes.size(), &facts);
-    if (result != agent_q::SuiTransactionFactsResult::ok) {
+    signing::SuiOfflinePolicyConditionFacts facts = {};
+    const signing::SuiTransactionFactsResult result =
+        signing::parse_sui_offline_policy_condition_facts(bytes.data(), bytes.size(), &facts);
+    if (result != signing::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "%s expected ok parse, got %s\n",
                 name,
-                agent_q::sui_transaction_facts_result_name(result));
+                signing::sui_transaction_facts_result_name(result));
         *failures += 1;
     }
     return facts;
 }
 
-bool set_contains(const agent_q::SuiOfflinePolicyStringSet& set, const char* value)
+bool set_contains(const signing::SuiOfflinePolicyStringSet& set, const char* value)
 {
     for (uint16_t index = 0; index < set.count; ++index) {
         if (strcmp(set.values[index], value) == 0) {
@@ -212,7 +212,7 @@ bool set_contains(const agent_q::SuiOfflinePolicyStringSet& set, const char* val
 
 void expect_gas_coin_split_source(const std::string& fixture_dir, int* failures)
 {
-    const agent_q::SuiOfflinePolicyConditionFacts facts =
+    const signing::SuiOfflinePolicyConditionFacts facts =
         parse_fixture(fixture_dir, "valid_sui_transfer_tx", failures);
     expect_true("valid_sui_transfer valid", facts.valid_transaction_data, failures);
     expect_false("valid_sui_transfer sponsored", facts.sponsored, failures);
@@ -237,14 +237,14 @@ void expect_gas_coin_split_source(const std::string& fixture_dir, int* failures)
         *failures += 1;
         return;
     }
-    const agent_q::SuiOfflinePolicyTokenSourceFact& source = facts.token_sources[0];
+    const signing::SuiOfflinePolicyTokenSourceFact& source = facts.token_sources[0];
     expect_equal("valid_sui_transfer token type", kSuiType, source.type_tag, failures);
     expect_equal("valid_sui_transfer amount", "1000000", source.amount_raw, failures);
-    if (source.source != agent_q::SuiOfflinePolicyTokenSourceKind::gas_coin) {
+    if (source.source != signing::SuiOfflinePolicyTokenSourceKind::gas_coin) {
         fprintf(stderr, "valid_sui_transfer source was not gas_coin\n");
         *failures += 1;
     }
-    if (source.provenance != agent_q::SuiOfflinePolicyTokenProvenance::gas_coin_split) {
+    if (source.provenance != signing::SuiOfflinePolicyTokenProvenance::gas_coin_split) {
         fprintf(stderr, "valid_sui_transfer provenance was not gas_coin_split\n");
         *failures += 1;
     }
@@ -257,21 +257,21 @@ void expect_gas_coin_split_source(const std::string& fixture_dir, int* failures)
 
 void expect_funds_withdrawal_source(const std::string& fixture_dir, int* failures)
 {
-    const agent_q::SuiOfflinePolicyConditionFacts facts =
+    const signing::SuiOfflinePolicyConditionFacts facts =
         parse_fixture(fixture_dir, "funds_withdrawal_tx", failures);
     if (facts.token_source_count != 1) {
         fprintf(stderr, "funds_withdrawal expected one token source, got %u\n", facts.token_source_count);
         *failures += 1;
         return;
     }
-    const agent_q::SuiOfflinePolicyTokenSourceFact& source = facts.token_sources[0];
+    const signing::SuiOfflinePolicyTokenSourceFact& source = facts.token_sources[0];
     expect_equal("funds_withdrawal token type", kSuiType, source.type_tag, failures);
     expect_equal("funds_withdrawal amount", "1000000", source.amount_raw, failures);
-    if (source.source != agent_q::SuiOfflinePolicyTokenSourceKind::funds_withdrawal_sender) {
+    if (source.source != signing::SuiOfflinePolicyTokenSourceKind::funds_withdrawal_sender) {
         fprintf(stderr, "funds_withdrawal source was not funds_withdrawal_sender\n");
         *failures += 1;
     }
-    if (source.provenance != agent_q::SuiOfflinePolicyTokenProvenance::funds_withdrawal) {
+    if (source.provenance != signing::SuiOfflinePolicyTokenProvenance::funds_withdrawal) {
         fprintf(stderr, "funds_withdrawal provenance was not funds_withdrawal\n");
         *failures += 1;
     }
@@ -284,7 +284,7 @@ void expect_funds_withdrawal_source(const std::string& fixture_dir, int* failure
 
 void expect_mixed_sui_source_total(const std::string& fixture_dir, int* failures)
 {
-    const agent_q::SuiOfflinePolicyConditionFacts facts =
+    const signing::SuiOfflinePolicyConditionFacts facts =
         parse_fixture(fixture_dir, "mixed_sui_source_total_tx", failures);
     expect_false("mixed_sui_source_total unknown amount", facts.token_unknown_amount_present, failures);
     expect_u16_equal("mixed_sui_source_total source count", 2, facts.token_source_count, failures);
@@ -297,17 +297,17 @@ void expect_mixed_sui_source_total(const std::string& fixture_dir, int* failures
 
 void expect_non_sui_funds_withdrawal_source(const std::string& fixture_dir, int* failures)
 {
-    const agent_q::SuiOfflinePolicyConditionFacts facts =
+    const signing::SuiOfflinePolicyConditionFacts facts =
         parse_fixture(fixture_dir, "non_sui_funds_withdrawal_tx", failures);
     if (facts.token_source_count != 1) {
         fprintf(stderr, "non_sui_funds_withdrawal expected one token source, got %u\n", facts.token_source_count);
         *failures += 1;
         return;
     }
-    const agent_q::SuiOfflinePolicyTokenSourceFact& source = facts.token_sources[0];
+    const signing::SuiOfflinePolicyTokenSourceFact& source = facts.token_sources[0];
     expect_equal("non_sui_funds_withdrawal token type", kNonSuiType, source.type_tag, failures);
     expect_equal("non_sui_funds_withdrawal amount", "1000000", source.amount_raw, failures);
-    if (source.source != agent_q::SuiOfflinePolicyTokenSourceKind::funds_withdrawal_sender) {
+    if (source.source != signing::SuiOfflinePolicyTokenSourceKind::funds_withdrawal_sender) {
         fprintf(stderr, "non_sui_funds_withdrawal source was not funds_withdrawal_sender\n");
         *failures += 1;
     }
@@ -315,7 +315,7 @@ void expect_non_sui_funds_withdrawal_source(const std::string& fixture_dir, int*
 
 void expect_merge_sources(const std::string& fixture_dir, int* failures)
 {
-    const agent_q::SuiOfflinePolicyConditionFacts known =
+    const signing::SuiOfflinePolicyConditionFacts known =
         parse_fixture(fixture_dir, "merge_known_known_tx", failures);
     expect_false("merge_known_known unknown amount", known.token_unknown_amount_present, failures);
     expect_u16_equal("merge_known_known source count", 2, known.token_source_count, failures);
@@ -325,17 +325,17 @@ void expect_merge_sources(const std::string& fixture_dir, int* failures)
         expect_equal("merge_known_known total amount", "3000000", known.token_totals_by_type[0].amount_raw, failures);
     }
 
-    const agent_q::SuiOfflinePolicyConditionFacts mixed =
+    const signing::SuiOfflinePolicyConditionFacts mixed =
         parse_fixture(fixture_dir, "merge_known_unknown_tx", failures);
     expect_true("merge_known_unknown unknown amount", mixed.token_unknown_amount_present, failures);
     if (mixed.token_unknown_amount_reason !=
-        agent_q::SuiOfflinePolicyFactsReason::mixed_known_unknown_token_merge) {
+        signing::SuiOfflinePolicyFactsReason::mixed_known_unknown_token_merge) {
         fprintf(stderr, "merge_known_unknown reason was not mixed_known_unknown_token_merge\n");
         *failures += 1;
     }
     expect_u16_equal("merge_known_unknown source count", 1, mixed.token_source_count, failures);
 
-    const agent_q::SuiOfflinePolicyConditionFacts reused =
+    const signing::SuiOfflinePolicyConditionFacts reused =
         parse_fixture(fixture_dir, "merge_known_known_then_transfer_tx", failures);
     expect_false("merge_known_known_then_transfer unknown amount", reused.token_unknown_amount_present, failures);
     expect_u16_equal("merge_known_known_then_transfer source count", 2, reused.token_source_count, failures);
@@ -345,11 +345,11 @@ void expect_merge_sources(const std::string& fixture_dir, int* failures)
         expect_equal("merge_known_known_then_transfer total amount", "3000000", reused.token_totals_by_type[0].amount_raw, failures);
     }
 
-    const agent_q::SuiOfflinePolicyConditionFacts merge_result =
+    const signing::SuiOfflinePolicyConditionFacts merge_result =
         parse_fixture(fixture_dir, "merge_result_reference_transfer_tx", failures);
     expect_true("merge_result_reference_transfer unknown amount", merge_result.token_unknown_amount_present, failures);
     if (merge_result.token_unknown_amount_reason !=
-        agent_q::SuiOfflinePolicyFactsReason::unknown_token_provenance) {
+        signing::SuiOfflinePolicyFactsReason::unknown_token_provenance) {
         fprintf(stderr, "merge_result_reference_transfer reason was not unknown_token_provenance\n");
         *failures += 1;
     }
@@ -357,24 +357,24 @@ void expect_merge_sources(const std::string& fixture_dir, int* failures)
 
 void expect_command_sets(const std::string& fixture_dir, int* failures)
 {
-    const agent_q::SuiOfflinePolicyConditionFacts move_call =
+    const signing::SuiOfflinePolicyConditionFacts move_call =
         parse_fixture(fixture_dir, "move_call_tx", failures);
     expect_true("move_call command kind", set_contains(move_call.command_kinds, "move_call"), failures);
     expect_true("move_call package", set_contains(move_call.move_call_packages, kMoveCallPackage), failures);
     expect_true("move_call module", set_contains(move_call.move_call_modules, "pay"), failures);
     expect_true("move_call function", set_contains(move_call.move_call_functions, "spend"), failures);
 
-    const agent_q::SuiOfflinePolicyConditionFacts publish =
+    const signing::SuiOfflinePolicyConditionFacts publish =
         parse_fixture(fixture_dir, "publish_tx", failures);
     expect_true("publish flag", publish.publish_present, failures);
     expect_true("publish command kind", set_contains(publish.command_kinds, "publish"), failures);
 
-    const agent_q::SuiOfflinePolicyConditionFacts upgrade =
+    const signing::SuiOfflinePolicyConditionFacts upgrade =
         parse_fixture(fixture_dir, "upgrade_tx", failures);
     expect_true("upgrade flag", upgrade.upgrade_present, failures);
     expect_true("upgrade command kind", set_contains(upgrade.command_kinds, "upgrade"), failures);
 
-    const agent_q::SuiOfflinePolicyConditionFacts sponsored =
+    const signing::SuiOfflinePolicyConditionFacts sponsored =
         parse_fixture(fixture_dir, "sponsored_gas_owner_tx", failures);
     expect_true("sponsored flag", sponsored.sponsored, failures);
     expect_equal("sponsored gas owner", kSponsoredGasOwner, sponsored.gas_owner, failures);
@@ -382,10 +382,10 @@ void expect_command_sets(const std::string& fixture_dir, int* failures)
 
 void expect_token_amount_overflow(const std::string& fixture_dir, int* failures)
 {
-    const agent_q::SuiOfflinePolicyConditionFacts facts =
+    const signing::SuiOfflinePolicyConditionFacts facts =
         parse_fixture(fixture_dir, "token_amount_overflow_tx", failures);
-    if (facts.completeness != agent_q::SuiOfflinePolicyFactsCompleteness::incomplete ||
-        facts.reason != agent_q::SuiOfflinePolicyFactsReason::token_amount_overflow) {
+    if (facts.completeness != signing::SuiOfflinePolicyFactsCompleteness::incomplete ||
+        facts.reason != signing::SuiOfflinePolicyFactsReason::token_amount_overflow) {
         fprintf(stderr, "token_amount_overflow did not expose overflow reason\n");
         *failures += 1;
     }
@@ -393,11 +393,11 @@ void expect_token_amount_overflow(const std::string& fixture_dir, int* failures)
 
 void expect_unknown_direct_object_source(const std::string& fixture_dir, int* failures)
 {
-    const agent_q::SuiOfflinePolicyConditionFacts non_gas =
+    const signing::SuiOfflinePolicyConditionFacts non_gas =
         parse_fixture(fixture_dir, "non_gas_split_transfer_tx", failures);
     expect_true("non_gas_split unknown amount", non_gas.token_unknown_amount_present, failures);
     if (non_gas.token_unknown_amount_reason !=
-        agent_q::SuiOfflinePolicyFactsReason::unknown_token_provenance) {
+        signing::SuiOfflinePolicyFactsReason::unknown_token_provenance) {
         fprintf(stderr, "non_gas_split reason was not unknown_token_provenance\n");
         *failures += 1;
     }
@@ -406,11 +406,11 @@ void expect_unknown_direct_object_source(const std::string& fixture_dir, int* fa
         *failures += 1;
     }
 
-    const agent_q::SuiOfflinePolicyConditionFacts direct =
+    const signing::SuiOfflinePolicyConditionFacts direct =
         parse_fixture(fixture_dir, "direct_object_transfer_tx", failures);
     expect_true("direct_object_transfer unknown amount", direct.token_unknown_amount_present, failures);
     if (direct.token_unknown_amount_reason !=
-        agent_q::SuiOfflinePolicyFactsReason::direct_object_token_amount_unknown) {
+        signing::SuiOfflinePolicyFactsReason::direct_object_token_amount_unknown) {
         fprintf(stderr, "direct_object_transfer reason was not direct_object_token_amount_unknown\n");
         *failures += 1;
     }
@@ -424,15 +424,15 @@ void expect_malformed_result(const std::string& fixture_dir, int* failures)
 {
     const std::string path = fixture_dir + "/malformed_short_tx.bcs.hex";
     const std::vector<uint8_t> bytes = read_hex_fixture(path.c_str());
-    agent_q::SuiOfflinePolicyConditionFacts facts = {};
-    const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_offline_policy_condition_facts(bytes.data(), bytes.size(), &facts);
-    if (result != agent_q::SuiTransactionFactsResult::malformed) {
+    signing::SuiOfflinePolicyConditionFacts facts = {};
+    const signing::SuiTransactionFactsResult result =
+        signing::parse_sui_offline_policy_condition_facts(bytes.data(), bytes.size(), &facts);
+    if (result != signing::SuiTransactionFactsResult::malformed) {
         fprintf(stderr, "malformed_short expected malformed parse\n");
         *failures += 1;
     }
-    if (facts.completeness != agent_q::SuiOfflinePolicyFactsCompleteness::malformed ||
-        facts.reason != agent_q::SuiOfflinePolicyFactsReason::malformed_bcs) {
+    if (facts.completeness != signing::SuiOfflinePolicyFactsCompleteness::malformed ||
+        facts.reason != signing::SuiOfflinePolicyFactsReason::malformed_bcs) {
         fprintf(stderr, "malformed_short did not expose malformed reason\n");
         *failures += 1;
     }
@@ -470,9 +470,9 @@ CPP
   -I"${COMMON_ROOT}" \
   -I"${COMMON_SUI_DIR}" \
   "${TMP_DIR}/sui_offline_policy_facts_test.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_offline_policy_facts.cpp" \
+  "${COMMON_SUI_DIR}/bcs_reader.cpp" \
+  "${COMMON_SUI_DIR}/transaction_facts.cpp" \
+  "${COMMON_SUI_DIR}/offline_policy_facts.cpp" \
   -o "${TMP_DIR}/sui_offline_policy_facts_test"
 
 "${TMP_DIR}/sui_offline_policy_facts_test" "${FIXTURE_DIR}"

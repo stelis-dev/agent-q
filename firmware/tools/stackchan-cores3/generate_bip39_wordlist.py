@@ -41,9 +41,9 @@ def generate_wordlist_source(wordlist_path: Path, output_path: Path) -> None:
             raise SystemExit(f"BIP-39 English wordlist contains an unsupported word: {word!r}")
 
     lines = [
-        '#include "agent_q_bip39_wordlist.h"',
+        '#include "bip39_wordlist.h"',
         "",
-        "namespace agent_q {",
+        "namespace signing {",
         "namespace {",
         "",
         "constexpr const char* kBip39EnglishWords[2048] = {",
@@ -64,7 +64,7 @@ def generate_wordlist_source(wordlist_path: Path, output_path: Path) -> None:
             "    return kBip39EnglishWords[index];",
             "}",
             "",
-            "}  // namespace agent_q",
+            "}  // namespace signing",
             "",
         ]
     )
@@ -79,7 +79,7 @@ def main() -> int:
     if len(sys.argv) != 3:
         print(
             "Usage: generate_bip39_wordlist.py /path/to/english.txt "
-            "/path/to/agent_q_bip39_wordlist.cpp",
+            "/path/to/bip39_wordlist.cpp",
             file=sys.stderr,
         )
         return 2

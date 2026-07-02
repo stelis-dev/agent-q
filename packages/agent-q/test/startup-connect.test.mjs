@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AgentQError } from "@stelis/agent-q-core/adapter-internal";
+import { DeviceRequestError } from "@stelis/agent-q-core/adapter-internal";
 import { requestDeviceConnectionOnStart } from "../dist/startup-connect.js";
 
 const deviceId = "a508d833-5c83-4680-88bb-18aee976881e";
@@ -151,7 +151,7 @@ test("startup --request-connect keeps the server path alive when connect is reje
       },
       async connectDevice(input) {
         calls.push(["connect", input]);
-        throw new AgentQError("user_rejected", "raw rejection text must not leak", false);
+        throw new DeviceRequestError("user_rejected", "raw rejection text must not leak", false);
       },
     },
     {},
@@ -193,7 +193,7 @@ test("startup --request-connect reports partial summary when capabilities fail",
       },
       async getCapabilities(input) {
         calls.push(["getCapabilities", input]);
-        throw new AgentQError("transport_closed", "raw port path must not leak", true);
+        throw new DeviceRequestError("transport_closed", "raw port path must not leak", true);
       },
       async getAccounts(input) {
         calls.push(["getAccounts", input]);
@@ -254,7 +254,7 @@ test("startup --request-connect reports sanitized account summary failures", asy
       },
       async getAccounts(input) {
         calls.push(["getAccounts", input]);
-        throw new AgentQError("handshake_failed", "raw serial text must not leak", true);
+        throw new DeviceRequestError("handshake_failed", "raw serial text must not leak", true);
       },
     },
     {},

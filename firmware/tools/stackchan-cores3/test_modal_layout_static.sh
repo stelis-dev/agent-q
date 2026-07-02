@@ -17,7 +17,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-MODAL_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_modal_drawing.cpp"
+MODAL_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/modal_drawing.cpp"
 
 fail() {
   printf 'FAILED: %s\n' "$1" >&2
@@ -29,7 +29,7 @@ const_int() {
   sed -n "s/.*${name} = \\([0-9][0-9]*\\);.*/\\1/p" "${MODAL_SOURCE}" | head -n 1
 }
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-modal-layout.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/modal-layout.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 SNIPPET="${TMP_DIR}/connect_review.cpp"
@@ -46,18 +46,18 @@ grep -Fq 'lv_label_set_text(mode_label, "Requires");' "${SNIPPET}" ||
   fail "connect review approval row must explain the required local input"
 
 grep -Fq 'lv_label_set_long_mode(client_value, LV_LABEL_LONG_CLIP);' "${SNIPPET}" ||
-  fail "connect review agent-q value must use bounded long mode"
+  fail "connect review client value must use bounded long mode"
 
 if grep -Fq 'lv_label_set_long_mode(client_value, LV_LABEL_LONG_WRAP);' "${SNIPPET}"; then
-  fail "connect review agent-q value must not wrap into following rows"
+  fail "connect review client value must not wrap into following rows"
 fi
 
 grep -Fq 'lv_obj_set_size(' "${SNIPPET}" ||
-  fail "connect review agent-q value must have a fixed display region"
+  fail "connect review client value must have a fixed display region"
 grep -Fq 'kConnectReviewClientNameValueWidth' "${SNIPPET}" ||
-  fail "connect review agent-q value width must use the bounded layout constant"
+  fail "connect review client value width must use the bounded layout constant"
 grep -Fq 'kConnectReviewClientNameValueHeight' "${SNIPPET}" ||
-  fail "connect review agent-q value height must use the bounded layout constant"
+  fail "connect review client value height must use the bounded layout constant"
 grep -Fq 'kConnectReviewApprovalRowY' "${SNIPPET}" ||
   fail "connect review approval row must use a named layout constant"
 
@@ -70,10 +70,10 @@ if [[ -z "${client_name_y}" || -z "${client_name_height}" || -z "${approval_y}" 
 fi
 
 if (( client_name_y + client_name_height > approval_y )); then
-  fail "connect review agent-q value region overlaps the approval row"
+  fail "connect review client value region overlaps the approval row"
 fi
 
-grep -Fq 'AgentQUserSigningReviewRowKind::wrapped_value' "${MODAL_SOURCE}" ||
+grep -Fq 'UserSigningReviewRowKind::wrapped_value' "${MODAL_SOURCE}" ||
   fail "signing review layout must use row kind for wrapped-value rows"
 
 grep -Fq 'kUserSigningReviewWrappedValueRowHeight' "${MODAL_SOURCE}" ||

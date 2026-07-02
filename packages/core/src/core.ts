@@ -6,7 +6,7 @@ import {
   type DeviceListing,
   type DeviceRecord,
 } from "./config.js";
-import { AgentQError, toAgentQError } from "./errors.js";
+import { DeviceRequestError, toDeviceRequestError } from "./errors.js";
 import { isClientName, isSafeDeviceId, sanitizePortHint } from "./safe-text.js";
 import { normalizeErrorCode, toPublicError } from "./public-error.js";
 import {
@@ -82,7 +82,7 @@ export interface CachedDeviceStatus {
 
 export type DeviceStatusResult = LiveDeviceStatus | CachedDeviceStatus;
 // getDeviceStatus only ever returns a live or cached result, or throws; it never
-// returns an error-shaped value. The error surfaces as a thrown AgentQError that
+// returns an error-shaped value. The error surfaces as a thrown DeviceRequestError that
 // the adapter boundary (run()) projects through public-error.ts.
 export type DeviceStatusToolResult = DeviceStatusResult;
 
@@ -334,7 +334,7 @@ export type SignPersonalMessageResult =
 
 export const DEFAULT_CLIENT_NAME = "Agent-Q";
 
-export class AgentQCore {
+export class DeviceCore {
   private readonly runtimeSessions = new Map<string, RuntimeSession>();
   private readonly usbDriver: UsbSerialDriver;
 
@@ -406,14 +406,14 @@ export class AgentQCore {
           remainingMs,
         );
         if (response.device.deviceId !== liveDevice.status.device.deviceId) {
-          throw new AgentQError(
+          throw new DeviceRequestError(
             "handshake_failed",
             `Identify response device id did not match status response. Expected ${liveDevice.status.device.deviceId}, got ${response.device.deviceId}.`,
             true,
           );
         }
         if (response.code !== code) {
-          throw new AgentQError("handshake_failed", "Identify response code did not match request.", true);
+          throw new DeviceRequestError("handshake_failed", "Identify response code did not match request.", true);
         }
 
         await this.configStore.rememberUsbStatus(
@@ -428,7 +428,7 @@ export class AgentQCore {
           device: response.device,
         });
       } catch (error) {
-        const agentQError = toAgentQError(error);
+        const requestError = toDeviceRequestError(error);
         // Canonicalize the nested error at the source so the returned data is
         // public-safe for ANY adapter, not only after MCP re-sanitizes it.
         devices.push({
@@ -437,7 +437,7 @@ export class AgentQCore {
           portPath: sanitizePortHint(liveDevice.portPath),
           deviceId: liveDevice.status.device.deviceId,
           status: "error",
-          error: toPublicError(agentQError.code, agentQError.retryable),
+          error: toPublicError(requestError.code, requestError.retryable),
         });
       }
     }
@@ -453,7 +453,7 @@ export class AgentQCore {
   async selectDevice(input: { deviceId: string; purpose?: string }): Promise<SelectDeviceResult> {
     rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "selectDevice");
     if (!isSafeDeviceId(input.deviceId)) {
-      throw new AgentQError("invalid_device_id", "deviceId is not a valid device identifier.", false);
+      throw new DeviceRequestError("invalid_device_id", "deviceId is not a valid device identifier.", false);
     }
 
     let record: DeviceRecord;
@@ -492,7 +492,7 @@ export class AgentQCore {
   }): Promise<SetDeviceMetadataResult> {
     rejectUnsupportedInputFields(input, SET_DEVICE_METADATA_INPUT_KEYS, "setDeviceMetadata");
     if (!isSafeDeviceId(input.deviceId)) {
-      throw new AgentQError("invalid_device_id", "deviceId is not a valid device identifier.", false);
+      throw new DeviceRequestError("invalid_device_id", "deviceId is not a valid device identifier.", false);
     }
 
     let record: DeviceRecord;
@@ -572,7 +572,7 @@ export class AgentQCore {
     }
 
     if (response.device.deviceId !== target.deviceId) {
-      throw new AgentQError(
+      throw new DeviceRequestError(
         "handshake_failed",
         `Connect response device id did not match. Expected ${target.deviceId}, got ${response.device.deviceId}.`,
         true,
@@ -1162,7 +1162,7 @@ export class AgentQCore {
     deviceId: string,
     error: unknown,
   ): RuntimeSessionMirrorEndReason | null {
-    if (!(error instanceof AgentQError) || error.code !== "invalid_session") {
+    if (!(error instanceof DeviceRequestError) || error.code !== "invalid_session") {
       return null;
     }
     this.clearRuntimeSessionMirror(deviceId);
@@ -1185,14 +1185,14 @@ export class AgentQCore {
     purpose?: string;
   }): Promise<{ deviceId: string; record: DeviceRecord }> {
     if (input.purpose !== undefined && RESERVED_PURPOSES.has(input.purpose)) {
-      throw new AgentQError(
+      throw new DeviceRequestError(
         "invalid_params",
         `purpose '${input.purpose}' is reserved. Omit purpose to use the default device.`,
         false,
       );
     }
     if (input.purpose !== undefined && !isValidPurpose(input.purpose)) {
-      throw new AgentQError(
+      throw new DeviceRequestError(
         "invalid_params",
         "purpose must be 1-32 characters of [A-Za-z0-9_.-].",
         false,
@@ -1213,12 +1213,12 @@ export class AgentQCore {
     }
 
     if (deviceId === undefined || deviceId.length === 0) {
-      throw new AgentQError("no_active_device", "No active device is configured.", false);
+      throw new DeviceRequestError("no_active_device", "No active device is configured.", false);
     }
 
     const record = config.devices.find((candidate) => candidate.deviceId === deviceId);
     if (record === undefined) {
-      throw new AgentQError("device_not_found", "Device is not known to Agent-Q.", true);
+      throw new DeviceRequestError("device_not_found", "Device is not known to Agent-Q.", true);
     }
     return { deviceId, record };
   }
@@ -1237,7 +1237,7 @@ export class AgentQCore {
 
     const knownPortFailure = scanResult.failures.find((failure) => failure.portPath === record.lastPortHint);
     if (knownPortFailure !== undefined) {
-      throw new AgentQError(
+      throw new DeviceRequestError(
         knownPortFailure.unavailableReason,
         `Device ${record.deviceId} is not reachable on the last known port.`,
         true,
@@ -1245,13 +1245,13 @@ export class AgentQCore {
     }
     const knownPortExists = scanResult.ports.some((port) => port.path === record.lastPortHint);
     if (!knownPortExists) {
-      throw new AgentQError(
+      throw new DeviceRequestError(
         "port_not_found",
         `Device ${record.deviceId} is not connected.`,
         true,
       );
     }
-    throw new AgentQError(
+    throw new DeviceRequestError(
       "handshake_failed",
       `Device ${record.deviceId} did not respond to a status handshake.`,
       true,
@@ -1341,7 +1341,7 @@ function validateClientName(value: unknown): string {
     return DEFAULT_CLIENT_NAME;
   }
   if (!isClientName(value)) {
-    throw new AgentQError(
+    throw new DeviceRequestError(
       "invalid_params",
       "clientName must be 1-64 printable ASCII characters.",
       false,
@@ -1365,7 +1365,7 @@ function validateSignHostInput(input: {
     );
   } catch (error) {
     if (error instanceof ProtocolError) {
-      throw new AgentQError(error.code, error.message, false);
+      throw new DeviceRequestError(error.code, error.message, false);
     }
     throw error;
   }
@@ -1386,7 +1386,7 @@ function validateSignPersonalMessageHostInput(input: {
     );
   } catch (error) {
     if (error instanceof ProtocolError) {
-      throw new AgentQError(error.code, error.message, false);
+      throw new DeviceRequestError(error.code, error.message, false);
     }
     throw error;
   }
@@ -1411,7 +1411,7 @@ function identifySignHostRoute(
     return identifySignRoute(operation, chain, method);
   } catch (error) {
     if (error instanceof ProtocolError) {
-      throw new AgentQError(error.code, error.message, false);
+      throw new DeviceRequestError(error.code, error.message, false);
     }
     throw error;
   }
@@ -1481,16 +1481,16 @@ function rejectUnsupportedInputFields(
   }
   for (const key of Object.keys(input)) {
     if (!allowedKeys.has(key)) {
-      throw new AgentQError("invalid_params", `${inputName} input contains unsupported fields.`, false);
+      throw new DeviceRequestError("invalid_params", `${inputName} input contains unsupported fields.`, false);
     }
   }
 }
 
-function mapConfigError(error: unknown): AgentQError {
+function mapConfigError(error: unknown): DeviceRequestError {
   if (error instanceof ConfigError) {
-    return new AgentQError(error.code, error.message, error.code === "device_not_found");
+    return new DeviceRequestError(error.code, error.message, error.code === "device_not_found");
   }
-  return toAgentQError(error);
+  return toDeviceRequestError(error);
 }
 
 function toRuntimeSessionView(session: RuntimeSession | null): RuntimeSessionView | null {
@@ -1511,7 +1511,7 @@ function toRuntimeSessionView(session: RuntimeSession | null): RuntimeSessionVie
 function runtimeSessionMirrorEndReason(
   error: unknown,
 ): RuntimeSessionMirrorEndReason | null {
-  if (!(error instanceof AgentQError)) {
+  if (!(error instanceof DeviceRequestError)) {
     return null;
   }
   switch (error.code) {
@@ -1546,9 +1546,9 @@ function createUniqueIdentificationCode(usedCodes: Set<string>): string {
     }
   }
 
-  throw new AgentQError("identification_code_exhausted", "Could not create a unique identification code.", true);
+  throw new DeviceRequestError("identification_code_exhausted", "Could not create a unique identification code.", true);
 }
 
-export function createDefaultAgentQCore(): AgentQCore {
-  return new AgentQCore(new ConfigStore(), new SerialPortUsbDriver());
+export function createDefaultDeviceCore(): DeviceCore {
+  return new DeviceCore(new ConfigStore(), new SerialPortUsbDriver());
 }

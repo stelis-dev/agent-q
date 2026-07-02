@@ -3,16 +3,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 CXX_BIN="${CXX:-c++}"
 
 for required in \
-  "${AGENT_Q_DIR}/agent_q_usb_line_receiver.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_line_receiver.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_request_line.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_request_line.h"; do
+  "${RUNTIME_DIR}/usb_line_receiver.cpp" \
+  "${RUNTIME_DIR}/usb_line_receiver.h" \
+  "${RUNTIME_DIR}/usb_request_line.cpp" \
+  "${RUNTIME_DIR}/usb_request_line.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
@@ -48,7 +48,7 @@ cat >"${TMP_DIR}/usb_line_receiver_test.cpp" <<'CPP'
 #include <string>
 #include <vector>
 
-#include "agent_q_usb_line_receiver.h"
+#include "usb_line_receiver.h"
 #include "freertos/FreeRTOS.h"
 
 namespace {
@@ -83,7 +83,7 @@ void write_error(const char* code)
 void poll_all()
 {
     for (int guard = 0; guard < 200 && g_input_offset < g_input.size(); ++guard) {
-        agent_q::usb_line_receiver_poll(handle_line, write_error);
+        signing::usb_line_receiver_poll(handle_line, write_error);
     }
 }
 
@@ -103,7 +103,7 @@ int usb_serial_jtag_read_bytes(uint8_t* buffer, uint32_t length, TickType_t)
 
 int main()
 {
-    agent_q::usb_line_receiver_reset();
+    signing::usb_line_receiver_reset();
     set_input("abc\nxyz\n");
     poll_all();
     assert(g_lines.size() == 2);
@@ -113,7 +113,7 @@ int main()
 
     g_lines.clear();
     g_errors.clear();
-    agent_q::usb_line_receiver_reset();
+    signing::usb_line_receiver_reset();
     set_input(std::vector<uint8_t>{'a', '\0', 'b', '\n', 'o', 'k', '\n'});
     poll_all();
     assert(g_errors.size() == 1);
@@ -123,8 +123,8 @@ int main()
 
     g_lines.clear();
     g_errors.clear();
-    agent_q::usb_line_receiver_reset();
-    std::vector<uint8_t> oversized(agent_q::kAgentQUsbRequestLineMaxBytes + 1, 'z');
+    signing::usb_line_receiver_reset();
+    std::vector<uint8_t> oversized(signing::kUsbRequestLineMaxBytes + 1, 'z');
     oversized.push_back('\n');
     oversized.push_back('h');
     oversized.push_back('i');
@@ -138,10 +138,10 @@ int main()
 
     g_lines.clear();
     g_errors.clear();
-    agent_q::usb_line_receiver_reset();
+    signing::usb_line_receiver_reset();
     set_input("partial");
     poll_all();
-    agent_q::usb_line_receiver_reset();
+    signing::usb_line_receiver_reset();
     set_input("\nnext\n");
     poll_all();
     assert(g_errors.empty());
@@ -155,10 +155,10 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/usb_line_receiver_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_line_receiver.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_request_line.cpp" \
+  "${RUNTIME_DIR}/usb_line_receiver.cpp" \
+  "${RUNTIME_DIR}/usb_request_line.cpp" \
   -o "${TMP_DIR}/usb_line_receiver_test"
 
 "${TMP_DIR}/usb_line_receiver_test"

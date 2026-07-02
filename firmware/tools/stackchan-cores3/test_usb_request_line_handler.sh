@@ -17,26 +17,26 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
-ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_request_line_handler.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_request_line_handler.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_request_envelope.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_request_envelope.h" \
-  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
-  "${AGENT_Q_DIR}/agent_q_device_contract.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_dispatch.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_dispatch.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_response_writer.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_type.h" \
-  "${AGENT_Q_DIR}/agent_q_session.cpp" \
-  "${AGENT_Q_DIR}/agent_q_request_id.cpp"; do
+  "${RUNTIME_DIR}/usb_request_line_handler.cpp" \
+  "${RUNTIME_DIR}/usb_request_line_handler.h" \
+  "${RUNTIME_DIR}/usb_request_envelope.cpp" \
+  "${RUNTIME_DIR}/usb_request_envelope.h" \
+  "${RUNTIME_DIR}/device_contract.cpp" \
+  "${RUNTIME_DIR}/device_contract.h" \
+  "${RUNTIME_DIR}/usb_operation_dispatch.cpp" \
+  "${RUNTIME_DIR}/usb_operation_dispatch.h" \
+  "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
+  "${RUNTIME_DIR}/usb_operation_manifest.h" \
+  "${RUNTIME_DIR}/usb_operation_response_writer.h" \
+  "${RUNTIME_DIR}/usb_operation_type.h" \
+  "${RUNTIME_DIR}/session.cpp" \
+  "${RUNTIME_DIR}/request_id.cpp"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -45,7 +45,7 @@ for required in \
 done
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-request-line-handler.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-usb-request-line-handler.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/freertos"
@@ -63,7 +63,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_usb_request_line_handler.h"
+#include "usb_request_line_handler.h"
 
 namespace {
 
@@ -116,7 +116,7 @@ void log_write_failure(const char* response_type, const char* id)
 void handle_get_status(
     const char* id,
     JsonDocument& request,
-    const agent_q::AgentQUsbOperationResponseWriter& writer)
+    const signing::UsbOperationResponseWriter& writer)
 {
     (void)writer;
     const char* method = request["method"] | "";
@@ -129,7 +129,7 @@ void handle_get_status(
 void handle_sign_transaction(
     const char* id,
     JsonDocument& request,
-    const agent_q::AgentQUsbOperationResponseWriter& writer)
+    const signing::UsbOperationResponseWriter& writer)
 {
     (void)writer;
     const char* method = request["method"] | "";
@@ -142,7 +142,7 @@ void handle_sign_transaction(
 void handle_policy_propose(
     const char* id,
     JsonDocument& request,
-    const agent_q::AgentQUsbOperationResponseWriter& writer)
+    const signing::UsbOperationResponseWriter& writer)
 {
     (void)writer;
     const char* method = request["method"] | "";
@@ -158,7 +158,7 @@ void handle_policy_propose(
 void handle_credential_prepare(
     const char* id,
     JsonDocument& request,
-    const agent_q::AgentQUsbOperationResponseWriter& writer)
+    const signing::UsbOperationResponseWriter& writer)
 {
     (void)writer;
     const char* method = request["method"] | "";
@@ -173,7 +173,7 @@ void handle_credential_prepare(
 void handle_credential_propose(
     const char* id,
     JsonDocument& request,
-    const agent_q::AgentQUsbOperationResponseWriter& writer)
+    const signing::UsbOperationResponseWriter& writer)
 {
     (void)writer;
     const char* method = request["method"] | "";
@@ -185,17 +185,17 @@ void handle_credential_propose(
     snprintf(g_last_id, sizeof(g_last_id), "%s", id == nullptr ? "" : id);
 }
 
-agent_q::AgentQUsbOperationResponseWriter make_writer()
+signing::UsbOperationResponseWriter make_writer()
 {
-    return agent_q::AgentQUsbOperationResponseWriter{
+    return signing::UsbOperationResponseWriter{
         write_method_error,
         log_write_failure,
     };
 }
 
-agent_q::AgentQUsbOperationHandlers make_handlers()
+signing::UsbOperationHandlers make_handlers()
 {
-    agent_q::AgentQUsbOperationHandlers handlers = {};
+    signing::UsbOperationHandlers handlers = {};
     handlers.get_status = handle_get_status;
     handlers.sign_transaction = handle_sign_transaction;
     handlers.policy_propose = handle_policy_propose;
@@ -211,7 +211,7 @@ void expect_error(
     const char* expected_code)
 {
     reset_state();
-    agent_q::handle_usb_request_line(line, 100, make_writer(), make_handlers());
+    signing::handle_usb_request_line(line, 100, make_writer(), make_handlers());
     assert(g_handler_calls == 0);
     assert(g_write_error_calls == 1);
     if (expected_id == nullptr) {
@@ -233,7 +233,7 @@ void expect_handler(
     const char* expected_id)
 {
     reset_state();
-    agent_q::handle_usb_request_line(line, 100, make_writer(), make_handlers());
+    signing::handle_usb_request_line(line, 100, make_writer(), make_handlers());
     assert(g_handler_calls == 1);
     assert(g_last_handler == expected_handler);
     assert(strcmp(g_last_id, expected_id) == 0);
@@ -242,7 +242,7 @@ void expect_handler(
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 void wipe_sensitive_buffer(void* data, size_t size)
 {
@@ -252,7 +252,7 @@ void wipe_sensitive_buffer(void* data, size_t size)
     memset(data, 0, size);
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 int main()
 {
@@ -265,7 +265,7 @@ int main()
         HandlerSlot::sign_transaction,
         "req_sign");
     expect_handler(
-        "{\"id\":\"req_policy\",\"version\":1,\"method\":\"policy_propose\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payload\":{\"policy\":{\"schema\":\"agentq.policy\",\"defaultAction\":\"reject\",\"blockchains\":[{\"blockchain\":\"sui\",\"networks\":[{\"network\":\"testnet\",\"policies\":[{\"id\":\"reject-source\",\"action\":\"reject\",\"conditions\":[{\"field\":\"sui.token_sources.source\",\"op\":\"eq\",\"value\":\"gas_coin\"}]}]}]}]}}}",
+        "{\"id\":\"req_policy\",\"version\":1,\"method\":\"policy_propose\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payload\":{\"policy\":{\"schema\":\"signing.policy\",\"defaultAction\":\"reject\",\"blockchains\":[{\"blockchain\":\"sui\",\"networks\":[{\"network\":\"testnet\",\"policies\":[{\"id\":\"reject-source\",\"action\":\"reject\",\"conditions\":[{\"field\":\"sui.token_sources.source\",\"op\":\"eq\",\"value\":\"gas_coin\"}]}]}]}]}}}",
         HandlerSlot::policy_propose,
         "req_policy");
     expect_handler(
@@ -312,15 +312,15 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_request_line_handler.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_request_envelope.cpp" \
-  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_dispatch.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.cpp" \
-  "${AGENT_Q_DIR}/agent_q_session.cpp" \
-  "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
+  "${RUNTIME_DIR}/usb_request_line_handler.cpp" \
+  "${RUNTIME_DIR}/usb_request_envelope.cpp" \
+  "${RUNTIME_DIR}/device_contract.cpp" \
+  "${RUNTIME_DIR}/usb_operation_dispatch.cpp" \
+  "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
+  "${RUNTIME_DIR}/session.cpp" \
+  "${RUNTIME_DIR}/request_id.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

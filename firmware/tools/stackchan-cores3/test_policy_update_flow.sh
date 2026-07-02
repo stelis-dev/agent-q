@@ -21,7 +21,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 TARGET_ROOT="${REPO_ROOT}/firmware/src/stackchan-cores3"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 COMMON_POLICY_DIR="${COMMON_ROOT}/policy"
 COMMON_SUI_DIR="${COMMON_ROOT}/sui"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
@@ -29,13 +29,13 @@ ARDUINOJSON_ROOT="${ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${COMMON_ROOT}/agent_q_u64_decimal.h" \
-  "${TARGET_ROOT}/agent_q/agent_q_policy_update_flow.cpp" \
-  "${TARGET_ROOT}/agent_q/agent_q_policy_update_flow.h" \
-  "${TARGET_ROOT}/agent_q/agent_q_policy_proposal_parser.cpp" \
-  "${TARGET_ROOT}/agent_q/agent_q_policy_proposal_parser.h" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_document.cpp" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_document.h"; do
+  "${COMMON_ROOT}/numeric/u64_decimal.h" \
+  "${TARGET_ROOT}/runtime/policy_update_flow.cpp" \
+  "${TARGET_ROOT}/runtime/policy_update_flow.h" \
+  "${TARGET_ROOT}/runtime/policy_proposal_parser.cpp" \
+  "${TARGET_ROOT}/runtime/policy_proposal_parser.h" \
+  "${COMMON_POLICY_DIR}/document.cpp" \
+  "${COMMON_POLICY_DIR}/document.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required file: ${required}" >&2
     exit 1
@@ -43,12 +43,12 @@ for required in \
 done
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-policy-update-flow.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-policy-update-flow.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
-mkdir -p "${TMP_DIR}/agent_q_common"
+mkdir -p "${TMP_DIR}/firmware_common"
 mkdir -p "${TMP_DIR}/freertos"
-ln -s "${COMMON_POLICY_DIR}" "${TMP_DIR}/agent_q_common/policy"
-ln -s "${COMMON_SUI_DIR}" "${TMP_DIR}/agent_q_common/sui"
+ln -s "${COMMON_POLICY_DIR}" "${TMP_DIR}/firmware_common/policy"
+ln -s "${COMMON_SUI_DIR}" "${TMP_DIR}/firmware_common/sui"
 
 cat >"${TMP_DIR}/freertos/FreeRTOS.h" <<'H'
 #pragma once
@@ -66,19 +66,19 @@ cat >"${TMP_DIR}/policy_update_flow_test.cpp" <<'CPP'
 
 #include <ArduinoJson.h>
 
-#include "agent_q_approval_history.h"
-#include "agent_q_policy_store.h"
-#include "agent_q_policy_update_flow.h"
-#include "agent_q_policy_update_marker.h"
+#include "approval_history.h"
+#include "policy_store.h"
+#include "policy_update_flow.h"
+#include "policy_update_marker.h"
 
 namespace {
 
 int failures = 0;
 
-agent_q::AgentQPolicyStoreWriteResult g_store_result =
-    agent_q::AgentQPolicyStoreWriteResult::applied;
-agent_q::AgentQPolicyUpdateMarkerBeginResult g_marker_begin_result =
-    agent_q::AgentQPolicyUpdateMarkerBeginResult::written;
+signing::PolicyStoreWriteResult g_store_result =
+    signing::PolicyStoreWriteResult::applied;
+signing::PolicyUpdateMarkerBeginResult g_marker_begin_result =
+    signing::PolicyUpdateMarkerBeginResult::written;
 bool g_marker_clear_result = true;
 bool g_digest_result = true;
 bool g_policy_id_result = true;
@@ -98,9 +98,9 @@ uint64_t g_last_uptime_ms = 0;
 constexpr const char* kTestRequestId = "policy-test-request";
 constexpr const char* kTestSessionId = "ABCDEFGHIJKLMNOPQRSTUVWXY";
 
-agent_q::AgentQTimeoutWindow test_review_window(TickType_t started_at = 10, TickType_t deadline = 110)
+signing::TimeoutWindow test_review_window(TickType_t started_at = 10, TickType_t deadline = 110)
 {
-    return agent_q::timeout_window_from_deadline(started_at, deadline);
+    return signing::timeout_window_from_deadline(started_at, deadline);
 }
 
 void expect(bool condition, const char* label)
@@ -113,9 +113,9 @@ void expect(bool condition, const char* label)
 
 void reset_stubs()
 {
-    agent_q::policy_update_flow_clear();
-    g_store_result = agent_q::AgentQPolicyStoreWriteResult::applied;
-    g_marker_begin_result = agent_q::AgentQPolicyUpdateMarkerBeginResult::written;
+    signing::policy_update_flow_clear();
+    g_store_result = signing::PolicyStoreWriteResult::applied;
+    g_marker_begin_result = signing::PolicyUpdateMarkerBeginResult::written;
     g_marker_clear_result = true;
     g_digest_result = true;
     g_policy_id_result = true;
@@ -138,7 +138,7 @@ JsonDocument parse_policy_json()
     JsonDocument document;
     const char* json =
         "{"
-        "\"schema\":\"agentq.policy\","
+        "\"schema\":\"signing.policy\","
         "\"defaultAction\":\"reject\","
         "\"blockchains\":[{"
         "\"blockchain\":\"sui\","
@@ -156,25 +156,25 @@ JsonDocument parse_policy_json()
 bool begin_valid_policy()
 {
     JsonDocument document = parse_policy_json();
-    return agent_q::policy_update_flow_begin(
+    return signing::policy_update_flow_begin(
                document.as<JsonVariantConst>(),
                kTestRequestId,
                kTestSessionId,
                10,
                test_review_window()) ==
-           agent_q::AgentQPolicyUpdateFlowBeginResult::ok;
+           signing::PolicyUpdateFlowBeginResult::ok;
 }
 
 bool continue_valid_policy_to_pin()
 {
-    return agent_q::policy_update_flow_continue_to_pin(20) ==
-           agent_q::AgentQPolicyUpdateFlowTransitionResult::ok;
+    return signing::policy_update_flow_continue_to_pin(20) ==
+           signing::PolicyUpdateFlowTransitionResult::ok;
 }
 
 bool mark_valid_policy_pin_verifying()
 {
-    return agent_q::policy_update_flow_mark_pin_verifying() ==
-           agent_q::AgentQPolicyUpdateFlowTransitionResult::ok;
+    return signing::policy_update_flow_mark_pin_verifying() ==
+           signing::PolicyUpdateFlowTransitionResult::ok;
 }
 
 bool begin_valid_policy_ready_to_commit()
@@ -189,7 +189,7 @@ JsonDocument parse_sign_policy_json()
     JsonDocument document;
     const char* json =
         "{"
-        "\"schema\":\"agentq.policy\","
+        "\"schema\":\"signing.policy\","
         "\"defaultAction\":\"reject\","
         "\"blockchains\":[{"
         "\"blockchain\":\"sui\","
@@ -212,10 +212,10 @@ JsonDocument parse_sign_policy_json()
     return document;
 }
 
-agent_q::AgentQPolicyUpdateFlowBeginResult begin_sign_policy()
+signing::PolicyUpdateFlowBeginResult begin_sign_policy()
 {
     JsonDocument document = parse_sign_policy_json();
-    return agent_q::policy_update_flow_begin(
+    return signing::policy_update_flow_begin(
                document.as<JsonVariantConst>(),
                kTestRequestId,
                kTestSessionId,
@@ -228,7 +228,7 @@ JsonDocument parse_multi_sign_policy_json()
     JsonDocument document;
     const char* json =
         "{"
-        "\"schema\":\"agentq.policy\","
+        "\"schema\":\"signing.policy\","
         "\"defaultAction\":\"reject\","
         "\"blockchains\":[{"
         "\"blockchain\":\"sui\","
@@ -260,9 +260,9 @@ JsonDocument parse_multi_sign_policy_json()
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
-AgentQPolicyStoreWriteResult store_active_policy_record(const uint8_t*, size_t)
+PolicyStoreWriteResult store_active_policy_record(const uint8_t*, size_t)
 {
     ++g_store_calls;
     return g_store_result;
@@ -270,7 +270,7 @@ AgentQPolicyStoreWriteResult store_active_policy_record(const uint8_t*, size_t)
 
 bool policy_store_digest_for_record(const uint8_t*, size_t, uint8_t* output, size_t output_size)
 {
-    if (!g_digest_result || output == nullptr || output_size != kAgentQPolicyUpdateDigestBytes) {
+    if (!g_digest_result || output == nullptr || output_size != kPolicyUpdateDigestBytes) {
         return false;
     }
     memset(output, 0xa5, output_size);
@@ -287,7 +287,7 @@ bool policy_store_policy_id_for_record(const uint8_t*, size_t, char* output, siz
 }
 
 bool approval_history_append_required_policy_update(
-    const AgentQPolicyUpdateHistoryAppendInput& input,
+    const PolicyUpdateHistoryAppendInput& input,
     uint64_t uptime_ms)
 {
     ++g_history_calls;
@@ -300,21 +300,21 @@ bool approval_history_append_required_policy_update(
     return g_history_result;
 }
 
-AgentQPolicyUpdateMarkerBeginResult policy_update_marker_begin(
+PolicyUpdateMarkerBeginResult policy_update_marker_begin(
     const uint8_t* policy_digest,
     size_t policy_digest_size,
     size_t policy_count,
-    AgentQPolicyUpdateHighestAction highest_action)
+    PolicyUpdateHighestAction highest_action)
 {
     ++g_marker_begin_calls;
     if (policy_digest == nullptr ||
-        policy_digest_size != kAgentQPolicyUpdateDigestBytes ||
-        policy_count > agent_q::kAgentQCurrentPolicyMaxTotalPolicies) {
-        return AgentQPolicyUpdateMarkerBeginResult::invalid_input;
+        policy_digest_size != kPolicyUpdateDigestBytes ||
+        policy_count > signing::kCurrentPolicyMaxTotalPolicies) {
+        return PolicyUpdateMarkerBeginResult::invalid_input;
     }
     strlcpy(
         g_last_marker_highest_action,
-        highest_action == AgentQPolicyUpdateHighestAction::sign ? "sign" : "reject",
+        highest_action == PolicyUpdateHighestAction::sign ? "sign" : "reject",
         sizeof(g_last_marker_highest_action));
     return g_marker_begin_result;
 }
@@ -325,19 +325,19 @@ bool policy_update_marker_clear()
     return g_marker_clear_result;
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 int main()
 {
     reset_stubs();
     expect(begin_valid_policy(), "valid policy begins flow");
-    agent_q::AgentQPolicyUpdateFlowSnapshot snapshot = agent_q::policy_update_flow_snapshot();
+    signing::PolicyUpdateFlowSnapshot snapshot = signing::policy_update_flow_snapshot();
     expect(snapshot.active, "snapshot reports active proposal");
-    expect(snapshot.stage == agent_q::AgentQPolicyUpdateFlowStage::reviewing,
+    expect(snapshot.stage == signing::PolicyUpdateFlowStage::reviewing,
            "snapshot starts in review stage");
     expect(strcmp(snapshot.request_id, kTestRequestId) == 0, "snapshot exposes request id");
     expect(strcmp(snapshot.session_id, kTestSessionId) == 0, "snapshot exposes session id");
-    expect(agent_q::timeout_window_valid(snapshot.review_window), "snapshot exposes review window");
+    expect(signing::timeout_window_valid(snapshot.review_window), "snapshot exposes review window");
     expect(strcmp(snapshot.policy_hash, "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0,
            "snapshot exposes policy hash");
     expect(snapshot.blockchain_count == 1, "snapshot exposes blockchain count");
@@ -357,88 +357,88 @@ int main()
 
     reset_stubs();
     expect(begin_valid_policy(), "begin before transition checks");
-    expect(agent_q::policy_update_flow_commit(50) ==
-               agent_q::AgentQPolicyUpdateFlowTerminalResult::invalid_state,
+    expect(signing::policy_update_flow_commit(50) ==
+               signing::PolicyUpdateFlowTerminalResult::invalid_state,
            "commit is unavailable before PIN verification");
-    expect(agent_q::policy_update_flow_continue_to_pin(20) ==
-               agent_q::AgentQPolicyUpdateFlowTransitionResult::ok,
+    expect(signing::policy_update_flow_continue_to_pin(20) ==
+               signing::PolicyUpdateFlowTransitionResult::ok,
            "review continue enters PIN stage");
-    snapshot = agent_q::policy_update_flow_snapshot();
-    expect(snapshot.stage == agent_q::AgentQPolicyUpdateFlowStage::pin_entry,
+    snapshot = signing::policy_update_flow_snapshot();
+    expect(snapshot.stage == signing::PolicyUpdateFlowStage::pin_entry,
            "snapshot reports PIN entry after continue");
-    expect(agent_q::policy_update_flow_record_rejected(60) ==
-               agent_q::AgentQPolicyUpdateFlowTerminalResult::invalid_state,
+    expect(signing::policy_update_flow_record_rejected(60) ==
+               signing::PolicyUpdateFlowTerminalResult::invalid_state,
            "PIN stage cancel is not terminal rejected by flow");
-    expect(agent_q::policy_update_flow_return_to_review(30, test_review_window(30, 130)) ==
-               agent_q::AgentQPolicyUpdateFlowTransitionResult::ok,
+    expect(signing::policy_update_flow_return_to_review(30, test_review_window(30, 130)) ==
+               signing::PolicyUpdateFlowTransitionResult::ok,
            "PIN Back returns to review with a new window");
-    snapshot = agent_q::policy_update_flow_snapshot();
-    expect(snapshot.stage == agent_q::AgentQPolicyUpdateFlowStage::reviewing &&
+    snapshot = signing::policy_update_flow_snapshot();
+    expect(snapshot.stage == signing::PolicyUpdateFlowStage::reviewing &&
                snapshot.review_window.started_at == 30 &&
                snapshot.review_window.deadline == 130,
            "review return stores fresh review window");
-    expect(agent_q::policy_update_flow_continue_to_pin(40) ==
-               agent_q::AgentQPolicyUpdateFlowTransitionResult::ok &&
-               agent_q::policy_update_flow_mark_pin_verifying() ==
-                   agent_q::AgentQPolicyUpdateFlowTransitionResult::ok,
+    expect(signing::policy_update_flow_continue_to_pin(40) ==
+               signing::PolicyUpdateFlowTransitionResult::ok &&
+               signing::policy_update_flow_mark_pin_verifying() ==
+                   signing::PolicyUpdateFlowTransitionResult::ok,
            "PIN submit enters verifying stage");
-    snapshot = agent_q::policy_update_flow_snapshot();
-    expect(snapshot.stage == agent_q::AgentQPolicyUpdateFlowStage::pin_verifying,
+    snapshot = signing::policy_update_flow_snapshot();
+    expect(snapshot.stage == signing::PolicyUpdateFlowStage::pin_verifying,
            "snapshot reports PIN verifying");
-    expect(agent_q::policy_update_flow_return_to_pin_entry() ==
-               agent_q::AgentQPolicyUpdateFlowTransitionResult::ok,
+    expect(signing::policy_update_flow_return_to_pin_entry() ==
+               signing::PolicyUpdateFlowTransitionResult::ok,
            "wrong PIN returns flow to PIN entry");
-    snapshot = agent_q::policy_update_flow_snapshot();
-    expect(snapshot.stage == agent_q::AgentQPolicyUpdateFlowStage::pin_entry,
+    snapshot = signing::policy_update_flow_snapshot();
+    expect(snapshot.stage == signing::PolicyUpdateFlowStage::pin_entry,
            "snapshot reports PIN entry after wrong PIN transition");
-    expect(agent_q::policy_update_flow_return_to_review(50, test_review_window(30, 40)) ==
-               agent_q::AgentQPolicyUpdateFlowTransitionResult::invalid_deadline,
+    expect(signing::policy_update_flow_return_to_review(50, test_review_window(30, 40)) ==
+               signing::PolicyUpdateFlowTransitionResult::invalid_deadline,
            "PIN Back rejects stale review window at state owner boundary");
-    expect(agent_q::policy_update_flow_return_to_review(20, test_review_window(30, 130)) ==
-               agent_q::AgentQPolicyUpdateFlowTransitionResult::invalid_deadline,
+    expect(signing::policy_update_flow_return_to_review(20, test_review_window(30, 130)) ==
+               signing::PolicyUpdateFlowTransitionResult::invalid_deadline,
            "PIN Back rejects future review window at state owner boundary");
 
     reset_stubs();
     {
         JsonDocument document = parse_policy_json();
-        expect(agent_q::policy_update_flow_begin(
+        expect(signing::policy_update_flow_begin(
                    document.as<JsonVariantConst>(),
                    kTestRequestId,
                    kTestSessionId,
                    25,
                    test_review_window(10, 20)) ==
-                   agent_q::AgentQPolicyUpdateFlowBeginResult::invalid_argument,
+                   signing::PolicyUpdateFlowBeginResult::invalid_argument,
                "begin rejects stale review window at state owner boundary");
-        expect(!agent_q::policy_update_flow_active(), "stale begin leaves no active proposal");
-        expect(agent_q::policy_update_flow_begin(
+        expect(!signing::policy_update_flow_active(), "stale begin leaves no active proposal");
+        expect(signing::policy_update_flow_begin(
                    document.as<JsonVariantConst>(),
                    kTestRequestId,
                    kTestSessionId,
                    5,
                    test_review_window(10, 20)) ==
-                   agent_q::AgentQPolicyUpdateFlowBeginResult::invalid_argument,
+                   signing::PolicyUpdateFlowBeginResult::invalid_argument,
                "begin rejects future review window at state owner boundary");
-        expect(!agent_q::policy_update_flow_active(), "future begin leaves no active proposal");
-        expect(agent_q::policy_update_flow_begin(
+        expect(!signing::policy_update_flow_active(), "future begin leaves no active proposal");
+        expect(signing::policy_update_flow_begin(
                    document.as<JsonVariantConst>(),
                    kTestRequestId,
                    kTestSessionId,
                    10,
                    test_review_window(10, 20)) ==
-                   agent_q::AgentQPolicyUpdateFlowBeginResult::ok,
+                   signing::PolicyUpdateFlowBeginResult::ok,
                "begin before expired review continue");
-        expect(agent_q::policy_update_flow_continue_to_pin(21) ==
-                   agent_q::AgentQPolicyUpdateFlowTransitionResult::timed_out,
+        expect(signing::policy_update_flow_continue_to_pin(21) ==
+                   signing::PolicyUpdateFlowTransitionResult::timed_out,
                "expired review cannot continue to PIN");
-        expect(agent_q::policy_update_flow_record_timed_out(210) ==
-                   agent_q::AgentQPolicyUpdateFlowTerminalResult::timed_out,
+        expect(signing::policy_update_flow_record_timed_out(210) ==
+                   signing::PolicyUpdateFlowTerminalResult::timed_out,
                "expired review can record timeout terminal");
     }
 
     reset_stubs();
     expect(begin_valid_policy(), "begin before rejected terminal");
-    expect(agent_q::policy_update_flow_record_rejected(100) ==
-               agent_q::AgentQPolicyUpdateFlowTerminalResult::rejected,
+    expect(signing::policy_update_flow_record_rejected(100) ==
+               signing::PolicyUpdateFlowTerminalResult::rejected,
            "rejected terminal records history");
     expect(g_history_calls == 1 &&
                strcmp(g_last_history_result, "rejected") == 0 &&
@@ -450,23 +450,23 @@ int main()
     reset_stubs();
     expect(begin_valid_policy(), "begin before timeout terminal");
     g_history_result = false;
-    expect(agent_q::policy_update_flow_record_timed_out(200) ==
-               agent_q::AgentQPolicyUpdateFlowTerminalResult::history_error,
+    expect(signing::policy_update_flow_record_timed_out(200) ==
+               signing::PolicyUpdateFlowTerminalResult::history_error,
            "timeout history failure returns history_error");
-    expect(!agent_q::policy_update_flow_active(), "history failure clears volatile proposal");
+    expect(!signing::policy_update_flow_active(), "history failure clears volatile proposal");
 
     reset_stubs();
     expect(begin_valid_policy(), "begin before UI error terminal");
-    expect(agent_q::policy_update_flow_record_ui_error() ==
-               agent_q::AgentQPolicyUpdateFlowTerminalResult::ui_error,
+    expect(signing::policy_update_flow_record_ui_error() ==
+               signing::PolicyUpdateFlowTerminalResult::ui_error,
            "UI error terminal is distinct from timeout");
     expect(g_history_calls == 0 && g_marker_begin_calls == 0 && g_store_calls == 0,
            "UI error terminal does not write history or storage");
 
     reset_stubs();
     expect(begin_valid_policy_ready_to_commit(), "begin before applied commit");
-    expect(agent_q::policy_update_flow_commit(300) ==
-               agent_q::AgentQPolicyUpdateFlowTerminalResult::applied,
+    expect(signing::policy_update_flow_commit(300) ==
+               signing::PolicyUpdateFlowTerminalResult::applied,
            "applied commit returns applied");
     expect(g_marker_begin_calls == 1 && g_store_calls == 1 && g_history_calls == 1 && g_marker_clear_calls == 1,
            "applied commit uses marker store history clear");
@@ -477,9 +477,9 @@ int main()
            "applied commit history metadata");
 
     reset_stubs();
-    expect(begin_sign_policy() == agent_q::AgentQPolicyUpdateFlowBeginResult::ok,
+    expect(begin_sign_policy() == signing::PolicyUpdateFlowBeginResult::ok,
            "non-empty sign policy begins flow");
-    snapshot = agent_q::policy_update_flow_snapshot();
+    snapshot = signing::policy_update_flow_snapshot();
     expect(snapshot.active, "non-empty sign policy is pending review");
     expect(snapshot.policy_count == 1, "sign policy count");
     expect(snapshot.condition_count == 3, "sign policy condition count");
@@ -493,13 +493,13 @@ int main()
            "sign policy summary includes token type condition");
     expect(strstr(snapshot.review_summary, "- sui.gas_budget_raw lte 10000000") != nullptr,
            "sign policy summary includes gas condition");
-    expect(agent_q::policy_update_flow_continue_to_pin(20) ==
-               agent_q::AgentQPolicyUpdateFlowTransitionResult::ok &&
-               agent_q::policy_update_flow_mark_pin_verifying() ==
-                   agent_q::AgentQPolicyUpdateFlowTransitionResult::ok,
+    expect(signing::policy_update_flow_continue_to_pin(20) ==
+               signing::PolicyUpdateFlowTransitionResult::ok &&
+               signing::policy_update_flow_mark_pin_verifying() ==
+                   signing::PolicyUpdateFlowTransitionResult::ok,
            "sign policy reaches commit stage");
-    expect(agent_q::policy_update_flow_commit(900) ==
-               agent_q::AgentQPolicyUpdateFlowTerminalResult::applied,
+    expect(signing::policy_update_flow_commit(900) ==
+               signing::PolicyUpdateFlowTerminalResult::applied,
            "sign policy commit applies");
     expect(strcmp(g_last_history_result, "applied") == 0 &&
                strcmp(g_last_history_reason, "device_confirmed") == 0 &&
@@ -511,15 +511,15 @@ int main()
     reset_stubs();
     {
         JsonDocument multi_sign = parse_multi_sign_policy_json();
-        expect(agent_q::policy_update_flow_begin(
+        expect(signing::policy_update_flow_begin(
                    multi_sign.as<JsonVariantConst>(),
                    kTestRequestId,
                    kTestSessionId,
                    10,
                    test_review_window()) ==
-               agent_q::AgentQPolicyUpdateFlowBeginResult::ok,
+               signing::PolicyUpdateFlowBeginResult::ok,
                "multiple current policies begin review");
-        snapshot = agent_q::policy_update_flow_snapshot();
+        snapshot = signing::policy_update_flow_snapshot();
         expect(snapshot.active, "multiple current policies leave an active proposal");
         expect(snapshot.policy_count == 2, "multiple current policy count");
         expect(snapshot.condition_count == 2, "multiple current condition count");
@@ -531,9 +531,9 @@ int main()
 
     reset_stubs();
     expect(begin_valid_policy_ready_to_commit(), "begin before unchanged failure commit");
-    g_store_result = agent_q::AgentQPolicyStoreWriteResult::unchanged_failure;
-    expect(agent_q::policy_update_flow_commit(400) ==
-               agent_q::AgentQPolicyUpdateFlowTerminalResult::storage_error,
+    g_store_result = signing::PolicyStoreWriteResult::unchanged_failure;
+    expect(signing::policy_update_flow_commit(400) ==
+               signing::PolicyUpdateFlowTerminalResult::storage_error,
            "unchanged store failure returns storage_error");
     expect(strcmp(g_last_history_result, "storage_error") == 0 &&
                strcmp(g_last_history_reason, "storage_error") == 0 &&
@@ -542,17 +542,17 @@ int main()
 
     reset_stubs();
     expect(begin_valid_policy_ready_to_commit(), "begin before store consistency error");
-    g_store_result = agent_q::AgentQPolicyStoreWriteResult::consistency_error;
-    expect(agent_q::policy_update_flow_commit(500) ==
-               agent_q::AgentQPolicyUpdateFlowTerminalResult::consistency_error,
+    g_store_result = signing::PolicyStoreWriteResult::consistency_error;
+    expect(signing::policy_update_flow_commit(500) ==
+               signing::PolicyUpdateFlowTerminalResult::consistency_error,
            "store consistency propagates consistency_error");
     expect(g_history_calls == 0, "consistency error is not stored as history result");
 
     reset_stubs();
     expect(begin_valid_policy_ready_to_commit(), "begin before marker storage failure");
-    g_marker_begin_result = agent_q::AgentQPolicyUpdateMarkerBeginResult::storage_error;
-    expect(agent_q::policy_update_flow_commit(600) ==
-               agent_q::AgentQPolicyUpdateFlowTerminalResult::storage_error,
+    g_marker_begin_result = signing::PolicyUpdateMarkerBeginResult::storage_error;
+    expect(signing::policy_update_flow_commit(600) ==
+               signing::PolicyUpdateFlowTerminalResult::storage_error,
            "pre-commit marker storage failure returns storage_error");
     expect(g_store_calls == 0 &&
                g_marker_clear_calls == 0 &&
@@ -561,45 +561,45 @@ int main()
 
     reset_stubs();
     expect(begin_valid_policy_ready_to_commit(), "begin before marker pending after error");
-    g_marker_begin_result = agent_q::AgentQPolicyUpdateMarkerBeginResult::pending_after_error;
-    expect(agent_q::policy_update_flow_commit(700) ==
-               agent_q::AgentQPolicyUpdateFlowTerminalResult::consistency_error,
+    g_marker_begin_result = signing::PolicyUpdateMarkerBeginResult::pending_after_error;
+    expect(signing::policy_update_flow_commit(700) ==
+               signing::PolicyUpdateFlowTerminalResult::consistency_error,
            "ambiguous marker begin returns consistency_error");
     expect(g_store_calls == 0 && g_history_calls == 0, "ambiguous marker begin is not recorded as durable history");
 
     reset_stubs();
     expect(begin_valid_policy_ready_to_commit(), "begin before applied history failure");
     g_history_result = false;
-    expect(agent_q::policy_update_flow_commit(800) ==
-               agent_q::AgentQPolicyUpdateFlowTerminalResult::consistency_error,
+    expect(signing::policy_update_flow_commit(800) ==
+               signing::PolicyUpdateFlowTerminalResult::consistency_error,
            "post-commit applied history failure becomes consistency_error");
     expect(g_marker_clear_calls == 0, "post-commit history failure leaves terminal marker for fail-closed state");
 
     reset_stubs();
     JsonDocument invalid;
     deserializeJson(invalid, "{\"schema\":\"bad\",\"defaultAction\":\"reject\",\"blockchains\":[]}");
-    expect(agent_q::policy_update_flow_begin(
+    expect(signing::policy_update_flow_begin(
                invalid.as<JsonVariantConst>(),
                kTestRequestId,
                kTestSessionId,
                10,
                test_review_window()) ==
-               agent_q::AgentQPolicyUpdateFlowBeginResult::invalid_policy,
+               signing::PolicyUpdateFlowBeginResult::invalid_policy,
            "invalid policy is rejected before flow activation");
-    expect(!agent_q::policy_update_flow_active(), "invalid policy leaves no active proposal");
+    expect(!signing::policy_update_flow_active(), "invalid policy leaves no active proposal");
 
     reset_stubs();
     JsonDocument valid_but_undigestable = parse_policy_json();
     g_policy_id_result = false;
-    expect(agent_q::policy_update_flow_begin(
+    expect(signing::policy_update_flow_begin(
                valid_but_undigestable.as<JsonVariantConst>(),
                kTestRequestId,
                kTestSessionId,
                10,
                test_review_window()) ==
-               agent_q::AgentQPolicyUpdateFlowBeginResult::encode_error,
+               signing::PolicyUpdateFlowBeginResult::encode_error,
            "canonical digest/id failure is reported as encode_error");
-    expect(!agent_q::policy_update_flow_active(), "encode error leaves no active proposal");
+    expect(!signing::policy_update_flow_active(), "encode error leaves no active proposal");
 
     if (failures != 0) {
         fprintf(stderr, "%d policy update flow test(s) failed\n", failures);
@@ -613,14 +613,14 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
-  -I"${TARGET_ROOT}/agent_q" \
+  -I"${TARGET_ROOT}/runtime" \
   -I"${COMMON_ROOT}" \
   -I"${COMMON_POLICY_DIR}" \
   -I"${COMMON_SUI_DIR}" \
   "${TMP_DIR}/policy_update_flow_test.cpp" \
-  "${TARGET_ROOT}/agent_q/agent_q_policy_update_flow.cpp" \
-  "${TARGET_ROOT}/agent_q/agent_q_policy_proposal_parser.cpp" \
-  "${COMMON_POLICY_DIR}/agent_q_policy_document.cpp" \
+  "${TARGET_ROOT}/runtime/policy_update_flow.cpp" \
+  "${TARGET_ROOT}/runtime/policy_proposal_parser.cpp" \
+  "${COMMON_POLICY_DIR}/document.cpp" \
   -o "${TMP_DIR}/policy_update_flow_test"
 
 "${TMP_DIR}/policy_update_flow_test"

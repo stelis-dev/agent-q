@@ -3,12 +3,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-COMMON_SUI_DIR="${REPO_ROOT}/firmware/src/common/agent_q/sui"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+COMMON_SUI_DIR="${REPO_ROOT}/firmware/src/common/sui"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 FIXTURE_DIR="${COMMON_SUI_DIR}/testdata/sui_transaction_facts"
 COVERAGE_MATRIX="${COMMON_SUI_DIR}/testdata/sui_transaction_authorization_coverage.tsv"
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-sui-sign-transaction-adapter.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-sui-sign-transaction-adapter.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 cat >"${TMP_DIR}/test.cpp" <<'CPP'
@@ -22,7 +22,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <string>
 #include <vector>
 
-#include "agent_q_sui_sign_transaction_adapter.h"
+#include "sign_transaction_adapter.h"
 
 void expect(bool condition, const std::string& message)
 {
@@ -126,76 +126,76 @@ std::vector<MatrixRow> read_matrix(const std::string& path)
     return rows;
 }
 
-agent_q::AgentQSuiSignTransactionAdapterResult expected_adapter_result(const MatrixRow& row)
+signing::SuiSignTransactionAdapterResult expected_adapter_result(const MatrixRow& row)
 {
     const std::string& user_gate = field(row, "expected_user_gate_after_adapter");
     if (user_gate == "ok_review_pending" || user_gate == "blind_signing_confirmation") {
-        return agent_q::AgentQSuiSignTransactionAdapterResult::ok;
+        return signing::SuiSignTransactionAdapterResult::ok;
     }
     if (user_gate == "malformed_transaction") {
-        return agent_q::AgentQSuiSignTransactionAdapterResult::malformed_transaction;
+        return signing::SuiSignTransactionAdapterResult::malformed_transaction;
     }
     if (user_gate == "unsupported_transaction") {
-        return agent_q::AgentQSuiSignTransactionAdapterResult::unsupported_transaction;
+        return signing::SuiSignTransactionAdapterResult::unsupported_transaction;
     }
     expect(false, "unsupported matrix expected_user_gate_after_adapter: " + user_gate);
-    return agent_q::AgentQSuiSignTransactionAdapterResult::unsupported_transaction;
+    return signing::SuiSignTransactionAdapterResult::unsupported_transaction;
 }
 
-agent_q::AgentQSuiUserAuthorizationOutcome expected_user_outcome(const MatrixRow& row)
+signing::SuiUserAuthorizationOutcome expected_user_outcome(const MatrixRow& row)
 {
     const std::string& user_gate = field(row, "expected_user_gate_after_adapter");
     if (user_gate == "ok_review_pending") {
-        return agent_q::AgentQSuiUserAuthorizationOutcome::offline_facts_review;
+        return signing::SuiUserAuthorizationOutcome::offline_facts_review;
     }
     if (user_gate == "blind_signing_confirmation") {
-        return agent_q::AgentQSuiUserAuthorizationOutcome::blind_signing;
+        return signing::SuiUserAuthorizationOutcome::blind_signing;
     }
-    return agent_q::AgentQSuiUserAuthorizationOutcome::unavailable;
+    return signing::SuiUserAuthorizationOutcome::unavailable;
 }
 
-agent_q::SuiTransactionFactsResult expected_parse_result(const MatrixRow& row)
+signing::SuiTransactionFactsResult expected_parse_result(const MatrixRow& row)
 {
     const std::string& parse_result = field(row, "full_facts_parse_result");
     if (parse_result == "ok") {
-        return agent_q::SuiTransactionFactsResult::ok;
+        return signing::SuiTransactionFactsResult::ok;
     }
     if (parse_result == "malformed") {
-        return agent_q::SuiTransactionFactsResult::malformed;
+        return signing::SuiTransactionFactsResult::malformed;
     }
     if (parse_result == "transaction_kind_only") {
-        return agent_q::SuiTransactionFactsResult::transaction_kind_only;
+        return signing::SuiTransactionFactsResult::transaction_kind_only;
     }
     if (parse_result == "too_large") {
-        return agent_q::SuiTransactionFactsResult::too_large;
+        return signing::SuiTransactionFactsResult::too_large;
     }
     expect(false, "unsupported matrix full_facts_parse_result: " + parse_result);
-    return agent_q::SuiTransactionFactsResult::malformed;
+    return signing::SuiTransactionFactsResult::malformed;
 }
 
-const char* adapter_result_name(agent_q::AgentQSuiSignTransactionAdapterResult result)
+const char* adapter_result_name(signing::SuiSignTransactionAdapterResult result)
 {
     switch (result) {
-        case agent_q::AgentQSuiSignTransactionAdapterResult::ok:
+        case signing::SuiSignTransactionAdapterResult::ok:
             return "ok";
-        case agent_q::AgentQSuiSignTransactionAdapterResult::invalid_argument:
+        case signing::SuiSignTransactionAdapterResult::invalid_argument:
             return "invalid_argument";
-        case agent_q::AgentQSuiSignTransactionAdapterResult::malformed_transaction:
+        case signing::SuiSignTransactionAdapterResult::malformed_transaction:
             return "malformed_transaction";
-        case agent_q::AgentQSuiSignTransactionAdapterResult::unsupported_transaction:
+        case signing::SuiSignTransactionAdapterResult::unsupported_transaction:
             return "unsupported_transaction";
     }
     return "unknown";
 }
 
-const char* review_status_name(agent_q::SuiReviewSummaryStatus status)
+const char* review_status_name(signing::SuiReviewSummaryStatus status)
 {
     switch (status) {
-        case agent_q::SuiReviewSummaryStatus::ok:
+        case signing::SuiReviewSummaryStatus::ok:
             return "ok";
-        case agent_q::SuiReviewSummaryStatus::unsupported_review:
+        case signing::SuiReviewSummaryStatus::unsupported_review:
             return "unsupported_review";
-        case agent_q::SuiReviewSummaryStatus::insufficient_review:
+        case signing::SuiReviewSummaryStatus::insufficient_review:
             return "insufficient_review";
     }
     return "unknown";
@@ -222,7 +222,7 @@ std::vector<uint8_t> read_hex(const std::string& path)
     return bytes;
 }
 
-const char* review_row_value(const agent_q::SuiReviewSummary& review, const char* label)
+const char* review_row_value(const signing::SuiReviewSummary& review, const char* label)
 {
     for (uint16_t index = 0; index < review.row_count; ++index) {
         if (strcmp(review.rows[index].label, label) == 0) {
@@ -234,7 +234,7 @@ const char* review_row_value(const agent_q::SuiReviewSummary& review, const char
 
 void validate_required_review_fields(
     const MatrixRow& row,
-    const agent_q::SuiReviewSummary& review)
+    const signing::SuiReviewSummary& review)
 {
     const std::vector<std::string> required = split_commas(field(row, "required_review_fields"));
     for (const std::string& label : required) {
@@ -289,33 +289,33 @@ void validate_adapter_against_row(const std::string& root, const MatrixRow& row)
     const std::string fixture = field(row, "fixture");
     const auto bytes = read_hex(root + "/" + fixture + ".bcs.hex");
 
-    agent_q::SuiParsedTransactionFacts* parsed =
-        static_cast<agent_q::SuiParsedTransactionFacts*>(malloc(sizeof(agent_q::SuiParsedTransactionFacts)));
+    signing::SuiParsedTransactionFacts* parsed =
+        static_cast<signing::SuiParsedTransactionFacts*>(malloc(sizeof(signing::SuiParsedTransactionFacts)));
     expect(parsed != nullptr, fixture + ": failed to allocate parser scratch");
     const auto actual_parse_result =
-        agent_q::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), parsed);
+        signing::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), parsed);
     const auto expected_full_parse = expected_parse_result(row);
     expect(
         actual_parse_result == expected_full_parse,
         fixture + ": expected full parse result " +
-            std::string(agent_q::sui_transaction_facts_result_name(expected_full_parse)) +
-            ", got " + agent_q::sui_transaction_facts_result_name(actual_parse_result));
+            std::string(signing::sui_transaction_facts_result_name(expected_full_parse)) +
+            ", got " + signing::sui_transaction_facts_result_name(actual_parse_result));
     free(parsed);
 
-    agent_q::SuiMinimumTransactionFacts minimum = {};
+    signing::SuiMinimumTransactionFacts minimum = {};
     const auto minimum_result =
-        agent_q::parse_sui_minimum_transaction_facts(bytes.data(), bytes.size(), &minimum);
-    const bool minimum_ok = minimum_result == agent_q::SuiTransactionFactsResult::ok;
+        signing::parse_sui_minimum_transaction_facts(bytes.data(), bytes.size(), &minimum);
+    const bool minimum_ok = minimum_result == signing::SuiTransactionFactsResult::ok;
     expect(
         minimum_ok == yes_no(row, "minimum_facts_coverage"),
         fixture + ": minimum facts coverage mismatch");
 
-    agent_q::SuiPolicySubjectFacts facts = {};
-    agent_q::SuiReviewSummary review = {};
-    agent_q::AgentQSuiSignTransactionAuthorizationCoverage coverage = {};
+    signing::SuiPolicySubjectFacts facts = {};
+    signing::SuiReviewSummary review = {};
+    signing::SuiSignTransactionAuthorizationCoverage coverage = {};
 
     const auto result =
-        agent_q::classify_sui_sign_transaction(
+        signing::classify_sui_sign_transaction(
             bytes.data(),
             bytes.size(),
             &facts,
@@ -337,25 +337,25 @@ void validate_adapter_against_row(const std::string& root, const MatrixRow& row)
         coverage.user_outcome == expected_user_outcome(row),
         fixture + ": user authorization outcome mismatch");
     expect(
-        coverage.policy_outcome == agent_q::AgentQSuiPolicyAuthorizationOutcome::unavailable,
+        coverage.policy_outcome == signing::SuiPolicyAuthorizationOutcome::unavailable,
         fixture + ": policy authorization must stay unavailable before current evaluator is connected");
 
-    if (result != agent_q::AgentQSuiSignTransactionAdapterResult::ok) {
+    if (result != signing::SuiSignTransactionAdapterResult::ok) {
         return;
     }
 
     const std::string& offline_review = field(row, "offline_review_coverage");
     if (offline_review == "complete") {
         expect(
-            review.status == agent_q::SuiReviewSummaryStatus::ok,
+            review.status == signing::SuiReviewSummaryStatus::ok,
             fixture + ": expected complete review status, got " + review_status_name(review.status));
     } else if (offline_review == "incomplete") {
         expect(
-            review.status == agent_q::SuiReviewSummaryStatus::insufficient_review,
+            review.status == signing::SuiReviewSummaryStatus::insufficient_review,
             fixture + ": expected insufficient review status, got " + review_status_name(review.status));
     } else {
         expect(
-            review.status == agent_q::SuiReviewSummaryStatus::unsupported_review,
+            review.status == signing::SuiReviewSummaryStatus::unsupported_review,
             fixture + ": expected unsupported review status, got " + review_status_name(review.status));
     }
 
@@ -376,12 +376,12 @@ int main(int argc, char** argv)
         validate_adapter_against_row(root, row);
     }
 
-    agent_q::SuiPolicySubjectFacts facts = {};
-    agent_q::SuiReviewSummary review = {};
-    agent_q::AgentQSuiSignTransactionAuthorizationCoverage coverage = {};
+    signing::SuiPolicySubjectFacts facts = {};
+    signing::SuiReviewSummary review = {};
+    signing::SuiSignTransactionAuthorizationCoverage coverage = {};
     expect(
-        agent_q::classify_sui_sign_transaction(nullptr, 0, &facts, &review, &coverage) ==
-            agent_q::AgentQSuiSignTransactionAdapterResult::invalid_argument,
+        signing::classify_sui_sign_transaction(nullptr, 0, &facts, &review, &coverage) ==
+            signing::SuiSignTransactionAdapterResult::invalid_argument,
         "null transaction input must return invalid_argument");
     return 0;
 }
@@ -391,9 +391,9 @@ CPP
   -I"${COMMON_SUI_DIR}" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_sign_transaction_adapter.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
+  "${COMMON_SUI_DIR}/sign_transaction_adapter.cpp" \
+  "${COMMON_SUI_DIR}/transaction_facts.cpp" \
+  "${COMMON_SUI_DIR}/bcs_reader.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test" "${FIXTURE_DIR}" "${COVERAGE_MATRIX}"

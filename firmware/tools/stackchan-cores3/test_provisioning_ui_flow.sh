@@ -19,14 +19,14 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 
 for required in \
-  "${AGENT_Q_DIR}/agent_q_provisioning_ui_flow.cpp" \
-  "${AGENT_Q_DIR}/agent_q_provisioning_ui_flow.h" \
-  "${AGENT_Q_DIR}/agent_q_provisioning_flow.cpp" \
-  "${AGENT_Q_DIR}/agent_q_provisioning_flow.h"; do
+  "${RUNTIME_DIR}/provisioning_ui_flow.cpp" \
+  "${RUNTIME_DIR}/provisioning_ui_flow.h" \
+  "${RUNTIME_DIR}/provisioning_flow.cpp" \
+  "${RUNTIME_DIR}/provisioning_flow.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
@@ -35,13 +35,13 @@ done
 
 CXX_BIN="${CXX:-c++}"
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-provisioning-ui-flow.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-provisioning-ui-flow.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/stubs/freertos"
 mkdir -p "${TMP_DIR}/stubs/lvgl"
-mkdir -p "${TMP_DIR}/agent_q_common"
-ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
+mkdir -p "${TMP_DIR}/firmware_common"
+ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
 
 cat >"${TMP_DIR}/stubs/freertos/FreeRTOS.h" <<'H'
 #pragma once
@@ -72,11 +72,11 @@ cat >"${TMP_DIR}/stubs.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_bip39.h"
-#include "agent_q_bip39_wordlist.h"
-#include "agent_q_entropy.h"
-#include "agent_q_local_auth.h"
-#include "agent_q_local_auth_worker.h"
+#include "bip39.h"
+#include "bip39_wordlist.h"
+#include "entropy.h"
+#include "local_auth.h"
+#include "local_auth_worker.h"
 
 namespace {
 
@@ -88,7 +88,7 @@ const char* const kWords[] = {
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 bool g_test_worker_accepts_jobs = true;
 uint32_t g_last_worker_job_id = 0;
@@ -166,7 +166,7 @@ bool is_valid_local_pin(const char* pin)
 }
 
 bool local_auth_worker_submit_prepare_verifier(
-    AgentQLocalAuthWorkerOwner,
+    LocalAuthWorkerOwner,
     const char* pin,
     uint32_t* job_id)
 {
@@ -179,7 +179,7 @@ bool local_auth_worker_submit_prepare_verifier(
 }
 
 bool local_auth_worker_submit_verify(
-    AgentQLocalAuthWorkerOwner owner,
+    LocalAuthWorkerOwner owner,
     const char* pin,
     uint32_t* job_id)
 {
@@ -191,17 +191,17 @@ bool local_auth_worker_cancel_job(uint32_t)
     return true;
 }
 
-}  // namespace agent_q
+}  // namespace signing
 CPP
 
 cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_provisioning_ui_flow.h"
-#include "agent_q_provisioning_flow.h"
+#include "provisioning_ui_flow.h"
+#include "provisioning_flow.h"
 
-namespace agent_q {
+namespace signing {
 extern uint32_t g_last_worker_job_id;
 }
 
@@ -224,9 +224,9 @@ int g_log_warn_calls = 0;
 int g_commit_calls = 0;
 const char* g_last_message = nullptr;
 const char* g_last_pin_notice = nullptr;
-agent_q::AgentQMessageKind g_last_kind = agent_q::AgentQMessageKind::info;
-agent_q::AgentQProvisioningFlowCommitResult g_commit_result =
-    agent_q::AgentQProvisioningFlowCommitResult::ok;
+signing::MessageKind g_last_kind = signing::MessageKind::info;
+signing::ProvisioningFlowCommitResult g_commit_result =
+    signing::ProvisioningFlowCommitResult::ok;
 
 void expect(bool condition, const char* label)
 {
@@ -238,7 +238,7 @@ void expect(bool condition, const char* label)
 
 void reset_harness()
 {
-    agent_q::provisioning_flow_wipe();
+    signing::provisioning_flow_wipe();
     g_now = 10;
     g_local_setup_allowed = true;
     g_setup_app_action_allowed = true;
@@ -255,8 +255,8 @@ void reset_harness()
     g_commit_calls = 0;
     g_last_message = nullptr;
     g_last_pin_notice = nullptr;
-    g_last_kind = agent_q::AgentQMessageKind::info;
-    g_commit_result = agent_q::AgentQProvisioningFlowCommitResult::ok;
+    g_last_kind = signing::MessageKind::info;
+    g_commit_result = signing::ProvisioningFlowCommitResult::ok;
 }
 
 TickType_t now()
@@ -274,12 +274,12 @@ bool setup_app_action_allowed()
     return g_setup_app_action_allowed;
 }
 
-bool panel_active(agent_q::AgentQUiPanelKind kind)
+bool panel_active(signing::UiPanelKind kind)
 {
     return g_panel_active[static_cast<int>(kind)];
 }
 
-bool clear_panel(agent_q::AgentQUiPanelKind kind, agent_q::SensitiveUiClearPolicy)
+bool clear_panel(signing::UiPanelKind kind, signing::SensitiveUiClearPolicy)
 {
     g_panel_active[static_cast<int>(kind)] = false;
     return true;
@@ -287,33 +287,33 @@ bool clear_panel(agent_q::AgentQUiPanelKind kind, agent_q::SensitiveUiClearPolic
 
 bool draw_setup_choice()
 {
-    g_panel_active[static_cast<int>(agent_q::AgentQUiPanelKind::setup_choice)] = g_draw_setup_choice;
+    g_panel_active[static_cast<int>(signing::UiPanelKind::setup_choice)] = g_draw_setup_choice;
     return g_draw_setup_choice;
 }
 
 bool draw_backup(const char* phrase)
 {
     expect(phrase != nullptr && phrase[0] != '\0', "backup phrase passed to display");
-    g_panel_active[static_cast<int>(agent_q::AgentQUiPanelKind::backup_phrase_display)] = g_draw_backup;
+    g_panel_active[static_cast<int>(signing::UiPanelKind::backup_phrase_display)] = g_draw_backup;
     return g_draw_backup;
 }
 
 bool draw_import(const char*)
 {
-    g_panel_active[static_cast<int>(agent_q::AgentQUiPanelKind::import_word_entry)] = g_draw_import;
+    g_panel_active[static_cast<int>(signing::UiPanelKind::import_word_entry)] = g_draw_import;
     return g_draw_import;
 }
 
 bool draw_pin(const char* notice)
 {
     g_last_pin_notice = notice;
-    g_panel_active[static_cast<int>(agent_q::AgentQUiPanelKind::pin_entry)] = g_draw_pin;
+    g_panel_active[static_cast<int>(signing::UiPanelKind::pin_entry)] = g_draw_pin;
     return g_draw_pin;
 }
 
 bool draw_pin_processing()
 {
-    g_panel_active[static_cast<int>(agent_q::AgentQUiPanelKind::pin_entry)] = g_draw_pin_processing;
+    g_panel_active[static_cast<int>(signing::UiPanelKind::pin_entry)] = g_draw_pin_processing;
     return g_draw_pin_processing;
 }
 
@@ -322,21 +322,21 @@ void clear_overlay()
     g_clear_overlay_calls += 1;
 }
 
-void show_message(const char* message, agent_q::AgentQMessageKind kind)
+void show_message(const char* message, signing::MessageKind kind)
 {
     g_show_message_calls += 1;
     g_last_message = message;
     g_last_kind = kind;
 }
 
-agent_q::AgentQProvisioningFlowCommitResult commit_setup(
+signing::ProvisioningFlowCommitResult commit_setup(
     const uint8_t* root_material,
     size_t root_material_size,
-    const agent_q::AgentQLocalAuthPreparedRecord* prepared_auth)
+    const signing::LocalAuthPreparedRecord* prepared_auth)
 {
     g_commit_calls += 1;
     expect(root_material != nullptr, "commit has root material");
-    expect(root_material_size == agent_q::kBip39EntropyBytes, "commit root material size");
+    expect(root_material_size == signing::kBip39EntropyBytes, "commit root material size");
     expect(prepared_auth != nullptr, "commit has prepared auth");
     return g_commit_result;
 }
@@ -351,9 +351,9 @@ void log_warn(const char*)
     g_log_warn_calls += 1;
 }
 
-const agent_q::AgentQProvisioningUiFlowOps& ops()
+const signing::ProvisioningUiFlowOps& ops()
 {
-    static const agent_q::AgentQProvisioningUiFlowOps value = {
+    static const signing::ProvisioningUiFlowOps value = {
         now,
         local_setup_allowed,
         setup_app_action_allowed,
@@ -381,40 +381,40 @@ const agent_q::AgentQProvisioningUiFlowOps& ops()
 void enter_pin(const char* pin)
 {
     for (size_t index = 0; pin[index] != '\0'; ++index) {
-        agent_q::provisioning_ui_handle_pin_digit(pin[index], ops());
+        signing::provisioning_ui_handle_pin_digit(pin[index], ops());
     }
 }
 
 void complete_generated_setup_with_commit_result(
-    agent_q::AgentQProvisioningFlowCommitResult commit_result,
+    signing::ProvisioningFlowCommitResult commit_result,
     const char* expected_message,
-    agent_q::AgentQMessageKind expected_kind,
+    signing::MessageKind expected_kind,
     const char* label)
 {
     reset_harness();
-    agent_q::provisioning_ui_show_setup_choice_from_touch(ops());
-    agent_q::provisioning_ui_start_generate_from_setup_choice(ops());
-    agent_q::provisioning_ui_confirm_backup_phrase(ops());
+    signing::provisioning_ui_show_setup_choice_from_touch(ops());
+    signing::provisioning_ui_start_generate_from_setup_choice(ops());
+    signing::provisioning_ui_confirm_backup_phrase(ops());
     enter_pin("123456");
-    agent_q::provisioning_ui_handle_pin_submit(ops());
+    signing::provisioning_ui_handle_pin_submit(ops());
     enter_pin("123456");
-    agent_q::provisioning_ui_handle_pin_submit(ops());
-    expect(agent_q::provisioning_flow_stage_is(
-               agent_q::AgentQProvisioningFlowStage::pin_committing),
+    signing::provisioning_ui_handle_pin_submit(ops());
+    expect(signing::provisioning_flow_stage_is(
+               signing::ProvisioningFlowStage::pin_committing),
            "matching PIN starts commit before result");
-    expect(agent_q::g_last_worker_job_id == 7, "worker job submitted before result");
+    expect(signing::g_last_worker_job_id == 7, "worker job submitted before result");
 
-    agent_q::AgentQLocalAuthWorkerResult result = {};
-    result.owner = agent_q::AgentQLocalAuthWorkerOwner::provisioning_setup;
-    result.operation = agent_q::AgentQLocalAuthWorkerOperation::prepare_verifier_record;
-    result.status = agent_q::AgentQLocalAuthWorkerStatus::ok;
-    result.job_id = agent_q::g_last_worker_job_id;
+    signing::LocalAuthWorkerResult result = {};
+    result.owner = signing::LocalAuthWorkerOwner::provisioning_setup;
+    result.operation = signing::LocalAuthWorkerOperation::prepare_verifier_record;
+    result.status = signing::LocalAuthWorkerStatus::ok;
+    result.job_id = signing::g_last_worker_job_id;
     memset(result.prepared_record.bytes, 0x42, sizeof(result.prepared_record.bytes));
 
     g_commit_result = commit_result;
-    agent_q::provisioning_ui_handle_setup_auth_worker_result(result, ops());
+    signing::provisioning_ui_handle_setup_auth_worker_result(result, ops());
     expect(g_commit_calls == 1, "commit called once");
-    expect(!agent_q::provisioning_flow_active(), "commit result clears flow");
+    expect(!signing::provisioning_flow_active(), "commit result clears flow");
     expect(g_last_kind == expected_kind && strcmp(g_last_message, expected_message) == 0,
            label);
 }
@@ -423,55 +423,55 @@ void complete_generated_setup_with_commit_result(
 
 int main()
 {
-    using Stage = agent_q::AgentQProvisioningFlowStage;
-    using Kind = agent_q::AgentQMessageKind;
-    using Commit = agent_q::AgentQProvisioningFlowCommitResult;
+    using Stage = signing::ProvisioningFlowStage;
+    using Kind = signing::MessageKind;
+    using Commit = signing::ProvisioningFlowCommitResult;
 
     reset_harness();
     g_local_setup_allowed = false;
-    agent_q::provisioning_ui_show_setup_choice_from_touch(ops());
+    signing::provisioning_ui_show_setup_choice_from_touch(ops());
     expect(g_clear_overlay_calls == 1, "unavailable setup clears overlay");
     expect(g_show_message_calls == 1 && strcmp(g_last_message, "Setup unavailable") == 0,
            "unavailable setup reports error");
-    expect(!agent_q::provisioning_flow_active(), "unavailable setup does not start flow");
+    expect(!signing::provisioning_flow_active(), "unavailable setup does not start flow");
 
     reset_harness();
     g_draw_setup_choice = false;
-    agent_q::provisioning_ui_show_setup_choice_from_touch(ops());
-    expect(!agent_q::provisioning_flow_active(), "setup choice display failure wipes flow");
+    signing::provisioning_ui_show_setup_choice_from_touch(ops());
+    expect(!signing::provisioning_flow_active(), "setup choice display failure wipes flow");
     expect(strcmp(g_last_message, "Display error") == 0, "setup choice display failure reports display error");
 
     reset_harness();
-    agent_q::provisioning_ui_start_generate_from_setup_choice(ops());
-    expect(!agent_q::provisioning_flow_active(), "stale generate UI action does not start flow");
-    expect(!g_panel_active[static_cast<int>(agent_q::AgentQUiPanelKind::backup_phrase_display)],
+    signing::provisioning_ui_start_generate_from_setup_choice(ops());
+    expect(!signing::provisioning_flow_active(), "stale generate UI action does not start flow");
+    expect(!g_panel_active[static_cast<int>(signing::UiPanelKind::backup_phrase_display)],
            "stale generate UI action does not draw backup phrase");
-    agent_q::provisioning_ui_start_import_from_setup_choice(ops());
-    expect(!agent_q::provisioning_flow_active(), "stale import UI action does not start flow");
-    expect(!g_panel_active[static_cast<int>(agent_q::AgentQUiPanelKind::import_word_entry)],
+    signing::provisioning_ui_start_import_from_setup_choice(ops());
+    expect(!signing::provisioning_flow_active(), "stale import UI action does not start flow");
+    expect(!g_panel_active[static_cast<int>(signing::UiPanelKind::import_word_entry)],
            "stale import UI action does not draw import panel");
 
     reset_harness();
-    agent_q::provisioning_ui_show_setup_choice_from_touch(ops());
-    agent_q::provisioning_ui_start_generate_from_setup_choice(ops());
-    expect(agent_q::provisioning_flow_stage_is(Stage::backup_phrase_displayed),
+    signing::provisioning_ui_show_setup_choice_from_touch(ops());
+    signing::provisioning_ui_start_generate_from_setup_choice(ops());
+    expect(signing::provisioning_flow_stage_is(Stage::backup_phrase_displayed),
            "generate enters backup phrase display");
-    agent_q::provisioning_ui_return_to_setup_choice(ops());
-    expect(agent_q::provisioning_flow_stage_is(Stage::setup_choice),
+    signing::provisioning_ui_return_to_setup_choice(ops());
+    expect(signing::provisioning_flow_stage_is(Stage::setup_choice),
            "back-to-choice returns to setup choice");
 
     reset_harness();
-    agent_q::provisioning_ui_show_setup_choice_from_touch(ops());
-    agent_q::provisioning_ui_start_generate_from_setup_choice(ops());
+    signing::provisioning_ui_show_setup_choice_from_touch(ops());
+    signing::provisioning_ui_start_generate_from_setup_choice(ops());
     g_draw_pin = true;
-    agent_q::provisioning_ui_confirm_backup_phrase(ops());
+    signing::provisioning_ui_confirm_backup_phrase(ops());
     enter_pin("123456");
-    agent_q::provisioning_ui_handle_pin_submit(ops());
-    expect(agent_q::provisioning_flow_stage_is(Stage::pin_repeat_entry),
+    signing::provisioning_ui_handle_pin_submit(ops());
+    expect(signing::provisioning_flow_stage_is(Stage::pin_repeat_entry),
            "first PIN submit advances to repeat");
     enter_pin("654321");
-    agent_q::provisioning_ui_handle_pin_submit(ops());
-    expect(agent_q::provisioning_flow_stage_is(Stage::pin_first_entry),
+    signing::provisioning_ui_handle_pin_submit(ops());
+    expect(signing::provisioning_flow_stage_is(Stage::pin_first_entry),
            "mismatched PIN returns to first entry");
     expect(g_last_pin_notice != nullptr && strcmp(g_last_pin_notice, "PINs did not match.") == 0,
            "mismatched PIN redraw message");
@@ -493,11 +493,11 @@ int main()
         "storage failure commit message");
 
     reset_harness();
-    agent_q::provisioning_ui_show_setup_choice_from_touch(ops());
-    agent_q::provisioning_ui_start_import_from_setup_choice(ops());
+    signing::provisioning_ui_show_setup_choice_from_touch(ops());
+    signing::provisioning_ui_start_import_from_setup_choice(ops());
     g_draw_import = false;
-    agent_q::provisioning_ui_handle_import_letter('a', ops());
-    expect(!agent_q::provisioning_flow_active(), "import redraw failure wipes flow");
+    signing::provisioning_ui_handle_import_letter('a', ops());
+    expect(!signing::provisioning_flow_active(), "import redraw failure wipes flow");
     expect(g_last_kind == Kind::error && strcmp(g_last_message, "Display error") == 0,
            "import redraw failure reports display error");
 
@@ -515,10 +515,10 @@ CPP
   -I"${TMP_DIR}" \
   -I"${REPO_ROOT}/firmware/src/common" \
   -I"${COMMON_ROOT}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/stubs.cpp" \
-  "${AGENT_Q_DIR}/agent_q_provisioning_flow.cpp" \
-  "${AGENT_Q_DIR}/agent_q_provisioning_ui_flow.cpp" \
+  "${RUNTIME_DIR}/provisioning_flow.cpp" \
+  "${RUNTIME_DIR}/provisioning_ui_flow.cpp" \
   "${TMP_DIR}/test.cpp" \
   -o "${TMP_DIR}/provisioning_ui_flow_test"
 

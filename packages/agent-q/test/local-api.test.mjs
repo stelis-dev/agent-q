@@ -9,7 +9,7 @@ import {
   createLocalApiHttpServer,
   startLocalApiServer,
 } from "../dist/local-api.js";
-import { AgentQError } from "@stelis/agent-q-core/adapter-internal";
+import { DeviceRequestError } from "@stelis/agent-q-core/adapter-internal";
 import { MAX_SUI_SIGN_TRANSACTION_TX_BYTES } from "@stelis/agent-q-core/protocol";
 
 const deviceId = "a508d833-5c83-4680-88bb-18aee976881e";
@@ -20,7 +20,7 @@ const policyHash = "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3
 function currentPolicyDocument(policies = []) {
   const conditionCount = policies.reduce((sum, policy) => sum + policy.conditions.length, 0);
   return {
-    schema: "agentq.policy",
+    schema: "signing.policy",
     policyId: policyHash,
     defaultAction: "reject",
     blockchainCount: 1,
@@ -238,7 +238,7 @@ test("Admin agent-q rejects non-loopback bind hosts", async () => {
   await assert.rejects(
     () => startLocalApiServer({ core: defaultCore(), host: "0.0.0.0", port: 0 }),
     (error) =>
-      error instanceof AgentQError &&
+      error instanceof DeviceRequestError &&
       error.code === "invalid_params" &&
       error.retryable === false,
   );
@@ -685,7 +685,7 @@ test("Local API projects raw core errors through the public error policy", async
   await withAdminServer(
     defaultCore({
       async scanDevices() {
-        throw new AgentQError("port_not_found", "raw /dev/cu.secret should not be exposed", true);
+        throw new DeviceRequestError("port_not_found", "raw /dev/cu.secret should not be exposed", true);
       },
     }),
     async (baseUrl) => {

@@ -14,21 +14,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 FIRMWARE_DIR="$(cd "$1" && pwd)"
 TARGET_ROOT="${REPO_ROOT}/firmware/src/stackchan-cores3"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 
 if [[ ! -f "${FIRMWARE_DIR}/main/CMakeLists.txt" || ! -f "${FIRMWARE_DIR}/main/main.cpp" ]]; then
   echo "Expected a StackChan firmware directory with main/CMakeLists.txt and main/main.cpp: ${FIRMWARE_DIR}" >&2
   exit 1
 fi
 
-if [[ ! -d "${TARGET_ROOT}/agent_q" || ! -d "${TARGET_ROOT}/components/signing_crypto" || ! -d "${COMMON_ROOT}" ]]; then
-  echo "Missing tracked StackChan CoreS3 overlay under ${TARGET_ROOT} or common Agent-Q source under ${COMMON_ROOT}" >&2
+if [[ ! -d "${TARGET_ROOT}/runtime" || ! -d "${TARGET_ROOT}/components/signing_crypto" || ! -d "${COMMON_ROOT}" ]]; then
+  echo "Missing tracked StackChan CoreS3 overlay under ${TARGET_ROOT} or common firmware source under ${COMMON_ROOT}" >&2
   exit 1
 fi
 
 python3 - \
-  "${TARGET_ROOT}/agent_q" "${FIRMWARE_DIR}/main/agent_q" "agent_q_bip39_wordlist.cpp" \
-  "${COMMON_ROOT}" "${FIRMWARE_DIR}/main/agent_q_common" "" \
+  "${TARGET_ROOT}/runtime" "${FIRMWARE_DIR}/main/runtime" "bip39_wordlist.cpp" \
+  "${COMMON_ROOT}" "${FIRMWARE_DIR}/main/firmware_common" "" \
   "${TARGET_ROOT}/components/signing_crypto" "${FIRMWARE_DIR}/components/signing_crypto" "" <<'PY'
 from __future__ import annotations
 
@@ -110,18 +110,18 @@ for index in range(1, len(sys.argv), 3):
     sync_tree(source, target, keep)
 PY
 
-BIP39_WORDLIST_FILE="${AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE:-}"
-if [[ -z "${BIP39_WORDLIST_FILE}" && -n "${AGENT_Q_BIP39_WORDLIST_ROOT:-}" && -n "${AGENT_Q_BIP39_ENGLISH_WORDLIST_PATH:-}" ]]; then
-  BIP39_WORDLIST_FILE="${AGENT_Q_BIP39_WORDLIST_ROOT}/${AGENT_Q_BIP39_ENGLISH_WORDLIST_PATH}"
+BIP39_WORDLIST_FILE="${BIP39_ENGLISH_WORDLIST_FILE:-}"
+if [[ -z "${BIP39_WORDLIST_FILE}" && -n "${BIP39_WORDLIST_ROOT:-}" && -n "${BIP39_ENGLISH_WORDLIST_PATH:-}" ]]; then
+  BIP39_WORDLIST_FILE="${BIP39_WORDLIST_ROOT}/${BIP39_ENGLISH_WORDLIST_PATH}"
 fi
 if [[ -z "${BIP39_WORDLIST_FILE}" || ! -f "${BIP39_WORDLIST_FILE}" ]]; then
-  echo "Missing pinned BIP-39 English wordlist. Run firmware/tools/stackchan-cores3/build.sh or set AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE." >&2
+  echo "Missing pinned BIP-39 English wordlist. Run firmware/tools/stackchan-cores3/build.sh or set BIP39_ENGLISH_WORDLIST_FILE." >&2
   exit 1
 fi
 
 python3 "${SCRIPT_DIR}/generate_bip39_wordlist.py" \
   "${BIP39_WORDLIST_FILE}" \
-  "${FIRMWARE_DIR}/main/agent_q/agent_q_bip39_wordlist.cpp"
+  "${FIRMWARE_DIR}/main/runtime/bip39_wordlist.cpp"
 
 python3 - "${FIRMWARE_DIR}/main/CMakeLists.txt" "${FIRMWARE_DIR}/main/main.cpp" <<'PY'
 from __future__ import annotations
@@ -279,13 +279,13 @@ cmake = read_text_file(cmake_path, "main/CMakeLists.txt")
 cmake = insert_after_once(
     cmake,
     '    "hal/*.cpp"\n',
-    '    "agent_q/*.c"\n    "agent_q/*.cc"\n    "agent_q/*.cpp"\n    "agent_q_common/sui/*.c"\n    "agent_q_common/sui/*.cc"\n    "agent_q_common/sui/*.cpp"\n',
+    '    "runtime/*.c"\n    "runtime/*.cc"\n    "runtime/*.cpp"\n    "firmware_common/sui/*.c"\n    "firmware_common/sui/*.cc"\n    "firmware_common/sui/*.cpp"\n',
     "main/CMakeLists.txt sources",
 )
 cmake = insert_after_once(
     cmake,
-    '    "agent_q_common/sui/*.cpp"\n',
-    '    "agent_q_common/policy/*.c"\n    "agent_q_common/policy/*.cc"\n    "agent_q_common/policy/*.cpp"\n',
+    '    "firmware_common/sui/*.cpp"\n',
+    '    "firmware_common/policy/*.c"\n    "firmware_common/policy/*.cc"\n    "firmware_common/policy/*.cpp"\n',
     "main/CMakeLists.txt common policy sources",
 )
 cmake = insert_after_once(
@@ -298,7 +298,7 @@ cmake = insert_after_once(
 # the hardware-specific StackChan source glob so those surfaces are not linked
 # into this build. The glob may contain relative or absolute paths depending on
 # CMake configuration, so each pattern must match either form.
-set(AGENT_Q_FORBIDDEN_STACKCHAN_SOURCE_PATTERNS
+set(FIRMWARE_FORBIDDEN_STACKCHAN_SOURCE_PATTERNS
     "(^|.*/)apps/app_ai_agent/.*"
     "(^|.*/)apps/app_avatar/.*"
     "(^|.*/)apps/app_ezdata/.*"
@@ -312,13 +312,13 @@ set(AGENT_Q_FORBIDDEN_STACKCHAN_SOURCE_PATTERNS
     "(^|.*/)hal/hal_ws_avatar\\.cpp$"
     "(^|.*/)hal/board/stackchan_camera\\.cc$"
 )
-foreach(AGENT_Q_FORBIDDEN_PATTERN IN LISTS AGENT_Q_FORBIDDEN_STACKCHAN_SOURCE_PATTERNS)
-    list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX "${AGENT_Q_FORBIDDEN_PATTERN}")
+foreach(FIRMWARE_FORBIDDEN_PATTERN IN LISTS FIRMWARE_FORBIDDEN_STACKCHAN_SOURCE_PATTERNS)
+    list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX "${FIRMWARE_FORBIDDEN_PATTERN}")
 endforeach()
-foreach(AGENT_Q_SOURCE_FILE IN LISTS STACK_CHAN_SOURCES)
-    foreach(AGENT_Q_FORBIDDEN_PATTERN IN LISTS AGENT_Q_FORBIDDEN_STACKCHAN_SOURCE_PATTERNS)
-        if(AGENT_Q_SOURCE_FILE MATCHES "${AGENT_Q_FORBIDDEN_PATTERN}")
-            message(FATAL_ERROR "Agent-Q forbidden StackChan source still included: ${AGENT_Q_SOURCE_FILE}")
+foreach(FIRMWARE_SOURCE_FILE IN LISTS STACK_CHAN_SOURCES)
+    foreach(FIRMWARE_FORBIDDEN_PATTERN IN LISTS FIRMWARE_FORBIDDEN_STACKCHAN_SOURCE_PATTERNS)
+        if(FIRMWARE_SOURCE_FILE MATCHES "${FIRMWARE_FORBIDDEN_PATTERN}")
+            message(FATAL_ERROR "Forbidden StackChan source still included: ${FIRMWARE_SOURCE_FILE}")
         endif()
     endforeach()
 endforeach()
@@ -352,7 +352,7 @@ cmake = insert_after_once(
 cmake = insert_after_once(
     cmake,
     'set(STACK_CHAN_INCLUDE_DIRS \n    "."\n',
-    '    "agent_q_common"\n',
+    '    "firmware_common"\n',
     "main/CMakeLists.txt Agent-Q common include dir",
 )
 write_text_if_changed(cmake_path, cmake)
@@ -361,19 +361,19 @@ main_cpp = read_text_file(main_path, "main.cpp")
 main_cpp = insert_after_once(
     main_cpp,
     "#include <hal/hal.h>\n",
-    "#include <agent_q/agent_q_entropy.h>\n#include <agent_q/agent_q_signing_self_test.h>\n#include <agent_q/agent_q_usb_request_server.h>\n",
+    "#include <runtime/entropy.h>\n#include <runtime/signing_self_test.h>\n#include <runtime/usb_request_server.h>\n",
     "main.cpp includes",
 )
 main_cpp = insert_after_once(
     main_cpp,
     "    // HAL init\n",
-    "    if (!agent_q::init_secure_random_from_early_boot_entropy()) {\n        mclog::tagError(\"AgentQ\", \"secure RNG init failed\");\n    }\n\n",
+    "    if (!signing::init_secure_random_from_early_boot_entropy()) {\n        mclog::tagError(\"Signing\", \"secure RNG init failed\");\n    }\n\n",
     "main.cpp early entropy",
 )
 main_cpp = insert_after_once(
     main_cpp,
     "    GetHAL().init();\n",
-    "\n    // Agent-Q smoke checks\n    agent_q::run_signing_self_test();\n    agent_q::init_usb_request_server();\n",
+    "\n    // Agent-Q smoke checks\n    signing::run_signing_self_test();\n    signing::init_usb_request_server();\n",
     "main.cpp startup",
 )
 main_cpp = replace_once(
@@ -477,9 +477,9 @@ launcher = read_text_file(launcher_path, "app_launcher.cpp")
 launcher = insert_after_once(
     launcher,
     "#include <stackchan/stackchan.h>\n",
-    "#include <agent_q/agent_q_usb_request_server.h>\n"
-    "#include <agent_q/agent_q_display_power.h>\n"
-    "#include <agent_q/agent_q_motion_state.h>\n",
+    "#include <runtime/usb_request_server.h>\n"
+    "#include <runtime/display_power.h>\n"
+    "#include <runtime/motion_state.h>\n",
     "app_launcher.cpp Agent-Q provisioning UI include",
 )
 launcher = replace_any_once(
@@ -526,8 +526,8 @@ launcher = replace_any_once(
         GetStackChan().attachAvatar(std::move(default_avatar));
         GetStackChan().addModifier(std::make_unique<stackchan::BlinkModifier>());
         GetStackChan().addModifier(std::make_unique<stackchan::IdleExpressionModifier>(8000, 20000));
-        agent_q::set_motion_posture(agent_q::AgentQMotionPostureState::awake);
-        agent_q::notify_agent_q_ui_surface_ready();
+        signing::set_motion_posture(signing::MotionPostureState::awake);
+        signing::notify_signing_ui_surface_ready();
         _view.reset();
     } else {
         create_launcher_view();
@@ -597,7 +597,7 @@ launcher = replace_once(
         _screensaver.reset();
     }
 
-    agent_q::update_display_power(idle_time);
+    signing::update_display_power(idle_time);
 }
 """,
     "app_launcher.cpp Agent-Q screen sleep without screensaver",
@@ -610,7 +610,7 @@ board = read_text_file(board_path, "stackchan.cc")
 board = insert_after_once(
     board,
     "#include \"hal_bridge.h\"\n",
-    "#include \"agent_q/agent_q_display_power.h\"\n#include \"agent_q/agent_q_motion_state.h\"\n#include <freertos/FreeRTOS.h>\n#include <freertos/task.h>\n",
+    "#include \"runtime/display_power.h\"\n#include \"runtime/motion_state.h\"\n#include <freertos/FreeRTOS.h>\n#include <freertos/task.h>\n",
     "stackchan.cc Agent-Q display power include",
 )
 board = replace_once(
@@ -709,14 +709,14 @@ board = insert_after_once(
         const uint8_t power_key_irqs = pmic_->ConsumePowerKeyIrqs();
         if ((power_key_irqs & 0x04) != 0) {
             ESP_LOGI(TAG, "Power key long press: moving to rest posture and powering off");
-            agent_q::set_motion_posture(agent_q::AgentQMotionPostureState::rest);
-            vTaskDelay(pdMS_TO_TICKS(agent_q::motion_rest_posture_settle_ms()));
+            signing::set_motion_posture(signing::MotionPostureState::rest);
+            vTaskDelay(pdMS_TO_TICKS(signing::motion_rest_posture_settle_ms()));
             pmic_->PowerOff();
             return;
         }
         if ((power_key_irqs & 0x08) != 0) {
             ESP_LOGI(TAG, "Power key short press: toggling display power");
-            agent_q::request_display_power_toggle();
+            signing::request_display_power_toggle();
         }
     }
 
@@ -774,9 +774,9 @@ i2c_device = replace_function(
     "void I2cDevice::WriteReg(uint8_t reg, uint8_t value)",
     """{
     uint8_t buffer[2] = {reg, value};
-    esp_err_t agentq_err = i2c_master_transmit(i2c_device_, buffer, 2, 100);
-    if (agentq_err != ESP_OK) {
-        ESP_LOGW(TAG, "WriteReg(0x%02x) failed: %s (Agent-Q: not fatal)", reg, esp_err_to_name(agentq_err));
+    esp_err_t i2c_err = i2c_master_transmit(i2c_device_, buffer, 2, 100);
+    if (i2c_err != ESP_OK) {
+        ESP_LOGW(TAG, "WriteReg(0x%02x) failed: %s (Agent-Q: not fatal)", reg, esp_err_to_name(i2c_err));
     }
 }
 """,
@@ -787,9 +787,9 @@ i2c_device = replace_function(
     "uint8_t I2cDevice::ReadReg(uint8_t reg)",
     """{
     uint8_t buffer[1] = {0};
-    esp_err_t agentq_err = i2c_master_transmit_receive(i2c_device_, &reg, 1, buffer, 1, 100);
-    if (agentq_err != ESP_OK) {
-        ESP_LOGW(TAG, "ReadReg(0x%02x) failed: %s (Agent-Q: not fatal)", reg, esp_err_to_name(agentq_err));
+    esp_err_t i2c_err = i2c_master_transmit_receive(i2c_device_, &reg, 1, buffer, 1, 100);
+    if (i2c_err != ESP_OK) {
+        ESP_LOGW(TAG, "ReadReg(0x%02x) failed: %s (Agent-Q: not fatal)", reg, esp_err_to_name(i2c_err));
     }
     return buffer[0];
 }
@@ -800,9 +800,9 @@ i2c_device = replace_function(
     i2c_device,
     "void I2cDevice::ReadRegs(uint8_t reg, uint8_t* buffer, size_t length)",
     """{
-    esp_err_t agentq_err = i2c_master_transmit_receive(i2c_device_, &reg, 1, buffer, length, 100);
-    if (agentq_err != ESP_OK) {
-        ESP_LOGW(TAG, "ReadRegs(0x%02x) failed: %s (Agent-Q: not fatal)", reg, esp_err_to_name(agentq_err));
+    esp_err_t i2c_err = i2c_master_transmit_receive(i2c_device_, &reg, 1, buffer, length, 100);
+    if (i2c_err != ESP_OK) {
+        ESP_LOGW(TAG, "ReadRegs(0x%02x) failed: %s (Agent-Q: not fatal)", reg, esp_err_to_name(i2c_err));
     }
 }
 """,

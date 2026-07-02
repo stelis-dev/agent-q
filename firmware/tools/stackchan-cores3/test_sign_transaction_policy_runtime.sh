@@ -19,17 +19,17 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 
 for required in \
-  "${AGENT_Q_DIR}/agent_q_sign_transaction_policy_runtime.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_transaction_policy_runtime.h" \
-  "${AGENT_Q_DIR}/agent_q_policy_store.h" \
-  "${COMMON_ROOT}/agent_q_sign_route.h" \
-  "${COMMON_ROOT}/policy/agent_q_policy_document.h" \
-  "${COMMON_ROOT}/policy/agent_q_policy_evaluator.h" \
-  "${COMMON_ROOT}/sui/agent_q_sui_offline_policy_facts.h"; do
+  "${RUNTIME_DIR}/sign_transaction_policy_runtime.cpp" \
+  "${RUNTIME_DIR}/sign_transaction_policy_runtime.h" \
+  "${RUNTIME_DIR}/policy_store.h" \
+  "${COMMON_ROOT}/protocol/sign_route.h" \
+  "${COMMON_ROOT}/policy/document.h" \
+  "${COMMON_ROOT}/policy/evaluator.h" \
+  "${COMMON_ROOT}/sui/offline_policy_facts.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
@@ -37,18 +37,18 @@ for required in \
 done
 
 if grep -Eq 'string_eq\(condition\.field, "sui\.' \
-  "${COMMON_ROOT}/policy/agent_q_policy_evaluator.cpp"; then
+  "${COMMON_ROOT}/policy/evaluator.cpp"; then
   echo "Policy evaluator must dispatch through current policy field descriptors" >&2
   exit 1
 fi
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-sign-transaction-policy-runtime.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-sign-transaction-policy-runtime.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-mkdir -p "${TMP_DIR}/agent_q_common" "${TMP_DIR}/stubs"
-ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
-ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/agent_q_common/sui"
+mkdir -p "${TMP_DIR}/firmware_common" "${TMP_DIR}/stubs"
+ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
+ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/firmware_common/sui"
 
 cat >"${TMP_DIR}/stubs/esp_log.h" <<'H'
 #pragma once
@@ -62,10 +62,10 @@ cat >"${TMP_DIR}/sign_transaction_policy_runtime_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_policy_store.h"
-#include "agent_q_sign_transaction_policy_runtime.h"
-#include "agent_q_common/policy/agent_q_policy_evaluator.h"
-#include "agent_q_common/sui/agent_q_sui_offline_policy_facts.h"
+#include "policy_store.h"
+#include "sign_transaction_policy_runtime.h"
+#include "firmware_common/policy/evaluator.h"
+#include "firmware_common/sui/offline_policy_facts.h"
 
 namespace {
 
@@ -97,7 +97,7 @@ void expect(bool condition, const char* label)
 }
 
 void set_token_total(
-    agent_q::SuiOfflinePolicyConditionFacts* facts,
+    signing::SuiOfflinePolicyConditionFacts* facts,
     uint16_t index,
     const char* type_tag,
     const char* amount_raw)
@@ -113,9 +113,9 @@ void set_token_total(
     }
 }
 
-agent_q::SuiOfflinePolicyConditionFacts matching_facts()
+signing::SuiOfflinePolicyConditionFacts matching_facts()
 {
-    agent_q::SuiOfflinePolicyConditionFacts facts = {};
+    signing::SuiOfflinePolicyConditionFacts facts = {};
     facts.valid_transaction_data = true;
     snprintf(facts.gas_budget_raw, sizeof(facts.gas_budget_raw), "%s", "50000000");
     snprintf(facts.gas_price_raw, sizeof(facts.gas_price_raw), "%s", "1000");
@@ -130,282 +130,282 @@ agent_q::SuiOfflinePolicyConditionFacts matching_facts()
     facts.token_source_count = 1;
     snprintf(facts.token_sources[0].type_tag, sizeof(facts.token_sources[0].type_tag),
              "%s", facts.token_totals_by_type[0].type_tag);
-    facts.token_sources[0].source = agent_q::SuiOfflinePolicyTokenSourceKind::gas_coin;
+    facts.token_sources[0].source = signing::SuiOfflinePolicyTokenSourceKind::gas_coin;
     facts.token_sources[0].amount_known = true;
-    facts.token_sources[0].provenance = agent_q::SuiOfflinePolicyTokenProvenance::gas_coin_split;
+    facts.token_sources[0].provenance = signing::SuiOfflinePolicyTokenProvenance::gas_coin_split;
     snprintf(facts.token_sources[0].amount_raw, sizeof(facts.token_sources[0].amount_raw),
              "%s", "1000000000");
     facts.token_unknown_amount_present = false;
-    facts.completeness = agent_q::SuiOfflinePolicyFactsCompleteness::complete;
-    facts.reason = agent_q::SuiOfflinePolicyFactsReason::none;
+    facts.completeness = signing::SuiOfflinePolicyFactsCompleteness::complete;
+    facts.reason = signing::SuiOfflinePolicyFactsReason::none;
     return facts;
 }
 
-agent_q::SuiOfflinePolicyConditionFacts sponsored_facts()
+signing::SuiOfflinePolicyConditionFacts sponsored_facts()
 {
-    agent_q::SuiOfflinePolicyConditionFacts facts = matching_facts();
+    signing::SuiOfflinePolicyConditionFacts facts = matching_facts();
     snprintf(facts.gas_owner, sizeof(facts.gas_owner), "%s", kSponsorAddress);
     facts.sponsored = true;
     return facts;
 }
 
-const agent_q::AgentQCurrentPolicyDocument& sponsored_gas_policy_document()
+const signing::CurrentPolicyDocument& sponsored_gas_policy_document()
 {
     static const char* sponsored_values[] = {"true"};
     static const char* owner_values[] = {kSponsorAddress};
     static const char* budget_values[] = {"50000000"};
     static const char* price_values[] = {"1000"};
-    static const agent_q::AgentQCurrentPolicyCondition conditions[] = {
+    static const signing::CurrentPolicyCondition conditions[] = {
         {
             "sui.sponsored",
-            agent_q::AgentQCurrentPolicyOperator::eq,
+            signing::CurrentPolicyOperator::eq,
             sponsored_values,
             sizeof(sponsored_values) / sizeof(sponsored_values[0]),
             nullptr,
         },
         {
             "sui.gas_owner",
-            agent_q::AgentQCurrentPolicyOperator::eq,
+            signing::CurrentPolicyOperator::eq,
             owner_values,
             sizeof(owner_values) / sizeof(owner_values[0]),
             nullptr,
         },
         {
             "sui.gas_budget_raw",
-            agent_q::AgentQCurrentPolicyOperator::lte,
+            signing::CurrentPolicyOperator::lte,
             budget_values,
             sizeof(budget_values) / sizeof(budget_values[0]),
             nullptr,
         },
         {
             "sui.gas_price_raw",
-            agent_q::AgentQCurrentPolicyOperator::eq,
+            signing::CurrentPolicyOperator::eq,
             price_values,
             sizeof(price_values) / sizeof(price_values[0]),
             nullptr,
         },
     };
-    static const agent_q::AgentQCurrentPolicy policies[] = {
+    static const signing::CurrentPolicy policies[] = {
         {
             "sponsored-gas-facts",
-            agent_q::AgentQCurrentPolicyAction::sign,
+            signing::CurrentPolicyAction::sign,
             conditions,
             sizeof(conditions) / sizeof(conditions[0]),
         },
     };
-    static const agent_q::AgentQCurrentPolicyNetworkScope networks[] = {
+    static const signing::CurrentPolicyNetworkScope networks[] = {
         {
             "devnet",
             policies,
             sizeof(policies) / sizeof(policies[0]),
         },
     };
-    static const agent_q::AgentQCurrentPolicyBlockchainScope blockchains[] = {
+    static const signing::CurrentPolicyBlockchainScope blockchains[] = {
         {
             "sui",
             networks,
             sizeof(networks) / sizeof(networks[0]),
         },
     };
-    static const agent_q::AgentQCurrentPolicyDocument document = {
-        agent_q::kAgentQCurrentPolicySchema,
-        agent_q::AgentQCurrentPolicyAction::reject,
+    static const signing::CurrentPolicyDocument document = {
+        signing::kCurrentPolicySchema,
+        signing::CurrentPolicyAction::reject,
         blockchains,
         sizeof(blockchains) / sizeof(blockchains[0]),
     };
     return document;
 }
 
-const agent_q::AgentQCurrentPolicyDocument& non_sponsored_only_policy_document()
+const signing::CurrentPolicyDocument& non_sponsored_only_policy_document()
 {
     static const char* sponsored_values[] = {"false"};
-    static const agent_q::AgentQCurrentPolicyCondition conditions[] = {
+    static const signing::CurrentPolicyCondition conditions[] = {
         {
             "sui.sponsored",
-            agent_q::AgentQCurrentPolicyOperator::eq,
+            signing::CurrentPolicyOperator::eq,
             sponsored_values,
             sizeof(sponsored_values) / sizeof(sponsored_values[0]),
             nullptr,
         },
     };
-    static const agent_q::AgentQCurrentPolicy policies[] = {
+    static const signing::CurrentPolicy policies[] = {
         {
             "non-sponsored-only",
-            agent_q::AgentQCurrentPolicyAction::sign,
+            signing::CurrentPolicyAction::sign,
             conditions,
             sizeof(conditions) / sizeof(conditions[0]),
         },
     };
-    static const agent_q::AgentQCurrentPolicyNetworkScope networks[] = {
+    static const signing::CurrentPolicyNetworkScope networks[] = {
         {
             "devnet",
             policies,
             sizeof(policies) / sizeof(policies[0]),
         },
     };
-    static const agent_q::AgentQCurrentPolicyBlockchainScope blockchains[] = {
+    static const signing::CurrentPolicyBlockchainScope blockchains[] = {
         {
             "sui",
             networks,
             sizeof(networks) / sizeof(networks[0]),
         },
     };
-    static const agent_q::AgentQCurrentPolicyDocument document = {
-        agent_q::kAgentQCurrentPolicySchema,
-        agent_q::AgentQCurrentPolicyAction::reject,
+    static const signing::CurrentPolicyDocument document = {
+        signing::kCurrentPolicySchema,
+        signing::CurrentPolicyAction::reject,
         blockchains,
         sizeof(blockchains) / sizeof(blockchains[0]),
     };
     return document;
 }
 
-const agent_q::AgentQCurrentPolicyDocument& sui_only_amount_policy_document()
+const signing::CurrentPolicyDocument& sui_only_amount_policy_document()
 {
     static const char* amount_values[] = {"1000000000"};
-    static const agent_q::AgentQCurrentPolicyCondition conditions[] = {
+    static const signing::CurrentPolicyCondition conditions[] = {
         {
             "sui.token_totals_by_type.amount_raw",
-            agent_q::AgentQCurrentPolicyOperator::lte,
+            signing::CurrentPolicyOperator::lte,
             amount_values,
             sizeof(amount_values) / sizeof(amount_values[0]),
             kSuiTypeTag,
         },
     };
-    static const agent_q::AgentQCurrentPolicy policies[] = {
+    static const signing::CurrentPolicy policies[] = {
         {
             "sui-only-amount",
-            agent_q::AgentQCurrentPolicyAction::sign,
+            signing::CurrentPolicyAction::sign,
             conditions,
             sizeof(conditions) / sizeof(conditions[0]),
         },
     };
-    static const agent_q::AgentQCurrentPolicyNetworkScope networks[] = {
+    static const signing::CurrentPolicyNetworkScope networks[] = {
         {
             "devnet",
             policies,
             sizeof(policies) / sizeof(policies[0]),
         },
     };
-    static const agent_q::AgentQCurrentPolicyBlockchainScope blockchains[] = {
+    static const signing::CurrentPolicyBlockchainScope blockchains[] = {
         {
             "sui",
             networks,
             sizeof(networks) / sizeof(networks[0]),
         },
     };
-    static const agent_q::AgentQCurrentPolicyDocument document = {
-        agent_q::kAgentQCurrentPolicySchema,
-        agent_q::AgentQCurrentPolicyAction::reject,
+    static const signing::CurrentPolicyDocument document = {
+        signing::kCurrentPolicySchema,
+        signing::CurrentPolicyAction::reject,
         blockchains,
         sizeof(blockchains) / sizeof(blockchains[0]),
     };
     return document;
 }
 
-const agent_q::AgentQCurrentPolicyDocument& two_token_amount_policy_document()
+const signing::CurrentPolicyDocument& two_token_amount_policy_document()
 {
     static const char* sui_amount_values[] = {"1000000000"};
     static const char* non_sui_amount_values[] = {"500"};
-    static const agent_q::AgentQCurrentPolicyCondition conditions[] = {
+    static const signing::CurrentPolicyCondition conditions[] = {
         {
             "sui.token_totals_by_type.amount_raw",
-            agent_q::AgentQCurrentPolicyOperator::lte,
+            signing::CurrentPolicyOperator::lte,
             sui_amount_values,
             sizeof(sui_amount_values) / sizeof(sui_amount_values[0]),
             kSuiTypeTag,
         },
         {
             "sui.token_totals_by_type.amount_raw",
-            agent_q::AgentQCurrentPolicyOperator::lte,
+            signing::CurrentPolicyOperator::lte,
             non_sui_amount_values,
             sizeof(non_sui_amount_values) / sizeof(non_sui_amount_values[0]),
             kNonSuiTypeTag,
         },
     };
-    static const agent_q::AgentQCurrentPolicy policies[] = {
+    static const signing::CurrentPolicy policies[] = {
         {
             "two-token-limits",
-            agent_q::AgentQCurrentPolicyAction::sign,
+            signing::CurrentPolicyAction::sign,
             conditions,
             sizeof(conditions) / sizeof(conditions[0]),
         },
     };
-    static const agent_q::AgentQCurrentPolicyNetworkScope networks[] = {
+    static const signing::CurrentPolicyNetworkScope networks[] = {
         {
             "devnet",
             policies,
             sizeof(policies) / sizeof(policies[0]),
         },
     };
-    static const agent_q::AgentQCurrentPolicyBlockchainScope blockchains[] = {
+    static const signing::CurrentPolicyBlockchainScope blockchains[] = {
         {
             "sui",
             networks,
             sizeof(networks) / sizeof(networks[0]),
         },
     };
-    static const agent_q::AgentQCurrentPolicyDocument document = {
-        agent_q::kAgentQCurrentPolicySchema,
-        agent_q::AgentQCurrentPolicyAction::reject,
+    static const signing::CurrentPolicyDocument document = {
+        signing::kCurrentPolicySchema,
+        signing::CurrentPolicyAction::reject,
         blockchains,
         sizeof(blockchains) / sizeof(blockchains[0]),
     };
     return document;
 }
 
-const agent_q::AgentQCurrentPolicyDocument& non_sui_only_amount_policy_document()
+const signing::CurrentPolicyDocument& non_sui_only_amount_policy_document()
 {
     static const char* amount_values[] = {"500"};
-    static const agent_q::AgentQCurrentPolicyCondition conditions[] = {
+    static const signing::CurrentPolicyCondition conditions[] = {
         {
             "sui.token_totals_by_type.amount_raw",
-            agent_q::AgentQCurrentPolicyOperator::lte,
+            signing::CurrentPolicyOperator::lte,
             amount_values,
             sizeof(amount_values) / sizeof(amount_values[0]),
             kNonSuiTypeTag,
         },
     };
-    static const agent_q::AgentQCurrentPolicy policies[] = {
+    static const signing::CurrentPolicy policies[] = {
         {
             "non-sui-only-amount",
-            agent_q::AgentQCurrentPolicyAction::sign,
+            signing::CurrentPolicyAction::sign,
             conditions,
             sizeof(conditions) / sizeof(conditions[0]),
         },
     };
-    static const agent_q::AgentQCurrentPolicyNetworkScope networks[] = {
+    static const signing::CurrentPolicyNetworkScope networks[] = {
         {
             "devnet",
             policies,
             sizeof(policies) / sizeof(policies[0]),
         },
     };
-    static const agent_q::AgentQCurrentPolicyBlockchainScope blockchains[] = {
+    static const signing::CurrentPolicyBlockchainScope blockchains[] = {
         {
             "sui",
             networks,
             sizeof(networks) / sizeof(networks[0]),
         },
     };
-    static const agent_q::AgentQCurrentPolicyDocument document = {
-        agent_q::kAgentQCurrentPolicySchema,
-        agent_q::AgentQCurrentPolicyAction::reject,
+    static const signing::CurrentPolicyDocument document = {
+        signing::kCurrentPolicySchema,
+        signing::CurrentPolicyAction::reject,
         blockchains,
         sizeof(blockchains) / sizeof(blockchains[0]),
     };
     return document;
 }
 
-agent_q::AgentQSuiPreparedSignTransaction prepared_request(
+signing::SuiPreparedSignTransaction prepared_request(
     bool policy_covered,
-    agent_q::SuiOfflinePolicyConditionFacts* facts,
+    signing::SuiOfflinePolicyConditionFacts* facts,
     const char* network = "devnet",
-    agent_q::AgentQSuiPolicyAuthorizationOutcome outcome =
-        agent_q::AgentQSuiPolicyAuthorizationOutcome::policy_evaluation)
+    signing::SuiPolicyAuthorizationOutcome outcome =
+        signing::SuiPolicyAuthorizationOutcome::policy_evaluation)
 {
     static uint8_t tx_bytes[] = {0x01, 0x02, 0x03};
-    agent_q::AgentQSuiPreparedSignTransaction prepared = {};
-    prepared.route = agent_q::AgentQSupportedSignRoute::sui_sign_transaction;
+    signing::SuiPreparedSignTransaction prepared = {};
+    prepared.route = signing::SupportedSignRoute::sui_sign_transaction;
     snprintf(prepared.network, sizeof(prepared.network), "%s", network);
     prepared.tx_bytes = tx_bytes;
     prepared.tx_bytes_size = sizeof(tx_bytes);
@@ -418,80 +418,80 @@ agent_q::AgentQSuiPreparedSignTransaction prepared_request(
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
-bool read_active_policy_summary(AgentQStoredPolicySummary* out)
+bool read_active_policy_summary(StoredPolicySummary* out)
 {
     if (!g_policy_summary_available || out == nullptr) {
         return false;
     }
     *out = {};
-    out->schema = kAgentQCurrentPolicySchema;
+    out->schema = kCurrentPolicySchema;
     memcpy(out->policy_id, kPolicyHash, strlen(kPolicyHash) + 1);
     out->default_action = "reject";
     return true;
 }
 
-const AgentQCurrentPolicyDocument* active_policy_document()
+const CurrentPolicyDocument* active_policy_document()
 {
     static constexpr const char* kSuiTypeTag =
         "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI";
     static const char* amount_values[] = {"1000000000"};
     static const char* unknown_values[] = {"false"};
-    static const AgentQCurrentPolicyCondition sign_conditions[] = {
+    static const CurrentPolicyCondition sign_conditions[] = {
         {
             "sui.token_totals_by_type.amount_raw",
-            AgentQCurrentPolicyOperator::lte,
+            CurrentPolicyOperator::lte,
             amount_values,
             sizeof(amount_values) / sizeof(amount_values[0]),
             kSuiTypeTag,
         },
         {
             "sui.token_unknown_amount_present",
-            AgentQCurrentPolicyOperator::eq,
+            CurrentPolicyOperator::eq,
             unknown_values,
             sizeof(unknown_values) / sizeof(unknown_values[0]),
             nullptr,
         },
     };
-    static const AgentQCurrentPolicy policies[] = {
+    static const CurrentPolicy policies[] = {
         {
             "sui-devnet-max-one-sui",
-            AgentQCurrentPolicyAction::sign,
+            CurrentPolicyAction::sign,
             sign_conditions,
             sizeof(sign_conditions) / sizeof(sign_conditions[0]),
         },
     };
-    static const AgentQCurrentPolicyNetworkScope networks[] = {
+    static const CurrentPolicyNetworkScope networks[] = {
         {
             "devnet",
             policies,
             sizeof(policies) / sizeof(policies[0]),
         },
     };
-    static const AgentQCurrentPolicyBlockchainScope blockchains[] = {
+    static const CurrentPolicyBlockchainScope blockchains[] = {
         {
             "sui",
             networks,
             sizeof(networks) / sizeof(networks[0]),
         },
     };
-    static const AgentQCurrentPolicyDocument document = {
-        kAgentQCurrentPolicySchema,
-        AgentQCurrentPolicyAction::reject,
+    static const CurrentPolicyDocument document = {
+        kCurrentPolicySchema,
+        CurrentPolicyAction::reject,
         blockchains,
         sizeof(blockchains) / sizeof(blockchains[0]),
     };
     return &document;
 }
 
-bool read_active_policy_document(AgentQStoredPolicyDocument* out)
+bool read_active_policy_document(StoredPolicyDocument* out)
 {
     if (!g_policy_document_available || out == nullptr) {
         return false;
     }
     *out = {};
-    out->schema = kAgentQCurrentPolicySchema;
+    out->schema = kCurrentPolicySchema;
     memcpy(out->policy_id, kPolicyHash, strlen(kPolicyHash) + 1);
     out->default_action = "reject";
     out->blockchain_count = 1;
@@ -514,14 +514,14 @@ const char* sui_offline_policy_facts_reason_name(SuiOfflinePolicyFactsReason rea
     }
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 int main()
 {
-    agent_q::SuiOfflinePolicyConditionFacts facts = matching_facts();
-    agent_q::AgentQSignTransactionPolicyRuntimeResult result =
-        agent_q::evaluate_sign_transaction_policy(prepared_request(false, nullptr));
-    expect(result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_rejected,
+    signing::SuiOfflinePolicyConditionFacts facts = matching_facts();
+    signing::SignTransactionPolicyRuntimeResult result =
+        signing::evaluate_sign_transaction_policy(prepared_request(false, nullptr));
+    expect(result.status == signing::SignTransactionPolicyRuntimeStatus::policy_rejected,
            "coverage incomplete rejects");
     expect(strcmp(result.code, "policy_rejected") == 0, "coverage incomplete code");
     expect(strcmp(result.reason_code, "policy_coverage_incomplete") == 0,
@@ -531,8 +531,8 @@ int main()
     expect(strcmp(result.payload_digest, kPayloadDigest) == 0, "coverage incomplete digest");
     expect(strcmp(result.policy_hash, kPolicyHash) == 0, "coverage incomplete policy hash");
 
-    result = agent_q::evaluate_sign_transaction_policy(prepared_request(true, &facts));
-    expect(result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_authorized,
+    result = signing::evaluate_sign_transaction_policy(prepared_request(true, &facts));
+    expect(result.status == signing::SignTransactionPolicyRuntimeStatus::policy_authorized,
            "matching policy authorizes");
     expect(strcmp(result.code, "policy_authorized") == 0, "authorized code");
     expect(strcmp(result.reason_code, "policy_authorized") == 0, "authorized reason");
@@ -540,130 +540,130 @@ int main()
     expect(result.tx_bytes != nullptr && result.tx_bytes_size == 3,
            "authorization exposes exact signable bytes");
 
-    agent_q::SuiOfflinePolicyConditionFacts sponsored = sponsored_facts();
-    result = agent_q::evaluate_sign_transaction_policy(prepared_request(true, &sponsored));
-    expect(result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_authorized,
+    signing::SuiOfflinePolicyConditionFacts sponsored = sponsored_facts();
+    result = signing::evaluate_sign_transaction_policy(prepared_request(true, &sponsored));
+    expect(result.status == signing::SignTransactionPolicyRuntimeStatus::policy_authorized,
            "sponsored facts reach policy runtime after account binding allows them");
     expect(strcmp(result.reason_code, "policy_authorized") == 0,
            "sponsored facts active policy reason");
 
-    agent_q::AgentQCurrentPolicyEvaluationResult sponsored_evaluation =
-        agent_q::evaluate_agent_q_current_policy_for_sui_sign_transaction(
+    signing::CurrentPolicyEvaluationResult sponsored_evaluation =
+        signing::evaluate_current_policy_for_sui_sign_transaction(
             sponsored_gas_policy_document(),
             "devnet",
             sponsored);
     expect(sponsored_evaluation.status ==
-               agent_q::AgentQCurrentPolicyEvaluationStatus::authorized,
+               signing::CurrentPolicyEvaluationStatus::authorized,
            "sponsored gas owner and gas facts authorize");
     expect(strcmp(sponsored_evaluation.rule_ref, "sponsored-gas-facts") == 0,
            "sponsored gas facts rule ref");
 
     sponsored_evaluation =
-        agent_q::evaluate_agent_q_current_policy_for_sui_sign_transaction(
+        signing::evaluate_current_policy_for_sui_sign_transaction(
             non_sponsored_only_policy_document(),
             "devnet",
             sponsored);
     expect(sponsored_evaluation.status ==
-               agent_q::AgentQCurrentPolicyEvaluationStatus::no_matching_policy,
+               signing::CurrentPolicyEvaluationStatus::no_matching_policy,
            "non-sponsored-only policy rejects sponsored facts");
 
-    agent_q::SuiOfflinePolicyConditionFacts wrong_sponsor = sponsored;
+    signing::SuiOfflinePolicyConditionFacts wrong_sponsor = sponsored;
     snprintf(wrong_sponsor.gas_owner, sizeof(wrong_sponsor.gas_owner), "%s", kOtherSponsorAddress);
     sponsored_evaluation =
-        agent_q::evaluate_agent_q_current_policy_for_sui_sign_transaction(
+        signing::evaluate_current_policy_for_sui_sign_transaction(
             sponsored_gas_policy_document(),
             "devnet",
             wrong_sponsor);
     expect(sponsored_evaluation.status ==
-               agent_q::AgentQCurrentPolicyEvaluationStatus::no_matching_policy,
+               signing::CurrentPolicyEvaluationStatus::no_matching_policy,
            "sponsored gas owner condition must match the sponsor gas owner");
 
-    agent_q::SuiOfflinePolicyConditionFacts too_large = facts;
+    signing::SuiOfflinePolicyConditionFacts too_large = facts;
     snprintf(too_large.token_totals_by_type[0].amount_raw, sizeof(too_large.token_totals_by_type[0].amount_raw),
              "%s", "1000000001");
     snprintf(too_large.token_sources[0].amount_raw, sizeof(too_large.token_sources[0].amount_raw),
              "%s", "1000000001");
-    result = agent_q::evaluate_sign_transaction_policy(prepared_request(true, &too_large));
-    expect(result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_rejected,
+    result = signing::evaluate_sign_transaction_policy(prepared_request(true, &too_large));
+    expect(result.status == signing::SignTransactionPolicyRuntimeStatus::policy_rejected,
            "non-matching policy rejects");
     expect(strcmp(result.reason_code, "policy_no_matching_rule") == 0,
            "non-matching policy reason");
     expect(result.tx_bytes == nullptr && result.tx_bytes_size == 0,
            "rejection does not expose signable bytes");
 
-    agent_q::SuiOfflinePolicyConditionFacts mixed_token_facts = facts;
+    signing::SuiOfflinePolicyConditionFacts mixed_token_facts = facts;
     set_token_total(&mixed_token_facts, 1, kNonSuiTypeTag, "999999999999");
-    result = agent_q::evaluate_sign_transaction_policy(prepared_request(true, &mixed_token_facts));
-    expect(result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_authorized,
+    result = signing::evaluate_sign_transaction_policy(prepared_request(true, &mixed_token_facts));
+    expect(result.status == signing::SignTransactionPolicyRuntimeStatus::policy_authorized,
            "sui selector ignores unrelated non-sui total");
 
-    agent_q::SuiOfflinePolicyConditionFacts two_token_facts = facts;
+    signing::SuiOfflinePolicyConditionFacts two_token_facts = facts;
     set_token_total(&two_token_facts, 1, kNonSuiTypeTag, "500");
-    agent_q::AgentQCurrentPolicyEvaluationResult direct_evaluation =
-        agent_q::evaluate_agent_q_current_policy_for_sui_sign_transaction(
+    signing::CurrentPolicyEvaluationResult direct_evaluation =
+        signing::evaluate_current_policy_for_sui_sign_transaction(
             two_token_amount_policy_document(),
             "devnet",
             two_token_facts);
-    expect(direct_evaluation.status == agent_q::AgentQCurrentPolicyEvaluationStatus::authorized,
+    expect(direct_evaluation.status == signing::CurrentPolicyEvaluationStatus::authorized,
            "two token amount limits authorize independently");
 
     set_token_total(&two_token_facts, 1, kNonSuiTypeTag, "501");
     direct_evaluation =
-        agent_q::evaluate_agent_q_current_policy_for_sui_sign_transaction(
+        signing::evaluate_current_policy_for_sui_sign_transaction(
             two_token_amount_policy_document(),
             "devnet",
             two_token_facts);
-    expect(direct_evaluation.status == agent_q::AgentQCurrentPolicyEvaluationStatus::no_matching_policy,
+    expect(direct_evaluation.status == signing::CurrentPolicyEvaluationStatus::no_matching_policy,
            "non-sui selector rejects only its own excess total");
 
     direct_evaluation =
-        agent_q::evaluate_agent_q_current_policy_for_sui_sign_transaction(
+        signing::evaluate_current_policy_for_sui_sign_transaction(
             non_sui_only_amount_policy_document(),
             "devnet",
             facts);
-    expect(direct_evaluation.status == agent_q::AgentQCurrentPolicyEvaluationStatus::no_matching_policy,
+    expect(direct_evaluation.status == signing::CurrentPolicyEvaluationStatus::no_matching_policy,
            "missing selector token type is false");
 
-    agent_q::SuiOfflinePolicyConditionFacts duplicate_sui_facts = facts;
+    signing::SuiOfflinePolicyConditionFacts duplicate_sui_facts = facts;
     set_token_total(&duplicate_sui_facts, 1, kSuiTypeTag, "1");
     direct_evaluation =
-        agent_q::evaluate_agent_q_current_policy_for_sui_sign_transaction(
+        signing::evaluate_current_policy_for_sui_sign_transaction(
             sui_only_amount_policy_document(),
             "devnet",
             duplicate_sui_facts);
-    expect(direct_evaluation.status == agent_q::AgentQCurrentPolicyEvaluationStatus::no_matching_policy,
+    expect(direct_evaluation.status == signing::CurrentPolicyEvaluationStatus::no_matching_policy,
            "duplicate selector token type fails closed");
 
-    agent_q::SuiOfflinePolicyConditionFacts unknown_amount_facts = facts;
+    signing::SuiOfflinePolicyConditionFacts unknown_amount_facts = facts;
     unknown_amount_facts.token_unknown_amount_present = true;
     direct_evaluation =
-        agent_q::evaluate_agent_q_current_policy_for_sui_sign_transaction(
+        signing::evaluate_current_policy_for_sui_sign_transaction(
             sui_only_amount_policy_document(),
             "devnet",
             unknown_amount_facts);
-    expect(direct_evaluation.status == agent_q::AgentQCurrentPolicyEvaluationStatus::no_matching_policy,
+    expect(direct_evaluation.status == signing::CurrentPolicyEvaluationStatus::no_matching_policy,
            "unknown amount fails token amount policy");
 
-    result = agent_q::evaluate_sign_transaction_policy(prepared_request(true, &facts, "mainnet"));
-    expect(result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_rejected,
+    result = signing::evaluate_sign_transaction_policy(prepared_request(true, &facts, "mainnet"));
+    expect(result.status == signing::SignTransactionPolicyRuntimeStatus::policy_rejected,
            "scope mismatch rejects");
     expect(strcmp(result.reason_code, "policy_scope_unmatched") == 0,
            "scope mismatch reason");
 
-    agent_q::SuiOfflinePolicyConditionFacts incomplete = facts;
-    incomplete.completeness = agent_q::SuiOfflinePolicyFactsCompleteness::incomplete;
-    incomplete.reason = agent_q::SuiOfflinePolicyFactsReason::direct_object_token_amount_unknown;
-    const agent_q::AgentQCurrentPolicyEvaluationResult incomplete_evaluation =
-        agent_q::evaluate_agent_q_current_policy_for_sui_sign_transaction(
-            *agent_q::active_policy_document(),
+    signing::SuiOfflinePolicyConditionFacts incomplete = facts;
+    incomplete.completeness = signing::SuiOfflinePolicyFactsCompleteness::incomplete;
+    incomplete.reason = signing::SuiOfflinePolicyFactsReason::direct_object_token_amount_unknown;
+    const signing::CurrentPolicyEvaluationResult incomplete_evaluation =
+        signing::evaluate_current_policy_for_sui_sign_transaction(
+            *signing::active_policy_document(),
             "devnet",
             incomplete);
-    expect(incomplete_evaluation.status == agent_q::AgentQCurrentPolicyEvaluationStatus::facts_incomplete,
+    expect(incomplete_evaluation.status == signing::CurrentPolicyEvaluationStatus::facts_incomplete,
            "direct incomplete evaluator result");
     expect(strcmp(incomplete_evaluation.reason_code, "policy_facts_incomplete") == 0,
            "direct incomplete evaluator reason");
-    result = agent_q::evaluate_sign_transaction_policy(prepared_request(true, &incomplete));
-    if (result.status != agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_rejected ||
+    result = signing::evaluate_sign_transaction_policy(prepared_request(true, &incomplete));
+    if (result.status != signing::SignTransactionPolicyRuntimeStatus::policy_rejected ||
         strcmp(result.reason_code, "policy_facts_incomplete") != 0) {
         fprintf(stderr,
                 "incomplete runtime result: status=%d code=%s reason=%s\n",
@@ -671,33 +671,33 @@ int main()
                 result.code != nullptr ? result.code : "",
                 result.reason_code);
     }
-    expect(result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_rejected,
+    expect(result.status == signing::SignTransactionPolicyRuntimeStatus::policy_rejected,
            "incomplete facts reject");
     expect(strcmp(result.reason_code, "policy_facts_incomplete") == 0,
            "incomplete facts reason");
 
-    agent_q::AgentQSuiPreparedSignTransaction invalid = prepared_request(true, &facts);
+    signing::SuiPreparedSignTransaction invalid = prepared_request(true, &facts);
     invalid.tx_bytes = nullptr;
     invalid.tx_bytes_size = 0;
-    result = agent_q::evaluate_sign_transaction_policy(invalid);
-    expect(result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::invalid_params,
+    result = signing::evaluate_sign_transaction_policy(invalid);
+    expect(result.status == signing::SignTransactionPolicyRuntimeStatus::invalid_params,
            "invalid prepared request rejected");
 
-    agent_q::AgentQSuiPreparedSignTransaction unsupported = prepared_request(true, &facts);
-    unsupported.route = agent_q::AgentQSupportedSignRoute::sui_sign_personal_message;
-    result = agent_q::evaluate_sign_transaction_policy(unsupported);
-    expect(result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::unsupported_method,
+    signing::SuiPreparedSignTransaction unsupported = prepared_request(true, &facts);
+    unsupported.route = signing::SupportedSignRoute::sui_sign_personal_message;
+    result = signing::evaluate_sign_transaction_policy(unsupported);
+    expect(result.status == signing::SignTransactionPolicyRuntimeStatus::unsupported_method,
            "unsupported route rejected");
 
     g_policy_summary_available = false;
-    result = agent_q::evaluate_sign_transaction_policy(prepared_request(false, nullptr));
-    expect(result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_error,
+    result = signing::evaluate_sign_transaction_policy(prepared_request(false, nullptr));
+    expect(result.status == signing::SignTransactionPolicyRuntimeStatus::policy_error,
            "missing active policy summary is policy error");
     g_policy_summary_available = true;
 
     g_policy_document_available = false;
-    result = agent_q::evaluate_sign_transaction_policy(prepared_request(true, &facts));
-    expect(result.status == agent_q::AgentQSignTransactionPolicyRuntimeStatus::policy_error,
+    result = signing::evaluate_sign_transaction_policy(prepared_request(true, &facts));
+    expect(result.status == signing::SignTransactionPolicyRuntimeStatus::policy_error,
            "missing active policy document is policy error");
 
     if (failures != 0) {
@@ -712,14 +712,14 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
   -I"${TMP_DIR}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   -I"${COMMON_ROOT}/policy" \
   -I"${COMMON_ROOT}/sui" \
   "${TMP_DIR}/sign_transaction_policy_runtime_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_transaction_policy_runtime.cpp" \
-  "${COMMON_ROOT}/policy/agent_q_policy_document.cpp" \
-  "${COMMON_ROOT}/policy/agent_q_policy_evaluator.cpp" \
+  "${RUNTIME_DIR}/sign_transaction_policy_runtime.cpp" \
+  "${COMMON_ROOT}/policy/document.cpp" \
+  "${COMMON_ROOT}/policy/evaluator.cpp" \
   -o "${TMP_DIR}/sign_transaction_policy_runtime_test"
 
 "${TMP_DIR}/sign_transaction_policy_runtime_test"

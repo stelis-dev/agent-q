@@ -18,11 +18,11 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 VECTOR_FILE="${REPO_ROOT}/specs/sign-route-vectors.tsv"
 
 for required in \
-  "${COMMON_ROOT}/agent_q_sign_route.h" \
+  "${COMMON_ROOT}/protocol/sign_route.h" \
   "${VECTOR_FILE}"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -31,7 +31,7 @@ for required in \
 done
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-sign-route-vectors.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-sign-route-vectors.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 cat >"${TMP_DIR}/test.cpp" <<'CPP'
@@ -43,7 +43,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <string>
 #include <vector>
 
-#include "agent_q_sign_route.h"
+#include "protocol/sign_route.h"
 
 namespace {
 
@@ -54,29 +54,29 @@ struct Vector {
     std::string expected;
 };
 
-agent_q::AgentQSignOperation parse_operation(const std::string& value)
+signing::SignOperation parse_operation(const std::string& value)
 {
     if (value == "sign_transaction") {
-        return agent_q::AgentQSignOperation::sign_transaction;
+        return signing::SignOperation::sign_transaction;
     }
     if (value == "sign_personal_message") {
-        return agent_q::AgentQSignOperation::sign_personal_message;
+        return signing::SignOperation::sign_personal_message;
     }
     fprintf(stderr, "unsupported operation in route vector: %s\n", value.c_str());
     assert(false);
-    return agent_q::AgentQSignOperation::sign_transaction;
+    return signing::SignOperation::sign_transaction;
 }
 
-const char* result_name(agent_q::AgentQSignRouteResult result)
+const char* result_name(signing::SignRouteResult result)
 {
     switch (result) {
-        case agent_q::AgentQSignRouteResult::ok:
+        case signing::SignRouteResult::ok:
             return "ok";
-        case agent_q::AgentQSignRouteResult::invalid_params:
+        case signing::SignRouteResult::invalid_params:
             return "invalid_params";
-        case agent_q::AgentQSignRouteResult::unsupported_chain:
+        case signing::SignRouteResult::unsupported_chain:
             return "unsupported_chain";
-        case agent_q::AgentQSignRouteResult::unsupported_method:
+        case signing::SignRouteResult::unsupported_method:
             return "unsupported_method";
     }
     return "unknown";
@@ -117,8 +117,8 @@ int main(int argc, char** argv)
     assert(vectors.size() >= 8);
 
     for (const Vector& vector : vectors) {
-        const agent_q::AgentQSignRouteClassification classification =
-            agent_q::classify_sign_route(
+        const signing::SignRouteClassification classification =
+            signing::classify_sign_route(
                 parse_operation(vector.operation),
                 vector.chain.c_str(),
                 vector.method.c_str());
@@ -133,10 +133,10 @@ int main(int argc, char** argv)
                     actual);
             return 1;
         }
-        if (classification.result == agent_q::AgentQSignRouteResult::ok) {
-            assert(classification.route != agent_q::AgentQSupportedSignRoute::unsupported);
+        if (classification.result == signing::SignRouteResult::ok) {
+            assert(classification.route != signing::SupportedSignRoute::unsupported);
         } else {
-            assert(classification.route == agent_q::AgentQSupportedSignRoute::unsupported);
+            assert(classification.route == signing::SupportedSignRoute::unsupported);
         }
     }
 

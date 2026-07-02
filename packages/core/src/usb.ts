@@ -1,7 +1,7 @@
 import { SerialPort } from "serialport";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { AgentQError } from "./errors.js";
+import { DeviceRequestError } from "./errors.js";
 import {
   assertAccountsResult,
   assertApprovalHistoryResponse,
@@ -45,9 +45,9 @@ import {
   validateSignTransactionInput,
 } from "./provider-protocol.js";
 import {
-  AGENT_Q_USB_PRODUCT_ID,
-  AGENT_Q_USB_VENDOR_ID,
-  DEFAULT_AGENT_Q_USB_BAUD_RATE,
+  FIRMWARE_USB_PRODUCT_ID,
+  FIRMWARE_USB_VENDOR_ID,
+  DEFAULT_FIRMWARE_USB_BAUD_RATE,
   INTERNAL_USB_DEADLINE_MS,
   PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES,
 } from "./transport-invariants.js";
@@ -63,7 +63,7 @@ import {
 import { requestSigningWithRetainedRecovery } from "./retained-signing-recovery-internal.js";
 import { IDENTIFICATION_CODE_PATTERN, isClientName } from "./safe-text.js";
 
-export { AGENT_Q_USB_PRODUCT_ID, AGENT_Q_USB_VENDOR_ID, INTERNAL_USB_DEADLINE_MS };
+export { FIRMWARE_USB_PRODUCT_ID, FIRMWARE_USB_VENDOR_ID, INTERNAL_USB_DEADLINE_MS };
 
 export type UnavailableReason =
   | "timeout"
@@ -146,8 +146,8 @@ type PortQuarantine = {
   released: Promise<void>;
   release(): void;
 };
-const REQUEST_MAY_HAVE_REACHED_FIRMWARE = Symbol("agent-q.requestMayHaveReachedFirmware");
-const FIRMWARE_SESSION_INVALIDATED = Symbol("agent-q.firmwareSessionInvalidated");
+const REQUEST_MAY_HAVE_REACHED_FIRMWARE = Symbol("signing.requestMayHaveReachedFirmware");
+const FIRMWARE_SESSION_INVALIDATED = Symbol("signing.firmwareSessionInvalidated");
 const portTransactions = new Map<string, Promise<void>>();
 const portQuarantines = new Map<string, PortQuarantine>();
 const USB_CLEANUP_STEP_TIMEOUT_MS = 1500;
@@ -160,7 +160,7 @@ export function setSerialPortFactoryForTest(factory: SerialPortFactory | null): 
 }
 
 // Transport contract: each call should resolve or reject within its internal
-// deadline. AgentQCore wraps the driver in deadlineEnforcingDriver, so a driver
+// deadline. DeviceCore wraps the driver in deadlineEnforcingDriver, so a driver
 // that ignores the deadline argument still cannot exceed the budget. listPorts
 // has no deadline argument and is bounded by the shared scan deadline in
 // scanUsbDeviceStatuses.
@@ -370,15 +370,15 @@ export function validateInternalDeadlineMs(value: unknown): number {
     return INTERNAL_USB_DEADLINE_MS;
   }
   if (!Number.isInteger(value) || typeof value !== "number" || value <= 0) {
-    throw new AgentQError("unknown_error", "Internal USB deadline is invalid.", false);
+    throw new DeviceRequestError("unknown_error", "Internal USB deadline is invalid.", false);
   }
   if (value > INTERNAL_USB_DEADLINE_MS) {
-    throw new AgentQError("unknown_error", "Internal USB deadline is invalid.", false);
+    throw new DeviceRequestError("unknown_error", "Internal USB deadline is invalid.", false);
   }
   return value;
 }
 
-export function isLikelyAgentQUsbPort(port: PortInfo): boolean {
+export function isLikelyFirmwareUsbPort(port: PortInfo): boolean {
   const vendorId = normalizeUsbId(port.vendorId);
   const productId = normalizeUsbId(port.productId);
 
@@ -391,7 +391,7 @@ export function isLikelyAgentQUsbPort(port: PortInfo): boolean {
   const hasDeviceSerial = serialNumber.length > 0;
 
   if (vendorId.length > 0 || productId.length > 0) {
-    if (vendorId !== AGENT_Q_USB_VENDOR_ID || productId !== AGENT_Q_USB_PRODUCT_ID) {
+    if (vendorId !== FIRMWARE_USB_VENDOR_ID || productId !== FIRMWARE_USB_PRODUCT_ID) {
       return false;
     }
     return manufacturer.length === 0 && pnpId.length === 0 ? true : hasLikelyDescriptor;
@@ -419,21 +419,21 @@ function raceDeadline<T>(work: Promise<T>, remainingMs: number, timeoutMessage: 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<T>((_resolve, reject) => {
     timer = setTimeout(
-      () => reject(new AgentQError("timeout", timeoutMessage, true)),
+      () => reject(new DeviceRequestError("timeout", timeoutMessage, true)),
       Math.max(0, remainingMs),
     );
   });
   return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
 }
 
-function deadlineExpiredBeforeWriteError(message: string): AgentQError {
-  return markRequestDidNotReachFirmware(new AgentQError("timeout", message, true));
+function deadlineExpiredBeforeWriteError(message: string): DeviceRequestError {
+  return markRequestDidNotReachFirmware(new DeviceRequestError("timeout", message, true));
 }
 
 // Single enforcement boundary for the transport deadline contract. Wrapping a
 // driver here races every deadline-bearing call against its own deadline argument,
 // so a driver that ignores the argument still cannot exceed the budget. Applied
-// once in AgentQCore, this bounds deadline-bearing calls in one place instead
+// once in DeviceCore, this bounds deadline-bearing calls in one place instead
 // of relying on each call site to remember to race.
 // listPorts has no deadline argument and is bounded by the shared scan deadline in
 // scanUsbDeviceStatuses.
@@ -552,7 +552,7 @@ function markFirmwareSessionInvalidated<T>(value: T): T {
   return value;
 }
 
-/** @internal Package-private side channel consumed by AgentQCore before projection. */
+/** @internal Package-private side channel consumed by DeviceCore before projection. */
 export function consumeFirmwareSessionInvalidated(value: unknown): boolean {
   if (
     value === null ||
@@ -596,7 +596,7 @@ function requestMayHaveReachedFirmware(error: unknown): boolean {
 }
 
 function errorCode(error: unknown): string | null {
-  if (error instanceof AgentQError || error instanceof ProtocolError) {
+  if (error instanceof DeviceRequestError || error instanceof ProtocolError) {
     return error.code;
   }
   return null;
@@ -658,7 +658,7 @@ function noop(): void {}
 function ensurePortPathNotQuarantined(portPath: string): void {
   const quarantine = portQuarantines.get(portPath);
   if (quarantine !== undefined) {
-    throw new AgentQError(
+    throw new DeviceRequestError(
       "port_in_use",
       `USB port is waiting for timed-out transport cleanup: ${quarantine.reason}`,
       true,
@@ -681,7 +681,7 @@ async function waitForPortPathAvailability(portPath: string, absoluteDeadlineMs:
       quarantine.released,
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
-          reject(new AgentQError(
+          reject(new DeviceRequestError(
             "port_in_use",
             `USB port is waiting for timed-out transport cleanup: ${quarantine.reason}`,
             true,
@@ -701,7 +701,7 @@ function quarantinePortPath(lease: PortLease, reason: string): symbol {
   if (lease.quarantineToken !== undefined) {
     return lease.quarantineToken;
   }
-  const token = Symbol(`agent-q.port-quarantine:${lease.portPath}`);
+  const token = Symbol(`signing.port-quarantine:${lease.portPath}`);
   let release!: () => void;
   const released = new Promise<void>((resolve) => {
     release = resolve;
@@ -740,7 +740,7 @@ export async function scanUsbDeviceStatuses(
     deadline - now(),
     "USB port enumeration exceeded the scan deadline.",
   );
-  const candidates = ports.filter(isLikelyAgentQUsbPort);
+  const candidates = ports.filter(isLikelyFirmwareUsbPort);
   const results: UsbStatusResult[] = [];
   const failures: UsbStatusFailure[] = [];
 
@@ -757,7 +757,7 @@ export async function scanUsbDeviceStatuses(
     try {
       // scanUsbDeviceStatuses OWNS the total scan budget, so it bounds each
       // handshake itself by the time remaining until the deadline. A raw/direct
-      // caller is therefore safe even without the AgentQCore driver wrapper; the
+      // caller is therefore safe even without the DeviceCore driver wrapper; the
       // wrapper adds the same bound for Core's non-scan transport calls and the
       // overlap on this path is harmless (same timeout, whichever fires first).
       const status = await raceDeadline(
@@ -788,7 +788,7 @@ export async function scanUsbDeviceStatuses(
 }
 
 export function mapErrorToUnavailableReason(error: unknown): UnavailableReason {
-  if (error instanceof AgentQError) {
+  if (error instanceof DeviceRequestError) {
     if (isUnavailableReason(error.code)) {
       return error.code;
     }
@@ -826,7 +826,7 @@ async function requestDeviceOverSerial<TResponse>(
       assertResponse,
       digestPayload: (bytes) => sha256PayloadDigest(bytes),
       encodeChunkBase64: (bytes) => Buffer.from(bytes).toString("base64"),
-      makeError: (code, message, retryable = false) => new AgentQError(code, message, retryable),
+      makeError: (code, message, retryable = false) => new DeviceRequestError(code, message, retryable),
       errorCode,
       onAbortInvalidSession: markFirmwareSessionInvalidated,
     }),
@@ -1061,7 +1061,7 @@ export async function requestSigningOutcomeWithRecovery(
     assertSigningOutcome: (response) => assertSigningOutcome(response),
     digestPayload: (bytes) => sha256PayloadDigest(bytes),
     encodeChunkBase64: (bytes) => Buffer.from(bytes).toString("base64"),
-    makeError: (code, message, retryable = false) => new AgentQError(code, message, retryable),
+    makeError: (code, message, retryable = false) => new DeviceRequestError(code, message, retryable),
     errorCode,
     requestMayHaveReachedFirmware,
     markInvalidSession: markFirmwareSessionInvalidated,
@@ -1072,7 +1072,7 @@ export async function requestSigningOutcomeWithRecovery(
     recoveryExecute: (recoveryExecutor) => recoveryExecutor,
   });
   if (outcome.status === "session_invalidated") {
-    throw new AgentQError("invalid_session", "Session is missing, expired, or does not match.", false);
+    throw new DeviceRequestError("invalid_session", "Session is missing, expired, or does not match.", false);
   }
   return outcome.response;
 }
@@ -1110,7 +1110,7 @@ async function requestOverSerialUnlocked<TResponse>(
   };
   const port = serialPortFactory({
     path: portPath,
-    baudRate: DEFAULT_AGENT_Q_USB_BAUD_RATE,
+    baudRate: DEFAULT_FIRMWARE_USB_BAUD_RATE,
     // The host opens a short-lived serial connection for each protocol call.
     // Dropping DTR on every close resets ESP32-S3 USB Serial/JTAG devices
     // between scan and connect, so keep the line state stable across closes.
@@ -1139,7 +1139,7 @@ async function requestOverSerialUnlocked<TResponse>(
         lease.canceled = true;
         settle(() =>
           reject(tagRequestReachability(
-            new AgentQError("timeout", "Timed out waiting for Firmware response.", true),
+            new DeviceRequestError("timeout", "Timed out waiting for Firmware response.", true),
             lease.writeReachability === "started",
           )),
         );
@@ -1164,7 +1164,7 @@ async function requestOverSerialUnlocked<TResponse>(
       const onClose = (): void => {
         settle(() =>
           reject(tagRequestReachability(
-            new AgentQError("transport_closed", "USB serial transport closed.", true),
+            new DeviceRequestError("transport_closed", "USB serial transport closed.", true),
             lease.writeReachability === "started",
           )),
         );
@@ -1177,7 +1177,7 @@ async function requestOverSerialUnlocked<TResponse>(
           buffer = consumed.buffer;
           lines = consumed.lines;
         } catch (error) {
-          settle(() => reject(markRequestMayHaveReachedFirmware(toAgentQProtocolError(error))));
+          settle(() => reject(markRequestMayHaveReachedFirmware(toSigningProtocolError(error))));
           return;
         }
 
@@ -1228,9 +1228,9 @@ async function requestOverSerialUnlocked<TResponse>(
   }
 }
 
-function toAgentQProtocolError(error: unknown): unknown {
+function toSigningProtocolError(error: unknown): unknown {
   if (error instanceof ProtocolError) {
-    return new AgentQError(error.code, error.message, error.code === "timeout");
+    return new DeviceRequestError(error.code, error.message, error.code === "timeout");
   }
   return error;
 }
@@ -1266,7 +1266,7 @@ function tryParseMatchingWireResponseLine<TResponse>(
     if (parsed.id === undefined && parsed.success === false) {
       const response = parseDeviceResponse(parsed);
       if (response.success === false) {
-        throw new AgentQError(
+        throw new DeviceRequestError(
           response.error.code,
           response.error.message,
           response.error.retryable,
@@ -1280,7 +1280,7 @@ function tryParseMatchingWireResponseLine<TResponse>(
     return assertResponse(parsed);
   } catch (error) {
     if (error instanceof ProtocolError) {
-      throw new AgentQError(error.code, error.message, error.code === "timeout");
+      throw new DeviceRequestError(error.code, error.message, error.code === "timeout");
     }
     throw error;
   }
@@ -1289,7 +1289,7 @@ function tryParseMatchingWireResponseLine<TResponse>(
 function ensureLeaseCanStartSideEffect(lease: PortLease, absoluteDeadlineMs: number): void {
   if (lease.canceled) {
     throw markRequestDidNotReachFirmware(
-      new AgentQError("timeout", "USB request lease was canceled before it reached Firmware.", true),
+      new DeviceRequestError("timeout", "USB request lease was canceled before it reached Firmware.", true),
     );
   }
   ensureTransactionDeadline(
@@ -1300,7 +1300,7 @@ function ensureLeaseCanStartSideEffect(lease: PortLease, absoluteDeadlineMs: num
 
 function remainingLeaseMs(lease: PortLease, absoluteDeadlineMs: number, message: string): number {
   if (lease.canceled) {
-    throw markRequestDidNotReachFirmware(new AgentQError("timeout", message, true));
+    throw markRequestDidNotReachFirmware(new DeviceRequestError("timeout", message, true));
   }
   return ensureTransactionDeadline(absoluteDeadlineMs, message);
 }
@@ -1447,13 +1447,13 @@ function closePortBestEffort(
   });
 }
 
-function mapSerialOpenError(error: Error): AgentQError {
+function mapSerialOpenError(error: Error): DeviceRequestError {
   const message = error.message || "USB serial transport failed.";
   const reason = classifySerialUnavailableReason(error);
   if (reason !== null) {
-    return new AgentQError(reason, message, true);
+    return new DeviceRequestError(reason, message, true);
   }
-  return new AgentQError("handshake_failed", message, true);
+  return new DeviceRequestError("handshake_failed", message, true);
 }
 
 function classifySerialUnavailableReason(error: unknown): UnavailableReason | null {
@@ -1496,7 +1496,7 @@ function isUnavailableReason(value: string): value is UnavailableReason {
 }
 
 function getFirmwareErrorCode(error: unknown): string | undefined {
-  if (error instanceof AgentQError && !isUnavailableReason(error.code)) {
+  if (error instanceof DeviceRequestError && !isUnavailableReason(error.code)) {
     return error.code;
   }
   if (error instanceof ProtocolError) {

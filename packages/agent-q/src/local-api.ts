@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { type AgentQCore } from "@stelis/agent-q-core";
+import { type DeviceCore } from "@stelis/agent-q-core";
 import {
-  AgentQError,
+  DeviceRequestError,
   hostSuccessOutputSchemas,
   isSafeDeviceId,
   isValidPurpose,
@@ -22,8 +22,8 @@ const LOCAL_API_LOOPBACK_HOSTS = new Set([DEFAULT_LOCAL_API_HOST, "localhost", "
 const SUI_TYPE_TAG = "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI";
 const ONE_SUI_MIST = "1000000000";
 
-export type LocalApiAgentQCore = Pick<
-  AgentQCore,
+export type LocalApiDeviceCore = Pick<
+  DeviceCore,
   | "listDevices"
   | "scanDevices"
   | "connectDevice"
@@ -48,14 +48,14 @@ interface SuccessSchema {
   parse(raw: unknown): object;
 }
 
-export function createLocalApiHttpServer(core: LocalApiAgentQCore): Server {
+export function createLocalApiHttpServer(core: LocalApiDeviceCore): Server {
   return createServer((request, response) => {
     void handleLocalApiRequest(core, request, response);
   });
 }
 
 export async function startLocalApiServer(options: {
-  core: LocalApiAgentQCore;
+  core: LocalApiDeviceCore;
   host?: string;
   port?: number;
 }): Promise<StartedLocalApiServer> {
@@ -76,7 +76,7 @@ export async function startLocalApiServer(options: {
 
 function validateLocalApiHost(host: string): string {
   if (!LOCAL_API_LOOPBACK_HOSTS.has(host)) {
-    throw new AgentQError("invalid_params", "Local API host must be loopback-only.", false);
+    throw new DeviceRequestError("invalid_params", "Local API host must be loopback-only.", false);
   }
   return host;
 }
@@ -87,7 +87,7 @@ function formatLocalApiHostForUrl(host: string): string {
 
 export function buildMinimalSuiTestnetPolicy(): Record<string, unknown> {
   return {
-    schema: "agentq.policy",
+    schema: "signing.policy",
     defaultAction: "reject",
     blockchains: [
       {
@@ -119,7 +119,7 @@ export function buildMinimalSuiTestnetPolicy(): Record<string, unknown> {
 }
 
 async function handleLocalApiRequest(
-  core: LocalApiAgentQCore,
+  core: LocalApiDeviceCore,
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
@@ -233,12 +233,12 @@ async function handleLocalApiRequest(
 function validateLocalApiRequest(request: IncomingMessage): void {
   const contentType = singleHeader(request, "content-type");
   if (!isJsonContentType(contentType)) {
-    throw new AgentQError("invalid_params", "Local API requests must use application/json.", false);
+    throw new DeviceRequestError("invalid_params", "Local API requests must use application/json.", false);
   }
 
   const fetchSite = singleHeader(request, "sec-fetch-site");
   if (fetchSite !== undefined && fetchSite !== "same-origin" && fetchSite !== "none") {
-    throw new AgentQError("invalid_params", "Local API requests must be same-origin.", false);
+    throw new DeviceRequestError("invalid_params", "Local API requests must be same-origin.", false);
   }
 
   const origin = singleHeader(request, "origin");
@@ -247,7 +247,7 @@ function validateLocalApiRequest(request: IncomingMessage): void {
   }
   const host = singleHeader(request, "host");
   if (host === undefined || !isSameOrigin(origin, host)) {
-    throw new AgentQError("invalid_params", "Local API requests must be same-origin.", false);
+    throw new DeviceRequestError("invalid_params", "Local API requests must be same-origin.", false);
   }
 }
 
@@ -257,7 +257,7 @@ function singleHeader(request: IncomingMessage, name: string): string | undefine
     return undefined;
   }
   if (typeof value !== "string") {
-    throw new AgentQError("invalid_params", "Local API request header is invalid.", false);
+    throw new DeviceRequestError("invalid_params", "Local API request header is invalid.", false);
   }
   return value;
 }
@@ -286,7 +286,7 @@ async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise
   for await (const chunk of request) {
     raw += chunk;
     if (Buffer.byteLength(raw, "utf8") > maxBytes) {
-      throw new AgentQError("invalid_params", "Local API request body is too large.", false);
+      throw new DeviceRequestError("invalid_params", "Local API request body is too large.", false);
     }
   }
   if (raw.length === 0) {
@@ -296,10 +296,10 @@ async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new AgentQError("invalid_request", "Local API request body is not valid JSON.", false);
+    throw new DeviceRequestError("invalid_request", "Local API request body is not valid JSON.", false);
   }
   if (!isRecord(parsed) || Array.isArray(parsed)) {
-    throw new AgentQError("invalid_params", "Local API request body must be a JSON object.", false);
+    throw new DeviceRequestError("invalid_params", "Local API request body must be a JSON object.", false);
   }
   return parsed;
 }
@@ -308,13 +308,13 @@ function deviceScopedInput(body: RequestBody): { deviceId?: string; purpose?: st
   const input: { deviceId?: string; purpose?: string } = {};
   if (Object.prototype.hasOwnProperty.call(body, "deviceId")) {
     if (!isSafeDeviceId(body.deviceId)) {
-      throw new AgentQError("invalid_device_id", "Local API request deviceId is invalid.", false);
+      throw new DeviceRequestError("invalid_device_id", "Local API request deviceId is invalid.", false);
     }
     input.deviceId = body.deviceId;
   }
   if (Object.prototype.hasOwnProperty.call(body, "purpose")) {
     if (typeof body.purpose !== "string" || !isValidPurpose(body.purpose)) {
-      throw new AgentQError("invalid_params", "Local API request purpose is invalid.", false);
+      throw new DeviceRequestError("invalid_params", "Local API request purpose is invalid.", false);
     }
     input.purpose = body.purpose;
   }
@@ -345,7 +345,7 @@ function policyProposalInput(body: RequestBody): {
 } {
   const policy = body.policy;
   if (!isRecord(policy) || Array.isArray(policy)) {
-    throw new AgentQError("invalid_params", "Local API policy proposal must be a JSON object.", false);
+    throw new DeviceRequestError("invalid_params", "Local API policy proposal must be a JSON object.", false);
   }
   return {
     ...deviceScopedInput(body),
@@ -356,7 +356,7 @@ function policyProposalInput(body: RequestBody): {
 function requiredString(body: RequestBody, key: string): string {
   const value = body[key];
   if (typeof value !== "string" || value.length === 0) {
-    throw new AgentQError("invalid_params", "Local API request field is invalid.", false);
+    throw new DeviceRequestError("invalid_params", "Local API request field is invalid.", false);
   }
   return value;
 }
@@ -365,7 +365,7 @@ function expectKeys(body: RequestBody, allowedKeys: string[]): void {
   const allowed = new Set(allowedKeys);
   for (const key of Object.keys(body)) {
     if (!allowed.has(key)) {
-      throw new AgentQError("invalid_params", "Local API request includes an unsupported field.", false);
+      throw new DeviceRequestError("invalid_params", "Local API request includes an unsupported field.", false);
     }
   }
 }

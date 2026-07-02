@@ -19,19 +19,19 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 CXX_BIN="${CXX:-c++}"
 
 for required in \
-  "${AGENT_Q_DIR}/agent_q_connect_review_response_flow.cpp" \
-  "${AGENT_Q_DIR}/agent_q_connect_review_response_flow.h"; do
+  "${RUNTIME_DIR}/connect_review_response_flow.cpp" \
+  "${RUNTIME_DIR}/connect_review_response_flow.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
   fi
 done
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-connect-review-response-flow.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-connect-review-response-flow.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/stubs/freertos" "${TMP_DIR}/stubs/lvgl"
@@ -62,7 +62,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_connect_review_response_flow.h"
+#include "connect_review_response_flow.h"
 
 namespace {
 
@@ -77,9 +77,9 @@ bool g_replace_session_result = true;
 bool g_write_approved_response = true;
 bool g_write_rejected_response = true;
 bool g_review_panel_visible = true;
-agent_q::AgentQConnectApprovalChoice g_choice_event =
-    agent_q::AgentQConnectApprovalChoice::none;
-agent_q::AgentQConnectApprovalSnapshot g_snapshot = {};
+signing::ConnectApprovalChoice g_choice_event =
+    signing::ConnectApprovalChoice::none;
+signing::ConnectApprovalSnapshot g_snapshot = {};
 int g_reset_choice_calls = 0;
 int g_receive_calls = 0;
 int g_begin_pin_calls = 0;
@@ -95,9 +95,9 @@ int g_log_write_failure_calls = 0;
 int g_log_recovered_calls = 0;
 int g_show_result_calls = 0;
 int g_show_review_calls = 0;
-agent_q::AgentQConnectApprovalChoice g_last_chosen =
-    agent_q::AgentQConnectApprovalChoice::none;
-agent_q::AgentQMessageKind g_last_result_kind = agent_q::AgentQMessageKind::info;
+signing::ConnectApprovalChoice g_last_chosen =
+    signing::ConnectApprovalChoice::none;
+signing::MessageKind g_last_result_kind = signing::MessageKind::info;
 char g_last_result_message[80] = {};
 char g_last_response_code[80] = {};
 char g_last_response_message[120] = {};
@@ -122,13 +122,13 @@ void reset_harness()
     g_write_approved_response = true;
     g_write_rejected_response = true;
     g_review_panel_visible = true;
-    g_choice_event = agent_q::AgentQConnectApprovalChoice::none;
+    g_choice_event = signing::ConnectApprovalChoice::none;
     g_snapshot = {
         true,
         "req-1",
         "client",
         {},
-        agent_q::AgentQConnectApprovalChoice::none,
+        signing::ConnectApprovalChoice::none,
     };
     g_reset_choice_calls = 0;
     g_receive_calls = 0;
@@ -145,8 +145,8 @@ void reset_harness()
     g_log_recovered_calls = 0;
     g_show_result_calls = 0;
     g_show_review_calls = 0;
-    g_last_chosen = agent_q::AgentQConnectApprovalChoice::none;
-    g_last_result_kind = agent_q::AgentQMessageKind::info;
+    g_last_chosen = signing::ConnectApprovalChoice::none;
+    g_last_result_kind = signing::MessageKind::info;
     g_last_result_message[0] = '\0';
     g_last_response_code[0] = '\0';
     g_last_response_message[0] = '\0';
@@ -155,7 +155,7 @@ void reset_harness()
 TickType_t now() { return g_now; }
 bool local_pin_flow_active() { return g_local_pin_flow_active; }
 void reset_choices() { ++g_reset_choice_calls; }
-bool receive_choice(agent_q::AgentQConnectApprovalChoice* choice)
+bool receive_choice(signing::ConnectApprovalChoice* choice)
 {
     ++g_receive_calls;
     if (!g_has_choice_event) {
@@ -175,7 +175,7 @@ bool begin_pin(TickType_t tick)
     ++g_begin_pin_calls;
     return true;
 }
-bool choose(agent_q::AgentQConnectApprovalChoice choice, TickType_t tick)
+bool choose(signing::ConnectApprovalChoice choice, TickType_t tick)
 {
     expect(tick == g_now, "choice receives current tick");
     ++g_choose_calls;
@@ -183,7 +183,7 @@ bool choose(agent_q::AgentQConnectApprovalChoice choice, TickType_t tick)
     g_snapshot.choice = choice;
     return true;
 }
-agent_q::AgentQConnectApprovalSnapshot snapshot() { return g_snapshot; }
+signing::ConnectApprovalSnapshot snapshot() { return g_snapshot; }
 bool deadline_reached(TickType_t tick)
 {
     expect(tick == g_now, "deadline check receives current tick");
@@ -198,7 +198,7 @@ void clear_approval()
 {
     ++g_clear_calls;
     g_snapshot.active = false;
-    g_snapshot.choice = agent_q::AgentQConnectApprovalChoice::none;
+    g_snapshot.choice = signing::ConnectApprovalChoice::none;
 }
 bool replace_session()
 {
@@ -228,7 +228,7 @@ void log_info(const char*, const char*) { ++g_log_info_calls; }
 void log_error(const char*, const char*) { ++g_log_error_calls; }
 void log_write_failure(const char*, const char*) { ++g_log_write_failure_calls; }
 void log_recovered(const char*) { ++g_log_recovered_calls; }
-void show_result(const char* message, agent_q::AgentQMessageKind kind)
+void show_result(const char* message, signing::MessageKind kind)
 {
     ++g_show_result_calls;
     snprintf(g_last_result_message, sizeof(g_last_result_message), "%s", message);
@@ -237,9 +237,9 @@ void show_result(const char* message, agent_q::AgentQMessageKind kind)
 bool review_panel_visible() { return g_review_panel_visible; }
 void show_review() { ++g_show_review_calls; }
 
-const agent_q::AgentQConnectReviewResponseFlowOps& ops()
+const signing::ConnectReviewResponseFlowOps& ops()
 {
-    static const agent_q::AgentQConnectReviewResponseFlowOps value = {
+    static const signing::ConnectReviewResponseFlowOps value = {
         now,
         local_pin_flow_active,
         reset_choices,
@@ -271,24 +271,24 @@ const agent_q::AgentQConnectReviewResponseFlowOps& ops()
 
 int main()
 {
-    using agent_q::AgentQConnectApprovalChoice;
-    using agent_q::AgentQMessageKind;
+    using signing::ConnectApprovalChoice;
+    using signing::MessageKind;
 
     reset_harness();
     g_local_pin_flow_active = true;
     g_has_choice_event = true;
-    g_choice_event = AgentQConnectApprovalChoice::approved;
-    agent_q::connect_review_response_flow_run(ops());
+    g_choice_event = ConnectApprovalChoice::approved;
+    signing::connect_review_response_flow_run(ops());
     expect(g_reset_choice_calls == 1, "active connect PIN flow resets stale choices");
     expect(g_receive_calls == 0, "active connect PIN flow skips choice receive");
     expect(g_show_result_calls == 0, "active connect PIN flow has no terminal result");
 
     reset_harness();
     g_has_choice_event = true;
-    g_choice_event = AgentQConnectApprovalChoice::approved;
+    g_choice_event = ConnectApprovalChoice::approved;
     g_awaiting_choice = true;
     g_requires_pin = true;
-    agent_q::connect_review_response_flow_run(ops());
+    signing::connect_review_response_flow_run(ops());
     expect(g_begin_pin_calls == 1, "approved choice with PIN requirement starts PIN auth");
     expect(g_reset_choice_calls == 1, "PIN handoff resets choice queue");
     expect(g_choose_calls == 0, "PIN handoff does not choose terminal approval yet");
@@ -296,67 +296,67 @@ int main()
 
     reset_harness();
     g_has_choice_event = true;
-    g_choice_event = AgentQConnectApprovalChoice::rejected;
+    g_choice_event = ConnectApprovalChoice::rejected;
     g_awaiting_choice = true;
-    agent_q::connect_review_response_flow_run(ops());
+    signing::connect_review_response_flow_run(ops());
     expect(g_choose_calls == 1, "rejected choice is recorded");
-    expect(g_last_chosen == AgentQConnectApprovalChoice::rejected, "rejected choice value");
+    expect(g_last_chosen == ConnectApprovalChoice::rejected, "rejected choice value");
     expect(g_reset_choice_calls == 1, "terminal choice resets choice queue");
     expect(g_clear_calls == 1, "terminal rejected connect clears approval state");
     expect(g_write_rejected_calls == 1, "terminal rejected connect writes rejected response");
     expect(strcmp(g_last_response_code, "user_rejected") == 0, "rejected response code");
     expect(g_show_result_calls == 1, "terminal rejected connect shows result");
     expect(strcmp(g_last_result_message, "Connection rejected") == 0, "rejected result message");
-    expect(g_last_result_kind == AgentQMessageKind::rejected, "rejected result kind");
+    expect(g_last_result_kind == MessageKind::rejected, "rejected result kind");
 
     reset_harness();
     g_deadline_reached = true;
-    agent_q::connect_review_response_flow_run(ops());
+    signing::connect_review_response_flow_run(ops());
     expect(g_clear_calls == 1, "timeout clears approval state before result");
     expect(g_write_rejected_calls == 1, "timeout writes rejected response");
     expect(strcmp(g_last_response_code, "timeout") == 0, "timeout response code");
     expect(g_show_result_calls == 1, "timeout shows result");
     expect(strcmp(g_last_result_message, "Connection timed out") == 0, "timeout result message");
-    expect(g_last_result_kind == AgentQMessageKind::timeout, "timeout result kind");
+    expect(g_last_result_kind == MessageKind::timeout, "timeout result kind");
 
     reset_harness();
-    g_snapshot.choice = AgentQConnectApprovalChoice::approved;
-    agent_q::connect_review_response_flow_run(ops());
+    g_snapshot.choice = ConnectApprovalChoice::approved;
+    signing::connect_review_response_flow_run(ops());
     expect(g_clear_calls == 1, "approved connect clears approval state");
     expect(g_replace_session_calls == 1, "approved connect creates session");
     expect(g_write_approved_calls == 1, "approved connect writes approved response");
     expect(g_show_result_calls == 1, "approved connect shows result");
     expect(strcmp(g_last_result_message, "Connected") == 0, "approved result message");
-    expect(g_last_result_kind == AgentQMessageKind::success, "approved result kind");
+    expect(g_last_result_kind == MessageKind::success, "approved result kind");
 
     reset_harness();
-    g_snapshot.choice = AgentQConnectApprovalChoice::approved;
+    g_snapshot.choice = ConnectApprovalChoice::approved;
     g_replace_session_result = false;
-    agent_q::connect_review_response_flow_run(ops());
+    signing::connect_review_response_flow_run(ops());
     expect(g_write_error_calls == 1, "session creation failure writes public error");
     expect(strcmp(g_last_response_code, "rng_unavailable") == 0, "session failure code");
     expect(g_log_error_calls == 1, "session creation failure logs error");
     expect(strcmp(g_last_result_message, "RNG error") == 0, "session failure result");
-    expect(g_last_result_kind == AgentQMessageKind::error, "session failure result kind");
+    expect(g_last_result_kind == MessageKind::error, "session failure result kind");
 
     reset_harness();
-    g_snapshot.choice = AgentQConnectApprovalChoice::approved;
+    g_snapshot.choice = ConnectApprovalChoice::approved;
     g_write_approved_response = false;
-    agent_q::connect_review_response_flow_run(ops());
+    signing::connect_review_response_flow_run(ops());
     expect(g_log_write_failure_calls == 1, "approved response write failure is logged");
     expect(g_show_result_calls == 1, "approved response write failure still shows terminal result");
 
     reset_harness();
     g_awaiting_choice = true;
     g_review_panel_visible = false;
-    agent_q::connect_review_response_flow_run(ops());
+    signing::connect_review_response_flow_run(ops());
     expect(g_show_review_calls == 1, "missing connect review panel is recovered");
     expect(g_log_recovered_calls == 1, "connect review recovery logs recovery warning");
 
     reset_harness();
     g_awaiting_choice = true;
     g_review_panel_visible = true;
-    agent_q::connect_review_response_flow_run(ops());
+    signing::connect_review_response_flow_run(ops());
     expect(g_show_review_calls == 0, "visible connect review panel is not redrawn");
 
     if (failures != 0) {
@@ -370,9 +370,9 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_connect_review_response_flow.cpp" \
+  "${RUNTIME_DIR}/connect_review_response_flow.cpp" \
   -o "${TMP_DIR}/connect_review_response_flow_test"
 
 "${TMP_DIR}/connect_review_response_flow_test"

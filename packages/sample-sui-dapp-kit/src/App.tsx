@@ -12,11 +12,11 @@ import {
 import { ConnectButton } from "@mysten/dapp-kit-react/ui";
 import { Transaction } from "@mysten/sui/transactions";
 import { fromBase64 } from "@mysten/sui/utils";
-import { AGENT_Q_SUI_WALLET_ID, AGENT_Q_SUI_WALLET_NAME } from "@stelis/agent-q-provider-sui/wallet-standard";
-import { agentQProvider, dAppKit } from "./dapp-kit";
+import { SUI_DEVICE_WALLET_ID, SUI_DEVICE_WALLET_NAME } from "@stelis/agent-q-provider-sui/wallet-standard";
+import { deviceProvider, dAppKit } from "./dapp-kit";
 import "./style.css";
 
-type AgentQTransferAction = {
+type TransferAction = {
   id: string;
   label: string;
   policyNote: string;
@@ -27,8 +27,8 @@ type AgentQTransferAction = {
 
 type ExecuteTransactionResult = Awaited<ReturnType<ReturnType<typeof useCurrentClient>["executeTransaction"]>>;
 
-const AGENT_Q_PERSONAL_MESSAGE = "Agent-Q dapp-kit personal message";
-const AGENT_Q_TRANSFER_ACTIONS: AgentQTransferAction[] = [
+const PERSONAL_MESSAGE = "Agent-Q dapp-kit personal message";
+const TRANSFER_ACTIONS: TransferAction[] = [
   {
     id: "self-transfer-0-5-sui",
     label: "Self-transfer 0.5 SUI",
@@ -47,7 +47,7 @@ const AGENT_Q_TRANSFER_ACTIONS: AgentQTransferAction[] = [
   },
 ];
 
-type SigningActionResult = {
+type SignActionResult = {
   title: string;
   status: "success" | "error";
   lines: string[];
@@ -57,17 +57,17 @@ function shortValue(value: string): string {
   return value.length <= 28 ? value : `${value.slice(0, 18)}...${value.slice(-8)}`;
 }
 
-function isAgentQWallet(wallet: UiWallet | null | undefined): boolean {
-  return wallet !== null && wallet !== undefined && getWalletUniqueIdentifier(wallet) === AGENT_Q_SUI_WALLET_ID;
+function isDeviceWallet(wallet: UiWallet | null | undefined): boolean {
+  return wallet !== null && wallet !== undefined && getWalletUniqueIdentifier(wallet) === SUI_DEVICE_WALLET_ID;
 }
 
-function assertAgentQWalletSelected(wallet: UiWallet | null): void {
-  if (!isAgentQWallet(wallet)) {
-    throw new Error(`Select the ${AGENT_Q_SUI_WALLET_NAME} wallet before signing.`);
+function assertDeviceWalletSelected(wallet: UiWallet | null): void {
+  if (!isDeviceWallet(wallet)) {
+    throw new Error(`Select the ${SUI_DEVICE_WALLET_NAME} wallet before signing.`);
   }
 }
 
-function signingAuthorizationFromCapabilities(capabilities: Awaited<ReturnType<NonNullable<typeof agentQProvider>["getCapabilities"]>>): string {
+function signingAuthorizationFromCapabilities(capabilities: Awaited<ReturnType<NonNullable<typeof deviceProvider>["getCapabilities"]>>): string {
   const signing = capabilities.signing;
   if (typeof signing !== "object" || signing === null || !("authorization" in signing)) {
     return "unknown";
@@ -76,7 +76,7 @@ function signingAuthorizationFromCapabilities(capabilities: Awaited<ReturnType<N
   return typeof authorization === "string" ? authorization : "unknown";
 }
 
-function createTransferTransaction(transfer: AgentQTransferAction, sender: string): Transaction {
+function createTransferTransaction(transfer: TransferAction, sender: string): Transaction {
   const transaction = new Transaction();
   transaction.setSender(sender);
   transaction.setGasBudget(transfer.gasBudgetMist);
@@ -105,28 +105,28 @@ function WalletStatus() {
   const dAppKitInstance = useDAppKit();
   const [signingAuthorization, setSigningAuthorization] = useState("unavailable");
   const [pendingAction, setPendingAction] = useState<string | null>(null);
-  const [result, setResult] = useState<SigningActionResult | null>(null);
-  const agentQWalletSelected = isAgentQWallet(wallet);
-  const signingActionDisabled = pendingAction !== null || !agentQWalletSelected;
+  const [result, setResult] = useState<SignActionResult | null>(null);
+  const deviceWalletSelected = isDeviceWallet(wallet);
+  const signActionDisabled = pendingAction !== null || !deviceWalletSelected;
   const showUserModeActions = signingAuthorization === "user";
   const showPolicyModeActions = signingAuthorization === "policy";
 
   useEffect(() => {
     let cancelled = false;
-    if (!account || agentQProvider === null) {
-      setSigningAuthorization(agentQProvider === null ? "unavailable" : "not_connected");
+    if (!account || deviceProvider === null) {
+      setSigningAuthorization(deviceProvider === null ? "unavailable" : "not_connected");
       return () => {
         cancelled = true;
       };
     }
-    if (!agentQWalletSelected) {
-      setSigningAuthorization("agent_q_wallet_not_selected");
+    if (!deviceWalletSelected) {
+      setSigningAuthorization("device_wallet_not_selected");
       return () => {
         cancelled = true;
       };
     }
     setSigningAuthorization("loading");
-    agentQProvider.getCapabilities()
+    deviceProvider.getCapabilities()
       .then((capabilities) => {
         if (!cancelled) {
           setSigningAuthorization(signingAuthorizationFromCapabilities(capabilities));
@@ -140,9 +140,9 @@ function WalletStatus() {
     return () => {
       cancelled = true;
     };
-  }, [account?.address, agentQWalletSelected]);
+  }, [account?.address, deviceWalletSelected]);
 
-  async function runSigningAction(title: string, action: () => Promise<SigningActionResult>): Promise<void> {
+  async function runSigningAction(title: string, action: () => Promise<SignActionResult>): Promise<void> {
     setPendingAction(title);
     setResult(null);
     try {
@@ -158,9 +158,9 @@ function WalletStatus() {
     }
   }
 
-  async function signTransfer(transfer: AgentQTransferAction): Promise<void> {
+  async function signTransfer(transfer: TransferAction): Promise<void> {
     await runSigningAction(transfer.label, async () => {
-      assertAgentQWalletSelected(wallet);
+      assertDeviceWalletSelected(wallet);
       if (account === null) {
         throw new Error("Connect the Agent-Q wallet before signing.");
       }
@@ -192,9 +192,9 @@ function WalletStatus() {
 
   async function signPersonalMessage(): Promise<void> {
     await runSigningAction("Personal message", async () => {
-      assertAgentQWalletSelected(wallet);
+      assertDeviceWalletSelected(wallet);
       const signed = await dAppKitInstance.signPersonalMessage({
-        message: new TextEncoder().encode(AGENT_Q_PERSONAL_MESSAGE),
+        message: new TextEncoder().encode(PERSONAL_MESSAGE),
       });
       return {
         title: "Personal message",
@@ -211,7 +211,7 @@ function WalletStatus() {
     return (
       <section className="panel">
         <h2>No wallet connected</h2>
-        <p>Use the dapp-kit connect button to select the {AGENT_Q_SUI_WALLET_NAME} wallet.</p>
+        <p>Use the dapp-kit connect button to select the {SUI_DEVICE_WALLET_NAME} wallet.</p>
       </section>
     );
   }
@@ -229,13 +229,13 @@ function WalletStatus() {
         <dt>Signing mode</dt>
         <dd>{signingAuthorization}</dd>
       </dl>
-      {!agentQWalletSelected && (
+      {!deviceWalletSelected && (
         <p className="inline-warning">
-          This sample only signs through {AGENT_Q_SUI_WALLET_NAME}. Select that wallet before signing.
+          This sample only signs through {SUI_DEVICE_WALLET_NAME}. Select that wallet before signing.
         </p>
       )}
       <section className="signing-grid" aria-label="Agent-Q signing actions">
-        {(showUserModeActions || showPolicyModeActions) && AGENT_Q_TRANSFER_ACTIONS.map((transfer) => (
+        {(showUserModeActions || showPolicyModeActions) && TRANSFER_ACTIONS.map((transfer) => (
           <article className="signing-card" key={transfer.id}>
             <h3>{transfer.label}</h3>
             <p>
@@ -244,7 +244,7 @@ function WalletStatus() {
             <p>{transfer.policyNote}</p>
             <button
               type="button"
-              disabled={signingActionDisabled}
+              disabled={signActionDisabled}
               onClick={() => void signTransfer(transfer)}
             >
               Sign self-transfer
@@ -254,10 +254,10 @@ function WalletStatus() {
         {showUserModeActions && (
           <article className="signing-card">
             <h3>Personal message</h3>
-            <p>{AGENT_Q_PERSONAL_MESSAGE}</p>
+            <p>{PERSONAL_MESSAGE}</p>
             <button
               type="button"
-              disabled={signingActionDisabled}
+              disabled={signActionDisabled}
               onClick={() => void signPersonalMessage()}
             >
               Sign personal message
@@ -296,7 +296,7 @@ export function App() {
       <main>
         <header>
           <h1>Agent-Q Sui dapp-kit Sample</h1>
-          <ConnectButton modalOptions={{ filterFn: isAgentQWallet }} />
+          <ConnectButton modalOptions={{ filterFn: isDeviceWallet }} />
         </header>
         <WalletStatus />
       </main>

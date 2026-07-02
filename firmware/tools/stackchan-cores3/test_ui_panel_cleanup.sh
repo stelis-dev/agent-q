@@ -19,10 +19,10 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 CXX_BIN="${CXX:-c++}"
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-ui-panel-cleanup.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-ui-panel-cleanup.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/stubs/freertos"
@@ -54,7 +54,7 @@ H
 cat >"${TMP_DIR}/ui_panel_cleanup_test.cpp" <<'CPP'
 #include <stdio.h>
 
-#include "agent_q_ui_panel_cleanup.h"
+#include "ui_panel_cleanup.h"
 
 namespace {
 
@@ -68,16 +68,16 @@ void expect(bool condition, const char* label)
     }
 }
 
-agent_q::AgentQUiPanelCleanupPlan plan(
-    agent_q::AgentQUiPanelKind kind,
-	    agent_q::AgentQUiPanelCleanupEvent event,
+signing::UiPanelCleanupPlan plan(
+    signing::UiPanelKind kind,
+	    signing::UiPanelCleanupEvent event,
 	    bool reset_matches = false,
 	    bool pin_matches = false,
 	    bool policy_update_review_matches = false,
 	    bool user_signing_review_matches = false,
 	    bool sui_zklogin_review_matches = false)
 {
-    return agent_q::ui_panel_cleanup_plan(agent_q::AgentQUiPanelCleanupInput{
+    return signing::ui_panel_cleanup_plan(signing::UiPanelCleanupInput{
         kind,
         event,
 	        reset_matches,
@@ -92,11 +92,11 @@ agent_q::AgentQUiPanelCleanupPlan plan(
 
 int main()
 {
-    using Event = agent_q::AgentQUiPanelCleanupEvent;
-    using Panel = agent_q::AgentQUiPanelKind;
-    using ProvisioningPanel = agent_q::AgentQProvisioningFlowPanel;
+    using Event = signing::UiPanelCleanupEvent;
+    using Panel = signing::UiPanelKind;
+    using ProvisioningPanel = signing::ProvisioningFlowPanel;
 
-    agent_q::AgentQUiPanelCleanupPlan p =
+    signing::UiPanelCleanupPlan p =
         plan(Panel::setup_choice, Event::external_delete);
     expect(p.route_provisioning_panel_deleted, "setup delete routes to provisioning owner");
     expect(p.provisioning_panel == ProvisioningPanel::setup_choice, "setup panel maps to setup choice");
@@ -194,9 +194,9 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/ui_panel_cleanup_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_ui_panel_cleanup.cpp" \
+  "${RUNTIME_DIR}/ui_panel_cleanup.cpp" \
   -o "${TMP_DIR}/ui_panel_cleanup_test"
 
 "${TMP_DIR}/ui_panel_cleanup_test"

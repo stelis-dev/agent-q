@@ -19,23 +19,23 @@ ESP32-S3-class hardware.
 Build:
 
 ```bash
-AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
+FIRMWARE_IDF_PATH=/path/to/esp-idf-v5.5.4 \
   firmware/tools/stackchan-cores3/with-idf.sh \
   firmware/tools/stackchan-cores3/build.sh
 ```
 
 When no custom checkout path is passed, the build script generates the upstream
 ESP-IDF project under `.firmware-cache/stackchan-cores3/StackChan/firmware` and
-uses `build-agentq-stackchan-cores3` as the build directory. There is no
+uses `build-stackchan-cores3` as the build directory. There is no
 Agent-Q protocol command for flashing. To flash the default build, run ESP-IDF
 against that generated project and the target serial port:
 
 ```bash
-AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
+FIRMWARE_IDF_PATH=/path/to/esp-idf-v5.5.4 \
   firmware/tools/stackchan-cores3/with-idf.sh \
   idf.py \
     -C .firmware-cache/stackchan-cores3/StackChan/firmware \
-    -B .firmware-cache/stackchan-cores3/StackChan/firmware/build-agentq-stackchan-cores3 \
+    -B .firmware-cache/stackchan-cores3/StackChan/firmware/build-stackchan-cores3 \
     -p /dev/cu.usbmodemXXXX \
     flash
 ```
@@ -255,27 +255,27 @@ The pinned upstream host source and ESP-IDF version live in this directory's
 and GitHub Actions use the same inputs:
 
 ```bash
-AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
+FIRMWARE_IDF_PATH=/path/to/esp-idf-v5.5.4 \
   firmware/tools/stackchan-cores3/with-idf.sh \
   firmware/tools/stackchan-cores3/build.sh
 ```
 
 The `with-idf.sh` launcher activates ESP-IDF with Python 3.11 by default so the
 same build directory is not reconfigured by different ESP-IDF Python virtual
-environments. Set `AGENT_Q_IDF_PYTHON=/path/to/python` only if the local machine
+environments. Set `FIRMWARE_IDF_PYTHON=/path/to/python` only if the local machine
 does not expose `python3.11`.
 
 Host checks that require ESP-IDF should use the same launcher around the
 specific command:
 
 ```bash
-AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
+FIRMWARE_IDF_PATH=/path/to/esp-idf-v5.5.4 \
   firmware/tools/stackchan-cores3/with-idf.sh \
   firmware/tools/stackchan-cores3/test_policy_store.sh
-AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
+FIRMWARE_IDF_PATH=/path/to/esp-idf-v5.5.4 \
   firmware/tools/stackchan-cores3/with-idf.sh \
   firmware/tools/stackchan-cores3/test_signing_preflight_order.sh
-AGENT_Q_IDF_PATH=/path/to/esp-idf-v5.5.4 \
+FIRMWARE_IDF_PATH=/path/to/esp-idf-v5.5.4 \
   firmware/tools/stackchan-cores3/with-idf.sh \
   firmware/tools/stackchan-cores3/test_sign_request_identity_vectors.sh
 ```
@@ -335,22 +335,22 @@ investigation cache, but that cache is not source of truth and is not used by
 CI.
 
 The BIP-39 vector test is a host-side check. It compiles the tracked
-`agent_q_bip39.cpp` encoder with ESP-IDF mbedTLS SHA-256 sources and a
+`bip39.cpp` encoder with ESP-IDF mbedTLS SHA-256 sources and a
 generated wordlist source from the pinned BIP-39 English wordlist.
 
 The Sui account vector test is also host-side. It compiles the tracked
-`agent_q_sui_key_derivation.cpp` and `agent_q_sui_account.cpp` derivation
+`sui_key_derivation.cpp` and `sui_account.cpp` derivation
 modules with the pinned MicroSui signing source and checks known Sui SDK
 address/public-key vectors.
 
 The Sui signing service test is host-side. It compiles the internal
-`agent_q_sui_signing_service.cpp` substrate with the pinned MicroSui signing
+`sui_signing_service.cpp` substrate with the pinned MicroSui signing
 source and verifies the deterministic Sui transaction signature vector,
 signature verification, invalid-input output wiping, and the stored-root
 signing boundary with host stubs. This is not a protocol signing test.
 
 The Sui transaction facts parser test is a common host-side check. It compiles
-`firmware/src/common/agent_q/sui` and verifies tracked BCS fixtures for the Sui
+`firmware/src/common/sui` and verifies tracked BCS fixtures for the Sui
 `TransactionData` facts extractor, command argument refs, top-level TypeTag
 facts, MoveCall package/module/function/type-argument facts, malformed ref
 rejection, unsupported decoded shape classification, and generic PTB command
@@ -359,7 +359,7 @@ connects the extractor to Sui `sign_transaction` policy and user authorization
 gates for inline and staged transaction bytes.
 
 The policy document tests are common host-side checks. They compile
-`firmware/src/common/agent_q/policy` and verify the current `agentq.policy`
+`firmware/src/common/policy` and verify the current `signing.policy`
 document shape, field/operator validation, canonical storage payloads, and
 readback projection. The Sui offline policy facts test verifies the transaction
 facts that the current policy evaluator consumes. StackChan CoreS3 connects
@@ -368,7 +368,7 @@ through the Firmware-owned runtime gate. Custom policy updates enter separately
 through the Firmware-owned `policy_propose` proposal flow.
 
 The StackChan policy-store test is target-specific. It compiles the tracked
-`agent_q_policy_store.cpp` provider with ESP-IDF mbedTLS SHA-256 sources and
+`policy_store.cpp` provider with ESP-IDF mbedTLS SHA-256 sources and
 host NVS stubs, then verifies default-policy storage, policy id calculation,
 summary reads, wipe behavior, active-policy availability checks, pending-marker
 torn-write rollback, metadata-flip commit-point behavior, stale pending-marker
@@ -376,21 +376,21 @@ overlap handling, stale commit pre-erase failure handling, and
 missing/corrupt/failed-write fail-closed provider behavior.
 
 The StackChan approval-history test is target-specific. It compiles the tracked
-`agent_q_approval_history.cpp` store with ESP-IDF mbedTLS SHA-256 sources and
+`approval_history.cpp` store with ESP-IDF mbedTLS SHA-256 sources and
 host NVS stubs, then verifies persistent ring-buffer append, newest-first
 pagination, payload digest formatting, unsupported-layout rejection, wipe
 behavior, required policy-update terminal record shape, signing record shape,
 and corrupt-record fail-closed behavior.
 
 The StackChan policy-update marker test is target-specific. It compiles the
-tracked `agent_q_policy_update_marker.cpp` NVS record boundary with host stubs,
+tracked `policy_update_marker.cpp` NVS record boundary with host stubs,
 then verifies the persistent terminal marker's pending/clear states, input
 validation, corrupt-marker fail-closed behavior, and storage-error reporting.
 This marker is a policy-update terminal substrate only; it is not a protocol
 policy-update handler.
 
 The StackChan device-activity projection test is target-specific and host-side.
-It compiles `agent_q_device_activity_projection.cpp` and verifies active-flow
+It compiles `device_activity_projection.cpp` and verifies active-flow
 state projection and operation-specific gates, including policy-update review
 and commit stages, local Settings entry blocking, signing ingress blocking, and
 the idle Settings menu USB exception. It also verifies the retained-response
@@ -398,13 +398,13 @@ read/cleanup route class for `get_result` and `ack_result`. It is not a
 hardware smoke test.
 
 The StackChan sign_transaction policy runtime test is target-specific. It compiles the tracked
-`agent_q_sign_transaction_policy_runtime.cpp` runtime boundary with ArduinoJson, the common Sui
+`sign_transaction_policy_runtime.cpp` runtime boundary with ArduinoJson, the common Sui
 facts parser, current policy document support, and pinned MicroSui base64 helpers,
 then verifies unsupported method rejection, invalid Sui params, approval-history
 metadata exposure, current fail-closed policy behavior, and scratch cleanup.
 
 The StackChan policy-proposal parser test is target-specific. It compiles the
-tracked `agent_q_policy_proposal_parser.cpp` parser with ArduinoJson and the
+tracked `policy_proposal_parser.cpp` parser with ArduinoJson and the
 common policy canonicalizer, then verifies bounded serialized proposal-object parsing,
 current-schema action enforcement, method/field/operator validation, embedded-NUL
 string rejection, canonical unsigned integer policy values, serialized
@@ -413,43 +413,43 @@ implement raw protocol envelope handling, policy storage, pending update state,
 or approval UI by itself.
 
 The StackChan persistent-material test is target-specific. It compiles the
-tracked `agent_q_persistent_material.cpp` coordinator with host material stubs,
+tracked `persistent_material.cpp` coordinator with host material stubs,
 then verifies setup commit ordering and rollback, reset wipe coverage,
 provisioning-state storage envelope classification, loaded-state consistency
 classification, typed runtime material failure handling, persistent-material
 consistency error latch ownership, and policy-update marker wipe coverage.
 
 The StackChan provisioning-state store test is target-specific. It compiles the
-tracked `agent_q_provisioning_state_store.cpp` NVS adapter with host NVS stubs,
+tracked `provisioning_state_store.cpp` NVS adapter with host NVS stubs,
 then verifies missing/present/unreadable storage classification and state
 writes. Persistent-material consistency meaning remains owned by
-`agent_q_persistent_material.cpp`.
+`persistent_material.cpp`.
 
 The StackChan local-auth test is target-specific. It compiles the tracked
-`agent_q_local_auth.cpp` verifier store with the pinned MicroSui Monocypher
+`local_auth.cpp` verifier store with the pinned MicroSui Monocypher
 source plus host NVS/RNG stubs, then verifies exact 6-digit PIN validation,
 PBKDF2-HMAC-SHA512 verifier storage, correct/wrong PIN checks, fresh salt,
 wipe behavior, and corrupt/failed-write fail-closed behavior. This verifier is
 a DEV_PROFILE local UX gate, not root-material encryption.
 
 The StackChan local-auth worker test is target-specific. It compiles the
-tracked `agent_q_local_auth_worker.cpp` task boundary with host FreeRTOS stubs,
+tracked `local_auth_worker.cpp` task boundary with host FreeRTOS stubs,
 then verifies worker request queue entries carry only job metadata and never raw
 PIN bytes.
 
 The StackChan local-reset test is target-specific. It compiles the tracked
-`agent_q_local_reset.cpp` state machine with host NVS/material stubs, then
+`local_reset.cpp` state machine with host NVS/material stubs, then
 verifies normal reset and error-state erase recovery transitions, reset-pending
 marker behavior, destructive wipe orchestration, and failure cleanup. This is a
 host-side state-machine check, not hardware UX proof.
 
 The StackChan provisioning-flow test is target-specific. It compiles the
-tracked `agent_q_provisioning_flow.cpp` state machine with host stubs, then
+tracked `provisioning_flow.cpp` state machine with host stubs, then
 verifies Generate/Import/setup-PIN volatile state transitions, scratch
 lifetime, panel-loss cleanup, and commit-readiness without LVGL or USB.
 
 The StackChan session test is target-specific. It compiles the tracked
-`agent_q_session.cpp` RAM session core with host stubs, then verifies session id
+`session.cpp` RAM session core with host stubs, then verifies session id
 generation, validation result classification, mismatch handling, and
 link-bound lifetime without USB JSON response code.
 
@@ -462,10 +462,10 @@ camera, and does not start remote avatar WebSocket service.
 
 In the hardware firmware tree:
 
-- Add `agent_q/*.cpp` to the main firmware component sources.
-- Add `agent_q_common/sui/*.cpp` to the main firmware component sources for the
+- Add `runtime/*.cpp` to the main firmware component sources.
+- Add `firmware_common/sui/*.cpp` to the main firmware component sources for the
   shared hardware-independent Sui parser and offline policy facts extractor.
-- Add `agent_q_common/policy/*.cpp` to the main firmware component sources for
+- Add `firmware_common/policy/*.cpp` to the main firmware component sources for
   the shared hardware-independent current policy document support.
 - Add the `signing_crypto` component to the main firmware component
   dependencies.
@@ -479,19 +479,19 @@ In the hardware firmware tree:
   64 KiB NVS partition. The upstream 16 KiB NVS layout is too small for the
   current Agent-Q root material, two-slot active policy store, approval-history
   ring buffer, local PIN verifier, settings, and terminal markers.
-- Call `agent_q::init_secure_random_from_early_boot_entropy()` before HAL
+- Call `signing::init_secure_random_from_early_boot_entropy()` before HAL
   initialization so backup phrase generation never depends on late direct
   `esp_fill_random()` while RF/ADC entropy is unavailable.
-- Call `agent_q::run_signing_self_test()` once during boot after hardware
+- Call `signing::run_signing_self_test()` once during boot after hardware
   initialization.
 - Initialize NVS during the host firmware boot sequence before Agent-Q
   initialization.
-- Call `agent_q::init_usb_request_server()` once after boot checks and NVS
+- Call `signing::init_usb_request_server()` once after boot checks and NVS
   initialization.
-- `agent_q::init_usb_request_server()` starts the USB request task. The task
+- `signing::init_usb_request_server()` starts the USB request task. The task
   keeps protocol handling available even when another firmware mode takes over
   the main app loop.
-- Call `agent_q::notify_agent_q_ui_surface_ready()` after the target attaches
+- Call `signing::notify_signing_ui_surface_ready()` after the target attaches
   the default avatar to let Agent-Q draw the current idle UI for the active
   device state.
 
@@ -501,7 +501,7 @@ This target stores the protocol `deviceId`, provisioning state, DEV_PROFILE root
 entropy, committed active policy records, local PIN verifier, human approval
 input mode setting, signing authorization mode, one optional bounded Sui
 zkLogin proof record, and approval-history ring buffer in NVS namespace
-`agent_q`. The StackChan build preparation step patches the generated firmware
+`signing`. The StackChan build preparation step patches the generated firmware
 partition table to use a 64 KiB NVS partition; the upstream 16 KiB default is
 not sufficient for the current Agent-Q material set.
 If NVS has `prov_state = provisioned` and valid root entropy but no active
@@ -538,6 +538,6 @@ is stored as DEV_PROFILE scaffolding only after the repeated PIN matches; this
 build does not enable USER_PROFILE encrypted storage. Three-letter BIP-39 words
 are displayed as the full word.
 
-Agent-Q-owned modules are sources under `agent_q/` in this target tree. These
-modules may share the `agent_q` namespace. New keys should be named by feature,
+Agent-Q-owned modules are sources under `runtime/` in this target tree. These
+modules may share the `signing` namespace. New keys should be named by feature,
 such as `<feature>_<name>`, to avoid collisions.

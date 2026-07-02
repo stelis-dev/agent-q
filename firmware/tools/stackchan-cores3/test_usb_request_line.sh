@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-AGENT_Q_DIR="${SCRIPT_DIR}/../../src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${SCRIPT_DIR}/../../src/stackchan-cores3/runtime"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 CXX_BIN="${CXX:-c++}"
@@ -12,9 +12,9 @@ cat >"${TMP_DIR}/usb_request_line_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_usb_request_line.h"
+#include "usb_request_line.h"
 
-using namespace agent_q;
+using namespace signing;
 
 int main()
 {
@@ -26,47 +26,47 @@ int main()
     // A normal line yields line_ready with the NUL-terminated content; state resets.
     size = 0;
     discarding = false;
-    assert(feed('a') == AgentQUsbLineFeedResult::none);
-    assert(feed('b') == AgentQUsbLineFeedResult::none);
-    assert(feed('c') == AgentQUsbLineFeedResult::none);
-    assert(feed('\n') == AgentQUsbLineFeedResult::line_ready);
+    assert(feed('a') == UsbLineFeedResult::none);
+    assert(feed('b') == UsbLineFeedResult::none);
+    assert(feed('c') == UsbLineFeedResult::none);
+    assert(feed('\n') == UsbLineFeedResult::line_ready);
     assert(strcmp(buf, "abc") == 0 && size == 0 && !discarding);
 
     // An empty line is not delivered.
-    assert(feed('\n') == AgentQUsbLineFeedResult::none);
+    assert(feed('\n') == UsbLineFeedResult::none);
 
     // Carriage returns are ignored.
-    assert(feed('a') == AgentQUsbLineFeedResult::none);
-    assert(feed('\r') == AgentQUsbLineFeedResult::none);
-    assert(feed('b') == AgentQUsbLineFeedResult::none);
-    assert(feed('\n') == AgentQUsbLineFeedResult::line_ready);
+    assert(feed('a') == UsbLineFeedResult::none);
+    assert(feed('\r') == UsbLineFeedResult::none);
+    assert(feed('b') == UsbLineFeedResult::none);
+    assert(feed('\n') == UsbLineFeedResult::line_ready);
     assert(strcmp(buf, "ab") == 0);
 
     // A NUL byte rejects the line; the rest is discarded; the next line resyncs cleanly.
-    assert(feed('x') == AgentQUsbLineFeedResult::none);
-    assert(feed('\0') == AgentQUsbLineFeedResult::rejected_nul);
+    assert(feed('x') == UsbLineFeedResult::none);
+    assert(feed('\0') == UsbLineFeedResult::rejected_nul);
     assert(discarding);
-    assert(feed('y') == AgentQUsbLineFeedResult::none);
-    assert(feed('\n') == AgentQUsbLineFeedResult::none);
+    assert(feed('y') == UsbLineFeedResult::none);
+    assert(feed('\n') == UsbLineFeedResult::none);
     assert(!discarding);
-    assert(feed('o') == AgentQUsbLineFeedResult::none);
-    assert(feed('k') == AgentQUsbLineFeedResult::none);
-    assert(feed('\n') == AgentQUsbLineFeedResult::line_ready);
+    assert(feed('o') == UsbLineFeedResult::none);
+    assert(feed('k') == UsbLineFeedResult::none);
+    assert(feed('\n') == UsbLineFeedResult::line_ready);
     assert(strcmp(buf, "ok") == 0);
 
     // An over-long line (>= capacity) is rejected and discarded; the next line resyncs.
     for (int i = 0; i < 7; ++i) {
-        assert(feed('z') == AgentQUsbLineFeedResult::none);
+        assert(feed('z') == UsbLineFeedResult::none);
     }
     assert(size == 7);
-    assert(feed('z') == AgentQUsbLineFeedResult::rejected_too_long);
+    assert(feed('z') == UsbLineFeedResult::rejected_too_long);
     assert(discarding);
-    assert(feed('z') == AgentQUsbLineFeedResult::none);
-    assert(feed('\n') == AgentQUsbLineFeedResult::none);
+    assert(feed('z') == UsbLineFeedResult::none);
+    assert(feed('\n') == UsbLineFeedResult::none);
     assert(!discarding);
-    assert(feed('h') == AgentQUsbLineFeedResult::none);
-    assert(feed('i') == AgentQUsbLineFeedResult::none);
-    assert(feed('\n') == AgentQUsbLineFeedResult::line_ready);
+    assert(feed('h') == UsbLineFeedResult::none);
+    assert(feed('i') == UsbLineFeedResult::none);
+    assert(feed('\n') == UsbLineFeedResult::line_ready);
     assert(strcmp(buf, "hi") == 0);
 
     printf("USB request line tests passed\n");
@@ -75,9 +75,9 @@ int main()
 CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/usb_request_line_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_request_line.cpp" \
+  "${RUNTIME_DIR}/usb_request_line.cpp" \
   -o "${TMP_DIR}/usb_request_line_test"
 
 "${TMP_DIR}/usb_request_line_test"

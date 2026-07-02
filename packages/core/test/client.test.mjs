@@ -3,8 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { hostSuccessOutputSchemas } from "../dist/adapter-internal.js";
-import { createDefaultAgentQDeviceClient } from "../dist/device.js";
-import { createDefaultAgentQCore, AgentQCore } from "../dist/core.js";
+import { createDefaultDeviceClient } from "../dist/device.js";
+import { createDefaultDeviceCore, DeviceCore } from "../dist/core.js";
 import {
   MAX_RAW_PROTOCOL_JSON_BYTES,
   MAX_SIGNING_OUTCOME_PAYLOAD_BASE64_CHARS,
@@ -72,7 +72,7 @@ function validLiveStatus() {
 
 function validPolicyDocument() {
   return {
-    schema: "agentq.policy",
+    schema: "signing.policy",
     policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
     defaultAction: "reject",
     blockchainCount: 1,
@@ -95,7 +95,7 @@ function validPolicyDocument() {
 
 function invalidMalformedSignPolicyDocument() {
   return {
-    schema: "agentq.policy",
+    schema: "signing.policy",
     policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
     defaultAction: "reject",
     blockchainCount: 1,
@@ -127,7 +127,7 @@ function invalidMalformedSignPolicyDocument() {
 
 function invalidUnsupportedScopePolicyDocument() {
   return {
-    schema: "agentq.policy",
+    schema: "signing.policy",
     policyId: "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
     defaultAction: "reject",
     blockchainCount: 1,
@@ -154,7 +154,7 @@ function invalidUnsupportedScopePolicyDocument() {
   };
 }
 
-function validAgentQSuccessOutputSamples() {
+function validSigningSuccessOutputSamples() {
   return {
     scanDevices: { source: "live", devices: [], failures: [], activeDeviceId: null },
     identifyDevices: { source: "live", devices: [], activeDeviceId: null },
@@ -287,8 +287,8 @@ function validSignPersonalMessageSignedOutput() {
   };
 }
 
-test("agent-q success output schemas reject unknown top-level fields", () => {
-  const samples = validAgentQSuccessOutputSamples();
+test("signing success output schemas reject unknown top-level fields", () => {
+  const samples = validSigningSuccessOutputSamples();
   for (const [name, sample] of Object.entries(samples)) {
     const schema = hostSuccessOutputSchemas[name];
     assert.equal(schema.safeParse(sample).success, true, `${name} sample must be valid`);
@@ -299,8 +299,8 @@ test("agent-q success output schemas reject unknown top-level fields", () => {
   }
 });
 
-test("agent-q success output schemas reject unknown nested fields", () => {
-  const samples = validAgentQSuccessOutputSamples();
+test("signing success output schemas reject unknown nested fields", () => {
+  const samples = validSigningSuccessOutputSamples();
   assert.throws(() => hostSuccessOutputSchemas.connectDevice.parse({
     ...samples.connectDevice,
     device: { ...samples.connectDevice.device, sessionId: "session_should_not_leak" },
@@ -344,8 +344,8 @@ test("agent-q success output schemas reject unknown nested fields", () => {
   }));
 });
 
-test("agent-q success output schemas reject semantically invalid policy documents", () => {
-  const samples = validAgentQSuccessOutputSamples();
+test("signing success output schemas reject semantically invalid policy documents", () => {
+  const samples = validSigningSuccessOutputSamples();
   assert.throws(() => hostSuccessOutputSchemas.policyGet.parse({
     ...samples.policyGet,
     policy: invalidMalformedSignPolicyDocument(),
@@ -357,7 +357,7 @@ test("agent-q success output schemas reject semantically invalid policy document
 });
 
 test("device entrypoint constructs a limited device API facade", () => {
-  const core = createDefaultAgentQDeviceClient();
+  const core = createDefaultDeviceClient();
   assert.equal(typeof core.scanDevices, "function");
   assert.equal(typeof core.signTransaction, "function");
   assert.equal(typeof core.credentialPrepare, "function");
@@ -368,8 +368,8 @@ test("device entrypoint constructs a limited device API facade", () => {
 });
 
 test("root entrypoint constructs the full Agent-Q core", () => {
-  const core = createDefaultAgentQCore();
-  assert.equal(core instanceof AgentQCore, true);
+  const core = createDefaultDeviceCore();
+  assert.equal(core instanceof DeviceCore, true);
 });
 
 test("device entrypoint does not import server adapters", async () => {
@@ -420,8 +420,8 @@ test("package self-reference resolves only core entrypoints", async () => {
   const deviceRequest = await import("@stelis/agent-q-core/device-request-internal");
   const protocol = await import("@stelis/agent-q-core/protocol");
   const providerProtocol = await import("@stelis/agent-q-core/provider-protocol");
-  assert.equal(typeof root.createDefaultAgentQCore, "function");
-  assert.equal(root.createDefaultAgentQDeviceClient, undefined);
+  assert.equal(typeof root.createDefaultDeviceCore, "function");
+  assert.equal(root.createDefaultDeviceClient, undefined);
   assert.equal(typeof adapterInternal.hostSuccessOutputSchemas, "object");
   assert.equal(adapterInternal.requestDevice, undefined);
   assert.deepEqual(Object.keys(deviceRequest).sort(), [
@@ -429,7 +429,7 @@ test("package self-reference resolves only core entrypoints", async () => {
     "requestDevice",
     "requestSigningWithRetainedRecovery",
   ]);
-  assert.equal(typeof device.createDefaultAgentQDeviceClient, "function");
+  assert.equal(typeof device.createDefaultDeviceClient, "function");
   assert.equal(typeof deviceRequest.requestDevice, "function");
   assert.equal(typeof deviceRequest.requestSigningWithRetainedRecovery, "function");
   assert.equal(typeof deviceRequest.assertAckResultDeviceResponse, "function");
@@ -445,7 +445,7 @@ test("package self-reference resolves only core entrypoints", async () => {
   assert.equal(providerProtocol.INTERNAL_SIGN_TRANSACTION_DEADLINE_MS, 185000);
   assert.equal(providerProtocol.INTERNAL_SIGN_PERSONAL_MESSAGE_DEADLINE_MS, 185000);
   assert.equal(typeof root.SerialPortUsbDriver, "function");
-  for (const subpath of ["config", "core", "errors", "agent-q-output-schema", "public-error", "safe-text", "usb"]) {
+  for (const subpath of ["config", "core", "errors", "signing-output-schema", "public-error", "safe-text", "usb"]) {
     await assert.rejects(() => import(`@stelis/agent-q-core/${subpath}`), {
       code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
     });

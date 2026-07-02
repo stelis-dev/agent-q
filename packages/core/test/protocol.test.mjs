@@ -99,14 +99,14 @@ function suiZkLoginSignature(byteLength = 145) {
 function parseFirmwarePolicyFieldDescriptors() {
   const source = readFileSync(
     new URL(
-      "../../../firmware/src/common/agent_q/policy/agent_q_policy_document.cpp",
+      "../../../firmware/src/common/policy/document.cpp",
       import.meta.url,
     ),
     "utf8",
   );
   const descriptors = new Map();
   const rowPattern =
-    /\{"([^"]+)", AgentQCurrentPolicyValueKind::([a-z0-9_]+), AgentQCurrentPolicyWhereTypeRequirement::[a-z0-9_]+, AgentQCurrentPolicyEvaluationKind::[a-z0-9_]+, (true|false), (true|false), (true|false), (true|false), (true|false), (true|false), (true|false), (true|false)\}/g;
+    /\{"([^"]+)", CurrentPolicyValueKind::([a-z0-9_]+), CurrentPolicyWhereTypeRequirement::[a-z0-9_]+, CurrentPolicyEvaluationKind::[a-z0-9_]+, (true|false), (true|false), (true|false), (true|false), (true|false), (true|false), (true|false), (true|false)\}/g;
   for (const match of source.matchAll(rowPattern)) {
     const [, field, type, ...allowed] = match;
     descriptors.set(field, {
@@ -743,7 +743,7 @@ test("sign personal-message input validation rejects caller-selected authorizati
 
 test("policy proposal input validation rejects secrets without exposing request builders", () => {
   const policy = {
-    schema: "agentq.policy",
+    schema: "signing.policy",
     defaultAction: "reject",
     blockchains: [
       {
@@ -893,7 +893,7 @@ function countPolicyDocument(blockchains) {
 function policyDocument(overrides = {}) {
   const blockchains = overrides.blockchains ?? policyBlockchains();
   return {
-    schema: "agentq.policy",
+    schema: "signing.policy",
     policyId: POLICY_HASH,
     defaultAction: "reject",
     ...countPolicyDocument(blockchains),

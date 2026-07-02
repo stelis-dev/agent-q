@@ -18,12 +18,12 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 
 for required in \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_type.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.cpp"; do
+  "${RUNTIME_DIR}/usb_operation_type.h" \
+  "${RUNTIME_DIR}/usb_operation_manifest.h" \
+  "${RUNTIME_DIR}/usb_operation_manifest.cpp"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
@@ -31,7 +31,7 @@ for required in \
 done
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-operation-type.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-usb-operation-type.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/freertos"
@@ -47,35 +47,35 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_usb_operation_manifest.h"
-#include "agent_q_usb_operation_type.h"
+#include "usb_operation_manifest.h"
+#include "usb_operation_type.h"
 
 namespace {
 
-void expect_type(const char* value, agent_q::AgentQUsbOperationType expected)
+void expect_type(const char* value, signing::UsbOperationType expected)
 {
-    assert(agent_q::classify_usb_operation_type(value) == expected);
-    if (expected != agent_q::AgentQUsbOperationType::unsupported) {
-        assert(strcmp(agent_q::usb_operation_type_wire_name(expected), value) == 0);
+    assert(signing::classify_usb_operation_type(value) == expected);
+    if (expected != signing::UsbOperationType::unsupported) {
+        assert(strcmp(signing::usb_operation_type_wire_name(expected), value) == 0);
     }
 }
 
 void expect_payload_kind(
-    agent_q::AgentQUsbOperationType type,
-    agent_q::AgentQPayloadDeliveryOperationKind expected)
+    signing::UsbOperationType type,
+    signing::PayloadDeliveryOperationKind expected)
 {
-    const agent_q::AgentQUsbOperationManifestEntry* entry =
-        agent_q::usb_operation_manifest_entry(type);
+    const signing::UsbOperationManifestEntry* entry =
+        signing::usb_operation_manifest_entry(type);
     assert(entry != nullptr);
     assert(entry->payload_delivery_operation == expected);
 }
 
 void expect_terminal_policy(
-    agent_q::AgentQUsbOperationType type,
-    agent_q::AgentQUsbOperationCompletionPolicy expected)
+    signing::UsbOperationType type,
+    signing::UsbOperationCompletionPolicy expected)
 {
-    const agent_q::AgentQUsbOperationManifestEntry* entry =
-        agent_q::usb_operation_manifest_entry(type);
+    const signing::UsbOperationManifestEntry* entry =
+        signing::usb_operation_manifest_entry(type);
     assert(entry != nullptr);
     assert(entry->completion_policy == expected);
 }
@@ -84,7 +84,7 @@ void expect_terminal_policy(
 
 int main()
 {
-    using Type = agent_q::AgentQUsbOperationType;
+    using Type = signing::UsbOperationType;
 
     expect_type("get_status", Type::get_status);
     expect_type("identify_device", Type::identify_device);
@@ -110,46 +110,46 @@ int main()
     expect_type("sign_transaction_policy", Type::unsupported);
     expect_type("unknown", Type::unsupported);
     expect_type(nullptr, Type::unsupported);
-    assert(agent_q::usb_operation_type_wire_name(Type::unsupported) == nullptr);
+    assert(signing::usb_operation_type_wire_name(Type::unsupported) == nullptr);
 
-    expect_payload_kind(Type::get_status, agent_q::AgentQPayloadDeliveryOperationKind::safe_read);
-    expect_payload_kind(Type::get_capabilities, agent_q::AgentQPayloadDeliveryOperationKind::safe_read);
-    expect_payload_kind(Type::get_result, agent_q::AgentQPayloadDeliveryOperationKind::retained_response_read_cleanup);
-    expect_payload_kind(Type::ack_result, agent_q::AgentQPayloadDeliveryOperationKind::retained_response_read_cleanup);
-    expect_payload_kind(Type::connect, agent_q::AgentQPayloadDeliveryOperationKind::connect);
-    expect_payload_kind(Type::policy_propose, agent_q::AgentQPayloadDeliveryOperationKind::policy_propose);
-    expect_payload_kind(Type::credential_prepare, agent_q::AgentQPayloadDeliveryOperationKind::safe_read);
-    expect_payload_kind(Type::credential_propose, agent_q::AgentQPayloadDeliveryOperationKind::credential_propose);
+    expect_payload_kind(Type::get_status, signing::PayloadDeliveryOperationKind::safe_read);
+    expect_payload_kind(Type::get_capabilities, signing::PayloadDeliveryOperationKind::safe_read);
+    expect_payload_kind(Type::get_result, signing::PayloadDeliveryOperationKind::retained_response_read_cleanup);
+    expect_payload_kind(Type::ack_result, signing::PayloadDeliveryOperationKind::retained_response_read_cleanup);
+    expect_payload_kind(Type::connect, signing::PayloadDeliveryOperationKind::connect);
+    expect_payload_kind(Type::policy_propose, signing::PayloadDeliveryOperationKind::policy_propose);
+    expect_payload_kind(Type::credential_prepare, signing::PayloadDeliveryOperationKind::safe_read);
+    expect_payload_kind(Type::credential_propose, signing::PayloadDeliveryOperationKind::credential_propose);
 
     expect_terminal_policy(
         Type::get_result,
-        agent_q::AgentQUsbOperationCompletionPolicy::signing_retained_response_read);
+        signing::UsbOperationCompletionPolicy::signing_retained_response_read);
     expect_terminal_policy(
         Type::ack_result,
-        agent_q::AgentQUsbOperationCompletionPolicy::signing_retained_response_ack);
+        signing::UsbOperationCompletionPolicy::signing_retained_response_ack);
     expect_terminal_policy(
         Type::policy_propose,
-        agent_q::AgentQUsbOperationCompletionPolicy::policy_update_history_marker);
+        signing::UsbOperationCompletionPolicy::policy_update_history_marker);
     expect_terminal_policy(
         Type::credential_prepare,
-        agent_q::AgentQUsbOperationCompletionPolicy::immediate_response);
+        signing::UsbOperationCompletionPolicy::immediate_response);
     expect_terminal_policy(
         Type::credential_propose,
-        agent_q::AgentQUsbOperationCompletionPolicy::credential_proposal_outcome);
+        signing::UsbOperationCompletionPolicy::credential_proposal_outcome);
     expect_terminal_policy(
         Type::sign_transaction,
-        agent_q::AgentQUsbOperationCompletionPolicy::signing_retained_response);
+        signing::UsbOperationCompletionPolicy::signing_retained_response);
 
-    const agent_q::AgentQUsbOperationManifestEntry* status_entry =
-        agent_q::usb_operation_manifest_entry(Type::get_status);
+    const signing::UsbOperationManifestEntry* status_entry =
+        signing::usb_operation_manifest_entry(Type::get_status);
     assert(status_entry != nullptr);
     assert(status_entry->read_side_effect_policy ==
-           agent_q::AgentQUsbOperationReadSideEffectPolicy::persistent_material_consistency_refresh);
+           signing::UsbOperationReadSideEffectPolicy::persistent_material_consistency_refresh);
 
-    assert(agent_q::usb_operation_is_retained_response_read_cleanup(Type::get_result));
-    assert(agent_q::usb_operation_is_retained_response_read_cleanup(Type::ack_result));
-    assert(!agent_q::usb_operation_is_retained_response_read_cleanup(Type::policy_propose));
-    assert(!agent_q::usb_operation_is_retained_response_read_cleanup(Type::credential_propose));
+    assert(signing::usb_operation_is_retained_response_read_cleanup(Type::get_result));
+    assert(signing::usb_operation_is_retained_response_read_cleanup(Type::ack_result));
+    assert(!signing::usb_operation_is_retained_response_read_cleanup(Type::policy_propose));
+    assert(!signing::usb_operation_is_retained_response_read_cleanup(Type::credential_propose));
 
     printf("USB operation type tests passed\n");
     return 0;
@@ -158,9 +158,9 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.cpp" \
+  "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

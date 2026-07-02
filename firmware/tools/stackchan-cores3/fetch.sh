@@ -33,13 +33,13 @@ fi
 
 if [[ ! -d "${CHECKOUT_DIR}/.git" ]]; then
   mkdir -p "$(dirname "${CHECKOUT_DIR}")"
-  git clone "${AGENT_Q_STACKCHAN_REPOSITORY}" "${CHECKOUT_DIR}"
+  git clone "${STACKCHAN_REPOSITORY}" "${CHECKOUT_DIR}"
 fi
 
-if ! git -C "${CHECKOUT_DIR}" cat-file -e "${AGENT_Q_STACKCHAN_COMMIT}^{commit}" 2>/dev/null; then
+if ! git -C "${CHECKOUT_DIR}" cat-file -e "${STACKCHAN_COMMIT}^{commit}" 2>/dev/null; then
   git -C "${CHECKOUT_DIR}" fetch --tags origin
 fi
-git -C "${CHECKOUT_DIR}" checkout --force "${AGENT_Q_STACKCHAN_COMMIT}"
+git -C "${CHECKOUT_DIR}" checkout --force "${STACKCHAN_COMMIT}"
 
 cd "${CHECKOUT_DIR}/firmware"
 python3 ./fetch_repos.py

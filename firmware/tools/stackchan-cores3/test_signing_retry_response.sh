@@ -18,17 +18,17 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
-ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
-  "${AGENT_Q_DIR}/agent_q_device_contract.h" \
-  "${AGENT_Q_DIR}/agent_q_signing_retry_response.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signing_retry_response.h"; do
+  "${RUNTIME_DIR}/device_contract.cpp" \
+  "${RUNTIME_DIR}/device_contract.h" \
+  "${RUNTIME_DIR}/signing_retry_response.cpp" \
+  "${RUNTIME_DIR}/signing_retry_response.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -37,7 +37,7 @@ for required in \
 done
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-signing-retry-response.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-signing-retry-response.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 cat >"${TMP_DIR}/test.cpp" <<'CPP'
@@ -49,7 +49,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 
 #include <string>
 
-#include "agent_q_signing_retry_response.h"
+#include "signing_retry_response.h"
 
 namespace {
 
@@ -79,12 +79,12 @@ JsonDocument parse_json(const std::string& json)
     return document;
 }
 
-agent_q::AgentQSigningRetryDeliveryResult retry_result(
-    agent_q::AgentQSigningRetryDeliveryStatus status,
+signing::RetryDeliveryResult retry_result(
+    signing::RetryDeliveryStatus status,
     size_t stored_response_len = 0,
     const char* code = nullptr)
 {
-    return agent_q::AgentQSigningRetryDeliveryResult{
+    return signing::RetryDeliveryResult{
         status,
         stored_response_len,
         code,
@@ -104,29 +104,29 @@ int main()
 
     {
         Capture capture;
-        const auto result = agent_q::deliver_signing_retry_response(
+        const auto result = signing::deliver_signing_retry_response(
             "req_sign",
             "sign_transaction",
-            retry_result(agent_q::AgentQSigningRetryDeliveryStatus::not_found),
+            retry_result(signing::RetryDeliveryStatus::not_found),
             stored,
             capture_response,
             &capture);
-        assert(result == agent_q::AgentQSigningRetryResponseResult::not_found);
+        assert(result == signing::RetryResponseResult::not_found);
         assert(capture.calls == 0);
     }
 
     {
         Capture capture;
-        const auto result = agent_q::deliver_signing_retry_response(
+        const auto result = signing::deliver_signing_retry_response(
             "req_sign",
             "sign_transaction",
             retry_result(
-                agent_q::AgentQSigningRetryDeliveryStatus::match,
+                signing::RetryDeliveryStatus::match,
                 strlen(stored)),
             stored,
             capture_response,
             &capture);
-        assert(result == agent_q::AgentQSigningRetryResponseResult::replayed_result);
+        assert(result == signing::RetryResponseResult::replayed_result);
         assert(capture.calls == 1);
         JsonDocument document = parse_json(capture.json);
         assert(document["success"] == true);
@@ -137,32 +137,32 @@ int main()
 
     {
         Capture capture;
-        const auto result = agent_q::deliver_signing_retry_response(
+        const auto result = signing::deliver_signing_retry_response(
             "req_sign",
             "sign_transaction",
             retry_result(
-                agent_q::AgentQSigningRetryDeliveryStatus::match,
+                signing::RetryDeliveryStatus::match,
                 strlen(invalid_stored)),
             invalid_stored,
             capture_response,
             &capture);
-        assert(result == agent_q::AgentQSigningRetryResponseResult::invalid_stored_response);
+        assert(result == signing::RetryResponseResult::invalid_stored_response);
         assert(capture.calls == 0);
     }
 
     {
         Capture capture;
-        const auto result = agent_q::deliver_signing_retry_response(
+        const auto result = signing::deliver_signing_retry_response(
             "req_sign",
             "sign_transaction",
             retry_result(
-                agent_q::AgentQSigningRetryDeliveryStatus::request_id_conflict,
+                signing::RetryDeliveryStatus::request_id_conflict,
                 0,
                 "request_id_conflict"),
             stored,
             capture_response,
             &capture);
-        assert(result == agent_q::AgentQSigningRetryResponseResult::error_response);
+        assert(result == signing::RetryResponseResult::error_response);
         JsonDocument document = parse_json(capture.json);
         assert(document["success"] == false);
         assert(strcmp(document["id"], "req_sign") == 0);
@@ -173,17 +173,17 @@ int main()
 
     {
         Capture capture;
-        const auto result = agent_q::deliver_signing_retry_response(
+        const auto result = signing::deliver_signing_retry_response(
             "req_sign",
             "sign_transaction",
             retry_result(
-                agent_q::AgentQSigningRetryDeliveryStatus::lookup_error,
+                signing::RetryDeliveryStatus::lookup_error,
                 0,
                 "internal_output_error"),
             stored,
             capture_response,
             &capture);
-        assert(result == agent_q::AgentQSigningRetryResponseResult::error_response);
+        assert(result == signing::RetryResponseResult::error_response);
         JsonDocument document = parse_json(capture.json);
         assert(document["success"] == false);
         assert(strcmp(document["method"], "sign_transaction") == 0);
@@ -193,49 +193,49 @@ int main()
     {
         Capture capture;
         const char malformed[] = "{not-json";
-        const auto result = agent_q::deliver_signing_retry_response(
+        const auto result = signing::deliver_signing_retry_response(
             "req_sign",
             "sign_transaction",
             retry_result(
-                agent_q::AgentQSigningRetryDeliveryStatus::match,
+                signing::RetryDeliveryStatus::match,
                 strlen(malformed)),
             malformed,
             capture_response,
             &capture);
-        assert(result == agent_q::AgentQSigningRetryResponseResult::invalid_stored_response);
+        assert(result == signing::RetryResponseResult::invalid_stored_response);
         assert(capture.calls == 0);
     }
 
     {
         Capture capture;
         capture.fail = true;
-        const auto result = agent_q::deliver_signing_retry_response(
+        const auto result = signing::deliver_signing_retry_response(
             "req_sign",
             "sign_transaction",
             retry_result(
-                agent_q::AgentQSigningRetryDeliveryStatus::match,
+                signing::RetryDeliveryStatus::match,
                 strlen(stored)),
             stored,
             capture_response,
             &capture);
-        assert(result == agent_q::AgentQSigningRetryResponseResult::replay_write_failed);
+        assert(result == signing::RetryResponseResult::replay_write_failed);
         assert(capture.calls == 1);
     }
 
     {
         Capture capture;
         capture.fail = true;
-        const auto result = agent_q::deliver_signing_retry_response(
+        const auto result = signing::deliver_signing_retry_response(
             "req_sign",
             "sign_transaction",
             retry_result(
-                agent_q::AgentQSigningRetryDeliveryStatus::request_id_conflict,
+                signing::RetryDeliveryStatus::request_id_conflict,
                 0,
                 "request_id_conflict"),
             stored,
             capture_response,
             &capture);
-        assert(result == agent_q::AgentQSigningRetryResponseResult::error_write_failed);
+        assert(result == signing::RetryResponseResult::error_write_failed);
         assert(capture.calls == 1);
     }
 
@@ -246,11 +246,11 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${ARDUINOJSON_ROOT}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
-  "${AGENT_Q_DIR}/agent_q_signing_retry_response.cpp" \
+  "${RUNTIME_DIR}/device_contract.cpp" \
+  "${RUNTIME_DIR}/signing_retry_response.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

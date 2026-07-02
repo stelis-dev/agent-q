@@ -78,16 +78,16 @@ jobs:
             }
           }
 
-          const agentQ = packages.get('@stelis/agent-q');
+          const localServerPackage = packages.get('@stelis/agent-q');
           const mcpPackage = server.packages?.[0];
-          if (agentQ.mcpName !== server.name) {
-            throw new Error(`${agentQ.name} mcpName must match server.json name`);
+          if (localServerPackage.mcpName !== server.name) {
+            throw new Error(`${localServerPackage.name} mcpName must match server.json name`);
           }
-          if (mcpPackage?.registryType !== 'npm' || mcpPackage.identifier !== agentQ.name) {
-            throw new Error(`server.json must register the npm package ${agentQ.name}`);
+          if (mcpPackage?.registryType !== 'npm' || mcpPackage.identifier !== localServerPackage.name) {
+            throw new Error(`server.json must register the npm package ${localServerPackage.name}`);
           }
-          if (server.version !== agentQ.version || mcpPackage.version !== agentQ.version) {
-            throw new Error(`server.json versions must match ${agentQ.name}@${agentQ.version}`);
+          if (server.version !== localServerPackage.version || mcpPackage.version !== localServerPackage.version) {
+            throw new Error(`server.json versions must match ${localServerPackage.name}@${localServerPackage.version}`);
           }
           NODE
 

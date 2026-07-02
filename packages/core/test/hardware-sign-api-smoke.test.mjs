@@ -8,27 +8,27 @@
 //   npm --workspace @stelis/agent-q-core run build
 //
 // User-authorized sign_transaction smoke:
-//   AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER=1 \
-//   AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO=positive \
-//   AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_TX_BYTES=<base64> \
+//   SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER=1 \
+//   SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO=positive \
+//   SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_TX_BYTES=<base64> \
 //   node --test packages/core/test/hardware-sign-api-smoke.test.mjs
 //
 // Policy-authorized sign_transaction smoke:
-//   AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY=1 \
-//   AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_SCENARIO=rejected \
+//   SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY=1 \
+//   SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY_SCENARIO=rejected \
 //   node --test packages/core/test/hardware-sign-api-smoke.test.mjs
 //
 // User-authorized sign_personal_message smoke:
-//   AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER=1 \
-//   AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_SCENARIO=positive \
+//   SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER=1 \
+//   SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_SCENARIO=positive \
 //   node --test packages/core/test/hardware-sign-api-smoke.test.mjs
 //
 // Policy-mode sign_personal_message fail-closed smoke:
-//   AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY=1 \
+//   SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY=1 \
 //   node --test packages/core/test/hardware-sign-api-smoke.test.mjs
 //
 // Policy update smoke mutates the active policy on the device:
-//   AGENTQ_HW_CLIENT_POLICY_UPDATE=1 \
+//   SIGNING_HW_CLIENT_POLICY_UPDATE=1 \
 //   node --test packages/core/test/hardware-sign-api-smoke.test.mjs
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
@@ -38,7 +38,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ConfigStore } from "../dist/adapter-internal.js";
-import { AgentQCore, SerialPortUsbDriver } from "../dist/core.js";
+import { DeviceCore, SerialPortUsbDriver } from "../dist/core.js";
 import {
   FORBIDDEN_SECRET_FIELD_NAMES,
   MAX_APPROVAL_HISTORY_RECORDS,
@@ -58,7 +58,7 @@ const DEFAULT_PERSONAL_MESSAGE_BYTES = Buffer.from("Agent-Q personal message che
 function smokePolicyDocument(policies = []) {
   const conditionCount = policies.reduce((sum, policy) => sum + policy.conditions.length, 0);
   return {
-    schema: "agentq.policy",
+    schema: "signing.policy",
     defaultAction: "reject",
     blockchains: [
       {
@@ -78,34 +78,34 @@ function smokePolicyDocument(policies = []) {
   };
 }
 
-const userSigningEnabled = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER === "1";
-const userSigningScenario = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO ?? "";
-const userSigningDeviceId = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_DEVICE_ID ?? "";
-const userSigningTxBytes = (process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_TX_BYTES ?? "").replace(/\s+/g, "");
+const userSigningEnabled = process.env.SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER === "1";
+const userSigningScenario = process.env.SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO ?? "";
+const userSigningDeviceId = process.env.SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_DEVICE_ID ?? "";
+const userSigningTxBytes = (process.env.SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_TX_BYTES ?? "").replace(/\s+/g, "");
 const userSigningScenarios = new Set(["positive", "reject", "timeout", "disconnect"]);
 
-const policySigningEnabled = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY === "1";
-const policySigningScenario = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_SCENARIO ?? "";
-const policySigningDeviceId = process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_DEVICE_ID ?? "";
-const policySigningTxBytes = (process.env.AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_TX_BYTES ?? "").replace(/\s+/g, "");
+const policySigningEnabled = process.env.SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY === "1";
+const policySigningScenario = process.env.SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY_SCENARIO ?? "";
+const policySigningDeviceId = process.env.SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY_DEVICE_ID ?? "";
+const policySigningTxBytes = (process.env.SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY_TX_BYTES ?? "").replace(/\s+/g, "");
 const policySigningScenarios = new Set(["signed", "rejected"]);
 
-const userPersonalMessageEnabled = process.env.AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER === "1";
-const userPersonalMessageScenario = process.env.AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_SCENARIO ?? "";
-const userPersonalMessageDeviceId = process.env.AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_DEVICE_ID ?? "";
+const userPersonalMessageEnabled = process.env.SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER === "1";
+const userPersonalMessageScenario = process.env.SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_SCENARIO ?? "";
+const userPersonalMessageDeviceId = process.env.SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_DEVICE_ID ?? "";
 const userPersonalMessageBytes = (
-  process.env.AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_MESSAGE ?? DEFAULT_PERSONAL_MESSAGE_BYTES
+  process.env.SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_MESSAGE ?? DEFAULT_PERSONAL_MESSAGE_BYTES
 ).replace(/\s+/g, "");
 const userPersonalMessageScenarios = new Set(["positive", "reject", "timeout", "disconnect"]);
 
-const policyPersonalMessageEnabled = process.env.AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY === "1";
-const policyPersonalMessageDeviceId = process.env.AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY_DEVICE_ID ?? "";
+const policyPersonalMessageEnabled = process.env.SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY === "1";
+const policyPersonalMessageDeviceId = process.env.SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY_DEVICE_ID ?? "";
 const policyPersonalMessageBytes = (
-  process.env.AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY_MESSAGE ?? DEFAULT_PERSONAL_MESSAGE_BYTES
+  process.env.SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY_MESSAGE ?? DEFAULT_PERSONAL_MESSAGE_BYTES
 ).replace(/\s+/g, "");
 
-const policyUpdateEnabled = process.env.AGENTQ_HW_CLIENT_POLICY_UPDATE === "1";
-const policyUpdateDeviceId = process.env.AGENTQ_HW_CLIENT_POLICY_UPDATE_DEVICE_ID ?? "";
+const policyUpdateEnabled = process.env.SIGNING_HW_CLIENT_POLICY_UPDATE === "1";
+const policyUpdateDeviceId = process.env.SIGNING_HW_CLIENT_POLICY_UPDATE_DEVICE_ID ?? "";
 
 const SIGN_TRANSACTION_USER_PURPOSE = "hw.sign_tx.user";
 const SIGN_TRANSACTION_POLICY_PURPOSE = "hw.sign_tx.policy";
@@ -130,49 +130,49 @@ function isCanonicalBase64(value) {
 
 function userSigningSkipReason() {
   if (!userSigningEnabled) {
-    return "set AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER=1 with a provisioned development device in user signing mode";
+    return "set SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER=1 with a provisioned development device in user signing mode";
   }
   if (!userSigningScenarios.has(userSigningScenario)) {
-    return "set AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO=positive, reject, timeout, or disconnect";
+    return "set SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO=positive, reject, timeout, or disconnect";
   }
   if (!isCanonicalBase64(userSigningTxBytes)) {
-    return "set AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_TX_BYTES to canonical base64 txBytes accepted by the device";
+    return "set SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_TX_BYTES to canonical base64 txBytes accepted by the device";
   }
   return false;
 }
 
 function policySigningSkipReason() {
   if (!policySigningEnabled) {
-    return "set AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY=1 with a provisioned development device in policy signing mode";
+    return "set SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY=1 with a provisioned development device in policy signing mode";
   }
   if (!policySigningScenarios.has(policySigningScenario)) {
-    return "set AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_SCENARIO=signed or rejected";
+    return "set SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY_SCENARIO=signed or rejected";
   }
   if (policySigningScenario === "signed" && !isCanonicalBase64(policySigningTxBytes)) {
-    return "set AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_TX_BYTES to txBytes matching the active sign policy";
+    return "set SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY_TX_BYTES to txBytes matching the active sign policy";
   }
   return false;
 }
 
 function userPersonalMessageSkipReason() {
   if (!userPersonalMessageEnabled) {
-    return "set AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER=1 with a provisioned development device in user signing mode";
+    return "set SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER=1 with a provisioned development device in user signing mode";
   }
   if (!userPersonalMessageScenarios.has(userPersonalMessageScenario)) {
-    return "set AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_SCENARIO=positive, reject, timeout, or disconnect";
+    return "set SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_SCENARIO=positive, reject, timeout, or disconnect";
   }
   if (!isCanonicalBase64(userPersonalMessageBytes)) {
-    return "set AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_MESSAGE to canonical base64 message bytes";
+    return "set SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_MESSAGE to canonical base64 message bytes";
   }
   return false;
 }
 
 function policyPersonalMessageSkipReason() {
   if (!policyPersonalMessageEnabled) {
-    return "set AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY=1 with a provisioned development device in policy signing mode";
+    return "set SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY=1 with a provisioned development device in policy signing mode";
   }
   if (!isCanonicalBase64(policyPersonalMessageBytes)) {
-    return "set AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY_MESSAGE to canonical base64 message bytes";
+    return "set SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY_MESSAGE to canonical base64 message bytes";
   }
   return false;
 }
@@ -180,7 +180,7 @@ function policyPersonalMessageSkipReason() {
 function policyUpdateSkipReason() {
   return policyUpdateEnabled
     ? false
-    : "set AGENTQ_HW_CLIENT_POLICY_UPDATE=1 with a provisioned development device whose policy may be changed";
+    : "set SIGNING_HW_CLIENT_POLICY_UPDATE=1 with a provisioned development device whose policy may be changed";
 }
 
 function scanDeviceId(device) {
@@ -349,7 +349,7 @@ function assertNewestPolicyUpdateRecord(history, previousTopSeq, updateResult) {
 async function readDefaultSuiTransferTxBytes() {
   const validSuiTransferHex = (
     await readFile(
-      new URL("../../../firmware/src/common/agent_q/sui/testdata/sui_transaction_facts/valid_sui_transfer_tx.bcs.hex", import.meta.url),
+      new URL("../../../firmware/src/common/sui/testdata/sui_transaction_facts/valid_sui_transfer_tx.bcs.hex", import.meta.url),
       "utf8",
     )
   ).replace(/\s+/g, "");
@@ -358,7 +358,7 @@ async function readDefaultSuiTransferTxBytes() {
 
 async function withSmokeCore(prefix, callback) {
   const dir = await mkdtemp(join(tmpdir(), prefix));
-  const core = new AgentQCore(new ConfigStore(join(dir, "config.json")), new SerialPortUsbDriver());
+  const core = new DeviceCore(new ConfigStore(join(dir, "config.json")), new SerialPortUsbDriver());
   try {
     return await callback(core);
   } finally {
@@ -371,35 +371,35 @@ test("client hardware smoke target selection is fail-closed", () => {
   const deviceB = { status: { device: { deviceId: "dev-b" } } };
 
   assert.equal(
-    selectSmokeDeviceId([deviceA], "", "AGENTQ_HW_CLIENT_POLICY_UPDATE_DEVICE_ID", "AGENTQ_HW_CLIENT_POLICY_UPDATE"),
+    selectSmokeDeviceId([deviceA], "", "SIGNING_HW_CLIENT_POLICY_UPDATE_DEVICE_ID", "SIGNING_HW_CLIENT_POLICY_UPDATE"),
     "dev-a",
   );
   assert.equal(
     selectSmokeDeviceId(
       [deviceA, deviceB],
       "dev-b",
-      "AGENTQ_HW_CLIENT_POLICY_UPDATE_DEVICE_ID",
-      "AGENTQ_HW_CLIENT_POLICY_UPDATE",
+      "SIGNING_HW_CLIENT_POLICY_UPDATE_DEVICE_ID",
+      "SIGNING_HW_CLIENT_POLICY_UPDATE",
     ),
     "dev-b",
   );
   assert.throws(
-    () => selectSmokeDeviceId([], "", "AGENTQ_HW_CLIENT_POLICY_UPDATE_DEVICE_ID", "AGENTQ_HW_CLIENT_POLICY_UPDATE"),
+    () => selectSmokeDeviceId([], "", "SIGNING_HW_CLIENT_POLICY_UPDATE_DEVICE_ID", "SIGNING_HW_CLIENT_POLICY_UPDATE"),
   );
   assert.throws(
     () => selectSmokeDeviceId(
       [deviceA, deviceB],
       "",
-      "AGENTQ_HW_CLIENT_POLICY_UPDATE_DEVICE_ID",
-      "AGENTQ_HW_CLIENT_POLICY_UPDATE",
+      "SIGNING_HW_CLIENT_POLICY_UPDATE_DEVICE_ID",
+      "SIGNING_HW_CLIENT_POLICY_UPDATE",
     ),
   );
   assert.throws(
     () => selectSmokeDeviceId(
       [deviceA],
       "missing",
-      "AGENTQ_HW_CLIENT_POLICY_UPDATE_DEVICE_ID",
-      "AGENTQ_HW_CLIENT_POLICY_UPDATE",
+      "SIGNING_HW_CLIENT_POLICY_UPDATE_DEVICE_ID",
+      "SIGNING_HW_CLIENT_POLICY_UPDATE",
     ),
   );
 });
@@ -466,13 +466,13 @@ test(
   "hardware: client core signTransaction user terminal path",
   { skip: userSigningSkipReason() },
   async () => {
-    await withSmokeCore("agent-q-core-sign-transaction-user-", async (core) => {
+    await withSmokeCore("signing-core-sign-transaction-user-", async (core) => {
       console.log("[client-sign-transaction-user-smoke] scanning devices...");
       const deviceId = selectSmokeDeviceId(
         await waitForSmokeScanDevices(core),
         userSigningDeviceId,
-        "AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_DEVICE_ID",
-        "AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER",
+        "SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_DEVICE_ID",
+        "SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER",
       );
 
       try {
@@ -605,13 +605,13 @@ test(
   "hardware: client core signTransaction policy terminal path",
   { skip: policySigningSkipReason() },
   async () => {
-    await withSmokeCore("agent-q-core-sign-transaction-policy-", async (core) => {
+    await withSmokeCore("signing-core-sign-transaction-policy-", async (core) => {
       console.log("[client-sign-transaction-policy-smoke] scanning devices...");
       const deviceId = selectSmokeDeviceId(
         await waitForSmokeScanDevices(core),
         policySigningDeviceId,
-        "AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_DEVICE_ID",
-        "AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY",
+        "SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY_DEVICE_ID",
+        "SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY",
       );
       const txBytes = policySigningTxBytes.length > 0
         ? policySigningTxBytes
@@ -686,13 +686,13 @@ test(
   "hardware: client core signPersonalMessage terminal path",
   { skip: userPersonalMessageSkipReason() },
   async () => {
-    await withSmokeCore("agent-q-core-sign-personal-message-user-", async (core) => {
+    await withSmokeCore("signing-core-sign-personal-message-user-", async (core) => {
       console.log("[client-sign-personal-message-user-smoke] scanning devices...");
       const deviceId = selectSmokeDeviceId(
         await waitForSmokeScanDevices(core),
         userPersonalMessageDeviceId,
-        "AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_DEVICE_ID",
-        "AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER",
+        "SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_DEVICE_ID",
+        "SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER",
       );
 
       try {
@@ -832,13 +832,13 @@ test(
   "hardware: client core signPersonalMessage fails closed in policy mode",
   { skip: policyPersonalMessageSkipReason() },
   async () => {
-    await withSmokeCore("agent-q-core-sign-personal-message-policy-", async (core) => {
+    await withSmokeCore("signing-core-sign-personal-message-policy-", async (core) => {
       console.log("[client-sign-personal-message-policy-smoke] scanning devices...");
       const deviceId = selectSmokeDeviceId(
         await waitForSmokeScanDevices(core),
         policyPersonalMessageDeviceId,
-        "AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY_DEVICE_ID",
-        "AGENTQ_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY",
+        "SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY_DEVICE_ID",
+        "SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY",
       );
 
       try {
@@ -900,13 +900,13 @@ test(
   "hardware: client core policyPropose terminal path",
   { skip: policyUpdateSkipReason() },
   async () => {
-    await withSmokeCore("agent-q-core-policy-update-", async (core) => {
+    await withSmokeCore("signing-core-policy-update-", async (core) => {
       console.log("[client-policy-update-smoke] scanning devices...");
       const deviceId = selectSmokeDeviceId(
         await waitForSmokeScanDevices(core),
         policyUpdateDeviceId,
-        "AGENTQ_HW_CLIENT_POLICY_UPDATE_DEVICE_ID",
-        "AGENTQ_HW_CLIENT_POLICY_UPDATE",
+        "SIGNING_HW_CLIENT_POLICY_UPDATE_DEVICE_ID",
+        "SIGNING_HW_CLIENT_POLICY_UPDATE",
       );
 
       try {
@@ -956,7 +956,7 @@ test(
         console.log("[client-policy-update-smoke] verifying committed policy document...");
         const policy = await core.policyGet({ deviceId, purpose: POLICY_UPDATE_PURPOSE });
         assert.equal(policy.source, "live");
-        assert.equal(policy.policy.schema, "agentq.policy");
+        assert.equal(policy.policy.schema, "signing.policy");
         assert.equal(policy.policy.policyId, update.policy.policyHash);
         assert.equal(policy.policy.defaultAction, "reject");
         assert.equal(policy.policy.policyCount, 1);

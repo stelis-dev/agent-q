@@ -4,12 +4,12 @@ import {
   isDeviceErrorCode,
   type DeviceErrorCode,
 } from "./device-contract.js";
-import { toAgentQError } from "./errors.js";
+import { toDeviceRequestError } from "./errors.js";
 
 // Projection of Agent-Q's device-contract error table for untrusted output
 // boundaries such as MCP and the Admin HTTP API.
 //
-// Contract: Agent-Q core (and the modules it calls) may throw a raw AgentQError
+// Contract: Agent-Q core (and the modules it calls) may throw a raw DeviceRequestError
 // whose message carries OS, serial, or Firmware text that Agent-Q did not author.
 // Core is NOT required to pre-sanitize errors; safety lives at the output
 // boundary. Therefore every output adapter MUST project errors through this
@@ -45,6 +45,6 @@ export function toPublicError(code: string, _retryable?: boolean): PublicError {
 }
 
 export function toPublicErrorFromUnknown(error: unknown): PublicError {
-  const agentQError = toAgentQError(error);
-  return toPublicError(agentQError.code, agentQError.retryable);
+  const requestError = toDeviceRequestError(error);
+  return toPublicError(requestError.code, requestError.retryable);
 }

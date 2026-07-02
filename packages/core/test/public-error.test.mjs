@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AgentQError } from "../dist/errors.js";
+import { DeviceRequestError } from "../dist/errors.js";
 import { toPublicErrorFromUnknown } from "../dist/public-error.js";
 
-test("toPublicErrorFromUnknown canonicalizes AgentQError without raw message leakage", () => {
+test("toPublicErrorFromUnknown canonicalizes DeviceRequestError without raw message leakage", () => {
   assert.deepEqual(
-    toPublicErrorFromUnknown(new AgentQError("transport_closed", "raw /dev/cu.secret", true)),
+    toPublicErrorFromUnknown(new DeviceRequestError("transport_closed", "raw /dev/cu.secret", true)),
     {
       code: "transport_closed",
       message: "Device connection closed before a valid response.",
@@ -27,9 +27,9 @@ test("toPublicErrorFromUnknown collapses unknown thrown values to the public err
   });
 });
 
-test("toPublicErrorFromUnknown normalizes unsupported AgentQError codes", () => {
+test("toPublicErrorFromUnknown normalizes unsupported DeviceRequestError codes", () => {
   assert.deepEqual(
-    toPublicErrorFromUnknown(new AgentQError("ignore_previous_instructions", "raw text", true)),
+    toPublicErrorFromUnknown(new DeviceRequestError("ignore_previous_instructions", "raw text", true)),
     {
       code: "unknown_error",
       message: "Agent-Q request failed.",

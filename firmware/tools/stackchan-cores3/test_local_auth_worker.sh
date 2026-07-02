@@ -18,19 +18,19 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 CXX_BIN="${CXX:-c++}"
 
 for required in \
-  "${AGENT_Q_DIR}/agent_q_local_auth_worker.cpp" \
-  "${AGENT_Q_DIR}/agent_q_local_auth_worker.h"; do
+  "${RUNTIME_DIR}/local_auth_worker.cpp" \
+  "${RUNTIME_DIR}/local_auth_worker.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
   fi
 done
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-local-auth-worker.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-local-auth-worker.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/stubs/freertos"
@@ -99,7 +99,7 @@ cat >"${TMP_DIR}/local_auth_worker_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_local_auth_worker.h"
+#include "local_auth_worker.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
@@ -150,18 +150,18 @@ void finish_worker_job(uint32_t job_id)
 {
     g_request_queue.has_item = false;
 
-    agent_q::AgentQLocalAuthWorkerResult result = {};
+    signing::LocalAuthWorkerResult result = {};
     result.job_id = job_id;
-    result.owner = agent_q::AgentQLocalAuthWorkerOwner::local_pin_auth;
-    result.operation = agent_q::AgentQLocalAuthWorkerOperation::verify_pin;
-    result.status = agent_q::AgentQLocalAuthWorkerStatus::ok;
+    result.owner = signing::LocalAuthWorkerOwner::local_pin_auth;
+    result.operation = signing::LocalAuthWorkerOperation::verify_pin;
+    result.status = signing::LocalAuthWorkerStatus::ok;
     result.verified = true;
     memcpy(g_result_queue.item, &result, sizeof(result));
     g_result_queue.has_item = true;
 
-    agent_q::AgentQLocalAuthWorkerResult polled = {};
-    expect(agent_q::local_auth_worker_poll_result(&polled), "worker result can be polled");
-    agent_q::local_auth_worker_wipe_result(&polled);
+    signing::LocalAuthWorkerResult polled = {};
+    expect(signing::local_auth_worker_poll_result(&polled), "worker result can be polled");
+    signing::local_auth_worker_wipe_result(&polled);
 }
 
 void run_worker_until_idle()
@@ -177,7 +177,7 @@ void run_worker_until_idle()
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 void wipe_sensitive_buffer(void* data, size_t size)
 {
@@ -201,7 +201,7 @@ bool is_valid_local_pin(const char* pin)
     return true;
 }
 
-bool prepare_local_pin_verifier_record(const char* pin, AgentQLocalAuthPreparedRecord* out)
+bool prepare_local_pin_verifier_record(const char* pin, LocalAuthPreparedRecord* out)
 {
     ++g_prepare_call_count;
     if (!is_valid_local_pin(pin) || out == nullptr) {
@@ -211,7 +211,7 @@ bool prepare_local_pin_verifier_record(const char* pin, AgentQLocalAuthPreparedR
     return true;
 }
 
-void wipe_local_pin_verifier_record(AgentQLocalAuthPreparedRecord* prepared)
+void wipe_local_pin_verifier_record(LocalAuthPreparedRecord* prepared)
 {
     if (prepared != nullptr) {
         memset(prepared->bytes, 0, sizeof(prepared->bytes));
@@ -228,7 +228,7 @@ bool verify_local_pin(const char* pin, bool* verified)
     return true;
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 extern "C" {
 
@@ -303,11 +303,11 @@ BaseType_t xTaskCreatePinnedToCore(
 
 int main()
 {
-    expect(agent_q::local_auth_worker_init(), "worker initializes");
+    expect(signing::local_auth_worker_init(), "worker initializes");
 
     uint32_t job_id = 0;
-    expect(agent_q::local_auth_worker_submit_verify(
-               agent_q::AgentQLocalAuthWorkerOwner::local_pin_auth,
+    expect(signing::local_auth_worker_submit_verify(
+               signing::LocalAuthWorkerOwner::local_pin_auth,
                "123456",
                &job_id),
            "verify submit succeeds");
@@ -318,8 +318,8 @@ int main()
 
     finish_worker_job(job_id);
 
-    expect(agent_q::local_auth_worker_submit_prepare_verifier(
-               agent_q::AgentQLocalAuthWorkerOwner::provisioning_setup,
+    expect(signing::local_auth_worker_submit_prepare_verifier(
+               signing::LocalAuthWorkerOwner::provisioning_setup,
                "654321",
                &job_id),
            "prepare submit succeeds");
@@ -329,84 +329,84 @@ int main()
 
     finish_worker_job(job_id);
 
-    expect(agent_q::local_auth_worker_submit_verify(
-               agent_q::AgentQLocalAuthWorkerOwner::local_pin_auth,
+    expect(signing::local_auth_worker_submit_verify(
+               signing::LocalAuthWorkerOwner::local_pin_auth,
                "123456",
                &job_id),
            "verify submit succeeds before result queue failure");
     g_fail_next_result_send = true;
     run_worker_until_idle();
     expect(!g_result_queue.has_item, "failed result send does not leave a queue item");
-    agent_q::AgentQLocalAuthWorkerResult failed_result = {};
-    expect(agent_q::local_auth_worker_poll_result(&failed_result),
+    signing::LocalAuthWorkerResult failed_result = {};
+    expect(signing::local_auth_worker_poll_result(&failed_result),
            "result send failure produces terminal result");
     expect(failed_result.job_id == job_id, "terminal result keeps job id");
-    expect(failed_result.owner == agent_q::AgentQLocalAuthWorkerOwner::local_pin_auth,
+    expect(failed_result.owner == signing::LocalAuthWorkerOwner::local_pin_auth,
            "terminal result keeps owner");
-    expect(failed_result.operation == agent_q::AgentQLocalAuthWorkerOperation::verify_pin,
+    expect(failed_result.operation == signing::LocalAuthWorkerOperation::verify_pin,
            "terminal result keeps operation");
-    expect(failed_result.status == agent_q::AgentQLocalAuthWorkerStatus::worker_unavailable,
+    expect(failed_result.status == signing::LocalAuthWorkerStatus::worker_unavailable,
            "terminal result reports worker unavailable");
-    agent_q::local_auth_worker_wipe_result(&failed_result);
-    expect(agent_q::local_auth_worker_submit_verify(
-               agent_q::AgentQLocalAuthWorkerOwner::local_pin_auth,
+    signing::local_auth_worker_wipe_result(&failed_result);
+    expect(signing::local_auth_worker_submit_verify(
+               signing::LocalAuthWorkerOwner::local_pin_auth,
                "333333",
                &job_id),
            "submit can retry after terminal worker failure is polled");
     finish_worker_job(job_id);
 
-    expect(agent_q::local_auth_worker_submit_verify(
-               agent_q::AgentQLocalAuthWorkerOwner::local_reset,
+    expect(signing::local_auth_worker_submit_verify(
+               signing::LocalAuthWorkerOwner::local_reset,
                "444444",
                &job_id),
            "submit succeeds before queued job cancellation");
-    expect(agent_q::local_auth_worker_cancel_job(job_id), "queued worker job can be cancelled");
+    expect(signing::local_auth_worker_cancel_job(job_id), "queued worker job can be cancelled");
     const int verify_count_before_cancelled_job = g_verify_call_count;
     run_worker_until_idle();
     expect(g_verify_call_count == verify_count_before_cancelled_job,
            "cancelled queued job does not verify wiped PIN");
-    agent_q::AgentQLocalAuthWorkerResult cancelled_result = {};
-    expect(!agent_q::local_auth_worker_poll_result(&cancelled_result),
+    signing::LocalAuthWorkerResult cancelled_result = {};
+    expect(!signing::local_auth_worker_poll_result(&cancelled_result),
            "cancelled queued job does not produce caller result");
-    expect(agent_q::local_auth_worker_submit_verify(
-               agent_q::AgentQLocalAuthWorkerOwner::local_pin_auth,
+    expect(signing::local_auth_worker_submit_verify(
+               signing::LocalAuthWorkerOwner::local_pin_auth,
                "555555",
                &job_id),
            "submit can retry after queued job cancellation");
     finish_worker_job(job_id);
 
-    expect(agent_q::local_auth_worker_submit_verify(
-               agent_q::AgentQLocalAuthWorkerOwner::local_pin_auth,
+    expect(signing::local_auth_worker_submit_verify(
+               signing::LocalAuthWorkerOwner::local_pin_auth,
                "666666",
                &job_id),
            "submit succeeds before queued result cancellation");
     g_request_queue.has_item = false;
-    agent_q::AgentQLocalAuthWorkerResult queued_result = {};
+    signing::LocalAuthWorkerResult queued_result = {};
     queued_result.job_id = job_id;
-    queued_result.owner = agent_q::AgentQLocalAuthWorkerOwner::local_pin_auth;
-    queued_result.operation = agent_q::AgentQLocalAuthWorkerOperation::verify_pin;
-    queued_result.status = agent_q::AgentQLocalAuthWorkerStatus::ok;
+    queued_result.owner = signing::LocalAuthWorkerOwner::local_pin_auth;
+    queued_result.operation = signing::LocalAuthWorkerOperation::verify_pin;
+    queued_result.status = signing::LocalAuthWorkerStatus::ok;
     queued_result.verified = true;
     memcpy(g_result_queue.item, &queued_result, sizeof(queued_result));
     g_result_queue.has_item = true;
-    expect(agent_q::local_auth_worker_cancel_job(job_id), "queued result job can be cancelled");
-    expect(!agent_q::local_auth_worker_poll_result(&cancelled_result),
+    expect(signing::local_auth_worker_cancel_job(job_id), "queued result job can be cancelled");
+    expect(!signing::local_auth_worker_poll_result(&cancelled_result),
            "cancelled queued result is discarded");
-    expect(agent_q::local_auth_worker_submit_verify(
-               agent_q::AgentQLocalAuthWorkerOwner::local_pin_auth,
+    expect(signing::local_auth_worker_submit_verify(
+               signing::LocalAuthWorkerOwner::local_pin_auth,
                "777777",
                &job_id),
            "submit can retry after queued result cancellation");
     finish_worker_job(job_id);
 
     g_fail_next_request_send = true;
-    expect(!agent_q::local_auth_worker_submit_verify(
-               agent_q::AgentQLocalAuthWorkerOwner::local_reset,
+    expect(!signing::local_auth_worker_submit_verify(
+               signing::LocalAuthWorkerOwner::local_reset,
                "111111",
                &job_id),
            "request queue send failure is reported");
-    expect(agent_q::local_auth_worker_submit_verify(
-               agent_q::AgentQLocalAuthWorkerOwner::local_reset,
+    expect(signing::local_auth_worker_submit_verify(
+               signing::LocalAuthWorkerOwner::local_reset,
                "222222",
                &job_id),
            "submit can retry after request queue send failure");
@@ -424,9 +424,9 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/local_auth_worker_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_local_auth_worker.cpp" \
+  "${RUNTIME_DIR}/local_auth_worker.cpp" \
   -o "${TMP_DIR}/local_auth_worker_test"
 
 "${TMP_DIR}/local_auth_worker_test"

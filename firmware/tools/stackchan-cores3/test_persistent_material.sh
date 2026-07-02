@@ -21,15 +21,15 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 CXX_BIN="${CXX:-c++}"
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-persistent-material.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-persistent-material.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-mkdir -p "${TMP_DIR}/agent_q_common" "${TMP_DIR}/stubs"
-ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
+mkdir -p "${TMP_DIR}/firmware_common" "${TMP_DIR}/stubs"
+ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
 
 cat >"${TMP_DIR}/stubs/esp_log.h" <<'H'
 #pragma once
@@ -43,9 +43,9 @@ cat >"${TMP_DIR}/persistent_material_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_human_approval_settings.h"
-#include "agent_q_local_auth_test.h"
-#include "agent_q_persistent_material.h"
+#include "human_approval_settings.h"
+#include "local_auth_test.h"
+#include "persistent_material.h"
 
 namespace {
 
@@ -71,24 +71,24 @@ bool g_approval_history_wipe_fails = false;
 bool g_policy_update_marker_wipe_fails = false;
 bool g_zklogin_proof_wipe_fails = false;
 bool g_persist_state_fails = false;
-agent_q::AgentQPolicyStoreStatus g_policy_status = agent_q::AgentQPolicyStoreStatus::missing;
-agent_q::AgentQLocalAuthStatus g_auth_status = agent_q::AgentQLocalAuthStatus::missing;
-agent_q::AgentQSigningAuthorizationModeStatus g_signing_mode_status =
-    agent_q::AgentQSigningAuthorizationModeStatus::missing;
-agent_q::AgentQSigningAuthorizationMode g_signing_mode =
-    agent_q::AgentQSigningAuthorizationMode::user;
-agent_q::AgentQSuiAccountSettings g_sui_account_settings =
-    agent_q::kDefaultSuiAccountSettings;
-agent_q::AgentQSuiAccountSettingsStatus g_sui_account_settings_status =
-    agent_q::AgentQSuiAccountSettingsStatus::missing;
-agent_q::AgentQHumanApprovalInputMode g_human_approval_input_mode =
-    agent_q::AgentQHumanApprovalInputMode::pin;
-agent_q::AgentQPolicyUpdateMarkerStatus g_policy_update_marker_status =
-    agent_q::AgentQPolicyUpdateMarkerStatus::clear;
-agent_q::AgentQSuiZkLoginProofRecordStatus g_zklogin_proof_status =
-    agent_q::AgentQSuiZkLoginProofRecordStatus::missing;
-agent_q::AgentQProvisioningPersistedState g_persisted_state =
-    agent_q::AgentQProvisioningPersistedState::unprovisioned;
+signing::PolicyStoreStatus g_policy_status = signing::PolicyStoreStatus::missing;
+signing::LocalAuthStatus g_auth_status = signing::LocalAuthStatus::missing;
+signing::AuthorizationModeStatus g_signing_mode_status =
+    signing::AuthorizationModeStatus::missing;
+signing::AuthorizationMode g_signing_mode =
+    signing::AuthorizationMode::user;
+signing::SuiAccountSettings g_sui_account_settings =
+    signing::kDefaultSuiAccountSettings;
+signing::SuiAccountSettingsStatus g_sui_account_settings_status =
+    signing::SuiAccountSettingsStatus::missing;
+signing::HumanApprovalInputMode g_human_approval_input_mode =
+    signing::HumanApprovalInputMode::pin;
+signing::PolicyUpdateMarkerStatus g_policy_update_marker_status =
+    signing::PolicyUpdateMarkerStatus::clear;
+signing::SuiZkLoginProofRecordStatus g_zklogin_proof_status =
+    signing::SuiZkLoginProofRecordStatus::missing;
+signing::ProvisioningPersistedState g_persisted_state =
+    signing::ProvisioningPersistedState::unprovisioned;
 int g_consistency_error_count = 0;
 int failures = 0;
 
@@ -124,21 +124,21 @@ void reset_stubs()
     g_policy_update_marker_wipe_fails = false;
     g_zklogin_proof_wipe_fails = false;
     g_persist_state_fails = false;
-    g_policy_status = agent_q::AgentQPolicyStoreStatus::missing;
-    g_auth_status = agent_q::AgentQLocalAuthStatus::missing;
-    g_signing_mode_status = agent_q::AgentQSigningAuthorizationModeStatus::missing;
-    g_signing_mode = agent_q::AgentQSigningAuthorizationMode::user;
-    g_sui_account_settings = agent_q::kDefaultSuiAccountSettings;
-    g_sui_account_settings_status = agent_q::AgentQSuiAccountSettingsStatus::missing;
-    g_human_approval_input_mode = agent_q::AgentQHumanApprovalInputMode::pin;
-    g_policy_update_marker_status = agent_q::AgentQPolicyUpdateMarkerStatus::clear;
-    g_zklogin_proof_status = agent_q::AgentQSuiZkLoginProofRecordStatus::missing;
-    g_persisted_state = agent_q::AgentQProvisioningPersistedState::unprovisioned;
+    g_policy_status = signing::PolicyStoreStatus::missing;
+    g_auth_status = signing::LocalAuthStatus::missing;
+    g_signing_mode_status = signing::AuthorizationModeStatus::missing;
+    g_signing_mode = signing::AuthorizationMode::user;
+    g_sui_account_settings = signing::kDefaultSuiAccountSettings;
+    g_sui_account_settings_status = signing::SuiAccountSettingsStatus::missing;
+    g_human_approval_input_mode = signing::HumanApprovalInputMode::pin;
+    g_policy_update_marker_status = signing::PolicyUpdateMarkerStatus::clear;
+    g_zklogin_proof_status = signing::SuiZkLoginProofRecordStatus::missing;
+    g_persisted_state = signing::ProvisioningPersistedState::unprovisioned;
     g_consistency_error_count = 0;
-    agent_q::persistent_material_begin_load();
+    signing::persistent_material_begin_load();
 }
 
-bool persist_state(agent_q::AgentQProvisioningPersistedState state)
+bool persist_state(signing::ProvisioningPersistedState state)
 {
     if (g_persist_state_fails) {
         return false;
@@ -152,9 +152,9 @@ void on_consistency_error(const char*)
     ++g_consistency_error_count;
 }
 
-agent_q::AgentQPersistentMaterialOps ops()
+signing::PersistentMaterialOps ops()
 {
-    return agent_q::AgentQPersistentMaterialOps{
+    return signing::PersistentMaterialOps{
         persist_state,
         on_consistency_error,
     };
@@ -162,7 +162,7 @@ agent_q::AgentQPersistentMaterialOps ops()
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 void wipe_sensitive_buffer(void* data, size_t size)
 {
@@ -207,23 +207,23 @@ bool store_default_policy()
         return false;
     }
     g_policy_present = true;
-    g_policy_status = AgentQPolicyStoreStatus::active;
+    g_policy_status = PolicyStoreStatus::active;
     return true;
 }
 
 bool wipe_policy()
 {
     g_policy_present = false;
-    g_policy_status = AgentQPolicyStoreStatus::missing;
+    g_policy_status = PolicyStoreStatus::missing;
     return true;
 }
 
-AgentQPolicyStoreStatus active_policy_status()
+PolicyStoreStatus active_policy_status()
 {
     return g_policy_status;
 }
 
-bool read_active_policy_summary(AgentQStoredPolicySummary*)
+bool read_active_policy_summary(StoredPolicySummary*)
 {
     return false;
 }
@@ -239,11 +239,11 @@ bool store_local_pin_verifier(const char* pin)
         return false;
     }
     g_auth_present = true;
-    g_auth_status = AgentQLocalAuthStatus::active;
+    g_auth_status = LocalAuthStatus::active;
     return true;
 }
 
-bool prepare_local_pin_verifier_record(const char* pin, AgentQLocalAuthPreparedRecord* out)
+bool prepare_local_pin_verifier_record(const char* pin, LocalAuthPreparedRecord* out)
 {
     if (!is_valid_local_pin(pin) || out == nullptr) {
         return false;
@@ -253,7 +253,7 @@ bool prepare_local_pin_verifier_record(const char* pin, AgentQLocalAuthPreparedR
     return true;
 }
 
-bool store_prepared_local_pin_verifier(const AgentQLocalAuthPreparedRecord* prepared)
+bool store_prepared_local_pin_verifier(const LocalAuthPreparedRecord* prepared)
 {
     if (prepared == nullptr || g_auth_store_fails) {
         return false;
@@ -263,11 +263,11 @@ bool store_prepared_local_pin_verifier(const AgentQLocalAuthPreparedRecord* prep
         return false;
     }
     g_auth_present = true;
-    g_auth_status = AgentQLocalAuthStatus::active;
+    g_auth_status = LocalAuthStatus::active;
     return true;
 }
 
-void wipe_local_pin_verifier_record(AgentQLocalAuthPreparedRecord* prepared)
+void wipe_local_pin_verifier_record(LocalAuthPreparedRecord* prepared)
 {
     if (prepared != nullptr) {
         memset(prepared->bytes, 0, sizeof(prepared->bytes));
@@ -282,32 +282,32 @@ bool verify_local_pin(const char*, bool*)
 bool wipe_local_auth()
 {
     g_auth_present = false;
-    g_auth_status = AgentQLocalAuthStatus::missing;
+    g_auth_status = LocalAuthStatus::missing;
     return true;
 }
 
-AgentQLocalAuthStatus local_auth_status()
+LocalAuthStatus local_auth_status()
 {
     return g_auth_status;
 }
 
-bool read_signing_authorization_mode(AgentQSigningAuthorizationMode* mode)
+bool read_signing_authorization_mode(AuthorizationMode* mode)
 {
     if (mode == nullptr || !g_signing_mode_present ||
-        g_signing_mode_status != AgentQSigningAuthorizationModeStatus::active) {
+        g_signing_mode_status != AuthorizationModeStatus::active) {
         return false;
     }
     *mode = g_signing_mode;
     return true;
 }
 
-bool store_signing_authorization_mode(AgentQSigningAuthorizationMode mode)
+bool store_signing_authorization_mode(AuthorizationMode mode)
 {
     if (g_signing_mode_store_fails) {
         return false;
     }
     g_signing_mode_present = true;
-    g_signing_mode_status = AgentQSigningAuthorizationModeStatus::active;
+    g_signing_mode_status = AuthorizationModeStatus::active;
     g_signing_mode = mode;
     return true;
 }
@@ -318,25 +318,25 @@ bool wipe_signing_authorization_mode()
         return false;
     }
     g_signing_mode_present = false;
-    g_signing_mode_status = AgentQSigningAuthorizationModeStatus::missing;
-    g_signing_mode = AgentQSigningAuthorizationMode::user;
+    g_signing_mode_status = AuthorizationModeStatus::missing;
+    g_signing_mode = AuthorizationMode::user;
     return true;
 }
 
-AgentQSigningAuthorizationModeStatus signing_authorization_mode_status()
+AuthorizationModeStatus authorization_mode_status()
 {
     return g_signing_mode_status;
 }
 
-const char* signing_authorization_mode_name(AgentQSigningAuthorizationMode mode)
+const char* authorization_mode_name(AuthorizationMode mode)
 {
-    return mode == AgentQSigningAuthorizationMode::policy ? "policy" : "user";
+    return mode == AuthorizationMode::policy ? "policy" : "user";
 }
 
-bool read_sui_account_settings(AgentQSuiAccountSettings* settings)
+bool read_sui_account_settings(SuiAccountSettings* settings)
 {
     if (settings == nullptr || !g_sui_account_settings_present ||
-        g_sui_account_settings_status != AgentQSuiAccountSettingsStatus::active) {
+        g_sui_account_settings_status != SuiAccountSettingsStatus::active) {
         if (settings != nullptr) {
             *settings = kDefaultSuiAccountSettings;
         }
@@ -346,13 +346,13 @@ bool read_sui_account_settings(AgentQSuiAccountSettings* settings)
     return true;
 }
 
-bool store_sui_account_settings(const AgentQSuiAccountSettings& settings)
+bool store_sui_account_settings(const SuiAccountSettings& settings)
 {
     if (g_sui_account_settings_store_fails) {
         return false;
     }
     g_sui_account_settings_present = true;
-    g_sui_account_settings_status = AgentQSuiAccountSettingsStatus::active;
+    g_sui_account_settings_status = SuiAccountSettingsStatus::active;
     g_sui_account_settings = settings;
     return true;
 }
@@ -363,17 +363,17 @@ bool wipe_sui_account_settings()
         return false;
     }
     g_sui_account_settings_present = false;
-    g_sui_account_settings_status = AgentQSuiAccountSettingsStatus::missing;
+    g_sui_account_settings_status = SuiAccountSettingsStatus::missing;
     g_sui_account_settings = kDefaultSuiAccountSettings;
     return true;
 }
 
-AgentQSuiAccountSettingsStatus sui_account_settings_status()
+SuiAccountSettingsStatus sui_account_settings_status()
 {
     return g_sui_account_settings_status;
 }
 
-bool read_human_approval_input_mode(AgentQHumanApprovalInputMode* mode)
+bool read_human_approval_input_mode(HumanApprovalInputMode* mode)
 {
     if (mode == nullptr || !g_human_approval_setting_present) {
         return false;
@@ -387,7 +387,7 @@ bool human_approval_requires_pin()
     return true;
 }
 
-bool store_human_approval_input_mode(AgentQHumanApprovalInputMode mode)
+bool store_human_approval_input_mode(HumanApprovalInputMode mode)
 {
     if (g_human_approval_setting_store_fails) {
         return false;
@@ -400,7 +400,7 @@ bool store_human_approval_input_mode(AgentQHumanApprovalInputMode mode)
 bool wipe_human_approval_input_mode()
 {
     g_human_approval_setting_present = false;
-    g_human_approval_input_mode = AgentQHumanApprovalInputMode::pin;
+    g_human_approval_input_mode = HumanApprovalInputMode::pin;
     return true;
 }
 
@@ -413,24 +413,24 @@ bool approval_history_wipe()
     return true;
 }
 
-AgentQPolicyUpdateMarkerStatus policy_update_marker_status()
+PolicyUpdateMarkerStatus policy_update_marker_status()
 {
     return g_policy_update_marker_status;
 }
 
-AgentQPolicyUpdateMarkerBeginResult policy_update_marker_begin(
+PolicyUpdateMarkerBeginResult policy_update_marker_begin(
     const uint8_t*,
     size_t policy_digest_size,
     size_t policy_count,
-    AgentQPolicyUpdateHighestAction)
+    PolicyUpdateHighestAction)
 {
-    if (policy_digest_size != kAgentQPolicyUpdateDigestBytes ||
-        policy_count > kAgentQCurrentPolicyMaxTotalPolicies) {
-        return AgentQPolicyUpdateMarkerBeginResult::invalid_input;
+    if (policy_digest_size != kPolicyUpdateDigestBytes ||
+        policy_count > kCurrentPolicyMaxTotalPolicies) {
+        return PolicyUpdateMarkerBeginResult::invalid_input;
     }
     g_policy_update_marker_present = true;
-    g_policy_update_marker_status = AgentQPolicyUpdateMarkerStatus::pending;
-    return AgentQPolicyUpdateMarkerBeginResult::written;
+    g_policy_update_marker_status = PolicyUpdateMarkerStatus::pending;
+    return PolicyUpdateMarkerBeginResult::written;
 }
 
 bool policy_update_marker_clear()
@@ -439,11 +439,11 @@ bool policy_update_marker_clear()
         return false;
     }
     g_policy_update_marker_present = false;
-    g_policy_update_marker_status = AgentQPolicyUpdateMarkerStatus::clear;
+    g_policy_update_marker_status = PolicyUpdateMarkerStatus::clear;
     return true;
 }
 
-agent_q::AgentQSuiZkLoginProofRecordStatus sui_zklogin_proof_record_status()
+signing::SuiZkLoginProofRecordStatus sui_zklogin_proof_record_status()
 {
     return g_zklogin_proof_status;
 }
@@ -454,48 +454,48 @@ bool wipe_sui_zklogin_proof_record()
         return false;
     }
     g_zklogin_proof_present = false;
-    g_zklogin_proof_status = AgentQSuiZkLoginProofRecordStatus::missing;
+    g_zklogin_proof_status = SuiZkLoginProofRecordStatus::missing;
     return true;
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 int main()
 {
-    using State = agent_q::AgentQProvisioningRuntimeState;
-    using PersistedState = agent_q::AgentQProvisioningPersistedState;
-    using Storage = agent_q::AgentQProvisioningStateStorageStatus;
-    using Consistency = agent_q::AgentQPersistentMaterialConsistencyResult;
-    using Commit = agent_q::AgentQPersistentMaterialCommitResult;
-    using Wipe = agent_q::AgentQPersistentMaterialWipeResult;
+    using State = signing::ProvisioningRuntimeState;
+    using PersistedState = signing::ProvisioningPersistedState;
+    using Storage = signing::ProvisioningStateStorageStatus;
+    using Consistency = signing::PersistentMaterialConsistencyResult;
+    using Commit = signing::PersistentMaterialCommitResult;
+    using Wipe = signing::PersistentMaterialWipeResult;
 
-    uint8_t root[agent_q::kRootMaterialBytes] = {};
+    uint8_t root[signing::kRootMaterialBytes] = {};
     State effective = State::unprovisioned;
 
     reset_stubs();
-    expect(agent_q::persistent_material_record_runtime_failure(
-               agent_q::AgentQPersistentMaterialRuntimeFailure::root_material_unreadable, ops()) ==
+    expect(signing::persistent_material_record_runtime_failure(
+               signing::PersistentMaterialRuntimeFailure::root_material_unreadable, ops()) ==
                Consistency::consistency_error,
            "runtime material failure is recorded as consistency error");
-    expect(agent_q::persistent_material_consistency_error_active(),
+    expect(signing::persistent_material_consistency_error_active(),
            "runtime material failure latches consistency error");
-    expect(agent_q::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+    expect(signing::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
                Commit::ok,
            "setup commit succeeds after runtime failure is resolved");
-    expect(!agent_q::persistent_material_consistency_error_active(),
+    expect(!signing::persistent_material_consistency_error_active(),
            "setup commit success clears consistency error latch");
 
     reset_stubs();
-    expect(agent_q::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+    expect(signing::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
                Commit::ok,
            "setup commit succeeds");
     expect(g_root_present && g_policy_present && g_auth_present &&
                g_signing_mode_present && g_human_approval_setting_present &&
                g_sui_account_settings_present,
            "setup commit stores all required material, signing mode, human approval default, and Sui account settings");
-    expect(g_signing_mode == agent_q::AgentQSigningAuthorizationMode::user,
+    expect(g_signing_mode == signing::AuthorizationMode::user,
            "setup commit initializes signing mode to user");
-    expect(g_human_approval_input_mode == agent_q::AgentQHumanApprovalInputMode::pin,
+    expect(g_human_approval_input_mode == signing::HumanApprovalInputMode::pin,
            "setup commit initializes human approval input mode to PIN");
     expect(!g_sui_account_settings.accept_gas_sponsor,
            "setup commit initializes Sui account settings to reject gas sponsors");
@@ -504,29 +504,29 @@ int main()
 
     reset_stubs();
     g_signing_mode_present = true;
-    g_signing_mode_status = agent_q::AgentQSigningAuthorizationModeStatus::active;
-    g_signing_mode = agent_q::AgentQSigningAuthorizationMode::policy;
-    expect(agent_q::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+    g_signing_mode_status = signing::AuthorizationModeStatus::active;
+    g_signing_mode = signing::AuthorizationMode::policy;
+    expect(signing::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
                Commit::ok,
            "setup commit succeeds over stale signing mode material");
-    expect(g_signing_mode_present && g_signing_mode == agent_q::AgentQSigningAuthorizationMode::user,
+    expect(g_signing_mode_present && g_signing_mode == signing::AuthorizationMode::user,
            "setup commit reinitializes stale signing mode to user");
 
     reset_stubs();
     g_human_approval_setting_present = true;
-    g_human_approval_input_mode = agent_q::AgentQHumanApprovalInputMode::confirm;
-    expect(agent_q::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+    g_human_approval_input_mode = signing::HumanApprovalInputMode::confirm;
+    expect(signing::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
                Commit::ok,
            "setup commit succeeds over stale human approval input mode material");
     expect(g_human_approval_setting_present &&
-               g_human_approval_input_mode == agent_q::AgentQHumanApprovalInputMode::pin,
+               g_human_approval_input_mode == signing::HumanApprovalInputMode::pin,
            "setup commit reinitializes stale human approval input mode to PIN");
 
     reset_stubs();
     g_sui_account_settings_present = true;
-    g_sui_account_settings_status = agent_q::AgentQSuiAccountSettingsStatus::active;
+    g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
     g_sui_account_settings.accept_gas_sponsor = true;
-    expect(agent_q::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+    expect(signing::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
                Commit::ok,
            "setup commit succeeds over stale Sui account settings material");
     expect(g_sui_account_settings_present && !g_sui_account_settings.accept_gas_sponsor,
@@ -534,7 +534,7 @@ int main()
 
     reset_stubs();
     g_policy_store_fails = true;
-    expect(agent_q::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+    expect(signing::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
                Commit::policy_storage_error,
            "policy storage failure is reported");
     expect(!g_root_present && !g_policy_present && !g_auth_present &&
@@ -546,7 +546,7 @@ int main()
 
     reset_stubs();
     g_signing_mode_store_fails = true;
-    expect(agent_q::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+    expect(signing::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
                Commit::signing_mode_storage_error,
            "signing mode storage failure is reported");
     expect(!g_root_present && !g_policy_present && !g_auth_present &&
@@ -557,7 +557,7 @@ int main()
 
     reset_stubs();
     g_human_approval_setting_store_fails = true;
-    expect(agent_q::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+    expect(signing::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
                Commit::human_approval_setting_storage_error,
            "human approval input mode storage failure is reported");
     expect(!g_root_present && !g_policy_present && !g_auth_present &&
@@ -569,7 +569,7 @@ int main()
 
     reset_stubs();
     g_sui_account_settings_store_fails = true;
-    expect(agent_q::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+    expect(signing::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
                Commit::sui_account_settings_storage_error,
            "Sui account settings storage failure is reported");
     expect(!g_root_present && !g_policy_present && !g_auth_present &&
@@ -582,36 +582,36 @@ int main()
     reset_stubs();
     g_root_present = true;
     g_policy_present = true;
-    g_policy_status = agent_q::AgentQPolicyStoreStatus::active;
+    g_policy_status = signing::PolicyStoreStatus::active;
     g_auth_present = true;
-    g_auth_status = agent_q::AgentQLocalAuthStatus::active;
+    g_auth_status = signing::LocalAuthStatus::active;
     g_signing_mode_present = true;
-    g_signing_mode_status = agent_q::AgentQSigningAuthorizationModeStatus::active;
+    g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_sui_account_settings_present = true;
-    g_sui_account_settings_status = agent_q::AgentQSuiAccountSettingsStatus::active;
+    g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
     g_human_approval_setting_present = true;
     g_approval_history_present = true;
     g_policy_update_marker_present = true;
-    g_policy_update_marker_status = agent_q::AgentQPolicyUpdateMarkerStatus::pending;
+    g_policy_update_marker_status = signing::PolicyUpdateMarkerStatus::pending;
     g_zklogin_proof_present = true;
-    g_zklogin_proof_status = agent_q::AgentQSuiZkLoginProofRecordStatus::active;
-    expect(agent_q::persistent_material_record_runtime_failure(
-               agent_q::AgentQPersistentMaterialRuntimeFailure::local_reset_root_wipe_failed, ops()) ==
+    g_zklogin_proof_status = signing::SuiZkLoginProofRecordStatus::active;
+    expect(signing::persistent_material_record_runtime_failure(
+               signing::PersistentMaterialRuntimeFailure::local_reset_root_wipe_failed, ops()) ==
                Consistency::consistency_error,
            "local reset material failure latches consistency error before wipe");
-    expect(agent_q::persistent_material_wipe_all() == Wipe::ok,
+    expect(signing::persistent_material_wipe_all() == Wipe::ok,
            "wipe all succeeds");
     expect(!g_root_present && !g_policy_present && !g_auth_present &&
                !g_signing_mode_present && !g_sui_account_settings_present &&
                !g_human_approval_setting_present && !g_approval_history_present &&
                !g_policy_update_marker_present && !g_zklogin_proof_present,
            "wipe all removes required, signing-mode, Sui account settings, reset-scoped settings, approval-history, policy-update marker, and zkLogin proof material");
-    expect(!agent_q::persistent_material_consistency_error_active(),
+    expect(!signing::persistent_material_consistency_error_active(),
            "wipe all success clears consistency error latch");
 
     reset_stubs();
-    g_policy_update_marker_status = agent_q::AgentQPolicyUpdateMarkerStatus::pending;
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::missing, nullptr, &effective, ops()) ==
+    g_policy_update_marker_status = signing::PolicyUpdateMarkerStatus::pending;
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::missing, nullptr, &effective, ops()) ==
                Consistency::consistency_error,
            "missing state with policy-update marker fails closed");
     expect(g_consistency_error_count == 1,
@@ -619,8 +619,8 @@ int main()
 
     reset_stubs();
     g_zklogin_proof_present = true;
-    g_zklogin_proof_status = agent_q::AgentQSuiZkLoginProofRecordStatus::active;
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::missing, nullptr, &effective, ops()) ==
+    g_zklogin_proof_status = signing::SuiZkLoginProofRecordStatus::active;
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::missing, nullptr, &effective, ops()) ==
                Consistency::consistency_error,
            "missing state with zkLogin proof material fails closed");
     expect(g_consistency_error_count == 1,
@@ -629,16 +629,16 @@ int main()
     reset_stubs();
     g_root_present = true;
     g_policy_present = true;
-    g_policy_status = agent_q::AgentQPolicyStoreStatus::active;
+    g_policy_status = signing::PolicyStoreStatus::active;
     g_auth_present = true;
-    g_auth_status = agent_q::AgentQLocalAuthStatus::active;
+    g_auth_status = signing::LocalAuthStatus::active;
     g_signing_mode_present = true;
-    g_signing_mode_status = agent_q::AgentQSigningAuthorizationModeStatus::active;
+    g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_sui_account_settings_present = true;
-    g_sui_account_settings_status = agent_q::AgentQSuiAccountSettingsStatus::active;
+    g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
     g_policy_update_marker_present = true;
-    g_policy_update_marker_status = agent_q::AgentQPolicyUpdateMarkerStatus::pending;
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
+    g_policy_update_marker_status = signing::PolicyUpdateMarkerStatus::pending;
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
                Consistency::consistency_error,
            "pending policy-update marker blocks provisioned material readiness");
     expect(g_consistency_error_count == 1,
@@ -646,42 +646,42 @@ int main()
 
     reset_stubs();
     g_policy_update_marker_present = true;
-    g_policy_update_marker_status = agent_q::AgentQPolicyUpdateMarkerStatus::pending;
+    g_policy_update_marker_status = signing::PolicyUpdateMarkerStatus::pending;
     g_policy_update_marker_wipe_fails = true;
-    expect(agent_q::persistent_material_wipe_all() == Wipe::policy_update_marker_wipe_error,
+    expect(signing::persistent_material_wipe_all() == Wipe::policy_update_marker_wipe_error,
            "policy-update marker wipe failure is reported");
     expect(g_policy_update_marker_present,
            "failed policy-update marker wipe leaves marker for caller-owned fail-closed handling");
 
     reset_stubs();
     g_zklogin_proof_present = true;
-    g_zklogin_proof_status = agent_q::AgentQSuiZkLoginProofRecordStatus::active;
+    g_zklogin_proof_status = signing::SuiZkLoginProofRecordStatus::active;
     g_zklogin_proof_wipe_fails = true;
-    expect(agent_q::persistent_material_wipe_all() == Wipe::zklogin_proof_wipe_error,
+    expect(signing::persistent_material_wipe_all() == Wipe::zklogin_proof_wipe_error,
            "zkLogin proof wipe failure is reported");
     expect(g_zklogin_proof_present,
            "failed zkLogin proof wipe leaves proof for caller-owned fail-closed handling");
 
     reset_stubs();
     g_signing_mode_present = true;
-    g_signing_mode_status = agent_q::AgentQSigningAuthorizationModeStatus::active;
+    g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_signing_mode_wipe_fails = true;
-    expect(agent_q::persistent_material_wipe_all() == Wipe::signing_mode_wipe_error,
+    expect(signing::persistent_material_wipe_all() == Wipe::signing_mode_wipe_error,
            "signing mode wipe failure is reported");
     expect(g_signing_mode_present,
            "failed signing mode wipe leaves signing mode for caller-owned fail-closed handling");
 
     reset_stubs();
     g_sui_account_settings_present = true;
-    g_sui_account_settings_status = agent_q::AgentQSuiAccountSettingsStatus::active;
+    g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
     g_sui_account_settings_wipe_fails = true;
-    expect(agent_q::persistent_material_wipe_all() == Wipe::sui_account_settings_wipe_error,
+    expect(signing::persistent_material_wipe_all() == Wipe::sui_account_settings_wipe_error,
            "Sui account settings wipe failure is reported");
     expect(g_sui_account_settings_present,
            "failed Sui account settings wipe leaves settings for caller-owned fail-closed handling");
 
     reset_stubs();
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::missing, nullptr, &effective, ops()) ==
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::missing, nullptr, &effective, ops()) ==
                Consistency::ok,
            "missing state without material is valid unprovisioned");
     expect(effective == State::unprovisioned,
@@ -689,19 +689,19 @@ int main()
 
     reset_stubs();
     g_root_present = true;
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::missing, nullptr, &effective, ops()) ==
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::missing, nullptr, &effective, ops()) ==
                Consistency::consistency_error,
            "missing state with material fails closed");
     expect(g_consistency_error_count == 1,
            "missing state with material reports consistency error");
-    expect(agent_q::persistent_material_consistency_error_active(),
+    expect(signing::persistent_material_consistency_error_active(),
            "missing state with material latches persistent material error");
 
     reset_stubs();
     g_signing_mode_present = true;
-    g_signing_mode_status = agent_q::AgentQSigningAuthorizationModeStatus::active;
-    g_signing_mode = agent_q::AgentQSigningAuthorizationMode::policy;
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::missing, nullptr, &effective, ops()) ==
+    g_signing_mode_status = signing::AuthorizationModeStatus::active;
+    g_signing_mode = signing::AuthorizationMode::policy;
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::missing, nullptr, &effective, ops()) ==
                Consistency::consistency_error,
            "missing state with signing mode material fails closed");
     expect(g_consistency_error_count == 1,
@@ -709,37 +709,37 @@ int main()
 
     reset_stubs();
     g_sui_account_settings_present = true;
-    g_sui_account_settings_status = agent_q::AgentQSuiAccountSettingsStatus::active;
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::missing, nullptr, &effective, ops()) ==
+    g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::missing, nullptr, &effective, ops()) ==
                Consistency::consistency_error,
            "missing state with Sui account settings fails closed");
     expect(g_consistency_error_count == 1,
            "missing state with Sui account settings reports consistency error");
 
     reset_stubs();
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::unreadable, nullptr, &effective, ops()) ==
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::unreadable, nullptr, &effective, ops()) ==
                Consistency::state_storage_error,
            "unreadable state fails closed");
     expect(g_consistency_error_count == 1,
            "unreadable state reports consistency error");
-    expect(agent_q::persistent_material_consistency_error_active(),
+    expect(signing::persistent_material_consistency_error_active(),
            "unreadable state latches persistent material error");
 
     reset_stubs();
     g_persisted_state = PersistedState::provisioned;
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "unknown", &effective, ops()) ==
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "unknown", &effective, ops()) ==
                Consistency::consistency_error,
            "unknown state without material fails closed");
     expect(g_persisted_state == PersistedState::provisioned,
            "unknown state is not normalized to unprovisioned");
     expect(g_consistency_error_count == 1,
            "unknown state without material reports consistency error");
-    expect(agent_q::persistent_material_consistency_error_active(),
+    expect(signing::persistent_material_consistency_error_active(),
            "unknown state without material latches persistent material error");
 
     reset_stubs();
     g_root_present = true;
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "unknown", &effective, ops()) ==
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "unknown", &effective, ops()) ==
                Consistency::consistency_error,
            "unknown state with material fails closed");
     expect(g_consistency_error_count == 1,
@@ -748,15 +748,15 @@ int main()
     reset_stubs();
     g_root_present = true;
     g_policy_present = true;
-    g_policy_status = agent_q::AgentQPolicyStoreStatus::active;
+    g_policy_status = signing::PolicyStoreStatus::active;
     g_auth_present = true;
-    g_auth_status = agent_q::AgentQLocalAuthStatus::active;
+    g_auth_status = signing::LocalAuthStatus::active;
     g_signing_mode_present = true;
-    g_signing_mode_status = agent_q::AgentQSigningAuthorizationModeStatus::active;
+    g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_sui_account_settings_present = true;
-    g_sui_account_settings_status = agent_q::AgentQSuiAccountSettingsStatus::active;
-    g_zklogin_proof_status = agent_q::AgentQSuiZkLoginProofRecordStatus::invalid;
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
+    g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
+    g_zklogin_proof_status = signing::SuiZkLoginProofRecordStatus::invalid;
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
                Consistency::consistency_error,
            "complete provisioned material with invalid zkLogin proof fails closed");
     expect(g_consistency_error_count == 1,
@@ -765,14 +765,14 @@ int main()
     reset_stubs();
     g_root_present = true;
     g_policy_present = true;
-    g_policy_status = agent_q::AgentQPolicyStoreStatus::active;
+    g_policy_status = signing::PolicyStoreStatus::active;
     g_auth_present = true;
-    g_auth_status = agent_q::AgentQLocalAuthStatus::active;
+    g_auth_status = signing::LocalAuthStatus::active;
     g_signing_mode_present = true;
-    g_signing_mode_status = agent_q::AgentQSigningAuthorizationModeStatus::active;
+    g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_sui_account_settings_present = true;
-    g_sui_account_settings_status = agent_q::AgentQSuiAccountSettingsStatus::active;
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
+    g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
                Consistency::ok,
            "complete native provisioned material is valid");
     expect(effective == State::provisioned,
@@ -781,16 +781,16 @@ int main()
     reset_stubs();
     g_root_present = true;
     g_policy_present = true;
-    g_policy_status = agent_q::AgentQPolicyStoreStatus::active;
+    g_policy_status = signing::PolicyStoreStatus::active;
     g_auth_present = true;
-    g_auth_status = agent_q::AgentQLocalAuthStatus::active;
+    g_auth_status = signing::LocalAuthStatus::active;
     g_signing_mode_present = true;
-    g_signing_mode_status = agent_q::AgentQSigningAuthorizationModeStatus::active;
+    g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_sui_account_settings_present = true;
-    g_sui_account_settings_status = agent_q::AgentQSuiAccountSettingsStatus::active;
+    g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
     g_zklogin_proof_present = true;
-    g_zklogin_proof_status = agent_q::AgentQSuiZkLoginProofRecordStatus::active;
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
+    g_zklogin_proof_status = signing::SuiZkLoginProofRecordStatus::active;
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
                Consistency::ok,
            "complete zkLogin provisioned material is valid");
     expect(effective == State::provisioned,
@@ -799,12 +799,12 @@ int main()
     reset_stubs();
     g_root_present = true;
     g_policy_present = true;
-    g_policy_status = agent_q::AgentQPolicyStoreStatus::active;
+    g_policy_status = signing::PolicyStoreStatus::active;
     g_auth_present = true;
-    g_auth_status = agent_q::AgentQLocalAuthStatus::active;
+    g_auth_status = signing::LocalAuthStatus::active;
     g_sui_account_settings_present = true;
-    g_sui_account_settings_status = agent_q::AgentQSuiAccountSettingsStatus::active;
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
+    g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
                Consistency::consistency_error,
            "provisioned material without signing mode fails closed");
     expect(g_consistency_error_count == 1,
@@ -813,12 +813,12 @@ int main()
     reset_stubs();
     g_root_present = true;
     g_policy_present = true;
-    g_policy_status = agent_q::AgentQPolicyStoreStatus::active;
+    g_policy_status = signing::PolicyStoreStatus::active;
     g_auth_present = true;
-    g_auth_status = agent_q::AgentQLocalAuthStatus::active;
+    g_auth_status = signing::LocalAuthStatus::active;
     g_signing_mode_present = true;
-    g_signing_mode_status = agent_q::AgentQSigningAuthorizationModeStatus::active;
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
+    g_signing_mode_status = signing::AuthorizationModeStatus::active;
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
                Consistency::consistency_error,
            "provisioned material without Sui account settings fails closed");
     expect(g_consistency_error_count == 1,
@@ -827,14 +827,14 @@ int main()
     reset_stubs();
     g_root_present = true;
     g_policy_present = true;
-    g_policy_status = agent_q::AgentQPolicyStoreStatus::active;
+    g_policy_status = signing::PolicyStoreStatus::active;
     g_auth_present = true;
-    g_auth_status = agent_q::AgentQLocalAuthStatus::active;
+    g_auth_status = signing::LocalAuthStatus::active;
     g_signing_mode_present = true;
-    g_signing_mode_status = agent_q::AgentQSigningAuthorizationModeStatus::invalid;
+    g_signing_mode_status = signing::AuthorizationModeStatus::invalid;
     g_sui_account_settings_present = true;
-    g_sui_account_settings_status = agent_q::AgentQSuiAccountSettingsStatus::active;
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
+    g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
                Consistency::consistency_error,
            "invalid signing mode under provisioned state fails closed");
     expect(g_consistency_error_count == 1,
@@ -843,12 +843,12 @@ int main()
     reset_stubs();
     g_root_present = true;
     g_auth_present = true;
-    g_auth_status = agent_q::AgentQLocalAuthStatus::active;
+    g_auth_status = signing::LocalAuthStatus::active;
     g_signing_mode_present = true;
-    g_signing_mode_status = agent_q::AgentQSigningAuthorizationModeStatus::active;
+    g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_sui_account_settings_present = true;
-    g_sui_account_settings_status = agent_q::AgentQSuiAccountSettingsStatus::active;
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
+    g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
                Consistency::consistency_error,
            "provisioned root plus auth without active policy fails closed");
     expect(g_consistency_error_count == 1,
@@ -856,14 +856,14 @@ int main()
 
     reset_stubs();
     g_root_present = true;
-    g_policy_status = agent_q::AgentQPolicyStoreStatus::invalid;
+    g_policy_status = signing::PolicyStoreStatus::invalid;
     g_auth_present = true;
-    g_auth_status = agent_q::AgentQLocalAuthStatus::active;
+    g_auth_status = signing::LocalAuthStatus::active;
     g_signing_mode_present = true;
-    g_signing_mode_status = agent_q::AgentQSigningAuthorizationModeStatus::active;
+    g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_sui_account_settings_present = true;
-    g_sui_account_settings_status = agent_q::AgentQSuiAccountSettingsStatus::active;
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
+    g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
                Consistency::consistency_error,
            "invalid policy under provisioned state fails closed");
     expect(g_consistency_error_count == 1,
@@ -871,13 +871,13 @@ int main()
 
     reset_stubs();
     g_root_present = true;
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "unprovisioned", &effective, ops()) ==
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "unprovisioned", &effective, ops()) ==
                Consistency::consistency_error,
            "material outside provisioned state fails closed");
 
     reset_stubs();
     g_persisted_state = PersistedState::provisioned;
-    expect(agent_q::persistent_material_validate_loaded_storage_state(Storage::present, "provisioning", &effective, ops()) ==
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "provisioning", &effective, ops()) ==
                Consistency::consistency_error,
            "persisted provisioning state fails closed");
     expect(g_persisted_state == PersistedState::provisioned,
@@ -897,9 +897,9 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
   -I"${TMP_DIR}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" -I"${TMP_DIR}/firmware_common" \
   "${TMP_DIR}/persistent_material_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_persistent_material.cpp" \
+  "${RUNTIME_DIR}/persistent_material.cpp" \
   -o "${TMP_DIR}/persistent_material_test"
 
 "${TMP_DIR}/persistent_material_test"

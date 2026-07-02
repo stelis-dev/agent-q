@@ -19,16 +19,16 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 CXX_BIN="${CXX:-c++}"
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-signature-request-review.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-signature-request-review.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-mkdir -p "${TMP_DIR}/agent_q_common" "${TMP_DIR}/freertos"
-ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/agent_q_common/sui"
-ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
+mkdir -p "${TMP_DIR}/firmware_common" "${TMP_DIR}/freertos"
+ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/firmware_common/sui"
+ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
 cat >"${TMP_DIR}/freertos/FreeRTOS.h" <<'H'
 #pragma once
 #include <stdint.h>
@@ -40,7 +40,7 @@ cat >"${TMP_DIR}/user_signing_review_view_model_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_user_signing_review_view_model.h"
+#include "user_signing_review_view_model.h"
 
 namespace {
 
@@ -66,8 +66,8 @@ void copy_field(char* output, size_t output_size, const char* value)
 }
 
 void add_summary_row(
-    agent_q::SuiReviewSummary* summary,
-    agent_q::SuiReviewRowKind kind,
+    signing::SuiReviewSummary* summary,
+    signing::SuiReviewRowKind kind,
     const char* label,
     const char* value)
 {
@@ -77,39 +77,39 @@ void add_summary_row(
     copy_field(summary->rows[index].value, sizeof(summary->rows[index].value), value);
 }
 
-agent_q::AgentQUserSigningFlowSnapshot valid_snapshot()
+signing::UserSigningFlowSnapshot valid_snapshot()
 {
-    agent_q::AgentQUserSigningFlowSnapshot snapshot = {};
+    signing::UserSigningFlowSnapshot snapshot = {};
     snapshot.active = true;
-    snapshot.stage = agent_q::AgentQUserSigningStage::reviewing;
-    snapshot.signing_route = agent_q::AgentQSigningRoute::sui_sign_transaction;
+    snapshot.stage = signing::UserSigningStage::reviewing;
+    snapshot.signing_route = signing::Route::sui_sign_transaction;
     copy_field(snapshot.chain, sizeof(snapshot.chain), "sui");
     copy_field(snapshot.method, sizeof(snapshot.method), "sign_transaction");
     copy_field(snapshot.network, sizeof(snapshot.network), "devnet");
     copy_field(snapshot.payload_digest, sizeof(snapshot.payload_digest),
                "sha256:1111111111111111111111111111111111111111111111111111111111111111");
-    snapshot.sui_review.status = agent_q::SuiReviewSummaryStatus::ok;
-    snapshot.sui_review.risk = agent_q::SuiReviewRiskLevel::low;
+    snapshot.sui_review.status = signing::SuiReviewSummaryStatus::ok;
+    snapshot.sui_review.risk = signing::SuiReviewRiskLevel::low;
     copy_field(snapshot.sui_review.title, sizeof(snapshot.sui_review.title), "Review Sui transaction");
     copy_field(snapshot.sui_review.type_summary, sizeof(snapshot.sui_review.type_summary), "SUI transfer");
     copy_field(snapshot.sui_review.risk_label, sizeof(snapshot.sui_review.risk_label), "Low");
-    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Type", "SUI transfer");
-    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Risk", "Low");
-    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Amount", "1000000000");
-    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Asset", "0x2::sui::SUI");
-    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::wrapped_value, "Recipient", kFullRecipient);
-    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Gas max", "5000000");
-    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Gas price", "1000");
-    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Commands", "2");
-    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Command 0", "SplitCoins");
-    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Command 1", "TransferObjects");
+    add_summary_row(&snapshot.sui_review, signing::SuiReviewRowKind::normal, "Type", "SUI transfer");
+    add_summary_row(&snapshot.sui_review, signing::SuiReviewRowKind::normal, "Risk", "Low");
+    add_summary_row(&snapshot.sui_review, signing::SuiReviewRowKind::normal, "Amount", "1000000000");
+    add_summary_row(&snapshot.sui_review, signing::SuiReviewRowKind::normal, "Asset", "0x2::sui::SUI");
+    add_summary_row(&snapshot.sui_review, signing::SuiReviewRowKind::wrapped_value, "Recipient", kFullRecipient);
+    add_summary_row(&snapshot.sui_review, signing::SuiReviewRowKind::normal, "Gas max", "5000000");
+    add_summary_row(&snapshot.sui_review, signing::SuiReviewRowKind::normal, "Gas price", "1000");
+    add_summary_row(&snapshot.sui_review, signing::SuiReviewRowKind::normal, "Commands", "2");
+    add_summary_row(&snapshot.sui_review, signing::SuiReviewRowKind::normal, "Command 0", "SplitCoins");
+    add_summary_row(&snapshot.sui_review, signing::SuiReviewRowKind::normal, "Command 1", "TransferObjects");
     snapshot.signable_payload_available = true;
     snapshot.signable_payload_size = 128;
     return snapshot;
 }
 
 const char* row_value(
-    const agent_q::AgentQUserSigningReviewViewModel& model,
+    const signing::UserSigningReviewViewModel& model,
     const char* label)
 {
     for (size_t index = 0; index < model.row_count; ++index) {
@@ -120,8 +120,8 @@ const char* row_value(
     return nullptr;
 }
 
-agent_q::AgentQUserSigningReviewRowKind row_kind(
-    const agent_q::AgentQUserSigningReviewViewModel& model,
+signing::UserSigningReviewRowKind row_kind(
+    const signing::UserSigningReviewViewModel& model,
     const char* label)
 {
     for (size_t index = 0; index < model.row_count; ++index) {
@@ -129,11 +129,11 @@ agent_q::AgentQUserSigningReviewRowKind row_kind(
             return model.rows[index].kind;
         }
     }
-    return agent_q::AgentQUserSigningReviewRowKind::normal;
+    return signing::UserSigningReviewRowKind::normal;
 }
 
 size_t row_label_count(
-    const agent_q::AgentQUserSigningReviewViewModel& model,
+    const signing::UserSigningReviewViewModel& model,
     const char* label)
 {
     size_t count = 0;
@@ -149,11 +149,11 @@ size_t row_label_count(
 
 int main()
 {
-    using Result = agent_q::AgentQUserSigningReviewBuildResult;
+    using Result = signing::UserSigningReviewBuildResult;
 
-    agent_q::AgentQUserSigningReviewViewModel model = {};
-    agent_q::AgentQUserSigningFlowSnapshot snapshot = valid_snapshot();
-    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
+    signing::UserSigningReviewViewModel model = {};
+    signing::UserSigningFlowSnapshot snapshot = valid_snapshot();
+    expect(signing::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
            "valid reviewing snapshot builds review model");
     expect(strcmp(model.title, "Review Sui transaction") == 0,
            "model title names review action");
@@ -175,26 +175,26 @@ int main()
            "gas price row included");
     expect(strcmp(row_value(model, "Recipient"), kFullRecipient) == 0,
            "full recipient row included without tail-only truncation");
-    expect(row_kind(model, "Recipient") == agent_q::AgentQUserSigningReviewRowKind::wrapped_value,
+    expect(row_kind(model, "Recipient") == signing::UserSigningReviewRowKind::wrapped_value,
            "recipient row carries wrapped-value layout kind");
-    expect(row_kind(model, "Amount") == agent_q::AgentQUserSigningReviewRowKind::normal,
+    expect(row_kind(model, "Amount") == signing::UserSigningReviewRowKind::normal,
            "amount row carries normal layout kind");
 
     snapshot = valid_snapshot();
-    snapshot.sui_review.status = agent_q::SuiReviewSummaryStatus::insufficient_review;
-    snapshot.sui_review.risk = agent_q::SuiReviewRiskLevel::high;
+    snapshot.sui_review.status = signing::SuiReviewSummaryStatus::insufficient_review;
+    snapshot.sui_review.risk = signing::SuiReviewRiskLevel::high;
     copy_field(snapshot.sui_review.type_summary, sizeof(snapshot.sui_review.type_summary), "Unparsed transaction");
     copy_field(snapshot.sui_review.risk_label, sizeof(snapshot.sui_review.risk_label), "High");
     snapshot.sui_review.row_count = 0;
-    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::warning, "Type", "Unparsed transaction");
-    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::warning, "Reason", "Transaction shape cannot be fully shown");
-    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::wrapped_value, "Sender",
+    add_summary_row(&snapshot.sui_review, signing::SuiReviewRowKind::warning, "Type", "Unparsed transaction");
+    add_summary_row(&snapshot.sui_review, signing::SuiReviewRowKind::warning, "Reason", "Transaction shape cannot be fully shown");
+    add_summary_row(&snapshot.sui_review, signing::SuiReviewRowKind::wrapped_value, "Sender",
                     "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::wrapped_value, "Gas owner",
+    add_summary_row(&snapshot.sui_review, signing::SuiReviewRowKind::wrapped_value, "Gas owner",
                     "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Gas max", "5000000");
-    add_summary_row(&snapshot.sui_review, agent_q::SuiReviewRowKind::normal, "Gas price", "1000");
-    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
+    add_summary_row(&snapshot.sui_review, signing::SuiReviewRowKind::normal, "Gas max", "5000000");
+    add_summary_row(&snapshot.sui_review, signing::SuiReviewRowKind::normal, "Gas price", "1000");
+    expect(signing::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
            "incomplete review snapshot builds blind-signing confirmation model");
     expect(model.row_count == 11,
            "blind-signing confirmation includes mode warnings and adapter blind summary rows");
@@ -207,17 +207,17 @@ int main()
     expect(strcmp(row_value(model, "Warning"),
                   "Confirm only if you accept blind signing") == 0,
            "blind-signing warning row is included");
-    expect(row_kind(model, "Review") == agent_q::AgentQUserSigningReviewRowKind::warning,
+    expect(row_kind(model, "Review") == signing::UserSigningReviewRowKind::warning,
            "blind-signing review row carries warning layout kind");
 
     snapshot = valid_snapshot();
     copy_field(snapshot.method, sizeof(snapshot.method), "sign_personal_message");
-    snapshot.signing_route = agent_q::AgentQSigningRoute::sui_sign_personal_message;
+    snapshot.signing_route = signing::Route::sui_sign_personal_message;
     copy_field(snapshot.account_address, sizeof(snapshot.account_address),
                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     copy_field(snapshot.message_preview, sizeof(snapshot.message_preview), "Agent-Q personal message");
     snapshot.signable_payload_size = 24;
-    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
+    expect(signing::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
            "valid personal-message snapshot builds review model");
     expect(strcmp(model.title, "Review Sui message") == 0,
            "personal-message model title names review action");
@@ -232,9 +232,9 @@ int main()
            "personal-message account row included");
     expect(strcmp(row_value(model, "Preview"), "Agent-Q personal message") == 0,
            "personal-message preview row included");
-    expect(row_kind(model, "Preview") == agent_q::AgentQUserSigningReviewRowKind::wrapped_value,
+    expect(row_kind(model, "Preview") == signing::UserSigningReviewRowKind::wrapped_value,
            "personal-message preview row carries wrapped-value layout kind");
-    expect(row_kind(model, "Account") == agent_q::AgentQUserSigningReviewRowKind::normal,
+    expect(row_kind(model, "Account") == signing::UserSigningReviewRowKind::normal,
            "personal-message account row carries normal layout kind");
     expect(strcmp(row_value(model, "Payload digest"),
                   "sha256:1111111111111111111111111111111111111111111111111111111111111111") == 0,
@@ -242,77 +242,77 @@ int main()
 
     snapshot = valid_snapshot();
     snapshot.active = false;
-    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::inactive,
+    expect(signing::user_signing_review_view_model_build(snapshot, &model) == Result::inactive,
            "inactive snapshot is rejected");
     expect(model.row_count == 0, "inactive failure clears output");
 
     snapshot = valid_snapshot();
-    snapshot.stage = agent_q::AgentQUserSigningStage::pin_entry;
-    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::wrong_stage,
+    snapshot.stage = signing::UserSigningStage::pin_entry;
+    expect(signing::user_signing_review_view_model_build(snapshot, &model) == Result::wrong_stage,
            "non-reviewing snapshot is rejected");
 
     snapshot = valid_snapshot();
     snapshot.sui_review.rows[2].value[0] = '\0';
-    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(signing::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "missing amount is rejected");
 
     snapshot = valid_snapshot();
     snapshot.sui_review.row_count = 0;
-    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(signing::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "missing Sui review rows are rejected");
 
     snapshot = valid_snapshot();
     snapshot.signable_payload_available = false;
-    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(signing::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "unavailable signable payload is rejected");
 
     snapshot = valid_snapshot();
     snapshot.payload_digest[0] = '\0';
-    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(signing::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "missing payload digest is rejected");
 
     snapshot = valid_snapshot();
     memset(snapshot.chain, 's', sizeof(snapshot.chain));
-    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
+    expect(signing::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
            "review model uses verified route enum instead of raw snapshot chain");
     expect(strcmp(row_value(model, "Chain"), "sui") == 0,
            "chain row is derived from route enum");
 
     snapshot = valid_snapshot();
     memset(snapshot.method, 'm', sizeof(snapshot.method));
-    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
+    expect(signing::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
            "review model uses verified route enum instead of raw snapshot method");
     expect(strcmp(row_value(model, "Method"), "sign_transaction") == 0,
            "method row is derived from route enum");
 
     snapshot = valid_snapshot();
     copy_field(snapshot.method, sizeof(snapshot.method), "sign_unknown");
-    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
+    expect(signing::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
            "raw method metadata does not drive review branching");
 
     snapshot = valid_snapshot();
-    snapshot.signing_route = agent_q::AgentQSigningRoute::unsupported;
-    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    snapshot.signing_route = signing::Route::unsupported;
+    expect(signing::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "unsupported route enum is rejected instead of falling through");
 
     snapshot = valid_snapshot();
     memset(snapshot.network, 'd', sizeof(snapshot.network));
-    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
+    expect(signing::user_signing_review_view_model_build(snapshot, &model) == Result::ok,
            "host-supplied network is ignored by the clear-signing view model");
 
     snapshot = valid_snapshot();
     memset(snapshot.sui_review.rows[3].value, 'S', sizeof(snapshot.sui_review.rows[3].value));
-    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(signing::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "unterminated asset is rejected instead of overread");
 
     snapshot = valid_snapshot();
     memset(snapshot.sui_review.rows[4].value, 'b', sizeof(snapshot.sui_review.rows[4].value));
-    expect(agent_q::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
+    expect(signing::user_signing_review_view_model_build(snapshot, &model) == Result::invalid_summary,
            "unterminated overlong recipient is rejected instead of truncated");
 
-    expect(strcmp(agent_q::user_signing_review_view_model_build_result_name(Result::ok), "ok") == 0,
+    expect(strcmp(signing::user_signing_review_view_model_build_result_name(Result::ok), "ok") == 0,
            "result name exposes ok");
-    expect(strcmp(agent_q::user_signing_review_view_model_build_result_name(Result::wrong_stage),
+    expect(strcmp(signing::user_signing_review_view_model_build_result_name(Result::wrong_stage),
                   "wrong_stage") == 0,
            "result name exposes wrong_stage");
 
@@ -326,11 +326,11 @@ CPP
 
 "${CXX_BIN}" -std=c++17 \
   -I"${TMP_DIR}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   -I"${REPO_ROOT}/firmware/src/common" \
-  -I"${REPO_ROOT}/firmware/src/common/agent_q" \
+  -I"${REPO_ROOT}/firmware/src/common" \
   "${TMP_DIR}/user_signing_review_view_model_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_user_signing_review_view_model.cpp" \
+  "${RUNTIME_DIR}/user_signing_review_view_model.cpp" \
   -o "${TMP_DIR}/user_signing_review_view_model_test"
 
 "${TMP_DIR}/user_signing_review_view_model_test"

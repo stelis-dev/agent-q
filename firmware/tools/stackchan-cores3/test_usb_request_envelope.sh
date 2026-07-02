@@ -17,18 +17,18 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
-ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_request_envelope.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_request_envelope.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_type.h" \
-  "${AGENT_Q_DIR}/agent_q_request_id.cpp"; do
+  "${RUNTIME_DIR}/usb_request_envelope.cpp" \
+  "${RUNTIME_DIR}/usb_request_envelope.h" \
+  "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
+  "${RUNTIME_DIR}/usb_operation_manifest.h" \
+  "${RUNTIME_DIR}/usb_operation_type.h" \
+  "${RUNTIME_DIR}/request_id.cpp"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -37,7 +37,7 @@ for required in \
 done
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-request-envelope.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-usb-request-envelope.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/freertos"
@@ -55,9 +55,9 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_usb_request_envelope.h"
+#include "usb_request_envelope.h"
 
-namespace agent_q {
+namespace signing {
 
 void wipe_sensitive_buffer(void* data, size_t size)
 {
@@ -68,28 +68,28 @@ void wipe_sensitive_buffer(void* data, size_t size)
     }
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 namespace {
 
-const char* status_name(agent_q::AgentQUsbRequestEnvelopeParseStatus status)
+const char* status_name(signing::UsbRequestEnvelopeParseStatus status)
 {
     switch (status) {
-        case agent_q::AgentQUsbRequestEnvelopeParseStatus::ok:
+        case signing::UsbRequestEnvelopeParseStatus::ok:
             return "ok";
-        case agent_q::AgentQUsbRequestEnvelopeParseStatus::invalid_json:
+        case signing::UsbRequestEnvelopeParseStatus::invalid_json:
             return "invalid_json";
-        case agent_q::AgentQUsbRequestEnvelopeParseStatus::invalid_id:
+        case signing::UsbRequestEnvelopeParseStatus::invalid_id:
             return "invalid_id";
-        case agent_q::AgentQUsbRequestEnvelopeParseStatus::invalid_request:
+        case signing::UsbRequestEnvelopeParseStatus::invalid_request:
             return "invalid_request";
-        case agent_q::AgentQUsbRequestEnvelopeParseStatus::invalid_params:
+        case signing::UsbRequestEnvelopeParseStatus::invalid_params:
             return "invalid_params";
-        case agent_q::AgentQUsbRequestEnvelopeParseStatus::invalid_session:
+        case signing::UsbRequestEnvelopeParseStatus::invalid_session:
             return "invalid_session";
-        case agent_q::AgentQUsbRequestEnvelopeParseStatus::unsupported_version:
+        case signing::UsbRequestEnvelopeParseStatus::unsupported_version:
             return "unsupported_version";
-        case agent_q::AgentQUsbRequestEnvelopeParseStatus::unsupported_method:
+        case signing::UsbRequestEnvelopeParseStatus::unsupported_method:
             return "unsupported_method";
     }
     return "unknown";
@@ -97,13 +97,13 @@ const char* status_name(agent_q::AgentQUsbRequestEnvelopeParseStatus status)
 
 void expect_status(
     const char* line,
-    agent_q::AgentQUsbRequestEnvelopeParseStatus expected_status,
+    signing::UsbRequestEnvelopeParseStatus expected_status,
     const char* expected_id,
-    agent_q::AgentQUsbOperationType expected_type)
+    signing::UsbOperationType expected_type)
 {
     JsonDocument request;
-    agent_q::AgentQUsbRequestEnvelope envelope = {};
-    const auto status = agent_q::parse_usb_request_envelope(line, request, &envelope);
+    signing::UsbRequestEnvelope envelope = {};
+    const auto status = signing::parse_usb_request_envelope(line, request, &envelope);
     if (status != expected_status) {
         fprintf(stderr, "status mismatch for %s: actual=%s expected=%s\n",
                 line,
@@ -124,8 +124,8 @@ void expect_status(
 
 int main()
 {
-    using Status = agent_q::AgentQUsbRequestEnvelopeParseStatus;
-    using Type = agent_q::AgentQUsbOperationType;
+    using Status = signing::UsbRequestEnvelopeParseStatus;
+    using Type = signing::UsbOperationType;
 
     expect_status(
         "{\"id\":\"req_1\",\"version\":1,\"method\":\"get_status\"}",
@@ -188,8 +188,8 @@ int main()
         "req_bad_type",
         Type::unsupported);
 
-    assert(strcmp(agent_q::usb_request_envelope_error_code(Status::invalid_json), "invalid_request") == 0);
-    assert(agent_q::usb_request_envelope_error_code(Status::ok) == nullptr);
+    assert(strcmp(signing::usb_request_envelope_error_code(Status::invalid_json), "invalid_request") == 0);
+    assert(signing::usb_request_envelope_error_code(Status::ok) == nullptr);
 
     printf("USB request envelope tests passed\n");
     return 0;
@@ -199,13 +199,13 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
-  "${AGENT_Q_DIR}/agent_q_session.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_request_envelope.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_manifest.cpp" \
-  "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
+  "${RUNTIME_DIR}/device_contract.cpp" \
+  "${RUNTIME_DIR}/session.cpp" \
+  "${RUNTIME_DIR}/usb_request_envelope.cpp" \
+  "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
+  "${RUNTIME_DIR}/request_id.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

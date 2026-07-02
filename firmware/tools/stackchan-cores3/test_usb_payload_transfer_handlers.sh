@@ -19,10 +19,10 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
-COMMON_AGENT_Q_DIR="${REPO_ROOT}/firmware/src/common/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
-ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 if [[ -z "${IDF_PATH:-}" ]]; then
   echo "IDF_PATH is not set. Source ESP-IDF v5.5.4 export.sh before running this test." >&2
@@ -38,19 +38,19 @@ for required in \
   "${MBEDTLS_INCLUDE_DIR}/mbedtls/sha256.h" \
   "${MBEDTLS_LIBRARY_DIR}/sha256.c" \
   "${MBEDTLS_LIBRARY_DIR}/platform_util.c" \
-  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_payload_transfer_handlers.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_payload_transfer_handlers.h" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_admission.cpp" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_admission.h" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.h" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_store.cpp" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_store.h" \
-  "${AGENT_Q_DIR}/agent_q_base64.cpp" \
-  "${AGENT_Q_DIR}/agent_q_session.cpp" \
-  "${COMMON_AGENT_Q_DIR}/agent_q_sign_route.h"; do
+  "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
+  "${RUNTIME_DIR}/usb_active_session_request_guard.h" \
+  "${RUNTIME_DIR}/usb_payload_transfer_handlers.cpp" \
+  "${RUNTIME_DIR}/usb_payload_transfer_handlers.h" \
+  "${RUNTIME_DIR}/payload_delivery_admission.cpp" \
+  "${RUNTIME_DIR}/payload_delivery_admission.h" \
+  "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
+  "${RUNTIME_DIR}/payload_delivery_primitives.h" \
+  "${RUNTIME_DIR}/payload_delivery_store.cpp" \
+  "${RUNTIME_DIR}/payload_delivery_store.h" \
+  "${RUNTIME_DIR}/base64.cpp" \
+  "${RUNTIME_DIR}/session.cpp" \
+  "${COMMON_ROOT}/protocol/sign_route.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -59,11 +59,11 @@ for required in \
 done
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-payload-transfer-handlers.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-usb-payload-transfer-handlers.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-mkdir -p "${TMP_DIR}/agent_q_common" "${TMP_DIR}/freertos"
-ln -s "${COMMON_AGENT_Q_DIR}/policy" "${TMP_DIR}/agent_q_common/policy"
+mkdir -p "${TMP_DIR}/firmware_common" "${TMP_DIR}/freertos"
+ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
 
 cat >"${TMP_DIR}/freertos/FreeRTOS.h" <<'H'
 #pragma once
@@ -78,8 +78,8 @@ cat >"${TMP_DIR}/stubs.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_approval_history.h"
-#include "agent_q_protocol_constants.h"
+#include "approval_history.h"
+#include "protocol_constants.h"
 
 namespace {
 
@@ -129,7 +129,7 @@ extern "C" int base64_to_bytes(
     return 0;
 }
 
-namespace agent_q {
+namespace signing {
 
 void wipe_sensitive_buffer(void* data, size_t size)
 {
@@ -149,7 +149,7 @@ bool approval_history_digest_payload(
     size_t output_size)
 {
     if (payload == nullptr || output == nullptr ||
-        output_size != kAgentQApprovalHistoryDigestSize ||
+        output_size != kApprovalHistoryDigestSize ||
         payload_size != sizeof(kSyntheticPayload) ||
         memcmp(payload, kSyntheticPayload, sizeof(kSyntheticPayload)) != 0) {
         return false;
@@ -174,14 +174,14 @@ bool usb_response_write_success_result(const char* id, const char* method, JsonO
 {
     JsonDocument response;
     response["id"] = id;
-    response["version"] = kAgentQProtocolVersion;
+    response["version"] = kProtocolVersion;
     response["success"] = true;
     response["method"] = method;
     response["result"].set(result);
     return usb_response_write_json(response);
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 const char* response_transfer_id() { return g_response_transfer_id; }
 const char* response_payload_ref() { return g_response_payload_ref; }
@@ -213,8 +213,8 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <string.h>
 #include <string>
 
-#include "agent_q_payload_delivery_store.h"
-#include "agent_q_usb_payload_transfer_handlers.h"
+#include "payload_delivery_store.h"
+#include "usb_payload_transfer_handlers.h"
 
 extern const char* response_transfer_id();
 extern const char* response_payload_ref();
@@ -234,7 +234,7 @@ int g_material_calls = 0;
 int g_busy_calls = 0;
 int g_session_calls = 0;
 size_t g_last_deadline_size = 0;
-agent_q::AgentQTimeoutTick g_current_tick = 0;
+signing::TimeoutTick g_current_tick = 0;
 bool g_material_ready = true;
 bool g_busy = false;
 bool g_session_valid = true;
@@ -251,7 +251,7 @@ constexpr const char* kPayloadMaxPlusOneSize = "131073";
 
 std::string oversized_chunk_base64()
 {
-    const size_t decoded_size = agent_q::kAgentQPayloadDeliveryDefaultChunkMaxBytes + 1;
+    const size_t decoded_size = signing::kPayloadDeliveryDefaultChunkMaxBytes + 1;
     std::string encoded(((decoded_size + 2) / 3) * 4, 'A');
     const size_t remainder = decoded_size % 3;
     if (remainder == 1) {
@@ -278,7 +278,7 @@ void reset_state()
     g_last_error_code = nullptr;
     g_last_session = nullptr;
     set_decode_should_fail_after_write(false);
-    agent_q::payload_delivery_store_reset();
+    signing::payload_delivery_store_reset();
 }
 
 bool write_error(const char*, const char* code)
@@ -299,7 +299,7 @@ bool material_ready()
     return g_material_ready;
 }
 
-bool write_busy(const char* id, const agent_q::AgentQUsbOperationResponseWriter& writer)
+bool write_busy(const char* id, const signing::UsbOperationResponseWriter& writer)
 {
     ++g_busy_calls;
     if (g_busy) {
@@ -311,7 +311,7 @@ bool write_busy(const char* id, const agent_q::AgentQUsbOperationResponseWriter&
 bool require_session(
     const char* id,
     const char* session_id,
-    const agent_q::AgentQUsbOperationResponseWriter& writer)
+    const signing::UsbOperationResponseWriter& writer)
 {
     ++g_session_calls;
     g_last_session = session_id;
@@ -322,25 +322,25 @@ bool require_session(
     return g_session_valid;
 }
 
-agent_q::AgentQTimeoutWindow timeout_window_for_size(size_t size_bytes)
+signing::TimeoutWindow timeout_window_for_size(size_t size_bytes)
 {
     g_last_deadline_size = size_bytes;
-    return agent_q::timeout_window_from_deadline(0, 99);
+    return signing::timeout_window_from_deadline(0, 99);
 }
 
-agent_q::AgentQTimeoutTick current_tick()
+signing::TimeoutTick current_tick()
 {
     return g_current_tick;
 }
 
-agent_q::AgentQUsbOperationResponseWriter make_writer()
+signing::UsbOperationResponseWriter make_writer()
 {
-    return agent_q::AgentQUsbOperationResponseWriter{write_error, log_write_failure};
+    return signing::UsbOperationResponseWriter{write_error, log_write_failure};
 }
 
-agent_q::AgentQUsbPayloadTransferHandlerOps make_ops()
+signing::UsbPayloadTransferHandlerOps make_ops()
 {
-    return agent_q::AgentQUsbPayloadTransferHandlerOps{
+    return signing::UsbPayloadTransferHandlerOps{
         material_ready,
         write_busy,
         require_session,
@@ -369,7 +369,7 @@ void begin_transfer()
         kPayloadSize,
         kDigest);
     JsonDocument doc = parse(request);
-    agent_q::handle_usb_payload_transfer_begin_request("req_begin", doc, make_writer(), make_ops());
+    signing::handle_usb_payload_transfer_begin_request("req_begin", doc, make_writer(), make_ops());
     assert(g_error_calls == 0);
     assert(strcmp(response_method(), "payload_transfer") == 0);
     assert(strncmp(response_transfer_id(), "transfer_", 7) == 0);
@@ -392,7 +392,7 @@ void begin_max_payload_transfer()
         kPayloadMaxSize,
         kDigest);
     JsonDocument doc = parse(request);
-    agent_q::handle_usb_payload_transfer_begin_request(
+    signing::handle_usb_payload_transfer_begin_request(
         "req_begin_max",
         doc,
         make_writer(),
@@ -417,7 +417,7 @@ void begin_max_plus_one_payload_transfer_fails_closed()
         kPayloadMaxPlusOneSize,
         kDigest);
     JsonDocument doc = parse(request);
-    agent_q::handle_usb_payload_transfer_begin_request(
+    signing::handle_usb_payload_transfer_begin_request(
         "req_begin_oversize",
         doc,
         make_writer(),
@@ -425,7 +425,7 @@ void begin_max_plus_one_payload_transfer_fails_closed()
     assert(g_error_calls == 1);
     assert(strcmp(g_last_error_code, "payload_too_large") == 0);
     assert(g_last_deadline_size == 131073);
-    assert(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle);
+    assert(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle);
 }
 
 void append_chunk()
@@ -440,7 +440,7 @@ void append_chunk()
         response_transfer_id(),
         kPayloadChunk);
     JsonDocument doc = parse(request);
-    agent_q::handle_usb_payload_transfer_chunk_request("req_chunk", doc, make_writer(), make_ops());
+    signing::handle_usb_payload_transfer_chunk_request("req_chunk", doc, make_writer(), make_ops());
     assert(g_error_calls == 0);
     assert(strcmp(response_method(), "payload_transfer") == 0);
     assert(strcmp(response_received_bytes(), kPayloadSize) == 0);
@@ -458,14 +458,14 @@ void append_oversized_decoded_chunk_wipes_matching_transfer()
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"" + transfer_id +
         "\",\"offsetBytes\":\"0\",\"chunk\":\"" + chunk + "\"}";
     JsonDocument doc = parse(request.c_str());
-    agent_q::handle_usb_payload_transfer_chunk_request(
+    signing::handle_usb_payload_transfer_chunk_request(
         "req_chunk_oversize",
         doc,
         make_writer(),
         make_ops());
     assert(g_error_calls == 1);
     assert(strcmp(g_last_error_code, "invalid_params") == 0);
-    assert(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle);
+    assert(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle);
 }
 
 void append_oversized_decoded_chunk_preserves_wrong_session_transfer()
@@ -479,21 +479,21 @@ void append_oversized_decoded_chunk_preserves_wrong_session_transfer()
         "\"type\":\"payload_transfer\",\"action\":\"chunk\",\"sessionId\":\"session_bbbbbbbbbbbbbbbb\",\"transferId\":\"" +
         transfer_id + "\",\"offsetBytes\":\"0\",\"chunk\":\"" + chunk + "\"}";
     JsonDocument doc = parse(request.c_str());
-    agent_q::handle_usb_payload_transfer_chunk_request(
+    signing::handle_usb_payload_transfer_chunk_request(
         "req_chunk_oversize_wrong_session",
         doc,
         make_writer(),
         make_ops());
     assert(g_error_calls == 1);
     assert(strcmp(g_last_error_code, "invalid_session") == 0);
-    assert(agent_q::payload_delivery_advance_and_snapshot(0).state ==
-           agent_q::AgentQPayloadDeliveryState::receiving);
+    assert(signing::payload_delivery_advance_and_snapshot(0).state ==
+           signing::PayloadDeliveryState::receiving);
 }
 
 void finish_transfer()
 {
     char request[256] = {};
-    agent_q::AgentQPayloadDeliverySnapshot snapshot = agent_q::payload_delivery_advance_and_snapshot(0);
+    signing::PayloadDeliverySnapshot snapshot = signing::payload_delivery_advance_and_snapshot(0);
     snprintf(
         request,
         sizeof(request),
@@ -501,7 +501,7 @@ void finish_transfer()
         "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"%s\"}",
         snapshot.transfer_id);
     JsonDocument doc = parse(request);
-    agent_q::handle_usb_payload_transfer_finish_request("req_finish", doc, make_writer(), make_ops());
+    signing::handle_usb_payload_transfer_finish_request("req_finish", doc, make_writer(), make_ops());
     assert(g_error_calls == 0);
     assert(strcmp(response_method(), "payload_transfer") == 0);
     assert(strncmp(response_payload_ref(), "payload_", 8) == 0);
@@ -515,7 +515,7 @@ int main()
     {
         reset_state();
         begin_max_payload_transfer();
-        agent_q::payload_delivery_store_reset();
+        signing::payload_delivery_store_reset();
     }
 
     {
@@ -543,7 +543,7 @@ int main()
             "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"%s\"}",
             transfer_id);
         JsonDocument doc = parse(request);
-        agent_q::handle_usb_payload_transfer_abort_request("req_abort", doc, make_writer(), make_ops());
+        signing::handle_usb_payload_transfer_abort_request("req_abort", doc, make_writer(), make_ops());
         assert(g_error_calls == 0);
         assert(strcmp(response_method(), "payload_transfer") == 0);
         assert(strcmp(response_status(), "") == 0);
@@ -553,7 +553,7 @@ int main()
         reset_state();
         g_material_ready = false;
         JsonDocument doc = parse("{\"id\":\"req\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"begin\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\"}");
-        agent_q::handle_usb_payload_transfer_begin_request("req", doc, make_writer(), make_ops());
+        signing::handle_usb_payload_transfer_begin_request("req", doc, make_writer(), make_ops());
         assert(g_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
         assert(g_busy_calls == 0);
@@ -566,12 +566,12 @@ int main()
             "{\"id\":\"req_chunk\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"chunk\","
             "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"transfer_0000000000000001\","
             "\"offsetBytes\":\"0\",\"chunk\":\"E1yl7jeAyRJbpO02f8gRWqPsNX7HEFmi6zR9xg9YoeozfMUOVw==\"}");
-        agent_q::handle_usb_payload_transfer_chunk_request("req_chunk", doc, make_writer(), make_ops());
+        signing::handle_usb_payload_transfer_chunk_request("req_chunk", doc, make_writer(), make_ops());
         assert(g_error_calls == 1);
         assert(strcmp(g_last_error_code, "unknown_request") == 0);
         assert(g_busy_calls == 1);
         assert(g_session_calls == 1);
-        assert(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle);
+        assert(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle);
     }
 
     {
@@ -590,14 +590,14 @@ int main()
             transfer_id,
             kPayloadChunk);
         JsonDocument doc = parse(request);
-        agent_q::handle_usb_payload_transfer_chunk_request(
+        signing::handle_usb_payload_transfer_chunk_request(
             "req_chunk_expired",
             doc,
             make_writer(),
             make_ops());
         assert(g_error_calls == 1);
         assert(strcmp(g_last_error_code, "unknown_request") == 0);
-        assert(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle);
+        assert(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle);
     }
 
     {
@@ -607,12 +607,12 @@ int main()
             "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"transfer_0000000000000001\","
             "\"offsetBytes\":\"0\",\"chunk\":\"E1yl7jeAyRJbpO02f8gRWqPsNX7HEFmi6zR9xg9YoeozfMUOVw==\","
             "\"extra\":\"ignored-by-state\"}");
-        agent_q::handle_usb_payload_transfer_chunk_request("req_chunk_extra", doc, make_writer(), make_ops());
+        signing::handle_usb_payload_transfer_chunk_request("req_chunk_extra", doc, make_writer(), make_ops());
         assert(g_error_calls == 1);
         assert(strcmp(g_last_error_code, "unknown_request") == 0);
         assert(g_busy_calls == 1);
         assert(g_session_calls == 1);
-        assert(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle);
+        assert(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle);
     }
 
     {
@@ -620,12 +620,12 @@ int main()
         JsonDocument doc = parse(
             "{\"id\":\"req_finish\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"finish\","
             "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"transfer_0000000000000001\"}");
-        agent_q::handle_usb_payload_transfer_finish_request("req_finish", doc, make_writer(), make_ops());
+        signing::handle_usb_payload_transfer_finish_request("req_finish", doc, make_writer(), make_ops());
         assert(g_error_calls == 1);
         assert(strcmp(g_last_error_code, "unknown_request") == 0);
         assert(g_busy_calls == 1);
         assert(g_session_calls == 1);
-        assert(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle);
+        assert(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle);
     }
 
     {
@@ -643,14 +643,14 @@ int main()
             "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"%s\"}",
             transfer_id);
         JsonDocument doc = parse(request);
-        agent_q::handle_usb_payload_transfer_finish_request(
+        signing::handle_usb_payload_transfer_finish_request(
             "req_finish_expired",
             doc,
             make_writer(),
             make_ops());
         assert(g_error_calls == 1);
         assert(strcmp(g_last_error_code, "unknown_request") == 0);
-        assert(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle);
+        assert(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle);
     }
 
     {
@@ -659,12 +659,12 @@ int main()
             "{\"id\":\"req_finish\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"finish\","
             "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"transfer_0000000000000001\","
             "\"extra\":\"ignored-by-state\"}");
-        agent_q::handle_usb_payload_transfer_finish_request("req_finish_extra", doc, make_writer(), make_ops());
+        signing::handle_usb_payload_transfer_finish_request("req_finish_extra", doc, make_writer(), make_ops());
         assert(g_error_calls == 1);
         assert(strcmp(g_last_error_code, "unknown_request") == 0);
         assert(g_busy_calls == 1);
         assert(g_session_calls == 1);
-        assert(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle);
+        assert(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle);
     }
 
     {
@@ -675,12 +675,12 @@ int main()
             "{\"id\":\"req_chunk\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"chunk\","
             "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"transfer_0000000000000001\","
             "\"offsetBytes\":\"0\",\"chunk\":\"E1yl7jeAyRJbpO02f8gRWqPsNX7HEFmi6zR9xg9YoeozfMUOVw==\"}");
-        agent_q::handle_usb_payload_transfer_chunk_request("req_chunk", doc, make_writer(), make_ops());
+        signing::handle_usb_payload_transfer_chunk_request("req_chunk", doc, make_writer(), make_ops());
         assert(g_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(last_decode_output_wiped());
-        assert(agent_q::payload_delivery_advance_and_snapshot(0).state ==
-               agent_q::AgentQPayloadDeliveryState::receiving);
+        assert(signing::payload_delivery_advance_and_snapshot(0).state ==
+               signing::PayloadDeliveryState::receiving);
     }
 
     {
@@ -699,14 +699,14 @@ int main()
             "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"%s\"}",
             payload_ref);
         JsonDocument doc = parse(request);
-        agent_q::handle_usb_payload_transfer_abort_request(
+        signing::handle_usb_payload_transfer_abort_request(
             "req_abort_expired",
             doc,
             make_writer(),
             make_ops());
         assert(g_error_calls == 1);
         assert(strcmp(g_last_error_code, "unknown_request") == 0);
-        assert(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle);
+        assert(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle);
     }
 
     {
@@ -732,11 +732,11 @@ int main()
             kPayloadSize,
             kDigest);
         JsonDocument doc = parse(request);
-        agent_q::handle_usb_payload_transfer_begin_request("req_begin_2", doc, make_writer(), make_ops());
+        signing::handle_usb_payload_transfer_begin_request("req_begin_2", doc, make_writer(), make_ops());
         assert(g_error_calls == 1);
         assert(strcmp(g_last_error_code, "busy") == 0);
-        assert(agent_q::payload_delivery_advance_and_snapshot(0).state ==
-               agent_q::AgentQPayloadDeliveryState::receiving);
+        assert(signing::payload_delivery_advance_and_snapshot(0).state ==
+               signing::PayloadDeliveryState::receiving);
     }
 
     {
@@ -753,11 +753,11 @@ int main()
             kPayloadSize,
             kDigest);
         JsonDocument doc = parse(request);
-        agent_q::handle_usb_payload_transfer_begin_request("req_begin_2_extra", doc, make_writer(), make_ops());
+        signing::handle_usb_payload_transfer_begin_request("req_begin_2_extra", doc, make_writer(), make_ops());
         assert(g_error_calls == 1);
         assert(strcmp(g_last_error_code, "busy") == 0);
-        assert(agent_q::payload_delivery_advance_and_snapshot(0).state ==
-               agent_q::AgentQPayloadDeliveryState::receiving);
+        assert(signing::payload_delivery_advance_and_snapshot(0).state ==
+               signing::PayloadDeliveryState::receiving);
     }
 
     {
@@ -766,7 +766,7 @@ int main()
             "{\"id\":\"req_begin\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"begin\","
             "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\","
             "\"totalBytes\":\"not-decimal\",\"payloadDigest\":\"not-digest\"}");
-        agent_q::handle_usb_payload_transfer_begin_request("req_begin", doc, make_writer(), make_ops());
+        signing::handle_usb_payload_transfer_begin_request("req_begin", doc, make_writer(), make_ops());
         assert(g_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
     }
@@ -778,7 +778,7 @@ int main()
             "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\","
             "\"totalBytes\":\"37\",\"payloadDigest\":\"sha256:c1280277d943fff9680e04557dacee6b39f6b22e5b381430576269feb22b679e\","
             "\"extra\":\"not-allowed\"}");
-        agent_q::handle_usb_payload_transfer_begin_request("req_begin", doc, make_writer(), make_ops());
+        signing::handle_usb_payload_transfer_begin_request("req_begin", doc, make_writer(), make_ops());
         assert(g_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
     }
@@ -796,12 +796,12 @@ int main()
             kPayloadSize,
             kDigest);
         JsonDocument doc = parse(request);
-        agent_q::handle_usb_payload_transfer_begin_request("req_begin", doc, make_writer(), make_ops());
+        signing::handle_usb_payload_transfer_begin_request("req_begin", doc, make_writer(), make_ops());
         assert(g_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
         assert(g_session_calls == 1);
         assert(strcmp(g_last_session, "session_aaaaaaaaaaaaaaaa") == 0);
-        assert(agent_q::payload_delivery_advance_and_snapshot(0).state == agent_q::AgentQPayloadDeliveryState::idle);
+        assert(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle);
     }
 
     printf("USB payload transfer handler tests passed\n");
@@ -811,57 +811,57 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${ARDUINOJSON_ROOT}" \
-  -I"${AGENT_Q_DIR}" \
-  -I"${COMMON_AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
+  -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
+  -c "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
   -o "${TMP_DIR}/active_session_request_guard.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${ARDUINOJSON_ROOT}" \
-  -I"${AGENT_Q_DIR}" \
-  -I"${COMMON_AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
+  -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${AGENT_Q_DIR}/agent_q_usb_payload_transfer_handlers.cpp" \
+  -c "${RUNTIME_DIR}/usb_payload_transfer_handlers.cpp" \
   -o "${TMP_DIR}/usb_payload_transfer_handlers.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
-  -I"${AGENT_Q_DIR}" \
-  -I"${COMMON_AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
+  -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
+  -c "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
   -o "${TMP_DIR}/payload_delivery_primitives.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
-  -I"${AGENT_Q_DIR}" \
-  -I"${COMMON_AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
+  -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${AGENT_Q_DIR}/agent_q_payload_delivery_store.cpp" \
+  -c "${RUNTIME_DIR}/payload_delivery_store.cpp" \
   -o "${TMP_DIR}/payload_delivery_store.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
-  -I"${AGENT_Q_DIR}" \
-  -I"${COMMON_AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
+  -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${AGENT_Q_DIR}/agent_q_payload_delivery_admission.cpp" \
+  -c "${RUNTIME_DIR}/payload_delivery_admission.cpp" \
   -o "${TMP_DIR}/payload_delivery_admission.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
-  -I"${AGENT_Q_DIR}" \
-  -I"${COMMON_AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
+  -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${AGENT_Q_DIR}/agent_q_session.cpp" \
+  -c "${RUNTIME_DIR}/session.cpp" \
   -o "${TMP_DIR}/session.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
-  -I"${AGENT_Q_DIR}" \
-  -c "${AGENT_Q_DIR}/agent_q_base64.cpp" \
+  -I"${RUNTIME_DIR}" \
+  -c "${RUNTIME_DIR}/base64.cpp" \
   -o "${TMP_DIR}/base64.o"
 
 cc -std=c99 -Wall -Wextra -Werror \
@@ -876,8 +876,8 @@ cc -std=c99 -Wall -Wextra -Werror \
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${ARDUINOJSON_ROOT}" \
-  -I"${AGENT_Q_DIR}" \
-  -I"${COMMON_AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
+  -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
   "${TMP_DIR}/test.cpp" \

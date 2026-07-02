@@ -1,5 +1,5 @@
-#ifndef AGENT_Q_SIGNING_CRYPTO_SIGN_H
-#define AGENT_Q_SIGNING_CRYPTO_SIGN_H
+#ifndef SIGNING_CRYPTO_SIGN_H
+#define SIGNING_CRYPTO_SIGN_H
 
 #include <stddef.h>
 #include <stdint.h>

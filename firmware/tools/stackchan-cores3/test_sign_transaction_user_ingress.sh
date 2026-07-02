@@ -9,7 +9,7 @@ Compiles the StackChan CoreS3 sign_transaction_user ingress decision helper
 against ArduinoJson with a host C++ compiler and checks that envelope, state,
 session, and params gates stay ordered. This test does not require ESP-IDF,
 but it uses the pinned StackChan ArduinoJson component checkout prepared by
-fetch.sh/build.sh. Set AGENT_Q_ARDUINOJSON_ROOT to override the ArduinoJson
+fetch.sh/build.sh. Set FIRMWARE_ARDUINOJSON_ROOT to override the ArduinoJson
 source root.
 EOF
 }
@@ -21,36 +21,36 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
-ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${AGENT_Q_DIR}/agent_q_base64.cpp" \
-  "${AGENT_Q_DIR}/agent_q_base64.h" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.h" \
-  "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
-  "${AGENT_Q_DIR}/agent_q_request_id.h" \
-  "${AGENT_Q_DIR}/agent_q_session.cpp" \
-  "${AGENT_Q_DIR}/agent_q_session.h" \
-  "${AGENT_Q_DIR}/agent_q_sign_transaction_user_ingress.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_transaction_user_ingress.h" \
-  "${AGENT_Q_DIR}/agent_q_sign_transaction_user_validation.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_transaction_user_validation.h"; do
+  "${RUNTIME_DIR}/base64.cpp" \
+  "${RUNTIME_DIR}/base64.h" \
+  "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
+  "${RUNTIME_DIR}/payload_delivery_primitives.h" \
+  "${RUNTIME_DIR}/request_id.cpp" \
+  "${RUNTIME_DIR}/request_id.h" \
+  "${RUNTIME_DIR}/session.cpp" \
+  "${RUNTIME_DIR}/session.h" \
+  "${RUNTIME_DIR}/sign_transaction_user_ingress.cpp" \
+  "${RUNTIME_DIR}/sign_transaction_user_ingress.h" \
+  "${RUNTIME_DIR}/sign_transaction_user_validation.cpp" \
+  "${RUNTIME_DIR}/sign_transaction_user_validation.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
-    echo "Run firmware/tools/stackchan-cores3/build.sh first, or set AGENT_Q_ARDUINOJSON_ROOT." >&2
+    echo "Run firmware/tools/stackchan-cores3/build.sh first, or set FIRMWARE_ARDUINOJSON_ROOT." >&2
     exit 1
   fi
 done
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-signature-request-ingress.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-signature-request-ingress.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
-mkdir -p "${TMP_DIR}/agent_q_common"
-ln -s "${REPO_ROOT}/firmware/src/common/agent_q/policy" "${TMP_DIR}/agent_q_common/policy"
+mkdir -p "${TMP_DIR}/firmware_common"
+ln -s "${REPO_ROOT}/firmware/src/common/policy" "${TMP_DIR}/firmware_common/policy"
 
 cat >"${TMP_DIR}/sign_transaction_user_ingress_test.cpp" <<'CPP'
 #include <ArduinoJson.h>
@@ -61,7 +61,7 @@ cat >"${TMP_DIR}/sign_transaction_user_ingress_test.cpp" <<'CPP'
 
 #include <string>
 
-#include "agent_q_sign_transaction_user_ingress.h"
+#include "sign_transaction_user_ingress.h"
 
 namespace {
 
@@ -69,33 +69,33 @@ int failures = 0;
 
 struct SessionCheck {
     const char* expected_session_id;
-    agent_q::AgentQSessionValidationResult result;
+    signing::SessionValidationResult result;
     int calls;
 };
 
-agent_q::AgentQPayloadDeliveryAdmissionDecision payload_admission_decision(
-    agent_q::AgentQPayloadDeliveryAdmissionResult result)
+signing::PayloadDeliveryAdmissionDecision payload_admission_decision(
+    signing::PayloadDeliveryAdmissionResult result)
 {
     switch (result) {
-        case agent_q::AgentQPayloadDeliveryAdmissionResult::ok:
+        case signing::PayloadDeliveryAdmissionResult::ok:
             return {
                 result,
-                agent_q::AgentQPayloadDeliveryAdmissionReason::idle_passthrough,
+                signing::PayloadDeliveryAdmissionReason::idle_passthrough,
             };
-        case agent_q::AgentQPayloadDeliveryAdmissionResult::busy:
+        case signing::PayloadDeliveryAdmissionResult::busy:
             return {
                 result,
-                agent_q::AgentQPayloadDeliveryAdmissionReason::blocked_pending_finalized_payload,
+                signing::PayloadDeliveryAdmissionReason::blocked_pending_finalized_payload,
             };
-        case agent_q::AgentQPayloadDeliveryAdmissionResult::unknown_request:
+        case signing::PayloadDeliveryAdmissionResult::unknown_request:
             return {
                 result,
-                agent_q::AgentQPayloadDeliveryAdmissionReason::missing_active_payload,
+                signing::PayloadDeliveryAdmissionReason::missing_active_payload,
             };
     }
     return {
-        agent_q::AgentQPayloadDeliveryAdmissionResult::busy,
-        agent_q::AgentQPayloadDeliveryAdmissionReason::blocked_unrelated_sensitive_flow,
+        signing::PayloadDeliveryAdmissionResult::busy,
+        signing::PayloadDeliveryAdmissionReason::blocked_unrelated_sensitive_flow,
     };
 }
 
@@ -143,40 +143,40 @@ std::string request_with_extra_top_level(
            "\"extra\":true}";
 }
 
-agent_q::AgentQSessionValidationResult validate_session(
+signing::SessionValidationResult validate_session(
     const char* session_id,
     void* context)
 {
     SessionCheck* check = static_cast<SessionCheck*>(context);
     if (check == nullptr) {
-        return agent_q::AgentQSessionValidationResult::missing;
+        return signing::SessionValidationResult::missing;
     }
     ++check->calls;
     if (check->expected_session_id != nullptr &&
         strcmp(session_id, check->expected_session_id) != 0) {
         fprintf(stderr, "session callback got unexpected session id: %s\n", session_id);
         ++failures;
-        return agent_q::AgentQSessionValidationResult::mismatch;
+        return signing::SessionValidationResult::mismatch;
     }
     return check->result;
 }
 
-agent_q::AgentQPayloadDeliveryAdmissionDecision admit_payload_delivery(
-    const agent_q::AgentQPayloadDeliveryOperationAdmissionInput& input)
+signing::PayloadDeliveryAdmissionDecision admit_payload_delivery(
+    const signing::PayloadDeliveryOperationAdmissionInput& input)
 {
-    if (input.operation != agent_q::AgentQPayloadDeliveryOperationKind::sign_transaction) {
+    if (input.operation != signing::PayloadDeliveryOperationKind::sign_transaction) {
         fprintf(stderr, "payload admission got unexpected operation\n");
         ++failures;
     }
-    return payload_admission_decision(agent_q::AgentQPayloadDeliveryAdmissionResult::ok);
+    return payload_admission_decision(signing::PayloadDeliveryAdmissionResult::ok);
 }
 
-agent_q::AgentQSignTransactionUserIngressState state(
+signing::SignTransactionUserIngressState state(
     bool material_ready,
     bool busy,
     SessionCheck* check)
 {
-    return agent_q::AgentQSignTransactionUserIngressState{
+    return signing::SignTransactionUserIngressState{
         0,
         material_ready,
         busy,
@@ -189,16 +189,16 @@ agent_q::AgentQSignTransactionUserIngressState state(
 void expect_ingress(
     const char* label,
     const std::string& json,
-    const agent_q::AgentQSignTransactionUserIngressState& input_state,
-    agent_q::AgentQSignTransactionUserIngressResult expected,
+    const signing::SignTransactionUserIngressState& input_state,
+    signing::SignTransactionUserIngressResult expected,
     int* expected_session_calls = nullptr,
     bool expect_valid_output = false)
 {
     JsonDocument document = parse_json(label, json);
-    agent_q::AgentQSignTransactionUserIngressOutput output = {};
+    signing::SignTransactionUserIngressOutput output = {};
     memset(&output, 0xA5, sizeof(output));
-    const agent_q::AgentQSignTransactionUserIngressResult actual =
-        agent_q::evaluate_sign_transaction_user_ingress(document, agent_q::AgentQSupportedSignRoute::sui_sign_transaction, input_state, &output);
+    const signing::SignTransactionUserIngressResult actual =
+        signing::evaluate_sign_transaction_user_ingress(document, signing::SupportedSignRoute::sui_sign_transaction, input_state, &output);
     if (actual != expected) {
         fprintf(stderr, "%s: expected ingress result %d, got %d\n",
                 label, static_cast<int>(expected), static_cast<int>(actual));
@@ -213,7 +213,7 @@ void expect_ingress(
             ++failures;
         }
     }
-    if (actual != agent_q::AgentQSignTransactionUserIngressResult::ok &&
+    if (actual != signing::SignTransactionUserIngressResult::ok &&
         (output.envelope.request_id[0] != '\0' ||
          output.session.session_id[0] != '\0' ||
          output.params.network[0] != '\0' ||
@@ -235,7 +235,7 @@ void expect_ingress(
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 void wipe_sensitive_buffer(void* data, size_t size)
 {
@@ -246,12 +246,12 @@ void wipe_sensitive_buffer(void* data, size_t size)
     }
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 int main()
 {
-    using IngressResult = agent_q::AgentQSignTransactionUserIngressResult;
-    using SessionResult = agent_q::AgentQSessionValidationResult;
+    using IngressResult = signing::SignTransactionUserIngressResult;
+    using SessionResult = signing::SessionValidationResult;
 
     {
         SessionCheck check{"session_aaaaaaaaaaaaaaaa", SessionResult::ok, 0};
@@ -418,16 +418,16 @@ int main()
         JsonDocument document = parse_json("null output", valid_request());
         SessionCheck check{"session_aaaaaaaaaaaaaaaa", SessionResult::ok, 0};
         const IngressResult result =
-            agent_q::evaluate_sign_transaction_user_ingress(document, agent_q::AgentQSupportedSignRoute::sui_sign_transaction, state(true, false, &check), nullptr);
+            signing::evaluate_sign_transaction_user_ingress(document, signing::SupportedSignRoute::sui_sign_transaction, state(true, false, &check), nullptr);
         if (result != IngressResult::invalid_request_shape || check.calls != 0) {
             fprintf(stderr, "null output should fail before session validation\n");
             ++failures;
         }
     }
 
-    if (strcmp(agent_q::sign_transaction_user_ingress_result_name(IngressResult::busy), "busy") != 0 ||
-        strcmp(agent_q::sign_transaction_user_ingress_result_name(IngressResult::invalid_state), "invalid_state") != 0 ||
-        strcmp(agent_q::sign_transaction_user_ingress_result_name(IngressResult::invalid_tx_bytes), "invalid_tx_bytes") != 0) {
+    if (strcmp(signing::sign_transaction_user_ingress_result_name(IngressResult::busy), "busy") != 0 ||
+        strcmp(signing::sign_transaction_user_ingress_result_name(IngressResult::invalid_state), "invalid_state") != 0 ||
+        strcmp(signing::sign_transaction_user_ingress_result_name(IngressResult::invalid_tx_bytes), "invalid_tx_bytes") != 0) {
         fprintf(stderr, "ingress result names mismatch\n");
         ++failures;
     }
@@ -447,15 +447,15 @@ CPP
   -Werror \
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
-  -I"${AGENT_Q_DIR}" \
-  -I"${AGENT_Q_DIR}/../../common/agent_q" \
+  -I"${RUNTIME_DIR}" \
+  -I"${RUNTIME_DIR}/../../common" \
   "${TMP_DIR}/sign_transaction_user_ingress_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_base64.cpp" \
-  "${AGENT_Q_DIR}/agent_q_payload_delivery_primitives.cpp" \
-  "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
-  "${AGENT_Q_DIR}/agent_q_session.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_transaction_user_ingress.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_transaction_user_validation.cpp" \
+  "${RUNTIME_DIR}/base64.cpp" \
+  "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
+  "${RUNTIME_DIR}/request_id.cpp" \
+  "${RUNTIME_DIR}/session.cpp" \
+  "${RUNTIME_DIR}/sign_transaction_user_ingress.cpp" \
+  "${RUNTIME_DIR}/sign_transaction_user_validation.cpp" \
   -o "${TMP_DIR}/sign_transaction_user_ingress_test"
 
 "${TMP_DIR}/sign_transaction_user_ingress_test"

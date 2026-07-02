@@ -20,14 +20,14 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 TARGET_ROOT="${REPO_ROOT}/firmware/src/stackchan-cores3"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 CXX_BIN="${CXX:-c++}"
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-policy-update-marker.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-policy-update-marker.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-mkdir -p "${TMP_DIR}/agent_q_common" "${TMP_DIR}/stubs"
-ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
+mkdir -p "${TMP_DIR}/firmware_common" "${TMP_DIR}/stubs"
+ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
 
 cat >"${TMP_DIR}/stubs/esp_err.h" <<'H'
 #pragma once
@@ -81,7 +81,7 @@ cat >"${TMP_DIR}/policy_update_marker_test.cpp" <<'CPP'
 
 #include <vector>
 
-#include "agent_q_policy_update_marker.h"
+#include "policy_update_marker.h"
 #include "esp_err.h"
 #include "nvs.h"
 
@@ -168,106 +168,106 @@ esp_err_t nvs_commit(nvs_handle_t)
 
 int main()
 {
-    using Status = agent_q::AgentQPolicyUpdateMarkerStatus;
-    using BeginResult = agent_q::AgentQPolicyUpdateMarkerBeginResult;
-    uint8_t digest[agent_q::kAgentQPolicyUpdateDigestBytes] = {};
+    using Status = signing::PolicyUpdateMarkerStatus;
+    using BeginResult = signing::PolicyUpdateMarkerBeginResult;
+    uint8_t digest[signing::kPolicyUpdateDigestBytes] = {};
     digest[0] = 0x42;
 
     reset_storage();
-    expect(agent_q::policy_update_marker_status() == Status::clear,
+    expect(signing::policy_update_marker_status() == Status::clear,
            "missing marker is clear");
 
-    expect(agent_q::policy_update_marker_begin(
+    expect(signing::policy_update_marker_begin(
                digest,
                sizeof(digest),
                1,
-               agent_q::AgentQPolicyUpdateHighestAction::reject) == BeginResult::written,
+               signing::PolicyUpdateHighestAction::reject) == BeginResult::written,
            "valid marker begin succeeds");
-    expect(agent_q::policy_update_marker_status() == Status::pending,
+    expect(signing::policy_update_marker_status() == Status::pending,
            "valid marker reads as pending");
     expect(g_blob.size() > 4 && g_blob[4] == 0,
            "policy update marker current version is zero");
     {
         const std::vector<uint8_t> current_marker = g_blob;
         g_blob[4] = 1;
-        expect(agent_q::policy_update_marker_status() == Status::invalid,
+        expect(signing::policy_update_marker_status() == Status::invalid,
                "nonzero policy update marker version fails closed");
         g_blob = current_marker;
-        expect(agent_q::policy_update_marker_status() == Status::pending,
+        expect(signing::policy_update_marker_status() == Status::pending,
                "restored current policy update marker reads as pending");
     }
-    expect(agent_q::policy_update_marker_clear(), "marker clear succeeds");
-    expect(agent_q::policy_update_marker_status() == Status::clear,
+    expect(signing::policy_update_marker_clear(), "marker clear succeeds");
+    expect(signing::policy_update_marker_status() == Status::clear,
            "cleared marker reads as clear");
 
-    expect(agent_q::policy_update_marker_begin(
+    expect(signing::policy_update_marker_begin(
                digest,
                sizeof(digest),
                1,
-               agent_q::AgentQPolicyUpdateHighestAction::sign) == BeginResult::written,
+               signing::PolicyUpdateHighestAction::sign) == BeginResult::written,
            "valid sign marker begin succeeds");
-    expect(agent_q::policy_update_marker_status() == Status::pending,
+    expect(signing::policy_update_marker_status() == Status::pending,
            "valid sign marker reads as pending");
     expect(g_blob.size() > 5 && g_blob[5] == 1,
            "sign marker stores sign highest action");
-    expect(agent_q::policy_update_marker_clear(), "sign marker clear succeeds");
+    expect(signing::policy_update_marker_clear(), "sign marker clear succeeds");
 
-    expect(agent_q::policy_update_marker_begin(
+    expect(signing::policy_update_marker_begin(
                nullptr,
                sizeof(digest),
                1,
-               agent_q::AgentQPolicyUpdateHighestAction::reject) == BeginResult::invalid_input,
+               signing::PolicyUpdateHighestAction::reject) == BeginResult::invalid_input,
            "null policy digest is rejected");
-    expect(agent_q::policy_update_marker_begin(
+    expect(signing::policy_update_marker_begin(
                digest,
                sizeof(digest) - 1,
                1,
-               agent_q::AgentQPolicyUpdateHighestAction::reject) == BeginResult::invalid_input,
+               signing::PolicyUpdateHighestAction::reject) == BeginResult::invalid_input,
            "wrong digest size is rejected");
-    expect(agent_q::policy_update_marker_begin(
+    expect(signing::policy_update_marker_begin(
                digest,
                sizeof(digest),
-               agent_q::kAgentQCurrentPolicyMaxTotalPolicies + 1,
-               agent_q::AgentQPolicyUpdateHighestAction::reject) == BeginResult::invalid_input,
+               signing::kCurrentPolicyMaxTotalPolicies + 1,
+               signing::PolicyUpdateHighestAction::reject) == BeginResult::invalid_input,
            "overlarge rule count is rejected");
-    expect(agent_q::policy_update_marker_begin(
+    expect(signing::policy_update_marker_begin(
                digest,
                sizeof(digest),
                1,
-               static_cast<agent_q::AgentQPolicyUpdateHighestAction>(99)) == BeginResult::invalid_input,
+               static_cast<signing::PolicyUpdateHighestAction>(99)) == BeginResult::invalid_input,
            "unknown highest action is rejected");
 
-    expect(agent_q::policy_update_marker_begin(
+    expect(signing::policy_update_marker_begin(
                digest,
                sizeof(digest),
-               agent_q::kAgentQCurrentPolicyMaxTotalPolicies,
-               agent_q::AgentQPolicyUpdateHighestAction::reject) == BeginResult::written,
+               signing::kCurrentPolicyMaxTotalPolicies,
+               signing::PolicyUpdateHighestAction::reject) == BeginResult::written,
            "max rule count marker succeeds");
     g_blob[0] = 'X';
-    expect(agent_q::policy_update_marker_status() == Status::invalid,
+    expect(signing::policy_update_marker_status() == Status::invalid,
            "corrupt marker magic fails closed");
 
     reset_storage();
     g_blob.assign(3, 0xAA);
-    expect(agent_q::policy_update_marker_status() == Status::invalid,
+    expect(signing::policy_update_marker_status() == Status::invalid,
            "wrong marker size fails closed");
 
     reset_storage();
     g_open_fails = true;
-    expect(agent_q::policy_update_marker_status() == Status::storage_error,
+    expect(signing::policy_update_marker_status() == Status::storage_error,
            "NVS open failure reports storage error");
-    expect(!agent_q::policy_update_marker_clear(),
+    expect(!signing::policy_update_marker_clear(),
            "marker clear reports NVS open failure");
 
     reset_storage();
     g_commit_fails = true;
-    expect(agent_q::policy_update_marker_begin(
+    expect(signing::policy_update_marker_begin(
                digest,
                sizeof(digest),
                1,
-               agent_q::AgentQPolicyUpdateHighestAction::reject) == BeginResult::pending_after_error,
+               signing::PolicyUpdateHighestAction::reject) == BeginResult::pending_after_error,
            "marker begin reports durable pending marker after commit failure");
-    expect(agent_q::policy_update_marker_status() == Status::pending,
+    expect(signing::policy_update_marker_status() == Status::pending,
            "durable marker remains pending after commit failure");
 
     if (failures != 0) {
@@ -282,9 +282,9 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
   -I"${TMP_DIR}" \
-  -I"${TARGET_ROOT}/agent_q" \
+  -I"${TARGET_ROOT}/runtime" -I"${TMP_DIR}/firmware_common" \
   "${TMP_DIR}/policy_update_marker_test.cpp" \
-  "${TARGET_ROOT}/agent_q/agent_q_policy_update_marker.cpp" \
+  "${TARGET_ROOT}/runtime/policy_update_marker.cpp" \
   -o "${TMP_DIR}/policy_update_marker_test"
 
 "${TMP_DIR}/policy_update_marker_test"

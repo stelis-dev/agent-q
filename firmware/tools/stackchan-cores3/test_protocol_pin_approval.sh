@@ -18,11 +18,11 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
-LOCAL_PIN_AUTH_UI_HEADER="${AGENT_Q_DIR}/agent_q_local_pin_auth_ui_flow.h"
-LOCAL_PIN_AUTH_UI_SOURCE="${AGENT_Q_DIR}/agent_q_local_pin_auth_ui_flow.cpp"
-MODAL_TRANSITION_SOURCE="${AGENT_Q_DIR}/agent_q_modal_transition.cpp"
-USB_REQUEST_SERVER_SOURCE="${AGENT_Q_DIR}/agent_q_usb_request_server.cpp"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+LOCAL_PIN_AUTH_UI_HEADER="${RUNTIME_DIR}/local_pin_auth_ui_flow.h"
+LOCAL_PIN_AUTH_UI_SOURCE="${RUNTIME_DIR}/local_pin_auth_ui_flow.cpp"
+MODAL_TRANSITION_SOURCE="${RUNTIME_DIR}/modal_transition.cpp"
+USB_REQUEST_SERVER_SOURCE="${RUNTIME_DIR}/usb_request_server.cpp"
 CXX_BIN="${CXX:-c++}"
 
 check_modal_transition_owner_present() {
@@ -36,7 +36,7 @@ check_modal_transition_owner_present() {
     echo "FAILED: ModalTransitionOwner must own next-panel, processing-to-result, and work-then-clear transitions" >&2
     exit 1
   fi
-  if ! grep -q 'agent_q_modal_transition.h' "${LOCAL_PIN_AUTH_UI_SOURCE}"; then
+  if ! grep -q 'modal_transition.h' "${LOCAL_PIN_AUTH_UI_SOURCE}"; then
     echo "FAILED: local PIN UI flow must use ModalTransitionOwner" >&2
     exit 1
   fi
@@ -204,7 +204,7 @@ check_settings_policy_reset_keeps_panel_until_completion() {
   local restore_line
 
   awk '
-    /case AgentQLocalPinAuthVerifyResult::verified_settings_policy_reset:/ { in_case = 1 }
+    /case LocalPinAuthVerifyResult::verified_settings_policy_reset:/ { in_case = 1 }
     in_case { print }
     in_case && /return;/ { exit }
   ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${snippet}"
@@ -242,7 +242,7 @@ check_settings_sui_clear_keeps_panel_until_completion() {
   local restore_line
 
   awk '
-    /case AgentQLocalPinAuthVerifyResult::verified_settings_sui_zklogin_clear:/ { in_case = 1 }
+    /case LocalPinAuthVerifyResult::verified_settings_sui_zklogin_clear:/ { in_case = 1 }
     in_case { print }
     in_case && /return;/ { exit }
   ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${snippet}"
@@ -396,21 +396,21 @@ check_policy_sui_pin_completion_uses_owner_callbacks() {
 
   local ops_snippet="${TMP_DIR}/local_pin_auth_ops.cpp"
   awk '
-    /^agent_q::AgentQLocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops\(\)$/ { in_ops = 1 }
+    /^signing::LocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops\(\)$/ { in_ops = 1 }
     in_ops { print }
     in_ops && /^}/ { exit }
   ' "${USB_REQUEST_SERVER_SOURCE}" >"${ops_snippet}"
 
   for required in \
-    'agent_q::policy_update_flow_return_to_pin_entry' \
-    'agent_q::policy_update_flow_record_ui_error' \
-    'agent_q::policy_update_flow_record_timed_out' \
-    'agent_q::policy_update_flow_commit' \
-    'agent_q::sui_zklogin_proposal_flow_return_to_pin_entry' \
-    'agent_q::sui_zklogin_proposal_flow_record_ui_error' \
-    'agent_q::sui_zklogin_proposal_flow_record_timed_out' \
-    'agent_q::sui_zklogin_proposal_flow_record_rejected' \
-    'agent_q::sui_zklogin_proposal_flow_commit'; do
+    'signing::policy_update_flow_return_to_pin_entry' \
+    'signing::policy_update_flow_record_ui_error' \
+    'signing::policy_update_flow_record_timed_out' \
+    'signing::policy_update_flow_commit' \
+    'signing::sui_zklogin_proposal_flow_return_to_pin_entry' \
+    'signing::sui_zklogin_proposal_flow_record_ui_error' \
+    'signing::sui_zklogin_proposal_flow_record_timed_out' \
+    'signing::sui_zklogin_proposal_flow_record_rejected' \
+    'signing::sui_zklogin_proposal_flow_commit'; do
     if ! grep -q "${required}" "${ops_snippet}"; then
       echo "FAILED: StackChan local PIN ops must bind direct owner function ${required}" >&2
       exit 1
@@ -428,8 +428,8 @@ check_policy_update_keeps_panel_until_commit() {
   local finish_line
 
   awk '
-    /case AgentQLocalPinAuthVerifyResult::verified_policy_update:/ { in_case = 1 }
-    in_case && /case AgentQLocalPinAuthVerifyResult::started_setting_commit:/ { exit }
+    /case LocalPinAuthVerifyResult::verified_policy_update:/ { in_case = 1 }
+    in_case && /case LocalPinAuthVerifyResult::started_setting_commit:/ { exit }
     in_case { print }
   ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${snippet}"
 
@@ -509,16 +509,16 @@ check_user_signing_keeps_panel_until_signing_work() {
 
   local ops_snippet="${TMP_DIR}/local_pin_auth_user_signing_ops.cpp"
   awk '
-    /^agent_q::AgentQLocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops\(\)$/ { in_ops = 1 }
+    /^signing::LocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops\(\)$/ { in_ops = 1 }
     in_ops { print }
     in_ops && /^}/ { exit }
   ' "${USB_REQUEST_SERVER_SOURCE}" >"${ops_snippet}"
 
   for required in \
-    'agent_q::user_signing_confirmation_cancel_for_pin_loss' \
-    'agent_q::user_signing_confirmation_record_timeout' \
-    'agent_q::user_signing_confirmation_return_to_review_from_pin' \
-    'agent_q::user_signing_flow_terminal_pending' \
+    'signing::user_signing_confirmation_cancel_for_pin_loss' \
+    'signing::user_signing_confirmation_record_timeout' \
+    'signing::user_signing_confirmation_return_to_review_from_pin' \
+    'signing::user_signing_flow_terminal_pending' \
     'execute_user_signing_critical_section_and_finish' \
     'finish_user_signing_error_terminal'; do
     if ! grep -q "${required}" "${ops_snippet}"; then
@@ -529,29 +529,29 @@ check_user_signing_keeps_panel_until_signing_work() {
 }
 
 check_local_pin_ops_surface_is_grouped() {
-  local ops_struct="${TMP_DIR}/AgentQLocalPinAuthUiFlowOps.h"
+  local ops_struct="${TMP_DIR}/LocalPinAuthUiFlowOps.h"
   local ops_builder="${TMP_DIR}/local_pin_auth_grouped_ops.cpp"
 
   awk '
-    /^struct AgentQLocalPinAuthUiFlowOps / { in_struct = 1 }
+    /^struct LocalPinAuthUiFlowOps / { in_struct = 1 }
     in_struct { print }
     in_struct && /^};/ { exit }
   ' "${LOCAL_PIN_AUTH_UI_HEADER}" >"${ops_struct}"
 
   if grep -q '(\*' "${ops_struct}"; then
-    echo "FAILED: AgentQLocalPinAuthUiFlowOps must expose responsibility groups, not flat callback fields" >&2
+    echo "FAILED: LocalPinAuthUiFlowOps must expose responsibility groups, not flat callback fields" >&2
     exit 1
   fi
 
   for required in \
-    'AgentQLocalPinAuthTimingOps timing' \
-    'AgentQLocalPinAuthDisplayOps display' \
-    'AgentQLocalPinAuthMaterialSettingsOps material_settings' \
-    'AgentQLocalPinAuthRequestOps request' \
-    'AgentQLocalPinAuthConnectOps connect' \
-    'AgentQLocalPinAuthPolicyUpdateOps policy_update' \
-    'AgentQLocalPinAuthSuiZkLoginOps sui_zklogin' \
-    'AgentQLocalPinAuthUserSigningOps user_signing'; do
+    'LocalPinAuthTimingOps timing' \
+    'LocalPinAuthDisplayOps display' \
+    'LocalPinAuthMaterialSettingsOps material_settings' \
+    'LocalPinAuthRequestOps request' \
+    'LocalPinAuthConnectOps connect' \
+    'LocalPinAuthPolicyUpdateOps policy_update' \
+    'LocalPinAuthSuiZkLoginOps sui_zklogin' \
+    'LocalPinAuthUserSigningOps user_signing'; do
     if ! grep -q "${required}" "${ops_struct}"; then
       echo "FAILED: local PIN ops surface is missing responsibility group ${required}" >&2
       exit 1
@@ -559,7 +559,7 @@ check_local_pin_ops_surface_is_grouped() {
   done
 
   awk '
-    /^agent_q::AgentQLocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops\(\)$/ { in_ops = 1 }
+    /^signing::LocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops\(\)$/ { in_ops = 1 }
     in_ops { print }
     in_ops && /^}/ { exit }
   ' "${USB_REQUEST_SERVER_SOURCE}" >"${ops_builder}"
@@ -585,7 +585,7 @@ check_local_pin_ops_surface_is_grouped() {
   fi
 }
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-protocol-pin-approval.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-protocol-pin-approval.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/freertos"
@@ -600,7 +600,7 @@ cat >"${TMP_DIR}/protocol_pin_approval_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_protocol_pin_approval.h"
+#include "protocol_pin_approval.h"
 
 namespace {
 
@@ -626,14 +626,14 @@ bool random_bytes(void* output, size_t size, void*)
     return true;
 }
 
-agent_q::AgentQTimeoutWindow timeout_window(TickType_t started_at, TickType_t deadline)
+signing::TimeoutWindow timeout_window(TickType_t started_at, TickType_t deadline)
 {
-    return agent_q::timeout_window_from_deadline(started_at, deadline);
+    return signing::timeout_window_from_deadline(started_at, deadline);
 }
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 void wipe_sensitive_buffer(void* data, size_t size)
 {
@@ -644,28 +644,28 @@ void wipe_sensitive_buffer(void* data, size_t size)
     }
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 int main()
 {
-    using Purpose = agent_q::AgentQProtocolPinApprovalPurpose;
-    using LocalPurpose = agent_q::AgentQLocalPinAuthPurpose;
-    using SessionValidation = agent_q::AgentQSessionValidationResult;
+    using Purpose = signing::ProtocolPinApprovalPurpose;
+    using LocalPurpose = signing::LocalPinAuthPurpose;
+    using SessionValidation = signing::SessionValidationResult;
 
-    agent_q::session_init();
-    agent_q::protocol_pin_approval_clear();
-    expect(!agent_q::protocol_pin_approval_active(), "clear leaves state inactive");
-    char request_id[agent_q::kAgentQProtocolPinRequestIdSize] = {};
-    expect(!agent_q::protocol_pin_approval_request_id_for_local_pin_purpose(
+    signing::session_init();
+    signing::protocol_pin_approval_clear();
+    expect(!signing::protocol_pin_approval_active(), "clear leaves state inactive");
+    char request_id[signing::kProtocolPinRequestIdSize] = {};
+    expect(!signing::protocol_pin_approval_request_id_for_local_pin_purpose(
                LocalPurpose::connect,
                request_id,
                sizeof(request_id)),
            "inactive state has no connect request id");
     expect(request_id[0] == '\0', "inactive request id output is cleared");
-    expect(agent_q::protocol_pin_approval_begin_connect("connect-1", 10, timeout_window(10, 100)),
+    expect(signing::protocol_pin_approval_begin_connect("connect-1", 10, timeout_window(10, 100)),
            "connect protocol PIN approval begins");
-    agent_q::AgentQProtocolPinApprovalSnapshot snapshot =
-        agent_q::protocol_pin_approval_snapshot();
+    signing::ProtocolPinApprovalSnapshot snapshot =
+        signing::protocol_pin_approval_snapshot();
     expect(snapshot.active, "connect snapshot is active");
     expect(snapshot.purpose == Purpose::connect, "connect snapshot purpose");
     expect(strcmp(snapshot.request_id, "connect-1") == 0, "connect request id stored");
@@ -676,130 +676,130 @@ int main()
     expect(snapshot.pin_input_window.started_at == 10 &&
                snapshot.pin_input_window.deadline == 100,
            "connect PIN input window stored");
-    expect(agent_q::protocol_pin_approval_request_id_for_local_pin_purpose(
+    expect(signing::protocol_pin_approval_request_id_for_local_pin_purpose(
                LocalPurpose::connect,
                request_id,
                sizeof(request_id)) &&
                strcmp(request_id, "connect-1") == 0,
            "connect request id maps from local PIN purpose");
-    expect(!agent_q::protocol_pin_approval_request_id_for_local_pin_purpose(
+    expect(!signing::protocol_pin_approval_request_id_for_local_pin_purpose(
                LocalPurpose::policy_update,
                request_id,
                sizeof(request_id)),
            "connect state does not map policy update purpose");
-    expect(!agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
+    expect(!signing::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
                LocalPurpose::connect,
                99),
            "deadline not reached before deadline");
-    expect(agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
+    expect(signing::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
                LocalPurpose::connect,
                100),
            "deadline reached at deadline");
-    expect(agent_q::protocol_pin_approval_pause_deadline_for_local_pin_purpose(
+    expect(signing::protocol_pin_approval_pause_deadline_for_local_pin_purpose(
                LocalPurpose::connect,
                90),
            "connect local PIN verification pauses PIN input deadline");
-    snapshot = agent_q::protocol_pin_approval_snapshot();
+    snapshot = signing::protocol_pin_approval_snapshot();
     expect(snapshot.request_window.deadline == 100, "connect request admission window remains recorded while PIN verifies");
     expect(snapshot.pin_input_window.started_at == 0 &&
                snapshot.pin_input_window.deadline == 0,
            "connect PIN input deadline is hidden while verification runs");
-    expect(!agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
+    expect(!signing::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
                LocalPurpose::connect,
                1000),
            "paused connect PIN input deadline does not keep request deadline running");
-    expect(agent_q::protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
+    expect(signing::protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
                LocalPurpose::connect,
                120),
            "connect local PIN retry resumes after processing");
-    snapshot = agent_q::protocol_pin_approval_snapshot();
+    snapshot = signing::protocol_pin_approval_snapshot();
     expect(snapshot.pin_input_window.started_at == 40 &&
                snapshot.pin_input_window.deadline == 130,
            "connect retry resumes remaining time without resetting timer fill");
-    expect(!agent_q::protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
+    expect(!signing::protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
                LocalPurpose::connect,
                121),
            "connect retry cannot resume twice without a new pause");
-    expect(agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
+    expect(signing::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
                LocalPurpose::connect,
                130),
            "resumed connect retry expires after remaining input time");
-    expect(agent_q::protocol_pin_approval_pause_deadline_for_local_pin_purpose(
+    expect(signing::protocol_pin_approval_pause_deadline_for_local_pin_purpose(
                LocalPurpose::connect,
                125),
            "connect local PIN verification can pause a resumed input window");
-    snapshot = agent_q::protocol_pin_approval_snapshot();
+    snapshot = signing::protocol_pin_approval_snapshot();
     expect(snapshot.request_window.deadline == 100, "connect request window remains immutable");
     expect(snapshot.pin_input_window.deadline == 0, "connect paused PIN input deadline stored");
-    expect(!agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
+    expect(!signing::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
                LocalPurpose::connect,
                1000),
            "paused connect PIN input deadline stays paused after resumed retry");
 
-    char too_long[agent_q::kAgentQProtocolPinRequestIdSize + 4] = {};
+    char too_long[signing::kProtocolPinRequestIdSize + 4] = {};
     memset(too_long, 'a', sizeof(too_long) - 1);
-    expect(!agent_q::protocol_pin_approval_begin_connect(too_long, 20, timeout_window(20, 200)),
+    expect(!signing::protocol_pin_approval_begin_connect(too_long, 20, timeout_window(20, 200)),
            "overlong request id is rejected");
-    snapshot = agent_q::protocol_pin_approval_snapshot();
+    snapshot = signing::protocol_pin_approval_snapshot();
     expect(strcmp(snapshot.request_id, "connect-1") == 0,
            "failed begin does not overwrite existing state");
-    expect(!agent_q::protocol_pin_approval_begin_policy_update(
+    expect(!signing::protocol_pin_approval_begin_policy_update(
                "policy-overwrite",
                "session_aaaaaaaaaaaaaaaa",
                20,
                timeout_window(20, 225)),
            "active protocol PIN approval cannot be overwritten");
-    snapshot = agent_q::protocol_pin_approval_snapshot();
+    snapshot = signing::protocol_pin_approval_snapshot();
     expect(snapshot.purpose == Purpose::connect &&
                strcmp(snapshot.request_id, "connect-1") == 0,
            "rejected active overwrite leaves current state intact");
 
-    expect(agent_q::session_replace(random_bytes, nullptr) ==
-               agent_q::AgentQSessionStartResult::ok,
+    expect(signing::session_replace(random_bytes, nullptr) ==
+               signing::SessionStartResult::ok,
            "test session starts");
-    const char* session_id = agent_q::session_id();
-    agent_q::protocol_pin_approval_clear();
-    expect(!agent_q::protocol_pin_approval_begin_connect(
+    const char* session_id = signing::session_id();
+    signing::protocol_pin_approval_clear();
+    expect(!signing::protocol_pin_approval_begin_connect(
                "connect-stale",
                30,
                timeout_window(10, 20)),
            "connect protocol PIN rejects stale request window");
-    expect(!agent_q::protocol_pin_approval_begin_connect(
+    expect(!signing::protocol_pin_approval_begin_connect(
                "connect-future",
                10,
                timeout_window(20, 40)),
            "connect protocol PIN rejects future request window");
-    expect(!agent_q::protocol_pin_approval_begin_policy_update(
+    expect(!signing::protocol_pin_approval_begin_policy_update(
                "policy-stale",
                session_id,
                30,
                timeout_window(10, 20)),
            "policy protocol PIN rejects stale request window");
-    expect(!agent_q::protocol_pin_approval_begin_policy_update(
+    expect(!signing::protocol_pin_approval_begin_policy_update(
                "policy-future",
                session_id,
                10,
                timeout_window(20, 40)),
            "policy protocol PIN rejects future request window");
-    expect(!agent_q::protocol_pin_approval_begin_sui_zklogin_proposal(
+    expect(!signing::protocol_pin_approval_begin_sui_zklogin_proposal(
                "zklogin-stale",
                session_id,
                30,
                timeout_window(10, 20)),
            "Sui zkLogin protocol PIN rejects stale request window");
-    expect(!agent_q::protocol_pin_approval_begin_sui_zklogin_proposal(
+    expect(!signing::protocol_pin_approval_begin_sui_zklogin_proposal(
                "zklogin-future",
                session_id,
                10,
                timeout_window(20, 40)),
            "Sui zkLogin protocol PIN rejects future request window");
-    expect(agent_q::protocol_pin_approval_begin_policy_update(
+    expect(signing::protocol_pin_approval_begin_policy_update(
                "policy-1",
                session_id,
                20,
                timeout_window(20, 250)),
            "policy update protocol PIN approval begins");
-    snapshot = agent_q::protocol_pin_approval_snapshot();
+    snapshot = signing::protocol_pin_approval_snapshot();
     expect(snapshot.active, "policy update snapshot is active");
     expect(snapshot.purpose == Purpose::policy_update, "policy update snapshot purpose");
     expect(strcmp(snapshot.request_id, "policy-1") == 0, "policy update request id stored");
@@ -810,66 +810,66 @@ int main()
     expect(snapshot.pin_input_window.started_at == 20 &&
                snapshot.pin_input_window.deadline == 250,
            "policy update stores PIN input window");
-    expect(agent_q::protocol_pin_approval_policy_update_session_matches(session_id),
+    expect(signing::protocol_pin_approval_policy_update_session_matches(session_id),
            "matching policy update session recognized");
-    expect(!agent_q::protocol_pin_approval_policy_update_session_matches(
+    expect(!signing::protocol_pin_approval_policy_update_session_matches(
                "session_aaaaaaaaaaaaaaaa"),
            "mismatched policy update session rejected");
-    expect(agent_q::protocol_pin_approval_policy_update_request_id(
+    expect(signing::protocol_pin_approval_policy_update_request_id(
                request_id,
                sizeof(request_id)) &&
                strcmp(request_id, "policy-1") == 0,
            "policy update request id is available");
-    expect(agent_q::protocol_pin_approval_validate_policy_update_session() ==
+    expect(signing::protocol_pin_approval_validate_policy_update_session() ==
                SessionValidation::ok,
            "active matching session validates");
 
-    agent_q::protocol_pin_approval_clear();
-    expect(agent_q::protocol_pin_approval_begin_sui_zklogin_proposal(
+    signing::protocol_pin_approval_clear();
+    expect(signing::protocol_pin_approval_begin_sui_zklogin_proposal(
                "zklogin-1",
                session_id,
                40,
                timeout_window(40, 260)),
            "Sui zkLogin protocol PIN approval begins");
-    snapshot = agent_q::protocol_pin_approval_snapshot();
+    snapshot = signing::protocol_pin_approval_snapshot();
     expect(snapshot.active, "Sui zkLogin snapshot is active");
     expect(snapshot.purpose == Purpose::sui_zklogin_proposal, "Sui zkLogin snapshot purpose");
     expect(strcmp(snapshot.request_id, "zklogin-1") == 0, "Sui zkLogin request id stored");
     expect(strcmp(snapshot.session_id, session_id) == 0, "Sui zkLogin session id stored");
-    expect(agent_q::protocol_pin_approval_request_id_for_local_pin_purpose(
+    expect(signing::protocol_pin_approval_request_id_for_local_pin_purpose(
                LocalPurpose::sui_zklogin_proposal,
                request_id,
                sizeof(request_id)) &&
                strcmp(request_id, "zklogin-1") == 0,
            "Sui zkLogin request id maps from local PIN purpose");
-    expect(agent_q::protocol_pin_approval_sui_zklogin_proposal_session_matches(session_id),
+    expect(signing::protocol_pin_approval_sui_zklogin_proposal_session_matches(session_id),
            "matching Sui zkLogin session recognized");
-    expect(!agent_q::protocol_pin_approval_sui_zklogin_proposal_session_matches(
+    expect(!signing::protocol_pin_approval_sui_zklogin_proposal_session_matches(
                "session_aaaaaaaaaaaaaaaa"),
            "mismatched Sui zkLogin session rejected");
-    expect(agent_q::protocol_pin_approval_sui_zklogin_proposal_request_id(
+    expect(signing::protocol_pin_approval_sui_zklogin_proposal_request_id(
                request_id,
                sizeof(request_id)) &&
                strcmp(request_id, "zklogin-1") == 0,
            "Sui zkLogin request id is available");
-    expect(agent_q::protocol_pin_approval_validate_sui_zklogin_proposal_session() ==
+    expect(signing::protocol_pin_approval_validate_sui_zklogin_proposal_session() ==
                SessionValidation::ok,
            "active matching Sui zkLogin session validates");
-    agent_q::session_clear();
-    expect(agent_q::protocol_pin_approval_validate_sui_zklogin_proposal_session() ==
+    signing::session_clear();
+    expect(signing::protocol_pin_approval_validate_sui_zklogin_proposal_session() ==
                SessionValidation::missing,
            "cleared session invalidates pending Sui zkLogin proposal");
 
-    agent_q::protocol_pin_approval_clear();
-    expect(!agent_q::protocol_pin_approval_policy_update_request_id(
+    signing::protocol_pin_approval_clear();
+    expect(!signing::protocol_pin_approval_policy_update_request_id(
                request_id,
                sizeof(request_id)),
            "cleared state has no policy update request id");
-    expect(!agent_q::protocol_pin_approval_sui_zklogin_proposal_request_id(
+    expect(!signing::protocol_pin_approval_sui_zklogin_proposal_request_id(
                request_id,
                sizeof(request_id)),
            "cleared state has no Sui zkLogin request id");
-    expect(!agent_q::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
+    expect(!signing::protocol_pin_approval_deadline_reached_for_local_pin_purpose(
                LocalPurpose::connect,
                1000),
            "cleared state has no reached protocol deadline");
@@ -885,10 +885,10 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/protocol_pin_approval_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_protocol_pin_approval.cpp" \
-  "${AGENT_Q_DIR}/agent_q_session.cpp" \
+  "${RUNTIME_DIR}/protocol_pin_approval.cpp" \
+  "${RUNTIME_DIR}/session.cpp" \
   -o "${TMP_DIR}/protocol_pin_approval_test"
 
 "${TMP_DIR}/protocol_pin_approval_test"

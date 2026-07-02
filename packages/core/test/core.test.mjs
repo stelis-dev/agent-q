@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { ConfigStore } from "../dist/config.js";
-import { AgentQCore } from "../dist/core.js";
+import { DeviceCore } from "../dist/core.js";
 import { makeDeviceRequest } from "../dist/device-contract.js";
-import { AgentQError } from "../dist/errors.js";
+import { DeviceRequestError } from "../dist/errors.js";
 import { MAX_SESSION_TTL_MS, SIGNING_OUTCOME_ERROR_MESSAGES } from "../dist/protocol.js";
 import {
   markRequestMayHaveReachedFirmware,
@@ -103,7 +103,7 @@ function deviceRequestExecutor(handler) {
 function currentPolicyDocument(policies = []) {
   const conditionCount = policies.reduce((sum, policy) => sum + policy.conditions.length, 0);
   return {
-    schema: "agentq.policy",
+    schema: "signing.policy",
     policyId: POLICY_HASH,
     defaultAction: "reject",
     blockchainCount: 1,
@@ -302,7 +302,7 @@ function defaultDriver(overrides = {}) {
 }
 
 async function withStore(callback) {
-  const dir = await mkdtemp(join(tmpdir(), "agent-q-core-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "signing-core-test-"));
   try {
     const store = new ConfigStore(join(dir, "config.json"));
     return await callback(store, dir);
@@ -313,7 +313,7 @@ async function withStore(callback) {
 
 test("returns no_active_device when no active device exists", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver({ async listPorts() { return []; } }));
+    const core = new DeviceCore(store, defaultDriver({ async listPorts() { return []; } }));
     await assert.rejects(() => core.getDeviceStatus(), { code: "no_active_device" });
   });
 });
@@ -325,11 +325,11 @@ test("returns cached status for known device when live request times out", async
       setActive: true,
     });
 
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async requestStatus() {
-          throw new AgentQError("timeout", "Timed out.", true);
+          throw new DeviceRequestError("timeout", "Timed out.", true);
         },
       }),
     );
@@ -351,7 +351,7 @@ test("returns cached status with a port permission failure reason", async () => 
       setActive: true,
     });
 
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async requestStatus() {
@@ -375,7 +375,7 @@ test("falls back to scan when stored port hint is stale", async () => {
     });
 
     const requestedPorts = [];
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async listPorts() {
@@ -406,7 +406,7 @@ test("falls back to scan when stored port hint is stale", async () => {
 
 test("scan stores live device without selecting it", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async signTransaction() {
@@ -437,7 +437,7 @@ test("scan stores live device without selecting it", async () => {
 test("scan sanitizes an OS-supplied port path before returning or storing it", async () => {
   await withStore(async (store) => {
     const weirdPath = "/dev/cu." + String.fromCharCode(7) + "usbmodem9";
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async listPorts() {
@@ -459,7 +459,7 @@ test("scan sanitizes an OS-supplied port path before returning or storing it", a
 test("scan reports candidate access failures without raw OS error text", async () => {
   await withStore(async (store) => {
     const weirdPath = "/dev/cu." + String.fromCharCode(7) + "usbmodem-denied";
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async listPorts() {
@@ -491,7 +491,7 @@ test("scan reports candidate access failures without raw OS error text", async (
 
 test("scan does not select an active device when multiple devices are found", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async listPorts() {
@@ -527,7 +527,7 @@ test("scan does not select an active device when multiple devices are found", as
 test("identifies devices without selecting one", async () => {
   await withStore(async (store) => {
     const identifiedCodes = [];
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async listPorts() {
@@ -568,7 +568,7 @@ test("identifies devices without selecting one", async () => {
 
 test("identify reports per-device errors without failing the whole request", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async listPorts() {
@@ -592,7 +592,7 @@ test("identify reports per-device errors without failing the whole request", asy
         },
         async identifyDevice(portPath, code) {
           if (portPath === "/dev/cu.usbmodem2") {
-            throw new AgentQError("timeout", "Timed out.", true);
+            throw new DeviceRequestError("timeout", "Timed out.", true);
           }
           return identifyResponse(code);
         },
@@ -614,7 +614,7 @@ test("identify uses one internal deadline across multiple devices", async () => 
     // Injected virtual clock: the first identify advances time past the budget, so
     // the second device is reported as a timeout deterministically (no real wait).
     let now = new Date("2026-05-28T00:00:00.000Z");
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async listPorts() {
@@ -646,7 +646,7 @@ test("identify uses one internal deadline across multiple devices", async () => 
 test("selects default and purpose-specific active devices", async () => {
   await withStore(async (store) => {
     await store.rememberUsbStatus(status, "/dev/cu.usbmodem1");
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async signTransaction() {
@@ -680,7 +680,7 @@ test("selects default and purpose-specific active devices", async () => {
 test("selectDevice rejects reserved purpose 'default'", async () => {
   await withStore(async (store) => {
     await store.rememberUsbStatus(status, "/dev/cu.usbmodem1");
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await assert.rejects(
       () => core.selectDevice({ deviceId: device.deviceId, purpose: "default" }),
       { code: "invalid_params" },
@@ -691,7 +691,7 @@ test("selectDevice rejects reserved purpose 'default'", async () => {
 test("listDevices reports purposes and runtime session state", async () => {
   await withStore(async (store) => {
     const now = new Date("2026-05-28T00:00:00.000Z");
-    const core = new AgentQCore(store, defaultDriver(), () => now);
+    const core = new DeviceCore(store, defaultDriver(), () => now);
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId, purpose: "payment" });
     await core.connectDevice({ deviceId: device.deviceId });
@@ -710,7 +710,7 @@ test("listDevices reports purposes and runtime session state", async () => {
 test("setDeviceMetadata updates label via core", async () => {
   await withStore(async (store) => {
     await store.rememberUsbStatus(status, "/dev/cu.usbmodem1");
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     const result = await core.setDeviceMetadata({ deviceId: device.deviceId, label: "Desk device" });
     assert.equal(result.label, "Desk device");
     assert.equal((await store.load()).devices[0].label, "Desk device");
@@ -721,7 +721,7 @@ test("connectDevice approved stores in-memory session and does not persist sessi
   await withStore(async (store, dir) => {
     let connectCalls = 0;
     let observedDeadlineMs = 0;
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async connectDevice(_portPath, _clientName, deadlineMs) {
@@ -750,7 +750,7 @@ test("connectDevice reuses an active runtime session without fresh Firmware appr
   await withStore(async (store) => {
     let connectCalls = 0;
     let capabilitiesCalls = 0;
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async connectDevice() {
@@ -780,7 +780,7 @@ test("connectDevice does not reuse a stale local session when the device disappe
     let listPortsCalls = 0;
     let connectCalls = 0;
     let portAvailable = true;
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async listPorts() {
@@ -821,7 +821,7 @@ test("connectDevice does not reuse a stale local session when the device disappe
 test("scanDevices clears runtime sessions for devices absent from the live USB scan", async () => {
   await withStore(async (store) => {
     let portAvailable = true;
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async listPorts() {
@@ -856,7 +856,7 @@ test("connectDevice clears a stale local session when reuse validation loses tra
   await withStore(async (store) => {
     let connectCalls = 0;
     let failReuseValidation = false;
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async connectDevice() {
@@ -865,7 +865,7 @@ test("connectDevice clears a stale local session when reuse validation loses tra
         },
         async getCapabilities() {
           if (failReuseValidation) {
-            throw new AgentQError("transport_closed", "USB transport closed.", true);
+            throw new DeviceRequestError("transport_closed", "USB transport closed.", true);
           }
           return defaultDriver().getCapabilities();
         },
@@ -889,7 +889,7 @@ test("connectDevice asks Firmware again when reuse validation reports invalid_se
   await withStore(async (store) => {
     let connectCalls = 0;
     let invalidateExisting = false;
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async connectDevice() {
@@ -898,7 +898,7 @@ test("connectDevice asks Firmware again when reuse validation reports invalid_se
         },
         async getCapabilities() {
           if (invalidateExisting) {
-            throw new AgentQError("invalid_session", "Session is not active.", true);
+            throw new DeviceRequestError("invalid_session", "Session is not active.", true);
           }
           return defaultDriver().getCapabilities();
         },
@@ -920,7 +920,7 @@ test("connectDevice does not reapprove from advertised wire ttl while the sessio
     let connectCalls = 0;
     let capabilitiesCalls = 0;
     let now = new Date("2026-05-28T00:00:00.000Z");
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async connectDevice() {
@@ -950,11 +950,11 @@ test("connectDevice does not reapprove from advertised wire ttl while the sessio
 
 test("connectDevice rejected does not store a session", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async connectDevice() {
-          throw new AgentQError("user_rejected", "Connection rejected.", false);
+          throw new DeviceRequestError("user_rejected", "Connection rejected.", false);
         },
       }),
     );
@@ -973,11 +973,11 @@ test("connectDevice rejected does not store a session", async () => {
 test("connectDevice refreshes lastSeenAt on rejection", async () => {
   await withStore(async (store) => {
     let now = new Date("2026-05-28T00:00:00.000Z");
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async connectDevice() {
-          throw new AgentQError("user_rejected", "Connection rejected.", false);
+          throw new DeviceRequestError("user_rejected", "Connection rejected.", false);
         },
       }),
       () => now,
@@ -997,7 +997,7 @@ test("connectDevice refreshes lastSeenAt on rejection", async () => {
 
 test("getDeviceStatus resolves by purpose", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId, purpose: "payment" });
 
@@ -1010,7 +1010,7 @@ test("getDeviceStatus resolves by purpose", async () => {
 
 test("getDeviceStatus rejects reserved purpose 'default'", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await core.scanDevices();
     await assert.rejects(() => core.getDeviceStatus({ purpose: "default" }), { code: "invalid_params" });
   });
@@ -1018,11 +1018,11 @@ test("getDeviceStatus rejects reserved purpose 'default'", async () => {
 
 test("connectDevice timeout does not store a session", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async connectDevice() {
-          throw new AgentQError("timeout", "Connection approval timed out.", true);
+          throw new DeviceRequestError("timeout", "Connection approval timed out.", true);
         },
       }),
     );
@@ -1037,7 +1037,7 @@ test("connectDevice timeout does not store a session", async () => {
 
 test("connectDevice rejects when Firmware reports a different deviceId", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async connectDevice() {
@@ -1053,7 +1053,7 @@ test("connectDevice rejects when Firmware reports a different deviceId", async (
 
 test("connectDevice resolves a device by purpose", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId, purpose: "payment" });
     const result = await core.connectDevice({ purpose: "payment" });
@@ -1063,7 +1063,7 @@ test("connectDevice resolves a device by purpose", async () => {
 
 test("connectDevice prefers explicit deviceId over purpose", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
@@ -1075,14 +1075,14 @@ test("connectDevice prefers explicit deviceId over purpose", async () => {
 
 test("connectDevice without resolution rejects with no_active_device", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await assert.rejects(() => core.connectDevice({}), { code: "no_active_device" });
   });
 });
 
 test("connectDevice for unknown device rejects with device_not_found", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await assert.rejects(
       () => core.connectDevice({ deviceId: "00000000-0000-0000-0000-000000000000" }),
       { code: "device_not_found" },
@@ -1092,7 +1092,7 @@ test("connectDevice for unknown device rejects with device_not_found", async () 
 
 test("disconnectDevice without a runtime session returns not_connected", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
@@ -1106,7 +1106,7 @@ test("disconnectDevice without a runtime session returns not_connected", async (
 test("disconnectDevice clears the runtime session after Firmware confirms", async () => {
   await withStore(async (store) => {
     let disconnectCalls = 0;
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async disconnectDevice() {
@@ -1134,11 +1134,11 @@ test("disconnectDevice clears the runtime session after Firmware confirms", asyn
 
 test("disconnectDevice clears the runtime session when Firmware reports invalid_session", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async disconnectDevice() {
-          throw new AgentQError("invalid_session", "Unknown session.", false);
+          throw new DeviceRequestError("invalid_session", "Unknown session.", false);
         },
       }),
     );
@@ -1157,7 +1157,7 @@ test("disconnectDevice clears the runtime session when Firmware reports invalid_
 test("disconnectDevice clears local session when transport is gone", async () => {
   await withStore(async (store) => {
     let portAvailable = true;
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async listPorts() {
@@ -1189,12 +1189,12 @@ test("disconnectDevice clears local session when transport is gone", async () =>
 
 test("disconnectDevice clears the local session and reports timeout when Firmware never confirms", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         // Firmware accepts the disconnect frame but never answers.
         disconnectDevice() {
-          throw new AgentQError("timeout", "Timed out.", true);
+          throw new DeviceRequestError("timeout", "Timed out.", true);
         },
       }),
     );
@@ -1215,7 +1215,7 @@ test("disconnectDevice clears the local session and reports timeout when Firmwar
 test("after a disconnect timeout, connectDevice contacts Firmware again instead of reusing the cleared session", async () => {
   await withStore(async (store) => {
     let connectCalls = 0;
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async connectDevice() {
@@ -1225,7 +1225,7 @@ test("after a disconnect timeout, connectDevice contacts Firmware again instead 
           });
         },
         disconnectDevice() {
-          throw new AgentQError("timeout", "Timed out.", true);
+          throw new DeviceRequestError("timeout", "Timed out.", true);
         },
       }),
     );
@@ -1247,7 +1247,7 @@ test("after a disconnect timeout, connectDevice contacts Firmware again instead 
 
 test("getAccounts without a runtime session returns not_connected", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
@@ -1260,7 +1260,7 @@ test("getAccounts without a runtime session returns not_connected", async () => 
 
 test("getCapabilities without a runtime session returns not_connected", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
@@ -1273,7 +1273,7 @@ test("getCapabilities without a runtime session returns not_connected", async ()
 
 test("getCapabilities returns Firmware-authored account identity and keeps the session", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
     await core.connectDevice({});
@@ -1305,11 +1305,11 @@ test("getCapabilities returns Firmware-authored account identity and keeps the s
 
 test("getCapabilities clears the local session when Firmware reports invalid_session", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async getCapabilities() {
-          throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
+          throw new DeviceRequestError("invalid_session", "Session is unknown or already ended.", false);
         },
       }),
     );
@@ -1327,7 +1327,7 @@ test("getCapabilities clears the local session when Firmware reports invalid_ses
 
 test("getAccounts returns the Sui account over an active session and keeps the session", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
     await core.connectDevice({});
@@ -1352,11 +1352,11 @@ test("getAccounts returns the Sui account over an active session and keeps the s
 
 test("getAccounts clears the local session when Firmware reports invalid_session", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async getAccounts() {
-          throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
+          throw new DeviceRequestError("invalid_session", "Session is unknown or already ended.", false);
         },
       }),
     );
@@ -1374,7 +1374,7 @@ test("getAccounts clears the local session when Firmware reports invalid_session
 
 test("policyGet without a runtime session returns not_connected", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
@@ -1387,14 +1387,14 @@ test("policyGet without a runtime session returns not_connected", async () => {
 
 test("policyGet returns the active Firmware policy document and keeps the session", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
     await core.connectDevice({});
 
     const result = await core.policyGet({});
     assert.equal(result.source, "live");
-    assert.equal(result.policy.schema, "agentq.policy");
+    assert.equal(result.policy.schema, "signing.policy");
     assert.equal(result.policy.policyId, POLICY_HASH);
     assert.equal(result.policy.defaultAction, "reject");
     assert.equal(result.policy.policyCount, 0);
@@ -1408,11 +1408,11 @@ test("policyGet returns the active Firmware policy document and keeps the sessio
 
 test("policyGet clears the local session when Firmware reports invalid_session", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async policyGet() {
-          throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
+          throw new DeviceRequestError("invalid_session", "Session is unknown or already ended.", false);
         },
       }),
     );
@@ -1430,7 +1430,7 @@ test("policyGet clears the local session when Firmware reports invalid_session",
 
 test("session-scoped APIs return not_connected before validating operation input", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
@@ -1476,7 +1476,7 @@ test("session-scoped APIs reject unsupported fields before USB live-port probing
   await withStore(async (store) => {
     let listPortsCalls = 0;
     let requestStatusCalls = 0;
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async listPorts() {
@@ -1544,7 +1544,7 @@ test("session-scoped APIs reject unsupported fields before USB live-port probing
 
 test("getApprovalHistory without a runtime session returns not_connected", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
@@ -1557,7 +1557,7 @@ test("getApprovalHistory without a runtime session returns not_connected", async
 
 test("getApprovalHistory returns Firmware-owned history and keeps the session", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
     await core.connectDevice({});
@@ -1578,7 +1578,7 @@ test("getApprovalHistory returns Firmware-owned history and keeps the session", 
 
 test("getApprovalHistory preserves blind-signing confirmation reason codes", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async getApprovalHistory() {
@@ -1625,7 +1625,7 @@ test("getApprovalHistory validates pagination before USB live-port probing", asy
     let listPortsCalls = 0;
     let requestStatusCalls = 0;
     let historyCalls = 0;
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async listPorts() {
@@ -1671,11 +1671,11 @@ test("getApprovalHistory validates pagination before USB live-port probing", asy
 
 test("getApprovalHistory clears the local session when Firmware reports invalid_session", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async getApprovalHistory() {
-          throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
+          throw new DeviceRequestError("invalid_session", "Session is unknown or already ended.", false);
         },
       }),
     );
@@ -1693,7 +1693,7 @@ test("getApprovalHistory clears the local session when Firmware reports invalid_
 
 test("signTransaction without a runtime session returns not_connected before validating signable payload", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
@@ -1711,7 +1711,7 @@ test("signTransaction without a runtime session returns not_connected before val
 
 test("signing route identity is selected before runtime-session lookup", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
@@ -1747,7 +1747,7 @@ test("signing route identity is selected before runtime-session lookup", async (
 
 test("signTransaction returns Firmware's policy_rejected signing outcome and keeps the session", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async signTransaction() {
@@ -1789,7 +1789,7 @@ test("signTransaction returns Firmware's policy_rejected signing outcome and kee
 test("signTransaction uses the internal request deadline by default", async () => {
   await withStore(async (store) => {
     let observedTimeoutMs = 0;
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async signTransaction(_portPath, _sessionId, _route, _params, deadlineMs) {
@@ -1826,11 +1826,11 @@ test("signTransaction uses the internal request deadline by default", async () =
 
 test("signTransaction propagates history_unavailable without clearing the session", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async signTransaction() {
-          throw new AgentQError("history_unavailable", "Could not record policy signing approval.", false);
+          throw new DeviceRequestError("history_unavailable", "Could not record policy signing approval.", false);
         },
       }),
     );
@@ -1855,11 +1855,11 @@ test("signTransaction propagates history_unavailable without clearing the sessio
 
 test("signTransaction preserves the local session on post-write transport failure", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async signTransaction() {
-          throw new AgentQError("transport_closed", "USB serial transport closed.", true);
+          throw new DeviceRequestError("transport_closed", "USB serial transport closed.", true);
         },
       }),
     );
@@ -1887,7 +1887,7 @@ test("signTransaction validates input before USB live-port probing", async () =>
     let listPortsCalls = 0;
     let requestStatusCalls = 0;
     let signTransactionCalls = 0;
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async listPorts() {
@@ -1948,11 +1948,11 @@ test("signTransaction validates input before USB live-port probing", async () =>
 
 test("signTransaction clears the local session when Firmware reports invalid_session", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async signTransaction() {
-          throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
+          throw new DeviceRequestError("invalid_session", "Session is unknown or already ended.", false);
         },
       }),
     );
@@ -1975,17 +1975,17 @@ test("signTransaction clears the local session when Firmware reports invalid_ses
 
 test("signTransaction clears the local session when get_result reports invalid_session", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async signTransaction(_portPath, sessionId, route, params) {
           const request = signTransactionDeviceRequest(sessionId, route, params);
           return requestSigningOutcomeWithRecovery(request, 1000, deviceRequestExecutor(async (wireRequest) => {
             if (wireKind(wireRequest) === "sign_transaction") {
-              throw markRequestMayHaveReachedFirmware(new AgentQError("timeout", "Original sign timeout.", true));
+              throw markRequestMayHaveReachedFirmware(new DeviceRequestError("timeout", "Original sign timeout.", true));
             }
             if (wireKind(wireRequest) === "get_result") {
-              throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
+              throw new DeviceRequestError("invalid_session", "Session is unknown or already ended.", false);
             }
             throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
           }));
@@ -2012,14 +2012,14 @@ test("signTransaction clears the local session when get_result reports invalid_s
 test("signTransaction returns recovered result and clears the local session when ack_result reports invalid_session", async () => {
   await withStore(async (store) => {
     const signature = suiEd25519Signature(3);
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async signTransaction(_portPath, sessionId, route, params) {
           const request = signTransactionDeviceRequest(sessionId, route, params);
           return requestSigningOutcomeWithRecovery(request, 1000, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
             if (wireKind(wireRequest) === "sign_transaction") {
-              throw markRequestMayHaveReachedFirmware(new AgentQError("transport_closed", "Transport closed.", true));
+              throw markRequestMayHaveReachedFirmware(new DeviceRequestError("transport_closed", "Transport closed.", true));
             }
             if (wireKind(wireRequest) === "get_result") {
               return assertResponse(signedDeviceResult(
@@ -2030,7 +2030,7 @@ test("signTransaction returns recovered result and clears the local session when
               ));
             }
             if (wireKind(wireRequest) === "ack_result") {
-              throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
+              throw new DeviceRequestError("invalid_session", "Session is unknown or already ended.", false);
             }
             throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
           }));
@@ -2060,7 +2060,7 @@ test("signTransaction returns recovered result and clears the local session when
 
 test("signTransaction returns not_connected before validating signable payload", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
@@ -2082,7 +2082,7 @@ test("signTransaction forwards a bounded provider signing request with internal 
   await withStore(async (store) => {
     let observed = null;
     const signature = suiEd25519Signature(7);
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async getCapabilities() {
@@ -2172,7 +2172,7 @@ test("signTransaction forwards canonical payload above the removed inline payloa
   await withStore(async (store) => {
     const txBytes = Buffer.alloc(385, 1).toString("base64");
     let observedTxBytes = null;
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async signTransaction(_portPath, _sessionId, _route, params) {
@@ -2225,7 +2225,7 @@ test("signTransaction returns Firmware terminal outcomes without throwing", asyn
     },
   ]) {
     await withStore(async (store) => {
-      const core = new AgentQCore(
+      const core = new DeviceCore(
         store,
         defaultDriver({
           async signTransaction() {
@@ -2267,7 +2267,7 @@ test("signTransaction validates params before USB live-port probing", async () =
     let listPortsCalls = 0;
     let requestStatusCalls = 0;
     let signTransactionCalls = 0;
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async listPorts() {
@@ -2326,11 +2326,11 @@ test("signTransaction validates params before USB live-port probing", async () =
 
 test("signTransaction clears the local session when Firmware reports invalid_session", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async signTransaction() {
-          throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
+          throw new DeviceRequestError("invalid_session", "Session is unknown or already ended.", false);
         },
       }),
     );
@@ -2353,7 +2353,7 @@ test("signTransaction clears the local session when Firmware reports invalid_ses
 
 test("signPersonalMessage returns not_connected before validating message payload", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
@@ -2376,7 +2376,7 @@ test("signPersonalMessage forwards a bounded user signing request with internal 
     let observed = null;
     const signature = suiEd25519Signature(9);
     const messageBytes = Buffer.from("hello").toString("base64");
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async signPersonalMessage(portPath, sessionId, route, params, deadlineMs) {
@@ -2437,7 +2437,7 @@ test("signPersonalMessage validates params before USB live-port probing", async 
     let listPortsCalls = 0;
     let requestStatusCalls = 0;
     let signPersonalMessageCalls = 0;
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async listPorts() {
@@ -2495,11 +2495,11 @@ test("signPersonalMessage validates params before USB live-port probing", async 
 
 test("signPersonalMessage clears the local session when Firmware reports invalid_session", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async signPersonalMessage() {
-          throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
+          throw new DeviceRequestError("invalid_session", "Session is unknown or already ended.", false);
         },
       }),
     );
@@ -2524,14 +2524,14 @@ test("signPersonalMessage returns recovered result and clears the local session 
   await withStore(async (store) => {
     const signature = suiEd25519Signature(4);
     const messageBytes = Buffer.from("hello").toString("base64");
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async signPersonalMessage(_portPath, sessionId, route, params) {
           const request = signPersonalMessageDeviceRequest(sessionId, route, params);
           return requestSigningOutcomeWithRecovery(request, 1000, deviceRequestExecutor(async (wireRequest, _deadlineMs, assertResponse) => {
             if (wireKind(wireRequest) === "sign_personal_message") {
-              throw markRequestMayHaveReachedFirmware(new AgentQError("transport_closed", "Transport closed.", true));
+              throw markRequestMayHaveReachedFirmware(new DeviceRequestError("transport_closed", "Transport closed.", true));
             }
             if (wireKind(wireRequest) === "get_result") {
               return assertResponse(signedDeviceResult(
@@ -2543,7 +2543,7 @@ test("signPersonalMessage returns recovered result and clears the local session 
               ));
             }
             if (wireKind(wireRequest) === "ack_result") {
-              throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
+              throw new DeviceRequestError("invalid_session", "Session is unknown or already ended.", false);
             }
             throw new Error(`unexpected request: ${wireKind(wireRequest)}`);
           }));
@@ -2570,7 +2570,7 @@ test("signPersonalMessage returns recovered result and clears the local session 
 
 test("policyPropose returns not_connected before validating policy payload", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(store, defaultDriver());
+    const core = new DeviceCore(store, defaultDriver());
     await core.scanDevices();
     await core.selectDevice({ deviceId: device.deviceId });
 
@@ -2595,7 +2595,7 @@ test("policyPropose forwards a bounded proposal and returns Firmware terminal me
         conditions: [{ field: "sui.command_kinds", op: "not_contains", values: ["publish"] }],
       },
     ]);
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async policyPropose(portPath, sessionId, submittedPolicy, deadlineMs) {
@@ -2633,7 +2633,7 @@ test("policyPropose validates proposals before live-port probing", async () => {
     let listPortsCalls = 0;
     let requestStatusCalls = 0;
     let proposeCalls = 0;
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async listPorts() {
@@ -2673,7 +2673,7 @@ test("policyPropose validates proposals before live-port probing", async () => {
     assert.equal(proposeCalls, 0);
 
     await assert.rejects(
-      () => core.policyPropose({ policy: { schema: "agentq.policy" }, extra: true }),
+      () => core.policyPropose({ policy: { schema: "signing.policy" }, extra: true }),
       { code: "invalid_params" },
     );
     assert.equal(listPortsCalls, 0);
@@ -2684,11 +2684,11 @@ test("policyPropose validates proposals before live-port probing", async () => {
 
 test("policyPropose clears the local session when Firmware reports invalid_session", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async policyPropose() {
-          throw new AgentQError("invalid_session", "Session is unknown or already ended.", false);
+          throw new DeviceRequestError("invalid_session", "Session is unknown or already ended.", false);
         },
       }),
     );
@@ -2708,7 +2708,7 @@ test("policyPropose clears the local session when Firmware reports invalid_sessi
 
 test("policyPropose clears the local session when Firmware reports consistency_error", async () => {
   await withStore(async (store) => {
-    const core = new AgentQCore(
+    const core = new DeviceCore(
       store,
       defaultDriver({
         async policyPropose() {

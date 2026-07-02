@@ -18,9 +18,9 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
-VECTOR_FILE="${AGENT_Q_DIR}/testdata/sign_request_identity_vectors.tsv"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
+VECTOR_FILE="${RUNTIME_DIR}/testdata/sign_request_identity_vectors.tsv"
 
 if [[ -z "${IDF_PATH:-}" ]]; then
   echo "IDF_PATH is not set. Source ESP-IDF v5.5.4 export.sh before running this test." >&2
@@ -37,9 +37,9 @@ fi
 
 for required in \
   "${VECTOR_FILE}" \
-  "${AGENT_Q_DIR}/agent_q_sign_request_identity.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_request_identity.h" \
-  "${COMMON_ROOT}/agent_q_sign_route.h"; do
+  "${RUNTIME_DIR}/sign_request_identity.cpp" \
+  "${RUNTIME_DIR}/sign_request_identity.h" \
+  "${COMMON_ROOT}/protocol/sign_route.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
@@ -48,7 +48,7 @@ done
 
 CXX_BIN="${CXX:-c++}"
 CC_BIN="${CC:-cc}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-sign-request-identity-vectors.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-sign-request-identity-vectors.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 cat >"${TMP_DIR}/test.cpp" <<'CPP'
@@ -62,8 +62,8 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <string>
 #include <vector>
 
-#include "agent_q_sign_request_identity.h"
-#include "agent_q_sign_route.h"
+#include "sign_request_identity.h"
+#include "protocol/sign_route.h"
 
 namespace {
 
@@ -122,30 +122,30 @@ bool is_hex_string(const std::string& value)
             return false;
         }
     }
-    return !value.empty() && value.size() == agent_q::kAgentQSignRequestIdentitySize * 2;
+    return !value.empty() && value.size() == signing::kSignRequestIdentitySize * 2;
 }
 
-agent_q::AgentQSignOperation parse_operation(const std::string& value)
+signing::SignOperation parse_operation(const std::string& value)
 {
     if (value == "sign_transaction") {
-        return agent_q::AgentQSignOperation::sign_transaction;
+        return signing::SignOperation::sign_transaction;
     }
     if (value == "sign_personal_message") {
-        return agent_q::AgentQSignOperation::sign_personal_message;
+        return signing::SignOperation::sign_personal_message;
     }
     fprintf(stderr, "Unsupported operation in vector: %s\n", value.c_str());
     assert(false);
-    return agent_q::AgentQSignOperation::sign_transaction;
+    return signing::SignOperation::sign_transaction;
 }
 
-const char* route_name(agent_q::AgentQSupportedSignRoute route)
+const char* route_name(signing::SupportedSignRoute route)
 {
     switch (route) {
-        case agent_q::AgentQSupportedSignRoute::sui_sign_transaction:
+        case signing::SupportedSignRoute::sui_sign_transaction:
             return "sui_sign_transaction";
-        case agent_q::AgentQSupportedSignRoute::sui_sign_personal_message:
+        case signing::SupportedSignRoute::sui_sign_personal_message:
             return "sui_sign_personal_message";
-        case agent_q::AgentQSupportedSignRoute::unsupported:
+        case signing::SupportedSignRoute::unsupported:
         default:
             return "unsupported";
     }
@@ -195,16 +195,16 @@ int main(int argc, char** argv)
     std::map<std::string, std::string> identities;
 
     for (const Vector& vector : vectors) {
-        const agent_q::AgentQSignRouteClassification classification =
-            agent_q::classify_sign_route(
+        const signing::SignRouteClassification classification =
+            signing::classify_sign_route(
                 parse_operation(vector.operation),
                 vector.chain.c_str(),
                 vector.method.c_str());
-        assert(classification.result == agent_q::AgentQSignRouteResult::ok);
+        assert(classification.result == signing::SignRouteResult::ok);
         assert(vector.route == route_name(classification.route));
 
-        uint8_t identity[agent_q::kAgentQSignRequestIdentitySize] = {};
-        assert(agent_q::sign_request_identity(
+        uint8_t identity[signing::kSignRequestIdentitySize] = {};
+        assert(signing::sign_request_identity(
             classification.route,
             vector.network.c_str(),
             vector.payload.c_str(),
@@ -239,11 +239,11 @@ CPP
   -o "${TMP_DIR}/platform_util.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_request_identity.cpp" \
+  "${RUNTIME_DIR}/sign_request_identity.cpp" \
   "${TMP_DIR}/sha256.o" \
   "${TMP_DIR}/platform_util.o" \
   -o "${TMP_DIR}/test"

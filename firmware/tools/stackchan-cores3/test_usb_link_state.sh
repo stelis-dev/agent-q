@@ -19,10 +19,10 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 CXX_BIN="${CXX:-c++}"
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-link-state.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-usb-link-state.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/freertos"
@@ -35,7 +35,7 @@ H
 cat >"${TMP_DIR}/usb_link_state_test.cpp" <<'CPP'
 #include <stdio.h>
 
-#include "agent_q_usb_link_state.h"
+#include "usb_link_state.h"
 
 namespace {
 
@@ -53,50 +53,50 @@ void expect(bool condition, const char* label)
 
 int main()
 {
-    using Event = agent_q::AgentQUsbLinkEvent;
+    using Event = signing::UsbLinkEvent;
 
-    agent_q::usb_link_state_clear();
-    agent_q::AgentQUsbLinkStateSnapshot snapshot =
-        agent_q::usb_link_state_snapshot();
+    signing::usb_link_state_clear();
+    signing::UsbLinkStateSnapshot snapshot =
+        signing::usb_link_state_snapshot();
     expect(!snapshot.known && !snapshot.connected && snapshot.next_poll == 0,
            "clear resets link state");
 
-    expect(agent_q::usb_link_state_observe(true, 10, 5) == Event::initial_observed,
+    expect(signing::usb_link_state_observe(true, 10, 5) == Event::initial_observed,
            "first due observation initializes state");
-    snapshot = agent_q::usb_link_state_snapshot();
+    snapshot = signing::usb_link_state_snapshot();
     expect(snapshot.known && snapshot.connected && snapshot.next_poll == 15,
            "initial observation stores connection and next poll");
-    expect(agent_q::usb_link_state_observe(false, 14, 5) == Event::not_due,
+    expect(signing::usb_link_state_observe(false, 14, 5) == Event::not_due,
            "observation before next poll is not due");
-    snapshot = agent_q::usb_link_state_snapshot();
+    snapshot = signing::usb_link_state_snapshot();
     expect(snapshot.connected && snapshot.next_poll == 15,
            "not-due observation leaves state untouched");
 
-    expect(agent_q::usb_link_state_observe(true, 15, 5) == Event::unchanged_connected,
+    expect(signing::usb_link_state_observe(true, 15, 5) == Event::unchanged_connected,
            "same connected state is unchanged connected");
-    expect(agent_q::usb_link_state_observe(false, 20, 5) == Event::disconnected,
+    expect(signing::usb_link_state_observe(false, 20, 5) == Event::disconnected,
            "connected to disconnected edge is reported");
-    snapshot = agent_q::usb_link_state_snapshot();
+    snapshot = signing::usb_link_state_snapshot();
     expect(snapshot.known && !snapshot.connected && snapshot.next_poll == 25,
            "disconnected edge stores disconnected state");
-    expect(agent_q::usb_link_state_observe(false, 25, 5) == Event::unchanged_disconnected,
+    expect(signing::usb_link_state_observe(false, 25, 5) == Event::unchanged_disconnected,
            "same disconnected state is unchanged disconnected");
-    expect(agent_q::usb_link_state_observe(true, 30, 5) == Event::connected,
+    expect(signing::usb_link_state_observe(true, 30, 5) == Event::connected,
            "disconnected to connected edge is reported");
 
-    agent_q::usb_link_state_clear();
-    expect(agent_q::usb_link_state_observe(false, 1, 5) == Event::initial_observed,
+    signing::usb_link_state_clear();
+    expect(signing::usb_link_state_observe(false, 1, 5) == Event::initial_observed,
            "clear makes next observation initial again");
-    snapshot = agent_q::usb_link_state_snapshot();
+    snapshot = signing::usb_link_state_snapshot();
     expect(snapshot.known && !snapshot.connected && snapshot.next_poll == 6,
            "initial disconnected observation is stored");
 
-    agent_q::usb_link_state_clear();
-    expect(agent_q::usb_link_state_observe(true, 0xFFFFFFF0u, 20) == Event::initial_observed,
+    signing::usb_link_state_clear();
+    expect(signing::usb_link_state_observe(true, 0xFFFFFFF0u, 20) == Event::initial_observed,
            "large initial tick initializes state");
-    expect(agent_q::usb_link_state_observe(true, 3, 20) == Event::not_due,
+    expect(signing::usb_link_state_observe(true, 3, 20) == Event::not_due,
            "deadline comparison stays not-due before wrapped deadline");
-    expect(agent_q::usb_link_state_observe(true, 4, 20) == Event::unchanged_connected,
+    expect(signing::usb_link_state_observe(true, 4, 20) == Event::unchanged_connected,
            "deadline comparison is wrap-safe after overflow");
 
     if (failures != 0) {
@@ -110,9 +110,9 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/usb_link_state_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_link_state.cpp" \
+  "${RUNTIME_DIR}/usb_link_state.cpp" \
   -o "${TMP_DIR}/usb_link_state_test"
 
 "${TMP_DIR}/usb_link_state_test"

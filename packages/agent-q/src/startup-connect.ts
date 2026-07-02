@@ -1,11 +1,11 @@
 import type {
-  AgentQCore,
+  DeviceCore,
   ScanDevicesResult,
 } from "@stelis/agent-q-core";
-import { AgentQError, toPublicErrorFromUnknown } from "@stelis/agent-q-core/adapter-internal";
+import { DeviceRequestError, toPublicErrorFromUnknown } from "@stelis/agent-q-core/adapter-internal";
 
 export type StartupConnectCore = Pick<
-  AgentQCore,
+  DeviceCore,
   | "scanDevices"
   | "selectDevice"
   | "connectDevice"
@@ -121,15 +121,15 @@ function chooseStartupConnectDeviceId(scanResult: ScanDevicesResult, requestedDe
   if (liveDeviceIds.length === 0) {
     const firstFailure = scanResult.failures[0];
     if (firstFailure !== undefined) {
-      throw new AgentQError(
+      throw new DeviceRequestError(
         firstFailure.unavailableReason,
         `Agent-Q device port is unavailable: ${firstFailure.unavailableReason}.`,
         true,
       );
     }
-    throw new AgentQError("port_not_found", "No Agent-Q device is connected.", true);
+    throw new DeviceRequestError("port_not_found", "No Agent-Q device is connected.", true);
   }
-  throw new AgentQError(
+  throw new DeviceRequestError(
     "invalid_params",
     "Multiple Agent-Q devices are connected; pass --device-id.",
     false,

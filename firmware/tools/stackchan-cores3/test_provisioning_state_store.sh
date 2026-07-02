@@ -18,24 +18,24 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 CXX_BIN="${CXX:-c++}"
 
 for required in \
-  "${AGENT_Q_DIR}/agent_q_provisioning_state_store.cpp" \
-  "${AGENT_Q_DIR}/agent_q_provisioning_state_store.h"; do
+  "${RUNTIME_DIR}/provisioning_state_store.cpp" \
+  "${RUNTIME_DIR}/provisioning_state_store.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
   fi
 done
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-provisioning-state-store.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-provisioning-state-store.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-mkdir -p "${TMP_DIR}/agent_q_common" "${TMP_DIR}/stubs"
-ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
+mkdir -p "${TMP_DIR}/firmware_common" "${TMP_DIR}/stubs"
+ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
 
 cat >"${TMP_DIR}/stubs/esp_err.h" <<'H'
 #pragma once
@@ -85,7 +85,7 @@ cat >"${TMP_DIR}/provisioning_state_store_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_provisioning_state_store.h"
+#include "provisioning_state_store.h"
 #include "esp_err.h"
 #include "nvs.h"
 
@@ -96,7 +96,7 @@ bool g_open_fails = false;
 bool g_read_fails = false;
 bool g_set_fails = false;
 bool g_commit_fails = false;
-char g_value[agent_q::kAgentQProvisioningStateStoreValueSize] = {};
+char g_value[signing::kProvisioningStateStoreValueSize] = {};
 int failures = 0;
 
 void expect(bool condition, const char* label)
@@ -119,20 +119,20 @@ void reset_stubs()
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
-const char* provisioning_persisted_state_to_string(AgentQProvisioningPersistedState state)
+const char* provisioning_persisted_state_to_string(ProvisioningPersistedState state)
 {
     switch (state) {
-        case AgentQProvisioningPersistedState::provisioned:
+        case ProvisioningPersistedState::provisioned:
             return "provisioned";
-        case AgentQProvisioningPersistedState::unprovisioned:
+        case ProvisioningPersistedState::unprovisioned:
         default:
             return "unprovisioned";
     }
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 extern "C" {
 
@@ -193,47 +193,47 @@ esp_err_t nvs_commit(nvs_handle_t handle)
 
 int main()
 {
-    using Status = agent_q::AgentQProvisioningStateStorageStatus;
+    using Status = signing::ProvisioningStateStorageStatus;
 
-    agent_q::AgentQProvisioningStateStoreRecord record = {};
+    signing::ProvisioningStateStoreRecord record = {};
 
     reset_stubs();
-    expect(agent_q::provisioning_state_store_load(&record), "missing state load returns transport success");
+    expect(signing::provisioning_state_store_load(&record), "missing state load returns transport success");
     expect(record.status == Status::missing, "missing state is classified");
     expect(record.value[0] == '\0', "missing state has empty value");
 
     reset_stubs();
     g_has_value = true;
     strlcpy(g_value, "provisioned", sizeof(g_value));
-    expect(agent_q::provisioning_state_store_load(&record), "present state load succeeds");
+    expect(signing::provisioning_state_store_load(&record), "present state load succeeds");
     expect(record.status == Status::present, "present state is classified");
     expect(strcmp(record.value, "provisioned") == 0, "present state value is copied");
 
     reset_stubs();
     g_open_fails = true;
-    expect(agent_q::provisioning_state_store_load(&record), "open failure load is represented as a record");
+    expect(signing::provisioning_state_store_load(&record), "open failure load is represented as a record");
     expect(record.status == Status::unreadable, "open failure is unreadable");
     expect(record.value[0] == '\0', "open failure has empty value");
 
     reset_stubs();
     g_read_fails = true;
-    expect(agent_q::provisioning_state_store_load(&record), "read failure load is represented as a record");
+    expect(signing::provisioning_state_store_load(&record), "read failure load is represented as a record");
     expect(record.status == Status::unreadable, "read failure is unreadable");
 
     reset_stubs();
-    expect(agent_q::provisioning_state_store_save(agent_q::AgentQProvisioningPersistedState::provisioned),
+    expect(signing::provisioning_state_store_save(signing::ProvisioningPersistedState::provisioned),
            "save provisioned succeeds");
     expect(g_has_value && strcmp(g_value, "provisioned") == 0,
            "save writes provisioning state string");
 
     reset_stubs();
     g_set_fails = true;
-    expect(!agent_q::provisioning_state_store_save(agent_q::AgentQProvisioningPersistedState::unprovisioned),
+    expect(!signing::provisioning_state_store_save(signing::ProvisioningPersistedState::unprovisioned),
            "set failure returns false");
 
     reset_stubs();
     g_commit_fails = true;
-    expect(!agent_q::provisioning_state_store_save(agent_q::AgentQProvisioningPersistedState::unprovisioned),
+    expect(!signing::provisioning_state_store_save(signing::ProvisioningPersistedState::unprovisioned),
            "commit failure returns false");
 
     if (failures != 0) {
@@ -248,9 +248,9 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
   -I"${TMP_DIR}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" -I"${TMP_DIR}/firmware_common" \
   "${TMP_DIR}/provisioning_state_store_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_provisioning_state_store.cpp" \
+  "${RUNTIME_DIR}/provisioning_state_store.cpp" \
   -o "${TMP_DIR}/provisioning_state_store_test"
 
 "${TMP_DIR}/provisioning_state_store_test"

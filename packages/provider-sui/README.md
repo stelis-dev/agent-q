@@ -29,10 +29,10 @@ For Wallet Standard / dapp-kit, register the wallet during app initialization:
 
 ```ts
 import { createDAppKit } from "@mysten/dapp-kit-react";
-import { createAgentQSuiWalletInitializer } from "@stelis/agent-q-provider-sui/wallet-standard";
-import { createAgentQSuiBrowserProvider } from "@stelis/agent-q-provider-sui/browser";
+import { createSuiDeviceWalletInitializer } from "@stelis/agent-q-provider-sui/wallet-standard";
+import { createSuiBrowserDeviceProvider } from "@stelis/agent-q-provider-sui/browser";
 
-const provider = createAgentQSuiBrowserProvider();
+const provider = createSuiBrowserDeviceProvider();
 
 export const dAppKit = createDAppKit({
   networks: ["devnet"],
@@ -40,7 +40,7 @@ export const dAppKit = createDAppKit({
   createClient(network) {
     return clients[network];
   },
-  walletInitializers: [createAgentQSuiWalletInitializer({ provider })],
+  walletInitializers: [createSuiDeviceWalletInitializer({ provider })],
 });
 ```
 
@@ -55,9 +55,9 @@ package and register the wallet during app initialization.
 
 The Wallet Standard entrypoint requires an injected provider implementation and
 does not create a default provider internally. The repository's
-`createAgentQSuiProvider()` factory is Node/host-local and uses the device
+`createSuiDeviceProvider()` factory is Node/host-local and uses the device
 client transport. Browser dapps can use the `./browser` subpath for a Web
-Serial-based runtime that implements `AgentQSuiWalletProvider`. Browser
+Serial-based runtime that implements `SuiDeviceWalletProvider`. Browser
 hardware signing is product-active only when the matching status entry in
 `docs/IMPLEMENTATION_STATUS.md` says the source, docs, tests, build, hardware,
 and visual evidence are complete.
@@ -169,7 +169,7 @@ host-selected authorization API.
 
 Credential setup is available through direct provider methods, not through
 Wallet Standard. The Wallet Standard wallet object does not expose
-`agentq:credentialPrepare`, `agentq:credentialPropose`, `credential_prepare`,
+`signing:credentialPrepare`, `signing:credentialPropose`, `credential_prepare`,
 `credential_propose`, or proof-clear features.
 
 The raw Agent-Q account projection and Wallet Standard account object are
@@ -180,12 +180,12 @@ from direct provider `getAccounts`.
 Apps can register the wallet directly:
 
 ```ts
-import { registerAgentQSuiWallet } from "@stelis/agent-q-provider-sui/wallet-standard";
-import type { AgentQSuiWalletProvider } from "@stelis/agent-q-provider-sui/wallet-standard";
+import { registerSuiDeviceWallet } from "@stelis/agent-q-provider-sui/wallet-standard";
+import type { SuiDeviceWalletProvider } from "@stelis/agent-q-provider-sui/wallet-standard";
 
-declare const provider: AgentQSuiWalletProvider;
+declare const provider: SuiDeviceWalletProvider;
 
-const registration = registerAgentQSuiWallet({
+const registration = registerSuiDeviceWallet({
   provider,
   getClient(network) {
     return clients[network];
@@ -201,10 +201,10 @@ For dapp-kit, register the initializer before wallet UI is created:
 
 ```ts
 import { createDAppKit } from "@mysten/dapp-kit-react";
-import { createAgentQSuiWalletInitializer } from "@stelis/agent-q-provider-sui/wallet-standard";
-import type { AgentQSuiWalletProvider } from "@stelis/agent-q-provider-sui/wallet-standard";
+import { createSuiDeviceWalletInitializer } from "@stelis/agent-q-provider-sui/wallet-standard";
+import type { SuiDeviceWalletProvider } from "@stelis/agent-q-provider-sui/wallet-standard";
 
-declare const provider: AgentQSuiWalletProvider;
+declare const provider: SuiDeviceWalletProvider;
 
 export const dAppKit = createDAppKit({
   networks: ["devnet"],
@@ -212,7 +212,7 @@ export const dAppKit = createDAppKit({
   createClient(network) {
     return clients[network];
   },
-  walletInitializers: [createAgentQSuiWalletInitializer({ provider })],
+  walletInitializers: [createSuiDeviceWalletInitializer({ provider })],
 });
 ```
 
@@ -235,7 +235,7 @@ a host-selected authorization API.
 
 ### Browser-Safe Provider Boundary
 
-`AgentQSuiWalletProvider` is the current browser injection contract for the
+`SuiDeviceWalletProvider` is the current browser injection contract for the
 Wallet Standard adapter. It is smaller than the Node-local
 provider factory:
 
@@ -292,9 +292,9 @@ The current source tree tracks opt-in hardware smoke tests for signing in the
 core package, where the direct USB/Firmware boundary lives:
 
 ```sh
-AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER=1 \
-AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO=positive \
-AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_TX_BYTES=<base64> \
+SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER=1 \
+SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO=positive \
+SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_TX_BYTES=<base64> \
 node --test packages/core/test/hardware-sign-api-smoke.test.mjs
 ```
 

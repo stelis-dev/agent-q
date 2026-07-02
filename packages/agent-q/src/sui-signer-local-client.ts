@@ -4,11 +4,11 @@ import type {
   GetAccountsResult,
   SignTransactionResult,
 } from "@stelis/agent-q-core";
-import { AgentQError } from "@stelis/agent-q-core/adapter-internal";
+import { DeviceRequestError } from "@stelis/agent-q-core/adapter-internal";
 
 import type { SuiSignCliCore } from "./sui-sign-cli.js";
 
-export const DEFAULT_AGENT_Q_LOCAL_SERVER_URL = "http://127.0.0.1:8787";
+export const DEFAULT_LOCAL_SERVER_URL = "http://127.0.0.1:8787";
 
 const MAX_LOCAL_SERVER_RESPONSE_BYTES = 65536;
 
@@ -31,7 +31,7 @@ type LocalApiResponse = LocalApiSuccess | LocalApiFailure;
 export function createLocalServerSuiSignCliCore(options: {
   baseUrl?: string;
 } = {}): SuiSignCliCore {
-  return new LocalServerSuiSignCliCore(options.baseUrl ?? DEFAULT_AGENT_Q_LOCAL_SERVER_URL);
+  return new LocalServerSuiSignCliCore(options.baseUrl ?? DEFAULT_LOCAL_SERVER_URL);
 }
 
 class LocalServerSuiSignCliCore implements SuiSignCliCore {
@@ -73,7 +73,7 @@ class LocalServerSuiSignCliCore implements SuiSignCliCore {
         body: JSON.stringify(body),
       });
     } catch {
-      throw new AgentQError(
+      throw new DeviceRequestError(
         "local_server_unavailable",
         "Start the local Agent-Q server with `agent-q` before using this command.",
         true,
@@ -82,7 +82,7 @@ class LocalServerSuiSignCliCore implements SuiSignCliCore {
 
     const payload = parseLocalApiResponse(await readBoundedResponseText(response));
     if (!payload.ok) {
-      throw new AgentQError(payload.error.code, payload.error.message, payload.error.retryable);
+      throw new DeviceRequestError(payload.error.code, payload.error.message, payload.error.retryable);
     }
     return payload.result as T;
   }
@@ -91,7 +91,7 @@ class LocalServerSuiSignCliCore implements SuiSignCliCore {
 async function readBoundedResponseText(response: Response): Promise<string> {
   const reader = response.body?.getReader();
   if (reader === undefined) {
-    throw new AgentQError("invalid_response", "Agent-Q local server response was empty.", true);
+    throw new DeviceRequestError("invalid_response", "Agent-Q local server response was empty.", true);
   }
 
   const decoder = new TextDecoder();
@@ -104,7 +104,7 @@ async function readBoundedResponseText(response: Response): Promise<string> {
     }
     raw += decoder.decode(value, { stream: true });
     if (Buffer.byteLength(raw, "utf8") > MAX_LOCAL_SERVER_RESPONSE_BYTES) {
-      throw new AgentQError("invalid_response", "Agent-Q local server response was too large.", true);
+      throw new DeviceRequestError("invalid_response", "Agent-Q local server response was too large.", true);
     }
   }
 }
@@ -114,20 +114,20 @@ function parseLocalApiResponse(raw: string): LocalApiResponse {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new AgentQError("invalid_response", "Agent-Q local server response was not JSON.", true);
+    throw new DeviceRequestError("invalid_response", "Agent-Q local server response was not JSON.", true);
   }
   if (!isRecord(parsed) || typeof parsed.ok !== "boolean") {
-    throw new AgentQError("invalid_response", "Agent-Q local server response was malformed.", true);
+    throw new DeviceRequestError("invalid_response", "Agent-Q local server response was malformed.", true);
   }
   if (parsed.ok) {
     return { ok: true, result: parsed.result };
   }
   if (!isRecord(parsed.error)) {
-    throw new AgentQError("invalid_response", "Agent-Q local server error was malformed.", true);
+    throw new DeviceRequestError("invalid_response", "Agent-Q local server error was malformed.", true);
   }
   const { code, message, retryable } = parsed.error;
   if (typeof code !== "string" || typeof message !== "string" || typeof retryable !== "boolean") {
-    throw new AgentQError("invalid_response", "Agent-Q local server error was malformed.", true);
+    throw new DeviceRequestError("invalid_response", "Agent-Q local server error was malformed.", true);
   }
   return { ok: false, error: { code, message, retryable } };
 }

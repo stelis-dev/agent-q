@@ -18,16 +18,16 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 CXX_BIN="${CXX:-c++}"
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-session-loss.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-usb-session-loss.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 cat >"${TMP_DIR}/usb_session_loss_test.cpp" <<'CPP'
 #include <stdio.h>
 
-#include "agent_q_usb_session_loss.h"
+#include "usb_session_loss.h"
 
 namespace {
 
@@ -41,17 +41,17 @@ void expect(bool condition, const char* label)
     }
 }
 
-agent_q::AgentQUsbSessionLossPlan plan(
+signing::UsbSessionLossPlan plan(
     bool session_active,
     bool connect_approval_active,
-    agent_q::AgentQUsbSessionLossProtocolPinPurpose protocol_pin,
-    agent_q::AgentQUsbSessionLossLocalPinPurpose local_pin,
+    signing::UsbSessionLossProtocolPinPurpose protocol_pin,
+    signing::UsbSessionLossLocalPinPurpose local_pin,
     bool policy_update_active = false,
     bool sui_zklogin_proposal_active = false,
     bool user_signing_active = false,
     bool user_signing_critical = false)
 {
-    return agent_q::usb_session_loss_plan(agent_q::AgentQUsbSessionLossInput{
+    return signing::usb_session_loss_plan(signing::UsbSessionLossInput{
         session_active,
         connect_approval_active,
         protocol_pin,
@@ -67,10 +67,10 @@ agent_q::AgentQUsbSessionLossPlan plan(
 
 int main()
 {
-    using ProtocolPurpose = agent_q::AgentQUsbSessionLossProtocolPinPurpose;
-    using LocalPurpose = agent_q::AgentQUsbSessionLossLocalPinPurpose;
+    using ProtocolPurpose = signing::UsbSessionLossProtocolPinPurpose;
+    using LocalPurpose = signing::UsbSessionLossLocalPinPurpose;
 
-    agent_q::AgentQUsbSessionLossPlan p =
+    signing::UsbSessionLossPlan p =
         plan(false, false, ProtocolPurpose::none, LocalPurpose::none);
     expect(!p.relevant, "idle state is not USB-session-loss relevant");
     expect(!p.clear_session && !p.clear_connect_approval && !p.clear_protocol_pin &&
@@ -178,9 +178,9 @@ int main()
 CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/usb_session_loss_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_session_loss.cpp" \
+  "${RUNTIME_DIR}/usb_session_loss.cpp" \
   -o "${TMP_DIR}/usb_session_loss_test"
 
 "${TMP_DIR}/usb_session_loss_test"

@@ -17,20 +17,20 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 
 for required in \
   "${REPO_ROOT}/packages/core/package.json" \
   "${REPO_ROOT}/packages/core/src/device-contract.ts" \
-  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
-  "${AGENT_Q_DIR}/agent_q_device_contract.h"; do
+  "${RUNTIME_DIR}/device_contract.cpp" \
+  "${RUNTIME_DIR}/device_contract.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
   fi
 done
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-device-contract-manifest.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-device-contract-manifest.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 CXX_BIN="${CXX:-c++}"
@@ -38,8 +38,8 @@ CXX_BIN="${CXX:-c++}"
 cat >"${TMP_DIR}/firmware_manifest.cpp" <<'CPP'
 #include <stdio.h>
 
-#include "agent_q_device_contract.h"
-#include "agent_q_protocol_constants.h"
+#include "device_contract.h"
+#include "protocol_constants.h"
 
 namespace {
 
@@ -56,32 +56,32 @@ void print_fields(const char* group, const char* const* fields, size_t count)
 
 int main()
 {
-    printf("VERSION\t%d\n", agent_q::kAgentQProtocolVersion);
+    printf("VERSION\t%d\n", signing::kProtocolVersion);
 
     size_t count = 0;
-    const agent_q::AgentQDeviceMethodRow* methods = agent_q::device_method_rows(&count);
+    const signing::DeviceMethodRow* methods = signing::device_method_rows(&count);
     for (size_t i = 0; i < count; ++i) {
-        const agent_q::AgentQDeviceMethodRow& row = methods[i];
+        const signing::DeviceMethodRow& row = methods[i];
         printf(
             "METHOD\t%s\t%s\t%s\t%s\t%s\t%s\n",
             row.method,
-            agent_q::device_session_rule_name(row.session_rule),
-            agent_q::device_payload_rule_name(row.payload_rule),
+            signing::device_session_rule_name(row.session_rule),
+            signing::device_payload_rule_name(row.payload_rule),
             row.payload_schema_owner,
             row.result_schema_owner,
             row.firmware_gate);
     }
 
-    const char* const* fields = agent_q::device_response_success_fields(&count);
+    const char* const* fields = signing::device_response_success_fields(&count);
     print_fields("success", fields, count);
-    fields = agent_q::device_response_failure_fields(&count);
+    fields = signing::device_response_failure_fields(&count);
     print_fields("failure", fields, count);
-    fields = agent_q::device_response_error_fields(&count);
+    fields = signing::device_response_error_fields(&count);
     print_fields("error", fields, count);
 
-    const agent_q::AgentQDeviceErrorRow* errors = agent_q::device_error_rows(&count);
+    const signing::DeviceErrorRow* errors = signing::device_error_rows(&count);
     for (size_t i = 0; i < count; ++i) {
-        const agent_q::AgentQDeviceErrorRow& row = errors[i];
+        const signing::DeviceErrorRow& row = errors[i];
         printf(
             "ERROR\t%s\t%s\t%s\t%s\n",
             row.code,
@@ -95,9 +95,9 @@ int main()
 CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/firmware_manifest.cpp" \
-  "${AGENT_Q_DIR}/agent_q_device_contract.cpp" \
+  "${RUNTIME_DIR}/device_contract.cpp" \
   -o "${TMP_DIR}/firmware_manifest"
 
 "${TMP_DIR}/firmware_manifest" >"${TMP_DIR}/firmware.tsv"

@@ -18,15 +18,15 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 CXX_BIN="${CXX:-c++}"
 
 for required in \
-  "${AGENT_Q_DIR}/agent_q_sui_zklogin_signature.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sui_zklogin_signature.h" \
-  "${AGENT_Q_DIR}/agent_q_sui_zklogin_proof_store.h" \
-  "${COMMON_ROOT}/agent_q_u64_decimal.h" \
+  "${RUNTIME_DIR}/sui_zklogin_signature.cpp" \
+  "${RUNTIME_DIR}/sui_zklogin_signature.h" \
+  "${RUNTIME_DIR}/sui_zklogin_proof_store.h" \
+  "${COMMON_ROOT}/numeric/u64_decimal.h" \
   "${REPO_ROOT}/node_modules/@mysten/sui/src/zklogin/signature.ts"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -34,7 +34,7 @@ for required in \
   fi
 done
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-sui-zklogin-signature.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-sui-zklogin-signature.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 node --input-type=module >"${TMP_DIR}/expected.hex" <<'JS'
@@ -73,7 +73,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_sui_zklogin_signature.h"
+#include "sui_zklogin_signature.h"
 
 namespace {
 
@@ -98,17 +98,17 @@ bool set_field(char* output, size_t output_size, const char* value)
     return true;
 }
 
-agent_q::AgentQSuiZkLoginSignatureInputs make_inputs()
+signing::SuiZkLoginSignatureInputs make_inputs()
 {
-    agent_q::AgentQSuiZkLoginSignatureInputs inputs = {};
+    signing::SuiZkLoginSignatureInputs inputs = {};
     const char* a_values[] = {"1", "2", "1"};
-    const char* b_values[][agent_q::kAgentQSuiZkLoginProofPointBInnerCount] = {
+    const char* b_values[][signing::kSuiZkLoginProofPointBInnerCount] = {
         {"3", "4"},
         {"5", "6"},
         {"1", "0"},
     };
     const char* c_values[] = {"7", "8", "1"};
-    for (size_t index = 0; index < agent_q::kAgentQSuiZkLoginProofPointACount; ++index) {
+    for (size_t index = 0; index < signing::kSuiZkLoginProofPointACount; ++index) {
         expect(
             set_field(
                 inputs.proof_points.a[index],
@@ -116,8 +116,8 @@ agent_q::AgentQSuiZkLoginSignatureInputs make_inputs()
                 a_values[index]),
             "proof point a fits");
     }
-    for (size_t row = 0; row < agent_q::kAgentQSuiZkLoginProofPointBOuterCount; ++row) {
-        for (size_t column = 0; column < agent_q::kAgentQSuiZkLoginProofPointBInnerCount; ++column) {
+    for (size_t row = 0; row < signing::kSuiZkLoginProofPointBOuterCount; ++row) {
+        for (size_t column = 0; column < signing::kSuiZkLoginProofPointBInnerCount; ++column) {
             expect(
                 set_field(
                     inputs.proof_points.b[row][column],
@@ -126,7 +126,7 @@ agent_q::AgentQSuiZkLoginSignatureInputs make_inputs()
                 "proof point b fits");
         }
     }
-    for (size_t index = 0; index < agent_q::kAgentQSuiZkLoginProofPointCCount; ++index) {
+    for (size_t index = 0; index < signing::kSuiZkLoginProofPointCCount; ++index) {
         expect(
             set_field(
                 inputs.proof_points.c[index],
@@ -190,7 +190,7 @@ bool read_expected_hex(const char* path, char* output, size_t output_size)
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 void wipe_sensitive_buffer(void* data, size_t size)
 {
@@ -201,7 +201,7 @@ void wipe_sensitive_buffer(void* data, size_t size)
     }
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 int main(int argc, char** argv)
 {
@@ -210,16 +210,16 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    agent_q::AgentQSuiZkLoginSignatureInputs inputs = make_inputs();
-    unsigned char user_signature[agent_q::kSuiEd25519SignatureBytes] = {};
+    signing::SuiZkLoginSignatureInputs inputs = make_inputs();
+    unsigned char user_signature[signing::kSuiEd25519SignatureBytes] = {};
     for (size_t index = 1; index < sizeof(user_signature); ++index) {
         user_signature[index] = static_cast<unsigned char>(index);
     }
 
-    unsigned char output[agent_q::kSuiSignatureEnvelopeMaxBytes] = {};
+    unsigned char output[signing::kSuiSignatureEnvelopeMaxBytes] = {};
     size_t output_size = 0;
-    const agent_q::AgentQSuiZkLoginSignatureBuildResult result =
-        agent_q::build_sui_zklogin_signature_envelope(
+    const signing::SuiZkLoginSignatureBuildResult result =
+        signing::build_sui_zklogin_signature_envelope(
             inputs,
             "123",
             user_signature,
@@ -227,12 +227,12 @@ int main(int argc, char** argv)
             output,
             sizeof(output),
             &output_size);
-    expect(result == agent_q::AgentQSuiZkLoginSignatureBuildResult::ok, "build succeeds");
-    expect(output_size > agent_q::kSuiEd25519SignatureBytes, "zkLogin envelope is variable sized");
-    expect(output[0] == agent_q::kAgentQSuiSignatureSchemeFlagZkLogin, "outer scheme flag is zkLogin");
+    expect(result == signing::SuiZkLoginSignatureBuildResult::ok, "build succeeds");
+    expect(output_size > signing::kSuiEd25519SignatureBytes, "zkLogin envelope is variable sized");
+    expect(output[0] == signing::kSuiSignatureSchemeFlagZkLogin, "outer scheme flag is zkLogin");
 
-    char expected_hex[agent_q::kSuiSignatureEnvelopeMaxBytes * 2 + 1] = {};
-    char actual_hex[agent_q::kSuiSignatureEnvelopeMaxBytes * 2 + 1] = {};
+    char expected_hex[signing::kSuiSignatureEnvelopeMaxBytes * 2 + 1] = {};
+    char actual_hex[signing::kSuiSignatureEnvelopeMaxBytes * 2 + 1] = {};
     expect(read_expected_hex(argv[1], expected_hex, sizeof(expected_hex)), "read SDK oracle fixture");
     to_hex(output, output_size, actual_hex, sizeof(actual_hex));
     expect(strcmp(actual_hex, expected_hex) == 0, "Firmware BCS output matches Sui SDK");
@@ -240,40 +240,40 @@ int main(int argc, char** argv)
     size_t invalid_size = 123;
     output[0] = 0xff;
     expect(
-        agent_q::build_sui_zklogin_signature_envelope(
+        signing::build_sui_zklogin_signature_envelope(
             inputs,
             "0123",
             user_signature,
             sizeof(user_signature),
             output,
             sizeof(output),
-            &invalid_size) == agent_q::AgentQSuiZkLoginSignatureBuildResult::invalid_input,
+            &invalid_size) == signing::SuiZkLoginSignatureBuildResult::invalid_input,
         "non-canonical maxEpoch rejected");
     expect(invalid_size == 0 && output[0] == 0, "invalid maxEpoch wipes output");
 
-    user_signature[0] = agent_q::kAgentQSuiSignatureSchemeFlagZkLogin;
+    user_signature[0] = signing::kSuiSignatureSchemeFlagZkLogin;
     expect(
-        agent_q::build_sui_zklogin_signature_envelope(
+        signing::build_sui_zklogin_signature_envelope(
             inputs,
             "123",
             user_signature,
             sizeof(user_signature),
             output,
             sizeof(output),
-            &invalid_size) == agent_q::AgentQSuiZkLoginSignatureBuildResult::invalid_input,
+            &invalid_size) == signing::SuiZkLoginSignatureBuildResult::invalid_input,
         "userSignature must be Ed25519 envelope");
-    user_signature[0] = agent_q::kAgentQSuiSignatureSchemeFlagEd25519;
+    user_signature[0] = signing::kSuiSignatureSchemeFlagEd25519;
 
     unsigned char small_output[8] = {};
     expect(
-        agent_q::build_sui_zklogin_signature_envelope(
+        signing::build_sui_zklogin_signature_envelope(
             inputs,
             "123",
             user_signature,
             sizeof(user_signature),
             small_output,
             sizeof(small_output),
-            &invalid_size) == agent_q::AgentQSuiZkLoginSignatureBuildResult::output_too_small,
+            &invalid_size) == signing::SuiZkLoginSignatureBuildResult::output_too_small,
         "undersized output rejected");
 
     return g_failures == 0 ? 0 : 1;
@@ -281,10 +281,10 @@ int main(int argc, char** argv)
 CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sui_zklogin_signature.cpp" \
+  "${RUNTIME_DIR}/sui_zklogin_signature.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test" "${TMP_DIR}/expected.hex"

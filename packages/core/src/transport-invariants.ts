@@ -20,11 +20,11 @@ export const INTERNAL_CONNECT_DEADLINE_MS = INTERNAL_LOCAL_PIN_INTERACTION_DEADL
 export const PAYLOAD_DELIVERY_DEADLINE_CHUNK_BYTES = 2048;
 export const PAYLOAD_TRANSFER_MAX_BYTES = 128 * 1024;
 
-export const DEFAULT_AGENT_Q_USB_BAUD_RATE = 115200;
-export const AGENT_Q_USB_VENDOR_ID = "303a";
-export const AGENT_Q_USB_PRODUCT_ID = "1001";
-export const AGENT_Q_USB_VENDOR_ID_NUMBER = 0x303a;
-export const AGENT_Q_USB_PRODUCT_ID_NUMBER = 0x1001;
+export const DEFAULT_FIRMWARE_USB_BAUD_RATE = 115200;
+export const FIRMWARE_USB_VENDOR_ID = "303a";
+export const FIRMWARE_USB_PRODUCT_ID = "1001";
+export const FIRMWARE_USB_VENDOR_ID_NUMBER = 0x303a;
+export const FIRMWARE_USB_PRODUCT_ID_NUMBER = 0x1001;
 
 // Current Firmware responses are bounded by protocol parsers. This transport
 // cap catches malformed or hostile streams before an unterminated line can grow

@@ -23,10 +23,10 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 COMMON_SOURCE_ENV="${REPO_ROOT}/firmware/source.env"
 TARGET_SOURCE_ENV="${REPO_ROOT}/firmware/src/stackchan-cores3/source.env"
 DEFAULT_CHECKOUT_DIR="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan"
-DEFAULT_SIGNING_DIR="${REPO_ROOT}/.firmware-cache/signing-crypto/microsui-lib"
+DEFAULT_RUNTIME_DIR="${REPO_ROOT}/.firmware-cache/signing-crypto/microsui-lib"
 DEFAULT_BIP39_WORDLIST_DIR="${REPO_ROOT}/.firmware-cache/bip39/bips"
 INPUT_PATH="${1:-${DEFAULT_CHECKOUT_DIR}}"
-BUILD_DIR="${2:-build-agentq-stackchan-cores3}"
+BUILD_DIR="${2:-build-stackchan-cores3}"
 
 # shellcheck source=/dev/null
 source "${COMMON_SOURCE_ENV}"
@@ -67,36 +67,36 @@ fetch_pinned_repo() {
   git -C "${checkout_dir}" checkout --force "${commit}"
 }
 
-if [[ -z "${AGENT_Q_SIGNING_CRYPTO_ROOT:-}" ]]; then
-  fetch_pinned_repo "${AGENT_Q_SIGNING_CRYPTO_REPOSITORY}" "${AGENT_Q_SIGNING_CRYPTO_COMMIT}" "${DEFAULT_SIGNING_DIR}"
-  export AGENT_Q_SIGNING_CRYPTO_ROOT="${DEFAULT_SIGNING_DIR}"
+if [[ -z "${SIGNING_CRYPTO_ROOT:-}" ]]; then
+  fetch_pinned_repo "${SIGNING_CRYPTO_REPOSITORY}" "${SIGNING_CRYPTO_COMMIT}" "${DEFAULT_RUNTIME_DIR}"
+  export SIGNING_CRYPTO_ROOT="${DEFAULT_RUNTIME_DIR}"
 else
-  export AGENT_Q_SIGNING_CRYPTO_ROOT
+  export SIGNING_CRYPTO_ROOT
 fi
 
-if [[ ! -f "${AGENT_Q_SIGNING_CRYPTO_ROOT}/src/microsui_core/sign.c" ]]; then
-  echo "AGENT_Q_SIGNING_CRYPTO_ROOT does not point to the pinned signing source: ${AGENT_Q_SIGNING_CRYPTO_ROOT}" >&2
+if [[ ! -f "${SIGNING_CRYPTO_ROOT}/src/microsui_core/sign.c" ]]; then
+  echo "SIGNING_CRYPTO_ROOT does not point to the pinned signing source: ${SIGNING_CRYPTO_ROOT}" >&2
   exit 1
 fi
 
-if [[ -z "${AGENT_Q_BIP39_WORDLIST_ROOT:-}" ]]; then
-  fetch_pinned_repo "${AGENT_Q_BIP39_WORDLIST_REPOSITORY}" "${AGENT_Q_BIP39_WORDLIST_COMMIT}" "${DEFAULT_BIP39_WORDLIST_DIR}"
-  export AGENT_Q_BIP39_WORDLIST_ROOT="${DEFAULT_BIP39_WORDLIST_DIR}"
+if [[ -z "${BIP39_WORDLIST_ROOT:-}" ]]; then
+  fetch_pinned_repo "${BIP39_WORDLIST_REPOSITORY}" "${BIP39_WORDLIST_COMMIT}" "${DEFAULT_BIP39_WORDLIST_DIR}"
+  export BIP39_WORDLIST_ROOT="${DEFAULT_BIP39_WORDLIST_DIR}"
 else
-  export AGENT_Q_BIP39_WORDLIST_ROOT
+  export BIP39_WORDLIST_ROOT
 fi
 
-AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE="${AGENT_Q_BIP39_WORDLIST_ROOT}/${AGENT_Q_BIP39_ENGLISH_WORDLIST_PATH}"
-if [[ ! -f "${AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE}" ]]; then
-  echo "AGENT_Q_BIP39_WORDLIST_ROOT does not point to the pinned BIP-39 wordlist source: ${AGENT_Q_BIP39_WORDLIST_ROOT}" >&2
+BIP39_ENGLISH_WORDLIST_FILE="${BIP39_WORDLIST_ROOT}/${BIP39_ENGLISH_WORDLIST_PATH}"
+if [[ ! -f "${BIP39_ENGLISH_WORDLIST_FILE}" ]]; then
+  echo "BIP39_WORDLIST_ROOT does not point to the pinned BIP-39 wordlist source: ${BIP39_WORDLIST_ROOT}" >&2
   exit 1
 fi
-export AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE
+export BIP39_ENGLISH_WORDLIST_FILE
 
 "${SCRIPT_DIR}/prepare.sh" "${FIRMWARE_DIR}"
 
 if ! command -v idf.py >/dev/null 2>&1; then
-  echo "idf.py is not on PATH. Install ESP-IDF ${AGENT_Q_ESP_IDF_VERSION} and source its export.sh first." >&2
+  echo "idf.py is not on PATH. Install ESP-IDF ${ESP_IDF_VERSION} and source its export.sh first." >&2
   exit 127
 fi
 

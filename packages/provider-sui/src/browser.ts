@@ -1,8 +1,8 @@
 import {
-  AGENT_Q_USB_PRODUCT_ID_NUMBER,
-  AGENT_Q_USB_VENDOR_ID_NUMBER,
+  FIRMWARE_USB_PRODUCT_ID_NUMBER,
+  FIRMWARE_USB_VENDOR_ID_NUMBER,
   consumeDeviceResponseLineChunk,
-  DEFAULT_AGENT_Q_USB_BAUD_RATE,
+  DEFAULT_FIRMWARE_USB_BAUD_RATE,
   INTERNAL_CONNECT_DEADLINE_MS,
   INTERNAL_DISCONNECT_DEADLINE_MS,
   INTERNAL_SIGN_PERSONAL_MESSAGE_DEADLINE_MS,
@@ -40,10 +40,10 @@ import {
   type RetainedSigningRecoveryOutcome,
 } from "@stelis/agent-q-core/device-request-internal";
 import type {
-  AgentQSuiWalletGetAccountsResult,
-  AgentQSuiWalletGetCapabilitiesResult,
-  AgentQSuiWalletProvider,
-  AgentQSuiWalletSignTransactionResult,
+  SuiDeviceWalletGetAccountsResult,
+  SuiDeviceWalletGetCapabilitiesResult,
+  SuiDeviceWalletProvider,
+  SuiDeviceWalletSignResult,
 } from "./wallet-standard.js";
 import type {
   CredentialPrepareInput,
@@ -73,7 +73,7 @@ type BrowserSerial = {
   requestPort(options?: { filters?: Array<{ usbVendorId?: number; usbProductId?: number }> }): Promise<BrowserSerialPort>;
 };
 
-export interface AgentQSuiBrowserProviderOptions {
+export interface SuiBrowserDeviceProviderOptions {
   clientName?: string;
 }
 
@@ -132,20 +132,20 @@ type BrowserSessionSnapshot = {
 };
 type BrowserSignRecoveryOutcome = RetainedSigningRecoveryOutcome<SigningOutcome>;
 
-const PROVIDER_REQUEST_MAY_HAVE_REACHED_FIRMWARE = Symbol("agent-q.providerRequestMayHaveReachedFirmware");
-const BROWSER_FIRMWARE_SESSION_INVALIDATED = Symbol("agent-q.browserFirmwareSessionInvalidated");
+const PROVIDER_REQUEST_MAY_HAVE_REACHED_FIRMWARE = Symbol("device.providerRequestMayHaveReachedFirmware");
+const BROWSER_FIRMWARE_SESSION_INVALIDATED = Symbol("device.browserFirmwareSessionInvalidated");
 
-export class AgentQSuiBrowserProviderError extends Error {
+export class SuiBrowserDeviceProviderError extends Error {
   readonly code: string;
 
   constructor(code: string, message: string) {
     super(message);
-    this.name = "AgentQSuiBrowserProviderError";
+    this.name = "SuiBrowserDeviceProviderError";
     this.code = code;
   }
 }
 
-export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
+export class SuiBrowserDeviceProvider implements SuiDeviceWalletProvider {
   readonly #requestPort: () => Promise<BrowserSerialPort>;
   readonly #clientName: string;
   #port: BrowserSerialPort | null;
@@ -166,7 +166,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
 
   #disconnectListener: ((event: { target?: unknown }) => void) | null = null;
 
-  constructor(options: AgentQSuiBrowserProviderOptions = {}) {
+  constructor(options: SuiBrowserDeviceProviderOptions = {}) {
     this.#port = null;
     this.#requestPort = defaultRequestPort();
     this.#clientName = options.clientName ?? DEFAULT_CLIENT_NAME;
@@ -217,7 +217,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       } finally {
         this.#clearSessionAndPort("device_mismatch");
       }
-      throw new AgentQSuiBrowserProviderError("device_mismatch", "Connected Agent-Q device did not match the requested deviceId.");
+      throw new SuiBrowserDeviceProviderError("device_mismatch", "Connected Agent-Q device did not match the requested deviceId.");
     }
     this.#session = {
       deviceId: response.device.deviceId,
@@ -260,7 +260,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
   async getCapabilities(input: {
     deviceId?: string;
     purpose?: string;
-  } = {}): Promise<AgentQSuiWalletGetCapabilitiesResult> {
+  } = {}): Promise<SuiDeviceWalletGetCapabilitiesResult> {
     const session = this.#matchingSession(input.deviceId);
     if (session === null) {
       return this.#inactiveResult(input.deviceId);
@@ -290,7 +290,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
   async getAccounts(input: {
     deviceId?: string;
     purpose?: string;
-  } = {}): Promise<AgentQSuiWalletGetAccountsResult> {
+  } = {}): Promise<SuiDeviceWalletGetAccountsResult> {
     const session = this.#matchingSession(input.deviceId);
     if (session === null) {
       return this.#inactiveResult(input.deviceId);
@@ -301,7 +301,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
         { method: "get_accounts", sessionId: session.sessionId },
         assertAccountsResult,
       );
-      return { source: "live", deviceId: session.deviceId, accounts: response.accounts as AgentQSuiWalletGetAccountsResult["accounts"] };
+      return { source: "live", deviceId: session.deviceId, accounts: response.accounts as SuiDeviceWalletGetAccountsResult["accounts"] };
     } catch (error) {
       const ended = this.#clearIfSessionEnded(error, snapshot);
       if (ended !== null) {
@@ -403,7 +403,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     // same signing request; while a retained response is buffered, a different
     // request using the same id fails with request_id_conflict.
     requestId?: string;
-  }): Promise<AgentQSuiWalletSignTransactionResult> {
+  }): Promise<SuiDeviceWalletSignResult> {
     const session = this.#matchingSession(input.deviceId);
     if (session === null) {
       return this.#inactiveResult(input.deviceId);
@@ -451,7 +451,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
     // same signing request; while a retained response is buffered, a different
     // request using the same id fails with request_id_conflict.
     requestId?: string;
-  }): Promise<AgentQSuiWalletSignTransactionResult> {
+  }): Promise<SuiDeviceWalletSignResult> {
     const session = this.#matchingSession(input.deviceId);
     if (session === null) {
       return this.#inactiveResult(input.deviceId);
@@ -556,7 +556,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       return;
     }
     if (cleanup.abandonedReason !== undefined) {
-      throw new AgentQSuiBrowserProviderError(
+      throw new SuiBrowserDeviceProviderError(
         "transport_closed",
         `The selected Web Serial port was abandoned after timed-out cleanup: ${cleanup.abandonedReason}.`,
       );
@@ -567,7 +567,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
         cleanup.promise,
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => {
-            reject(new AgentQSuiBrowserProviderError(
+            reject(new SuiBrowserDeviceProviderError(
               "transport_closed",
               "The selected Web Serial port is still cleaning up from a timed-out request.",
             ));
@@ -580,7 +580,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       }
     }
     if (cleanup.abandonedReason !== undefined) {
-      throw new AgentQSuiBrowserProviderError(
+      throw new SuiBrowserDeviceProviderError(
         "transport_closed",
         `The selected Web Serial port was abandoned after timed-out cleanup: ${cleanup.abandonedReason}.`,
       );
@@ -620,7 +620,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       if (this.#port === null && this.#session === null) {
         return;
       }
-      console.warn("[agent-q] Web Serial device disconnected; clearing cached port and session.");
+      console.warn("[device] Web Serial device disconnected; clearing cached port and session.");
       this.#clearSessionAndPort("physical_disconnect");
     };
     this.#disconnectListener = listener;
@@ -696,7 +696,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       assertSigningOutcome: (response) => assertSigningOutcome(response),
       digestPayload: (bytes) => sha256PayloadDigest(bytes),
       encodeChunkBase64: (bytes) => encodeBase64(bytes),
-      makeError: (code, message) => new AgentQSuiBrowserProviderError(code, message),
+      makeError: (code, message) => new SuiBrowserDeviceProviderError(code, message),
       errorCode,
       requestMayHaveReachedFirmware: providerRequestMayHaveReachedFirmware,
       markInvalidSession: markBrowserFirmwareSessionInvalidated,
@@ -713,7 +713,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       onDirectSuccess: () => {
         const port = this.#port;
         if (port === null) {
-          throw new AgentQSuiBrowserProviderError("transport_closed", "Web Serial port is not available.");
+          throw new SuiBrowserDeviceProviderError("transport_closed", "Web Serial port is not available.");
         }
         this.#restoreCapturedSessionAfterPhysicalDisconnect(generation, session, port);
       },
@@ -761,7 +761,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
       assertResponse,
       digestPayload: (bytes) => sha256PayloadDigest(bytes),
       encodeChunkBase64: (bytes) => encodeBase64(bytes),
-      makeError: (code, message, retryable = false) => new AgentQSuiBrowserProviderError(code, message),
+      makeError: (code, message, retryable = false) => new SuiBrowserDeviceProviderError(code, message),
       errorCode,
       onAbortInvalidSession: markBrowserFirmwareSessionInvalidated,
     });
@@ -804,7 +804,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
 
   #assertTransportLive(generation: number): void {
     if (this.#transportGeneration !== generation) {
-      throw new AgentQSuiBrowserProviderError(
+      throw new SuiBrowserDeviceProviderError(
         "transport_closed",
         "The device transport was torn down before this request could run.",
       );
@@ -854,7 +854,7 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
   }
 
   #inactiveResult(deviceId: string | undefined): { source: "not_connected" | "unavailable"; deviceId: string; reason: string } {
-    if (!isAgentQSuiBrowserProviderAvailable()) {
+    if (!isSuiBrowserDeviceProviderAvailable()) {
       return { source: "unavailable", deviceId: deviceId ?? "browser", reason: "unsupported_transport" };
     }
     return { source: "not_connected", deviceId: deviceId ?? this.#session?.deviceId ?? "browser", reason: "not_connected" };
@@ -913,12 +913,12 @@ export class AgentQSuiBrowserProvider implements AgentQSuiWalletProvider {
   }
 }
 
-export function isAgentQSuiBrowserProviderAvailable(): boolean {
+export function isSuiBrowserDeviceProviderAvailable(): boolean {
   return defaultSerial() !== null;
 }
 
-export function createAgentQSuiBrowserProvider(options: AgentQSuiBrowserProviderOptions = {}): AgentQSuiBrowserProvider {
-  return new AgentQSuiBrowserProvider(options);
+export function createSuiBrowserDeviceProvider(options: SuiBrowserDeviceProviderOptions = {}): SuiBrowserDeviceProvider {
+  return new SuiBrowserDeviceProvider(options);
 }
 
 function defaultSerial(): BrowserSerial | null {
@@ -929,21 +929,21 @@ function defaultRequestPort(): () => Promise<BrowserSerialPort> {
   return async () => {
     const serial = defaultSerial();
     if (serial === null) {
-      throw new AgentQSuiBrowserProviderError("unsupported_transport", "Web Serial is not available in this browser.");
+      throw new SuiBrowserDeviceProviderError("unsupported_transport", "Web Serial is not available in this browser.");
     }
-    const grantedPort = await findSingleGrantedAgentQPort(serial);
+    const grantedPort = await findSingleGrantedFirmwarePort(serial);
     if (grantedPort !== null) {
       return grantedPort;
     }
     return serial.requestPort({
-      filters: [{ usbVendorId: AGENT_Q_USB_VENDOR_ID_NUMBER, usbProductId: AGENT_Q_USB_PRODUCT_ID_NUMBER }],
+      filters: [{ usbVendorId: FIRMWARE_USB_VENDOR_ID_NUMBER, usbProductId: FIRMWARE_USB_PRODUCT_ID_NUMBER }],
     });
   };
 }
 
 function noop(): void {}
 
-async function findSingleGrantedAgentQPort(serial: BrowserSerial): Promise<BrowserSerialPort | null> {
+async function findSingleGrantedFirmwarePort(serial: BrowserSerial): Promise<BrowserSerialPort | null> {
   if (typeof serial.getPorts !== "function") {
     return null;
   }
@@ -953,17 +953,17 @@ async function findSingleGrantedAgentQPort(serial: BrowserSerial): Promise<Brows
   } catch {
     return null;
   }
-  const agentQPorts = grantedPorts.filter(isAgentQSerialPort);
-  return agentQPorts.length === 1 ? agentQPorts[0] : null;
+  const firmwarePorts = grantedPorts.filter(isFirmwareSerialPort);
+  return firmwarePorts.length === 1 ? firmwarePorts[0] : null;
 }
 
-function isAgentQSerialPort(port: BrowserSerialPort): boolean {
+function isFirmwareSerialPort(port: BrowserSerialPort): boolean {
   if (typeof port.getInfo !== "function") {
     return false;
   }
   const info = port.getInfo();
-  return info.usbVendorId === AGENT_Q_USB_VENDOR_ID_NUMBER &&
-    info.usbProductId === AGENT_Q_USB_PRODUCT_ID_NUMBER;
+  return info.usbVendorId === FIRMWARE_USB_VENDOR_ID_NUMBER &&
+    info.usbProductId === FIRMWARE_USB_PRODUCT_ID_NUMBER;
 }
 
 function deadlineForProviderSigningTransaction(request: BrowserSignRequest): number {
@@ -983,7 +983,7 @@ function remainingProviderDeadline(absoluteDeadlineMs: number, phaseDeadlineMs: 
   const remainingMs = absoluteDeadlineMs - Date.now();
   if (remainingMs <= 0) {
     throw markProviderRequestDidNotReachFirmware(
-      new AgentQSuiBrowserProviderError("timeout", "The device request expired before it reached Firmware."),
+      new SuiBrowserDeviceProviderError("timeout", "The device request expired before it reached Firmware."),
     );
   }
   return Math.min(phaseDeadlineMs, remainingMs);
@@ -1103,7 +1103,7 @@ async function settleCleanupStep(operation: Promise<unknown> | undefined, label:
   const timeout = new Promise<false>((resolve) => {
     timer = setTimeout(() => {
       console.warn(
-        `[agent-q] Web Serial cleanup '${label}' did not complete within ${CLEANUP_STEP_TIMEOUT_MS}ms; abandoning it.`,
+        `[device] Web Serial cleanup '${label}' did not complete within ${CLEANUP_STEP_TIMEOUT_MS}ms; abandoning it.`,
       );
       resolve(false);
     }, CLEANUP_STEP_TIMEOUT_MS);
@@ -1123,13 +1123,13 @@ function remainingBrowserLeaseMs(
   message: string,
 ): number {
   if (lease.canceled) {
-    throw markProviderRequestDidNotReachFirmware(new AgentQSuiBrowserProviderError("timeout", message));
+    throw markProviderRequestDidNotReachFirmware(new SuiBrowserDeviceProviderError("timeout", message));
   }
   const remainingMs = absoluteDeadlineMs - Date.now();
   if (remainingMs <= 0) {
     lease.canceled = true;
     throw tagProviderRequestReachability(
-      new AgentQSuiBrowserProviderError("timeout", message),
+      new SuiBrowserDeviceProviderError("timeout", message),
       lease.writeReachability === "started",
     );
   }
@@ -1147,7 +1147,7 @@ async function openBrowserPortWithinLease(
     absoluteDeadlineMs,
     "The device request expired while opening the Web Serial port.",
   );
-  const open = port.open({ baudRate: DEFAULT_AGENT_Q_USB_BAUD_RATE });
+  const open = port.open({ baudRate: DEFAULT_FIRMWARE_USB_BAUD_RATE });
   let timer: ReturnType<typeof setTimeout> | null = null;
   open.then(() => {
     if (lease.canceled) {
@@ -1170,7 +1170,7 @@ async function openBrowserPortWithinLease(
       lease.abandoned = true;
       lease.stalePortLease = abandonPort() ?? undefined;
       reject(markProviderRequestDidNotReachFirmware(
-        new AgentQSuiBrowserProviderError("timeout", "The device request expired while opening the Web Serial port."),
+        new SuiBrowserDeviceProviderError("timeout", "The device request expired while opening the Web Serial port."),
       ));
     }, remainingOpenMs);
   });
@@ -1207,7 +1207,7 @@ async function writeBrowserRequestWithinLease(
       lease.abandoned = true;
       lease.stalePortLease = abandonPort() ?? undefined;
       reject(markProviderRequestMayHaveReachedFirmware(
-        new AgentQSuiBrowserProviderError("timeout", "Timed out writing to Firmware."),
+        new SuiBrowserDeviceProviderError("timeout", "Timed out writing to Firmware."),
       ));
     }, Math.max(0, absoluteDeadlineMs - Date.now()));
   });
@@ -1250,7 +1250,7 @@ async function requestOverBrowserSerial<TResponse>(
   try {
     if (port.readable === null || port.writable === null) {
       throw markProviderRequestDidNotReachFirmware(
-        new AgentQSuiBrowserProviderError("transport_closed", "Web Serial port is not readable or writable."),
+        new SuiBrowserDeviceProviderError("transport_closed", "Web Serial port is not readable or writable."),
       );
     }
     reader = port.readable.getReader();
@@ -1269,9 +1269,9 @@ async function requestOverBrowserSerial<TResponse>(
         lease.canceled = true;
         lease.abandoned = true;
         lease.stalePortLease = abandonPort() ?? undefined;
-        console.warn(`[agent-q] No Firmware response for '${requestLabel}' within ${deadlineMs}ms; treating link as lost.`);
+        console.warn(`[device] No Firmware response for '${requestLabel}' within ${deadlineMs}ms; treating link as lost.`);
         reject(markProviderRequestMayHaveReachedFirmware(
-          new AgentQSuiBrowserProviderError("timeout", "Timed out waiting for Firmware response."),
+          new SuiBrowserDeviceProviderError("timeout", "Timed out waiting for Firmware response."),
         ));
       }, Math.max(0, absoluteDeadlineMs - Date.now()));
     });
@@ -1326,7 +1326,7 @@ async function readMatchingResponse<TResponse>(
   for (;;) {
     const { value, done } = await reader.read();
     if (done) {
-      throw new AgentQSuiBrowserProviderError("transport_closed", "The device connection was closed.");
+      throw new SuiBrowserDeviceProviderError("transport_closed", "The device connection was closed.");
     }
     let lines: string[];
     try {
@@ -1335,7 +1335,7 @@ async function readMatchingResponse<TResponse>(
       lines = consumed.lines;
     } catch (error) {
       if (error instanceof ProtocolError) {
-        throw new AgentQSuiBrowserProviderError(error.code, error.message);
+        throw new SuiBrowserDeviceProviderError(error.code, error.message);
       }
       throw error;
     }
@@ -1372,12 +1372,12 @@ function deadlineForProviderRequest(request: Pick<BrowserDeviceRequest, "method"
     case "ack_result":
       return INTERNAL_USB_DEADLINE_MS;
   }
-  throw new AgentQSuiBrowserProviderError("unknown_error", "Provider request deadline is not defined.");
+  throw new SuiBrowserDeviceProviderError("unknown_error", "Provider request deadline is not defined.");
 }
 
 function connectDeviceRequestInput(clientName: string): BrowserDeviceRequest {
   if (!isClientName(clientName)) {
-    throw new AgentQSuiBrowserProviderError(
+    throw new SuiBrowserDeviceProviderError(
       "invalid_params",
       "clientName must be 1-64 printable ASCII characters.",
     );
@@ -1403,7 +1403,7 @@ function tryParseMatchingResponseLine<TResponse>(
     if (parsed.id === undefined && parsed.success === false) {
       const response = parseDeviceResponse(parsed);
       if (response.success === false) {
-        throw new AgentQSuiBrowserProviderError(response.error.code, response.error.message);
+        throw new SuiBrowserDeviceProviderError(response.error.code, response.error.message);
       }
     }
     return { matched: false };
@@ -1412,7 +1412,7 @@ function tryParseMatchingResponseLine<TResponse>(
     return { matched: true, value: assertResponse(parsed) };
   } catch (error) {
     if (error instanceof ProtocolError) {
-      throw new AgentQSuiBrowserProviderError(error.code, error.message);
+      throw new SuiBrowserDeviceProviderError(error.code, error.message);
     }
     throw error;
   }
@@ -1438,13 +1438,13 @@ function isSessionEndedError(error: unknown): boolean {
 }
 
 function errorCode(error: unknown): string | null {
-  if (error instanceof ProtocolError || error instanceof AgentQSuiBrowserProviderError) {
+  if (error instanceof ProtocolError || error instanceof SuiBrowserDeviceProviderError) {
     return error.code;
   }
   return null;
 }
 
-function toLiveSigningOutcome(deviceId: string, response: SigningOutcome): AgentQSuiWalletSignTransactionResult {
+function toLiveSigningOutcome(deviceId: string, response: SigningOutcome): SuiDeviceWalletSignResult {
   if (response.status === "signed") {
     return {
       source: "live",

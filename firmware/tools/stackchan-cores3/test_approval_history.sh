@@ -22,7 +22,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 TARGET_ROOT="${REPO_ROOT}/firmware/src/stackchan-cores3"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 
 if [[ -z "${IDF_PATH:-}" ]]; then
   echo "IDF_PATH is not set. Source ESP-IDF v5.5.4 export.sh before running this test." >&2
@@ -38,20 +38,20 @@ if [[ ! -f "${MBEDTLS_INCLUDE_DIR}/mbedtls/sha256.h" || ! -f "${MBEDTLS_LIBRARY_
 fi
 
 for required in \
-  "${TARGET_ROOT}/agent_q/agent_q_approval_history.cpp" \
-  "${TARGET_ROOT}/agent_q/agent_q_approval_history.h" \
-  "${COMMON_ROOT}/policy/agent_q_policy_document.h"; do
+  "${TARGET_ROOT}/runtime/approval_history.cpp" \
+  "${TARGET_ROOT}/runtime/approval_history.h" \
+  "${COMMON_ROOT}/policy/document.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
   fi
 done
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-approval-history.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-approval-history.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-mkdir -p "${TMP_DIR}/agent_q_common"
-ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
+mkdir -p "${TMP_DIR}/firmware_common"
+ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
 
 mkdir -p "${TMP_DIR}/stubs"
 
@@ -107,7 +107,7 @@ cat >"${TMP_DIR}/approval_history_test.cpp" <<'CPP'
 
 #include <vector>
 
-#include "agent_q_approval_history.h"
+#include "approval_history.h"
 #include "esp_err.h"
 #include "nvs.h"
 
@@ -126,12 +126,12 @@ void expect(bool condition, const char* label)
     }
 }
 
-agent_q::AgentQSigningHistoryAppendInput policy_signing_rejected_input(const char* reason = "policy_rejected")
+signing::HistoryAppendInput policy_signing_rejected_input(const char* reason = "policy_rejected")
 {
-    return agent_q::AgentQSigningHistoryAppendInput{
-        agent_q::AgentQSigningHistoryRecordKind::terminal,
-        agent_q::AgentQApprovalHistoryConfirmationKind::policy,
-        agent_q::AgentQSigningHistoryTerminalResult::policy_rejected,
+    return signing::HistoryAppendInput{
+        signing::HistoryRecordKind::terminal,
+        signing::ApprovalHistoryConfirmationKind::policy,
+        signing::HistoryTerminalResult::policy_rejected,
         "sui",
         "sign_transaction",
         reason,
@@ -141,12 +141,12 @@ agent_q::AgentQSigningHistoryAppendInput policy_signing_rejected_input(const cha
     };
 }
 
-agent_q::AgentQPolicyUpdateHistoryAppendInput policy_update_input(
+signing::PolicyUpdateHistoryAppendInput policy_update_input(
     const char* result = "applied",
     const char* reason = "device_confirmed",
     const char* highest_action = "reject")
 {
-    return agent_q::AgentQPolicyUpdateHistoryAppendInput{
+    return signing::PolicyUpdateHistoryAppendInput{
         result,
         reason,
         "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3",
@@ -155,15 +155,15 @@ agent_q::AgentQPolicyUpdateHistoryAppendInput policy_update_input(
     };
 }
 
-agent_q::AgentQSigningHistoryAppendInput user_signing_confirmation_input(
+signing::HistoryAppendInput user_signing_confirmation_input(
     const char* reason = "device_confirmed",
-    agent_q::AgentQApprovalHistoryConfirmationKind confirmation_kind =
-        agent_q::AgentQApprovalHistoryConfirmationKind::local_pin)
+    signing::ApprovalHistoryConfirmationKind confirmation_kind =
+        signing::ApprovalHistoryConfirmationKind::local_pin)
 {
-    return agent_q::AgentQSigningHistoryAppendInput{
-        agent_q::AgentQSigningHistoryRecordKind::confirmation,
+    return signing::HistoryAppendInput{
+        signing::HistoryRecordKind::confirmation,
         confirmation_kind,
-        agent_q::AgentQSigningHistoryTerminalResult::none,
+        signing::HistoryTerminalResult::none,
         "sui",
         "sign_transaction",
         reason,
@@ -173,14 +173,14 @@ agent_q::AgentQSigningHistoryAppendInput user_signing_confirmation_input(
     };
 }
 
-agent_q::AgentQSigningHistoryAppendInput user_signing_terminal_input(
-    agent_q::AgentQSigningHistoryTerminalResult result =
-        agent_q::AgentQSigningHistoryTerminalResult::signed_success,
+signing::HistoryAppendInput user_signing_terminal_input(
+    signing::HistoryTerminalResult result =
+        signing::HistoryTerminalResult::signed_success,
     const char* reason = "device_confirmed")
 {
-    return agent_q::AgentQSigningHistoryAppendInput{
-        agent_q::AgentQSigningHistoryRecordKind::terminal,
-        agent_q::AgentQApprovalHistoryConfirmationKind::none,
+    return signing::HistoryAppendInput{
+        signing::HistoryRecordKind::terminal,
+        signing::ApprovalHistoryConfirmationKind::none,
         result,
         "sui",
         "sign_transaction",
@@ -285,65 +285,65 @@ esp_err_t nvs_commit(nvs_handle_t)
 
 int main()
 {
-    agent_q::AgentQApprovalHistoryPage page = {};
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
+    signing::ApprovalHistoryPage page = {};
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::ok,
            "missing approval history reads as empty");
     expect(page.count == 0 && !page.has_more, "missing approval history page is empty");
 
     const uint8_t abc[] = {'a', 'b', 'c'};
-    char digest[agent_q::kAgentQApprovalHistoryDigestSize] = {};
-    expect(agent_q::approval_history_digest_payload(abc, sizeof(abc), digest, sizeof(digest)),
+    char digest[signing::kApprovalHistoryDigestSize] = {};
+    expect(signing::approval_history_digest_payload(abc, sizeof(abc), digest, sizeof(digest)),
            "payload digest helper succeeds");
     expect(strcmp(digest, "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") == 0,
            "payload digest helper formats canonical sha256");
 
     uint64_t sequence_value = 0;
-    expect(agent_q::approval_history_parse_sequence("0", &sequence_value) && sequence_value == 0,
+    expect(signing::approval_history_parse_sequence("0", &sequence_value) && sequence_value == 0,
            "sequence parser accepts canonical zero");
-    expect(agent_q::approval_history_parse_sequence("18446744073709551615", &sequence_value) &&
+    expect(signing::approval_history_parse_sequence("18446744073709551615", &sequence_value) &&
                sequence_value == UINT64_MAX,
            "sequence parser accepts uint64 max");
-    expect(!agent_q::approval_history_parse_sequence("01", &sequence_value),
+    expect(!signing::approval_history_parse_sequence("01", &sequence_value),
            "sequence parser rejects leading zero");
-    expect(!agent_q::approval_history_parse_sequence("00000000000000000001", &sequence_value),
+    expect(!signing::approval_history_parse_sequence("00000000000000000001", &sequence_value),
            "sequence parser rejects long zero-padded values");
-    expect(!agent_q::approval_history_parse_sequence("18446744073709551616", &sequence_value),
+    expect(!signing::approval_history_parse_sequence("18446744073709551616", &sequence_value),
            "sequence parser rejects overflow");
 
-    expect(agent_q::approval_history_append_required_signing(policy_signing_rejected_input(), 100),
+    expect(signing::approval_history_append_required_signing(policy_signing_rejected_input(), 100),
            "append first policy signing rejection");
     expect(g_blob.size() > 4 && g_blob[4] == 1,
            "approval history current format marker is one");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::ok,
            "read first page");
     expect(page.count == 1 && !page.has_more, "one record page shape");
     expect(page.records[0].sequence == 1, "first record sequence");
     expect(page.records[0].uptime_ms == 100, "first record uptime");
-    expect(page.records[0].event_kind == agent_q::AgentQApprovalHistoryEventKind::signing,
+    expect(page.records[0].event_kind == signing::ApprovalHistoryEventKind::signing,
            "first record event kind");
-    expect(page.records[0].signing_record_kind == agent_q::AgentQSigningHistoryRecordKind::terminal,
+    expect(page.records[0].signing_record_kind == signing::HistoryRecordKind::terminal,
            "first record signing terminal kind");
-    expect(page.records[0].signing_terminal_result == agent_q::AgentQSigningHistoryTerminalResult::policy_rejected,
+    expect(page.records[0].signing_terminal_result == signing::HistoryTerminalResult::policy_rejected,
            "first record signing terminal result");
-    expect(page.records[0].confirmation_kind == agent_q::AgentQApprovalHistoryConfirmationKind::policy,
+    expect(page.records[0].confirmation_kind == signing::ApprovalHistoryConfirmationKind::policy,
            "first record confirmation kind");
     expect(strcmp(page.records[0].chain, "sui") == 0, "first record chain");
 
     const std::vector<uint8_t> valid_enum_blob = g_blob;
     g_blob[4] = 0;
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::invalid,
            "stored unsupported approval history format marker fails closed");
     g_blob = valid_enum_blob;
     expect(mutate_first_method_record_byte(16, 0xFF), "mutate stored confirmation enum");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::invalid,
            "stored unsupported confirmation enum fails closed");
     g_blob = valid_enum_blob;
 
-    agent_q::AgentQSigningHistoryAppendInput max_rule_ref = policy_signing_rejected_input();
+    signing::HistoryAppendInput max_rule_ref = policy_signing_rejected_input();
     max_rule_ref.rule_ref = "abcdefghijklmnopqrstuvwxyzabcdef";
-    expect(agent_q::approval_history_append_required_signing(max_rule_ref, 103),
+    expect(signing::approval_history_append_required_signing(max_rule_ref, 103),
            "max-length ruleRef matching policy rule id is accepted");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::ok,
            "read max ruleRef page");
     expect(strcmp(page.records[0].rule_ref, "abcdefghijklmnopqrstuvwxyzabcdef") == 0,
            "max-length ruleRef is preserved");
@@ -363,82 +363,82 @@ int main()
             break;
         }
     }
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::invalid,
            "corrupt stored token fails closed instead of being sanitized");
     g_blob = valid_blob;
 
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::ok,
            "read newest page before wrap");
     const uint64_t sequence_before_wrap = page.count > 0 ? page.records[0].sequence : 0;
-    for (uint32_t index = 0; index < agent_q::kAgentQApprovalHistoryCapacity + 3; ++index) {
-        char reason[agent_q::kAgentQApprovalHistoryReasonCodeSize] = {};
+    for (uint32_t index = 0; index < signing::kApprovalHistoryCapacity + 3; ++index) {
+        char reason[signing::kApprovalHistoryReasonCodeSize] = {};
         snprintf(reason, sizeof(reason), "reason_%u", static_cast<unsigned>(index));
-        expect(agent_q::approval_history_append_required_signing(
+        expect(signing::approval_history_append_required_signing(
                    policy_signing_rejected_input(reason),
                    200 + (static_cast<uint64_t>(index + 1) *
                           60000ULL)),
                "append ring record");
     }
 
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::ok,
            "read newest page");
     expect(page.count == 4 && page.has_more, "newest page is bounded with hasMore");
-    expect(page.records[0].sequence == sequence_before_wrap + agent_q::kAgentQApprovalHistoryCapacity + 3,
+    expect(page.records[0].sequence == sequence_before_wrap + signing::kApprovalHistoryCapacity + 3,
            "newest record sequence after wrap");
     const uint64_t before = page.records[3].sequence;
-    expect(agent_q::approval_history_read_page(before, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
+    expect(signing::approval_history_read_page(before, 4, &page) == signing::ApprovalHistoryReadResult::ok,
            "read paged page");
     expect(page.count == 4 && page.records[0].sequence == before - 1,
            "beforeSeq reads older records");
 
-    agent_q::AgentQSigningHistoryAppendInput overlong_method = policy_signing_rejected_input();
+    signing::HistoryAppendInput overlong_method = policy_signing_rejected_input();
     overlong_method.method = "this_method_name_is_longer_than_the_current_store_allows";
-    expect(!agent_q::approval_history_append_required_signing(overlong_method, 400),
+    expect(!signing::approval_history_append_required_signing(overlong_method, 400),
            "overlong method token is rejected instead of truncated");
 
-    agent_q::AgentQSigningHistoryAppendInput invalid_chain = policy_signing_rejected_input();
+    signing::HistoryAppendInput invalid_chain = policy_signing_rejected_input();
     invalid_chain.chain = "Sui";
-    expect(!agent_q::approval_history_append_required_signing(invalid_chain, 401),
+    expect(!signing::approval_history_append_required_signing(invalid_chain, 401),
            "invalid chain token is rejected instead of sanitized");
 
-    expect(agent_q::approval_history_wipe(), "wipe approval history");
+    expect(signing::approval_history_wipe(), "wipe approval history");
     expect(g_blob.empty(), "wipe removes approval history blob");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::ok,
            "wiped approval history reads as empty");
     expect(page.count == 0, "wiped page is empty");
 
     g_blob.assign(31, 0xA5);
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::invalid,
            "unsupported approval history blob is rejected");
-    expect(!agent_q::approval_history_append_required_signing(policy_signing_rejected_input(), 900),
+    expect(!signing::approval_history_append_required_signing(policy_signing_rejected_input(), 900),
            "append refuses unsupported approval history blob");
-    expect(agent_q::approval_history_wipe(), "wipe unsupported approval history blob");
-    expect(agent_q::approval_history_append_required_policy_update(
+    expect(signing::approval_history_wipe(), "wipe unsupported approval history blob");
+    expect(signing::approval_history_append_required_policy_update(
                policy_update_input(),
                1013),
            "required policy-update history appends");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::ok,
            "read policy-update record after budget exhaustion");
     expect(page.count == 1 &&
-               page.records[0].event_kind == agent_q::AgentQApprovalHistoryEventKind::policy_update,
+               page.records[0].event_kind == signing::ApprovalHistoryEventKind::policy_update,
            "policy-update record is newest approval-history event");
     expect(strcmp(page.records[0].policy_result, "applied") == 0 &&
                strcmp(page.records[0].reason_code, "device_confirmed") == 0 &&
                strcmp(page.records[0].highest_action, "reject") == 0 &&
                page.records[0].policy_count == 1,
            "policy-update record metadata is preserved");
-    expect(agent_q::approval_history_append_required_signing(
+    expect(signing::approval_history_append_required_signing(
                user_signing_confirmation_input(),
                1100),
            "required user_signing confirmation history appends");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::ok,
            "read user_signing confirmation record");
-    expect(page.records[0].event_kind == agent_q::AgentQApprovalHistoryEventKind::signing &&
+    expect(page.records[0].event_kind == signing::ApprovalHistoryEventKind::signing &&
                page.records[0].signing_record_kind ==
-                   agent_q::AgentQSigningHistoryRecordKind::confirmation &&
-               page.records[0].confirmation_kind == agent_q::AgentQApprovalHistoryConfirmationKind::local_pin &&
+                   signing::HistoryRecordKind::confirmation &&
+               page.records[0].confirmation_kind == signing::ApprovalHistoryConfirmationKind::local_pin &&
                page.records[0].signing_terminal_result ==
-                   agent_q::AgentQSigningHistoryTerminalResult::none,
+                   signing::HistoryTerminalResult::none,
            "user_signing confirmation metadata is preserved");
     expect(strcmp(page.records[0].chain, "sui") == 0 &&
                strcmp(page.records[0].method, "sign_transaction") == 0 &&
@@ -446,44 +446,44 @@ int main()
                strcmp(page.records[0].payload_digest,
                       "sha256:0000000000000000000000000000000000000000000000000000000000000002") == 0,
            "user_signing confirmation bounded fields are preserved");
-    expect(agent_q::approval_history_append_required_signing(
+    expect(signing::approval_history_append_required_signing(
                user_signing_confirmation_input("blind_signing_confirmed"),
                1100),
            "required user_signing blind-signing confirmation history appends");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::ok,
            "read user_signing blind-signing confirmation record");
-    expect(page.records[0].event_kind == agent_q::AgentQApprovalHistoryEventKind::signing &&
+    expect(page.records[0].event_kind == signing::ApprovalHistoryEventKind::signing &&
                page.records[0].signing_record_kind ==
-                   agent_q::AgentQSigningHistoryRecordKind::confirmation &&
-               page.records[0].confirmation_kind == agent_q::AgentQApprovalHistoryConfirmationKind::local_pin &&
+                   signing::HistoryRecordKind::confirmation &&
+               page.records[0].confirmation_kind == signing::ApprovalHistoryConfirmationKind::local_pin &&
                strcmp(page.records[0].reason_code, "blind_signing_confirmed") == 0,
            "user_signing blind-signing confirmation metadata is preserved");
-    expect(agent_q::approval_history_append_required_signing(
+    expect(signing::approval_history_append_required_signing(
                user_signing_confirmation_input(
                    "device_confirmed",
-                   agent_q::AgentQApprovalHistoryConfirmationKind::physical_confirm),
+                   signing::ApprovalHistoryConfirmationKind::physical_confirm),
                1100),
            "required user_signing physical confirmation history appends");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::ok,
            "read user_signing physical confirmation record");
-    expect(page.records[0].event_kind == agent_q::AgentQApprovalHistoryEventKind::signing &&
+    expect(page.records[0].event_kind == signing::ApprovalHistoryEventKind::signing &&
                page.records[0].signing_record_kind ==
-                   agent_q::AgentQSigningHistoryRecordKind::confirmation &&
+                   signing::HistoryRecordKind::confirmation &&
                page.records[0].confirmation_kind ==
-                   agent_q::AgentQApprovalHistoryConfirmationKind::physical_confirm,
+                   signing::ApprovalHistoryConfirmationKind::physical_confirm,
            "user_signing physical confirmation metadata is preserved");
-    expect(agent_q::approval_history_append_required_signing(
+    expect(signing::approval_history_append_required_signing(
                user_signing_terminal_input(),
                1101),
            "required signing terminal history appends");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::ok,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::ok,
            "read signing terminal record");
-    expect(page.records[0].event_kind == agent_q::AgentQApprovalHistoryEventKind::signing &&
+    expect(page.records[0].event_kind == signing::ApprovalHistoryEventKind::signing &&
                page.records[0].signing_record_kind ==
-                   agent_q::AgentQSigningHistoryRecordKind::terminal &&
-               page.records[0].confirmation_kind == agent_q::AgentQApprovalHistoryConfirmationKind::none &&
+                   signing::HistoryRecordKind::terminal &&
+               page.records[0].confirmation_kind == signing::ApprovalHistoryConfirmationKind::none &&
                page.records[0].signing_terminal_result ==
-                   agent_q::AgentQSigningHistoryTerminalResult::signed_success,
+                   signing::HistoryTerminalResult::signed_success,
            "signing terminal metadata is preserved");
 	    const char* allowed_results[] = {
 	        "applied",
@@ -492,147 +492,147 @@ int main()
 	        "storage_error",
 	    };
     for (const char* result : allowed_results) {
-        expect(agent_q::approval_history_wipe(), "wipe before allowed policy-update result test");
-        expect(agent_q::approval_history_append_required_policy_update(
+        expect(signing::approval_history_wipe(), "wipe before allowed policy-update result test");
+        expect(signing::approval_history_append_required_policy_update(
                    policy_update_input(result),
                    1500),
                "allowed policy-update result is storable");
     }
-    expect(agent_q::approval_history_wipe(), "wipe before stored response corruption test");
-    expect(agent_q::approval_history_append_required_policy_update(policy_update_input(), 1501),
+    expect(signing::approval_history_wipe(), "wipe before stored response corruption test");
+    expect(signing::approval_history_append_required_policy_update(policy_update_input(), 1501),
            "append policy-update result before corruption");
     expect(replace_blob_token("applied", "approve"), "mutate stored policy-update result token");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::invalid,
            "stored unsupported policy-update result fails closed");
-    expect(agent_q::approval_history_wipe(), "wipe before stored highest-action corruption test");
-    expect(agent_q::approval_history_append_required_policy_update(policy_update_input(), 1502),
+    expect(signing::approval_history_wipe(), "wipe before stored highest-action corruption test");
+    expect(signing::approval_history_append_required_policy_update(policy_update_input(), 1502),
            "append policy-update highest action before corruption");
     expect(replace_blob_token("reject", "accept"), "mutate stored highest-action token");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::invalid,
            "stored unsupported highest action fails closed");
-    expect(agent_q::approval_history_wipe(), "wipe after policy-update corruption tests");
-    expect(agent_q::approval_history_wipe(), "wipe approval history after policy-update corruption tests");
+    expect(signing::approval_history_wipe(), "wipe after policy-update corruption tests");
+    expect(signing::approval_history_wipe(), "wipe approval history after policy-update corruption tests");
 
-	    expect(!agent_q::approval_history_append_required_policy_update(
+	    expect(!signing::approval_history_append_required_policy_update(
 	               policy_update_input("Applied"),
 	               1200),
 	           "policy-update history rejects invalid result token");
-	    expect(!agent_q::approval_history_append_required_policy_update(
+	    expect(!signing::approval_history_append_required_policy_update(
 	               policy_update_input("history_error"),
 	               1201),
 	           "policy-update history rejects top-level history error as stored response");
-	    expect(!agent_q::approval_history_append_required_policy_update(
+	    expect(!signing::approval_history_append_required_policy_update(
 	               policy_update_input("consistency_error"),
 	               1202),
 	           "policy-update history rejects consistency state as stored response");
-	    expect(!agent_q::approval_history_append_required_policy_update(
+	    expect(!signing::approval_history_append_required_policy_update(
 	               policy_update_input("applied", "device_confirmed", "approve"),
 	               1203),
 	           "policy-update history rejects unsupported highest action");
-	    agent_q::AgentQPolicyUpdateHistoryAppendInput invalid_policy_hash = policy_update_input();
+	    signing::PolicyUpdateHistoryAppendInput invalid_policy_hash = policy_update_input();
 	    invalid_policy_hash.policy_hash = "not-a-digest";
-	    expect(!agent_q::approval_history_append_required_policy_update(invalid_policy_hash, 1204),
+	    expect(!signing::approval_history_append_required_policy_update(invalid_policy_hash, 1204),
 	           "policy-update history rejects invalid policy hash");
-	    agent_q::AgentQPolicyUpdateHistoryAppendInput overlarge_policy_count = policy_update_input();
-	    overlarge_policy_count.policy_count = agent_q::kAgentQCurrentPolicyMaxTotalPolicies + 1;
-	    expect(!agent_q::approval_history_append_required_policy_update(overlarge_policy_count, 1205),
+	    signing::PolicyUpdateHistoryAppendInput overlarge_policy_count = policy_update_input();
+	    overlarge_policy_count.policy_count = signing::kCurrentPolicyMaxTotalPolicies + 1;
+	    expect(!signing::approval_history_append_required_policy_update(overlarge_policy_count, 1205),
 	           "policy-update history rejects overlarge policy count");
-    expect(agent_q::approval_history_wipe(), "wipe before user_signing invalid input tests");
-    agent_q::AgentQSigningHistoryAppendInput invalid_signature = user_signing_confirmation_input();
-    invalid_signature.confirmation_kind = agent_q::AgentQApprovalHistoryConfirmationKind::policy;
-    expect(!agent_q::approval_history_append_required_signing(invalid_signature, 1300),
+    expect(signing::approval_history_wipe(), "wipe before user_signing invalid input tests");
+    signing::HistoryAppendInput invalid_signature = user_signing_confirmation_input();
+    invalid_signature.confirmation_kind = signing::ApprovalHistoryConfirmationKind::policy;
+    expect(!signing::approval_history_append_required_signing(invalid_signature, 1300),
            "user_signing confirmation rejects policy confirmation kind");
     invalid_signature = user_signing_terminal_input();
-    invalid_signature.terminal_result = agent_q::AgentQSigningHistoryTerminalResult::none;
-    expect(!agent_q::approval_history_append_required_signing(invalid_signature, 1301),
+    invalid_signature.terminal_result = signing::HistoryTerminalResult::none;
+    expect(!signing::approval_history_append_required_signing(invalid_signature, 1301),
            "signing terminal rejects empty terminal result");
     invalid_signature = user_signing_terminal_input(
-        agent_q::AgentQSigningHistoryTerminalResult::policy_rejected,
+        signing::HistoryTerminalResult::policy_rejected,
         "policy_rejected");
-    expect(!agent_q::approval_history_append_required_signing(invalid_signature, 1301),
+    expect(!signing::approval_history_append_required_signing(invalid_signature, 1301),
            "user signing terminal rejects policy_rejected");
     invalid_signature = policy_signing_rejected_input();
-    invalid_signature.terminal_result = agent_q::AgentQSigningHistoryTerminalResult::user_rejected;
+    invalid_signature.terminal_result = signing::HistoryTerminalResult::user_rejected;
     invalid_signature.reason_code = "user_rejected";
-    expect(!agent_q::approval_history_append_required_signing(invalid_signature, 1301),
+    expect(!signing::approval_history_append_required_signing(invalid_signature, 1301),
            "policy signing terminal rejects user_rejected");
     invalid_signature = user_signing_terminal_input();
     invalid_signature.policy_hash = "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3b1a341ad3c3";
     invalid_signature.rule_ref = "default";
-    expect(!agent_q::approval_history_append_required_signing(invalid_signature, 1301),
+    expect(!signing::approval_history_append_required_signing(invalid_signature, 1301),
            "user signing terminal rejects policy metadata");
     invalid_signature = policy_signing_rejected_input();
     invalid_signature.policy_hash = nullptr;
-    expect(!agent_q::approval_history_append_required_signing(invalid_signature, 1301),
+    expect(!signing::approval_history_append_required_signing(invalid_signature, 1301),
            "policy signing terminal requires policy metadata");
     invalid_signature = user_signing_terminal_input();
     invalid_signature.payload_digest = "not-a-digest";
-    expect(!agent_q::approval_history_append_required_signing(invalid_signature, 1302),
+    expect(!signing::approval_history_append_required_signing(invalid_signature, 1302),
            "signing history rejects invalid payload digest");
-    expect(agent_q::approval_history_append_required_signing(
+    expect(signing::approval_history_append_required_signing(
                user_signing_confirmation_input(),
                1303),
            "append user_signing before enum corruption");
     const std::vector<uint8_t> valid_signature_blob = g_blob;
     expect(mutate_first_method_record_byte(18, 0xFF), "mutate stored event enum");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::invalid,
            "stored unsupported event enum fails closed");
     g_blob = valid_signature_blob;
     expect(mutate_first_method_record_byte(22, 0xFF), "mutate signature record kind enum");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::invalid,
            "stored unsupported signature record kind fails closed");
-    expect(agent_q::approval_history_wipe(), "wipe after user_signing enum corruption");
+    expect(signing::approval_history_wipe(), "wipe after user_signing enum corruption");
 
-    expect(agent_q::approval_history_append_required_signing(
+    expect(signing::approval_history_append_required_signing(
                user_signing_terminal_input(
-                   agent_q::AgentQSigningHistoryTerminalResult::user_rejected,
+                   signing::HistoryTerminalResult::user_rejected,
                    "user_rejected"),
                1400),
            "append user terminal before stored matrix corruption");
     const std::vector<uint8_t> valid_user_terminal_blob = g_blob;
     expect(mutate_first_method_record_byte(16, 1), "mutate user terminal to policy authorization");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::invalid,
            "stored user terminal with policy authorization fails closed");
     g_blob = valid_user_terminal_blob;
     expect(mutate_first_method_record_byte(23, 5), "mutate user terminal to policy_rejected result");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::invalid,
            "stored user terminal with policy result fails closed");
-    expect(agent_q::approval_history_wipe(), "wipe after stored user terminal corruption");
+    expect(signing::approval_history_wipe(), "wipe after stored user terminal corruption");
 
-    expect(agent_q::approval_history_append_required_signing(policy_signing_rejected_input(), 1410),
+    expect(signing::approval_history_append_required_signing(policy_signing_rejected_input(), 1410),
            "append policy terminal before stored policy metadata corruption");
     const std::vector<uint8_t> valid_policy_terminal_blob = g_blob;
     expect(mutate_first_method_record_byte(17, 1), "drop stored policy digest flag");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::invalid,
            "stored policy terminal without policy metadata fails closed");
     g_blob = valid_policy_terminal_blob;
     expect(mutate_first_method_record_byte(23, 2), "mutate policy terminal to user_rejected result");
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::invalid,
            "stored policy terminal with user result fails closed");
-    expect(agent_q::approval_history_wipe(), "wipe after stored policy terminal corruption");
+    expect(signing::approval_history_wipe(), "wipe after stored policy terminal corruption");
 
-    for (size_t index = 0; index < agent_q::kAgentQApprovalHistoryWriteBudgetMax; ++index) {
-        expect(agent_q::approval_history_append_budgeted_signing(
+    for (size_t index = 0; index < signing::kApprovalHistoryWriteBudgetMax; ++index) {
+        expect(signing::approval_history_append_budgeted_signing(
                    policy_signing_rejected_input(),
                    2000),
                "budgeted policy rejection append within window");
     }
-    expect(!agent_q::approval_history_append_budgeted_signing(
+    expect(!signing::approval_history_append_budgeted_signing(
                policy_signing_rejected_input(),
                2000),
            "budgeted policy rejection append fails when write budget is exhausted");
-    expect(agent_q::approval_history_append_budgeted_signing(
+    expect(signing::approval_history_append_budgeted_signing(
                policy_signing_rejected_input(),
-               2000 + agent_q::kAgentQApprovalHistoryWriteBudgetWindowMs),
+               2000 + signing::kApprovalHistoryWriteBudgetWindowMs),
            "budgeted policy rejection append resumes after window");
-    expect(agent_q::approval_history_wipe(), "wipe after budgeted policy rejection tests");
+    expect(signing::approval_history_wipe(), "wipe after budgeted policy rejection tests");
 
-    expect(agent_q::approval_history_append_required_signing(policy_signing_rejected_input(), 500),
+    expect(signing::approval_history_append_required_signing(policy_signing_rejected_input(), 500),
            "append after wipe reinitializes");
     g_blob.push_back(0);
-    expect(agent_q::approval_history_read_page(0, 4, &page) == agent_q::AgentQApprovalHistoryReadResult::invalid,
+    expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::invalid,
            "corrupt history read fails closed");
-    expect(!agent_q::approval_history_append_required_signing(policy_signing_rejected_input(), 501),
+    expect(!signing::approval_history_append_required_signing(policy_signing_rejected_input(), 501),
            "corrupt history append fails closed");
 
     if (failures != 0) {
@@ -657,10 +657,11 @@ CXX_BIN="${CXX:-c++}"
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
   -I"${TMP_DIR}" \
-  -I"${TARGET_ROOT}/agent_q" \
+  -I"${TARGET_ROOT}/runtime" \
+  -I"${TMP_DIR}/firmware_common" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
   "${TMP_DIR}/approval_history_test.cpp" \
-  "${TARGET_ROOT}/agent_q/agent_q_approval_history.cpp" \
+  "${TARGET_ROOT}/runtime/approval_history.cpp" \
   "${TMP_DIR}/sha256.o" \
   "${TMP_DIR}/platform_util.o" \
   -o "${TMP_DIR}/approval_history_test"

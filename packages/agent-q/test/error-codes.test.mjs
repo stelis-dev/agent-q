@@ -9,7 +9,7 @@ function readSrc(rel) {
 }
 
 const SRC_FILES = ["local-api.ts", "mcp.ts", "sui-signer-local-client.ts", "bin/agent-q.ts"];
-const LITERAL_CODE = /new AgentQError\(\s*"([a-z_]+)"/g;
+const LITERAL_CODE = /new DeviceRequestError\(\s*"([a-z_]+)"/g;
 
 const producedCodes = new Set();
 for (const file of SRC_FILES) {

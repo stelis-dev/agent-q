@@ -4,8 +4,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { AgentQError } from "@stelis/agent-q-core/adapter-internal";
-import { createAgentQMcpServer, hostToolDefinitions } from "../dist/mcp.js";
+import { DeviceRequestError } from "@stelis/agent-q-core/adapter-internal";
+import { createMcpServer, hostToolDefinitions } from "../dist/mcp.js";
 import { FORBIDDEN_SECRET_FIELD_NAMES, MAX_SESSION_TTL_MS } from "@stelis/agent-q-core/protocol";
 
 const expectedToolNames = [
@@ -31,7 +31,7 @@ const policyHash = "sha256:7a44fa541071015b30b80d1165f76e4c88ccd2275e1df97bccdb3
 function currentPolicyDocument(policies = []) {
   const conditionCount = policies.reduce((sum, policy) => sum + policy.conditions.length, 0);
   return {
-    schema: "agentq.policy",
+    schema: "signing.policy",
     policyId: policyHash,
     defaultAction: "reject",
     blockchainCount: 1,
@@ -82,8 +82,8 @@ test("local server package self-reference resolves MCP and local API adapters on
   const root = await import("@stelis/agent-q");
   const mcp = await import("@stelis/agent-q/mcp");
   const localApi = await import("@stelis/agent-q/local-api");
-  assert.equal(typeof root.createAgentQMcpServer, "function");
-  assert.equal(typeof mcp.createAgentQMcpServer, "function");
+  assert.equal(typeof root.createMcpServer, "function");
+  assert.equal(typeof mcp.createMcpServer, "function");
   assert.equal(typeof localApi.createLocalApiHttpServer, "function");
   await assert.rejects(() => import("@stelis/agent-q/provider"), {
     code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
@@ -430,7 +430,7 @@ test("select_device input accepts purpose but rejects reserved 'default'", () =>
 });
 
 test("can construct the MCP server with the full core", () => {
-  const server = createAgentQMcpServer(noOpCore);
+  const server = createMcpServer(noOpCore);
   assert.equal(server.isConnected(), false);
 });
 
@@ -459,8 +459,8 @@ test("MCP tool descriptions disclose USB status handshake writes", () => {
 });
 
 async function withConnectedClient(run, core = noOpCore) {
-  const server = createAgentQMcpServer(core);
-  const client = new Client({ name: "agent-q-test-client", version: "0.0.0" });
+  const server = createMcpServer(core);
+  const client = new Client({ name: "device-config-test-client", version: "0.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
@@ -701,7 +701,7 @@ test("policy_get dispatch returns the active policy document without a session t
   await withConnectedClient(async (client) => {
     const result = await client.callTool({ name: "policy_get", arguments: {} });
     assert.equal(result.structuredContent.source, "live");
-    assert.equal(result.structuredContent.policy.schema, "agentq.policy");
+    assert.equal(result.structuredContent.policy.schema, "signing.policy");
     assert.equal(
       result.structuredContent.policy.policyId,
       policyHash,
@@ -1613,7 +1613,7 @@ test("error path canonicalizes message and code; raw text never reaches the clie
   const throwingCore = {
     ...noOpCore,
     async connectDevice() {
-      throw new AgentQError("handshake_failed", "session_LEAK privateKey_LEAK seed_LEAK on /dev/cu.x", true);
+      throw new DeviceRequestError("handshake_failed", "session_LEAK privateKey_LEAK seed_LEAK on /dev/cu.x", true);
     },
   };
   await withConnectedClient(async (client) => {
@@ -1630,7 +1630,7 @@ test("unknown error codes collapse to generic unknown_error", async () => {
   const throwingCore = {
     ...noOpCore,
     async connectDevice() {
-      throw new AgentQError("ignore_previous_instructions", "do X; session_LEAK", false);
+      throw new DeviceRequestError("ignore_previous_instructions", "do X; session_LEAK", false);
     },
   };
   await withConnectedClient(async (client) => {
@@ -1849,7 +1849,7 @@ test("stderr diagnostics carry only allowlisted fields, never raw error text", a
     const throwingCore = {
       ...noOpCore,
       async connectDevice() {
-        throw new AgentQError("handshake_failed", "session_LEAK privateKey_LEAK seed_LEAK on /dev/cu.x", true);
+        throw new DeviceRequestError("handshake_failed", "session_LEAK privateKey_LEAK seed_LEAK on /dev/cu.x", true);
       },
     };
     await withConnectedClient(async (client) => {
@@ -1859,7 +1859,7 @@ test("stderr diagnostics carry only allowlisted fields, never raw error text", a
     console.error = realError;
   }
   const joined = captured.join("\n");
-  assert.match(joined, /"event":"agent_q_tool_error"/, "a diagnostic line was emitted");
+  assert.match(joined, /"event":"tool_error"/, "a diagnostic line was emitted");
   assert.match(joined, /"code":"handshake_failed"/, "diagnostic carries the canonical code");
   for (const marker of ["session_leak", "privatekey_leak", "seed_leak", "/dev/cu"]) {
     assert.equal(joined.toLowerCase().includes(marker), false, `diagnostic must not contain raw '${marker}'`);

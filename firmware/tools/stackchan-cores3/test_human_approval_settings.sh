@@ -18,11 +18,11 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 
 for required in \
-  "${AGENT_Q_DIR}/agent_q_human_approval_settings.cpp" \
-  "${AGENT_Q_DIR}/agent_q_human_approval_settings.h"; do
+  "${RUNTIME_DIR}/human_approval_settings.cpp" \
+  "${RUNTIME_DIR}/human_approval_settings.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
@@ -31,7 +31,7 @@ done
 
 CXX_BIN="${CXX:-c++}"
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-human-approval-settings.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-human-approval-settings.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/stubs"
@@ -84,7 +84,7 @@ cat >"${TMP_DIR}/human_approval_settings_test.cpp" <<'CPP'
 #include <stdint.h>
 #include <stdio.h>
 
-#include "agent_q_human_approval_settings.h"
+#include "human_approval_settings.h"
 #include "esp_err.h"
 #include "nvs.h"
 
@@ -170,44 +170,44 @@ esp_err_t nvs_commit(nvs_handle_t handle)
 
 int main()
 {
-    agent_q::AgentQHumanApprovalInputMode mode =
-        agent_q::AgentQHumanApprovalInputMode::confirm;
+    signing::HumanApprovalInputMode mode =
+        signing::HumanApprovalInputMode::confirm;
 
-    expect(agent_q::read_human_approval_input_mode(&mode), "missing setting read succeeds");
-    expect(mode == agent_q::AgentQHumanApprovalInputMode::pin,
+    expect(signing::read_human_approval_input_mode(&mode), "missing setting read succeeds");
+    expect(mode == signing::HumanApprovalInputMode::pin,
            "missing setting defaults to PIN input");
-    expect(agent_q::human_approval_requires_pin(), "missing setting requires PIN");
+    expect(signing::human_approval_requires_pin(), "missing setting requires PIN");
 
-    expect(agent_q::store_human_approval_input_mode(agent_q::AgentQHumanApprovalInputMode::confirm),
+    expect(signing::store_human_approval_input_mode(signing::HumanApprovalInputMode::confirm),
            "store Confirm input mode");
-    expect(agent_q::read_human_approval_input_mode(&mode), "stored setting read succeeds");
-    expect(mode == agent_q::AgentQHumanApprovalInputMode::confirm,
+    expect(signing::read_human_approval_input_mode(&mode), "stored setting read succeeds");
+    expect(mode == signing::HumanApprovalInputMode::confirm,
            "stored Confirm input mode is observed");
-    expect(!agent_q::human_approval_requires_pin(), "stored Confirm mode does not require PIN");
+    expect(!signing::human_approval_requires_pin(), "stored Confirm mode does not require PIN");
 
-    expect(agent_q::wipe_human_approval_input_mode(), "wipe human approval input mode");
-    expect(agent_q::read_human_approval_input_mode(&mode), "wiped setting read succeeds");
-    expect(mode == agent_q::AgentQHumanApprovalInputMode::pin,
+    expect(signing::wipe_human_approval_input_mode(), "wipe human approval input mode");
+    expect(signing::read_human_approval_input_mode(&mode), "wiped setting read succeeds");
+    expect(mode == signing::HumanApprovalInputMode::pin,
            "wiped setting returns to PIN default");
 
     g_namespace_missing = true;
-    expect(agent_q::wipe_human_approval_input_mode(), "missing namespace wipe succeeds");
+    expect(signing::wipe_human_approval_input_mode(), "missing namespace wipe succeeds");
     g_namespace_missing = false;
 
     g_has_value = true;
     g_value = 2;
-    mode = agent_q::AgentQHumanApprovalInputMode::confirm;
-    expect(!agent_q::read_human_approval_input_mode(&mode), "invalid setting reports read failure");
-    expect(mode == agent_q::AgentQHumanApprovalInputMode::pin,
+    mode = signing::HumanApprovalInputMode::confirm;
+    expect(!signing::read_human_approval_input_mode(&mode), "invalid setting reports read failure");
+    expect(mode == signing::HumanApprovalInputMode::pin,
            "invalid setting fails closed to PIN mode");
-    expect(agent_q::human_approval_requires_pin(), "invalid setting requires PIN");
+    expect(signing::human_approval_requires_pin(), "invalid setting requires PIN");
 
     g_open_fails = true;
-    mode = agent_q::AgentQHumanApprovalInputMode::confirm;
-    expect(!agent_q::read_human_approval_input_mode(&mode), "storage error reports read failure");
-    expect(mode == agent_q::AgentQHumanApprovalInputMode::pin,
+    mode = signing::HumanApprovalInputMode::confirm;
+    expect(!signing::read_human_approval_input_mode(&mode), "storage error reports read failure");
+    expect(mode == signing::HumanApprovalInputMode::pin,
            "storage error fails closed to PIN mode");
-    expect(agent_q::human_approval_requires_pin(), "storage error requires PIN");
+    expect(signing::human_approval_requires_pin(), "storage error requires PIN");
     g_open_fails = false;
 
     if (failures != 0) {
@@ -221,9 +221,9 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/human_approval_settings_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_human_approval_settings.cpp" \
+  "${RUNTIME_DIR}/human_approval_settings.cpp" \
   -o "${TMP_DIR}/human_approval_settings_test"
 
 "${TMP_DIR}/human_approval_settings_test"

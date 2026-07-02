@@ -18,14 +18,14 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 COMMON_SUI_DIR="${COMMON_ROOT}/sui"
 FIXTURE_DIR="${COMMON_SUI_DIR}/testdata/sui_transaction_facts"
 
 for required in \
-  "${COMMON_ROOT}/agent_q_u64_decimal.h" \
-  "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" \
-  "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" \
+  "${COMMON_ROOT}/numeric/u64_decimal.h" \
+  "${COMMON_SUI_DIR}/bcs_reader.cpp" \
+  "${COMMON_SUI_DIR}/transaction_facts.cpp" \
   "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex" \
   "${FIXTURE_DIR}/move_call_tx.bcs.hex" \
   "${FIXTURE_DIR}/split_move_call_tx.bcs.hex" \
@@ -76,7 +76,7 @@ for required in \
 done
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-sui-tx-facts.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-sui-tx-facts.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 cat >"${TMP_DIR}/sui_transaction_facts_test.cpp" <<'CPP'
@@ -89,7 +89,7 @@ cat >"${TMP_DIR}/sui_transaction_facts_test.cpp" <<'CPP'
 #include <string>
 #include <vector>
 
-#include "agent_q_sui_transaction_facts.h"
+#include "transaction_facts.h"
 
 namespace {
 
@@ -212,37 +212,37 @@ void expect_equal(const char* label, const char* expected, const char* actual, i
     }
 }
 
-const char* command_kind_name(agent_q::SuiCommandFactKind kind)
+const char* command_kind_name(signing::SuiCommandFactKind kind)
 {
     switch (kind) {
-        case agent_q::SuiCommandFactKind::unsupported:
+        case signing::SuiCommandFactKind::unsupported:
             return "unsupported";
-        case agent_q::SuiCommandFactKind::move_call:
+        case signing::SuiCommandFactKind::move_call:
             return "MoveCall";
-        case agent_q::SuiCommandFactKind::transfer_objects:
+        case signing::SuiCommandFactKind::transfer_objects:
             return "TransferObjects";
-        case agent_q::SuiCommandFactKind::split_coins:
+        case signing::SuiCommandFactKind::split_coins:
             return "SplitCoins";
-        case agent_q::SuiCommandFactKind::merge_coins:
+        case signing::SuiCommandFactKind::merge_coins:
             return "MergeCoins";
-        case agent_q::SuiCommandFactKind::publish:
+        case signing::SuiCommandFactKind::publish:
             return "Publish";
-        case agent_q::SuiCommandFactKind::make_move_vec:
+        case signing::SuiCommandFactKind::make_move_vec:
             return "MakeMoveVec";
-        case agent_q::SuiCommandFactKind::upgrade:
+        case signing::SuiCommandFactKind::upgrade:
             return "Upgrade";
     }
     return "unknown";
 }
 
-const char* expiration_kind_name(agent_q::SuiTransactionExpirationFact kind)
+const char* expiration_kind_name(signing::SuiTransactionExpirationFact kind)
 {
     switch (kind) {
-        case agent_q::SuiTransactionExpirationFact::none:
+        case signing::SuiTransactionExpirationFact::none:
             return "None";
-        case agent_q::SuiTransactionExpirationFact::epoch:
+        case signing::SuiTransactionExpirationFact::epoch:
             return "Epoch";
-        case agent_q::SuiTransactionExpirationFact::valid_during:
+        case signing::SuiTransactionExpirationFact::valid_during:
             return "ValidDuring";
     }
     return "unknown";
@@ -250,39 +250,39 @@ const char* expiration_kind_name(agent_q::SuiTransactionExpirationFact kind)
 
 void expect_reject(
     const char* fixture_path,
-    agent_q::SuiTransactionFactsResult expected,
+    signing::SuiTransactionFactsResult expected,
     int* failures)
 {
     const std::vector<uint8_t> bytes = read_hex_fixture(fixture_path);
-    agent_q::SuiParsedTransactionFacts facts = {};
-    const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
+    signing::SuiParsedTransactionFacts facts = {};
+    const signing::SuiTransactionFactsResult result =
+        signing::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
     if (result != expected) {
         fprintf(stderr, "%s expected %s, got %s\n",
                 fixture_path,
-                agent_q::sui_transaction_facts_result_name(expected),
-                agent_q::sui_transaction_facts_result_name(result));
+                signing::sui_transaction_facts_result_name(expected),
+                signing::sui_transaction_facts_result_name(result));
         *failures += 1;
     }
 }
 
-agent_q::SuiTransactionFactsResult parse_policy_subject(
+signing::SuiTransactionFactsResult parse_policy_subject(
     const uint8_t* bytes,
     size_t size,
-    agent_q::SuiPolicySubjectFacts* out)
+    signing::SuiPolicySubjectFacts* out)
 {
     if (out != nullptr) {
         *out = {};
     }
-    agent_q::SuiParsedTransactionFacts parsed = {};
-    const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_parsed_transaction_facts(bytes, size, &parsed);
-    if (result != agent_q::SuiTransactionFactsResult::ok) {
+    signing::SuiParsedTransactionFacts parsed = {};
+    const signing::SuiTransactionFactsResult result =
+        signing::parse_sui_parsed_transaction_facts(bytes, size, &parsed);
+    if (result != signing::SuiTransactionFactsResult::ok) {
         return result;
     }
-    return agent_q::build_sui_policy_subject_facts(parsed, out)
-               ? agent_q::SuiTransactionFactsResult::ok
-               : agent_q::SuiTransactionFactsResult::unsupported_shape;
+    return signing::build_sui_policy_subject_facts(parsed, out)
+               ? signing::SuiTransactionFactsResult::ok
+               : signing::SuiTransactionFactsResult::unsupported_shape;
 }
 
 void expect_supported_policy_subject(
@@ -290,13 +290,13 @@ void expect_supported_policy_subject(
     int* failures)
 {
     const std::vector<uint8_t> bytes = read_hex_fixture(fixture_path);
-    agent_q::SuiPolicySubjectFacts facts = {};
-    const agent_q::SuiTransactionFactsResult result =
+    signing::SuiPolicySubjectFacts facts = {};
+    const signing::SuiTransactionFactsResult result =
         parse_policy_subject(bytes.data(), bytes.size(), &facts);
-    if (result != agent_q::SuiTransactionFactsResult::ok) {
+    if (result != signing::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "%s expected ok parse, got %s\n",
                 fixture_path,
-                agent_q::sui_transaction_facts_result_name(result));
+                signing::sui_transaction_facts_result_name(result));
         *failures += 1;
         return;
     }
@@ -311,17 +311,17 @@ void expect_move_call_metadata(
     int* failures)
 {
     const std::vector<uint8_t> bytes = read_hex_fixture(fixture_path);
-    agent_q::SuiParsedTransactionFacts facts = {};
-    const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
-    if (result != agent_q::SuiTransactionFactsResult::ok) {
+    signing::SuiParsedTransactionFacts facts = {};
+    const signing::SuiTransactionFactsResult result =
+        signing::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
+    if (result != signing::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "%s expected ok parse, got %s\n",
                 fixture_path,
-                agent_q::sui_transaction_facts_result_name(result));
+                signing::sui_transaction_facts_result_name(result));
         *failures += 1;
         return;
     }
-    if (facts.command_count != 1 || facts.commands[0].kind != agent_q::SuiCommandFactKind::move_call) {
+    if (facts.command_count != 1 || facts.commands[0].kind != signing::SuiCommandFactKind::move_call) {
         fprintf(stderr, "%s did not expose one MoveCall command\n", fixture_path);
         *failures += 1;
         return;
@@ -338,13 +338,13 @@ void expect_move_call_metadata(
         fprintf(stderr, "%s MoveCall arg counts mismatch\n", fixture_path);
         *failures += 1;
     }
-    if (facts.commands[0].move_call.type_arguments[0].kind != agent_q::SuiTypeTagFactKind::u64) {
+    if (facts.commands[0].move_call.type_arguments[0].kind != signing::SuiTypeTagFactKind::u64) {
         fprintf(stderr, "%s MoveCall type argument was not exposed as u64\n", fixture_path);
         *failures += 1;
     }
     expect_equal("MoveCall type argument canonical", "u64", facts.commands[0].move_call.type_arguments[0].canonical, failures);
     if (facts.commands[0].argument_count != 1 ||
-        facts.commands[0].arguments[0].kind != agent_q::SuiArgumentFactKind::input ||
+        facts.commands[0].arguments[0].kind != signing::SuiArgumentFactKind::input ||
         facts.commands[0].arguments[0].index != 0) {
         fprintf(stderr, "%s MoveCall argument ref was not exposed as Input(0)\n", fixture_path);
         *failures += 1;
@@ -356,23 +356,23 @@ void expect_move_call_vector_type_arg_metadata(
     int* failures)
 {
     const std::vector<uint8_t> bytes = read_hex_fixture(fixture_path);
-    agent_q::SuiParsedTransactionFacts facts = {};
-    const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
-    if (result != agent_q::SuiTransactionFactsResult::ok) {
+    signing::SuiParsedTransactionFacts facts = {};
+    const signing::SuiTransactionFactsResult result =
+        signing::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
+    if (result != signing::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "%s expected ok parse, got %s\n",
                 fixture_path,
-                agent_q::sui_transaction_facts_result_name(result));
+                signing::sui_transaction_facts_result_name(result));
         *failures += 1;
         return;
     }
-    if (facts.command_count != 1 || facts.commands[0].kind != agent_q::SuiCommandFactKind::move_call) {
+    if (facts.command_count != 1 || facts.commands[0].kind != signing::SuiCommandFactKind::move_call) {
         fprintf(stderr, "%s did not expose one MoveCall command\n", fixture_path);
         *failures += 1;
         return;
     }
     if (facts.commands[0].move_call.type_argument_count != 1 ||
-        facts.commands[0].move_call.type_arguments[0].kind != agent_q::SuiTypeTagFactKind::vector) {
+        facts.commands[0].move_call.type_arguments[0].kind != signing::SuiTypeTagFactKind::vector) {
         fprintf(stderr, "%s MoveCall type argument was not exposed as vector\n", fixture_path);
         *failures += 1;
         return;
@@ -389,17 +389,17 @@ void expect_publish_metadata(
     int* failures)
 {
     const std::vector<uint8_t> bytes = read_hex_fixture(fixture_path);
-    agent_q::SuiParsedTransactionFacts facts = {};
-    const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
-    if (result != agent_q::SuiTransactionFactsResult::ok) {
+    signing::SuiParsedTransactionFacts facts = {};
+    const signing::SuiTransactionFactsResult result =
+        signing::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
+    if (result != signing::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "%s expected ok parse, got %s\n",
                 fixture_path,
-                agent_q::sui_transaction_facts_result_name(result));
+                signing::sui_transaction_facts_result_name(result));
         *failures += 1;
         return;
     }
-    if (facts.command_count != 1 || facts.commands[0].kind != agent_q::SuiCommandFactKind::publish) {
+    if (facts.command_count != 1 || facts.commands[0].kind != signing::SuiCommandFactKind::publish) {
         fprintf(stderr, "%s did not expose one Publish command\n", fixture_path);
         *failures += 1;
         return;
@@ -421,17 +421,17 @@ void expect_upgrade_metadata(
     int* failures)
 {
     const std::vector<uint8_t> bytes = read_hex_fixture(fixture_path);
-    agent_q::SuiParsedTransactionFacts facts = {};
-    const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
-    if (result != agent_q::SuiTransactionFactsResult::ok) {
+    signing::SuiParsedTransactionFacts facts = {};
+    const signing::SuiTransactionFactsResult result =
+        signing::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
+    if (result != signing::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "%s expected ok parse, got %s\n",
                 fixture_path,
-                agent_q::sui_transaction_facts_result_name(result));
+                signing::sui_transaction_facts_result_name(result));
         *failures += 1;
         return;
     }
-    if (facts.command_count != 1 || facts.commands[0].kind != agent_q::SuiCommandFactKind::upgrade) {
+    if (facts.command_count != 1 || facts.commands[0].kind != signing::SuiCommandFactKind::upgrade) {
         fprintf(stderr, "%s did not expose one Upgrade command\n", fixture_path);
         *failures += 1;
         return;
@@ -451,7 +451,7 @@ void expect_upgrade_metadata(
         "0x4444444444444444444444444444444444444444444444444444444444444444",
         facts.commands[0].upgrade.package,
         failures);
-    if (facts.commands[0].upgrade.ticket.kind != agent_q::SuiArgumentFactKind::input ||
+    if (facts.commands[0].upgrade.ticket.kind != signing::SuiArgumentFactKind::input ||
         facts.commands[0].upgrade.ticket.index != 0) {
         fprintf(stderr, "%s Upgrade ticket was not exposed as Input(0)\n", fixture_path);
         *failures += 1;
@@ -463,28 +463,28 @@ void expect_funds_withdrawal_metadata(
     int* failures)
 {
     const std::vector<uint8_t> bytes = read_hex_fixture(fixture_path);
-    agent_q::SuiParsedTransactionFacts facts = {};
-    const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
-    if (result != agent_q::SuiTransactionFactsResult::ok) {
+    signing::SuiParsedTransactionFacts facts = {};
+    const signing::SuiTransactionFactsResult result =
+        signing::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
+    if (result != signing::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "%s expected ok parse, got %s\n",
                 fixture_path,
-                agent_q::sui_transaction_facts_result_name(result));
+                signing::sui_transaction_facts_result_name(result));
         *failures += 1;
         return;
     }
     if (facts.input_count != 1 ||
-        facts.inputs[0].kind != agent_q::SuiCallArgFactKind::funds_withdrawal) {
+        facts.inputs[0].kind != signing::SuiCallArgFactKind::funds_withdrawal) {
         fprintf(stderr, "%s did not expose one FundsWithdrawal input\n", fixture_path);
         *failures += 1;
         return;
     }
     expect_equal("FundsWithdrawal amount", "1000000", facts.inputs[0].funds_withdrawal.amount, failures);
-    if (facts.inputs[0].funds_withdrawal.source != agent_q::SuiFundsWithdrawalSourceFact::sender) {
+    if (facts.inputs[0].funds_withdrawal.source != signing::SuiFundsWithdrawalSourceFact::sender) {
         fprintf(stderr, "%s FundsWithdrawal source was not Sender\n", fixture_path);
         *failures += 1;
     }
-    if (facts.inputs[0].funds_withdrawal.type.kind != agent_q::SuiTypeTagFactKind::struct_) {
+    if (facts.inputs[0].funds_withdrawal.type.kind != signing::SuiTypeTagFactKind::struct_) {
         fprintf(stderr, "%s FundsWithdrawal type was not a struct tag\n", fixture_path);
         *failures += 1;
     } else {
@@ -508,17 +508,17 @@ void expect_valid_during_metadata(
     int* failures)
 {
     const std::vector<uint8_t> bytes = read_hex_fixture(fixture_path);
-    agent_q::SuiParsedTransactionFacts facts = {};
-    const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
-    if (result != agent_q::SuiTransactionFactsResult::ok) {
+    signing::SuiParsedTransactionFacts facts = {};
+    const signing::SuiTransactionFactsResult result =
+        signing::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
+    if (result != signing::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "%s expected ok parse, got %s\n",
                 fixture_path,
-                agent_q::sui_transaction_facts_result_name(result));
+                signing::sui_transaction_facts_result_name(result));
         *failures += 1;
         return;
     }
-    if (facts.expiration_kind != agent_q::SuiTransactionExpirationFact::valid_during) {
+    if (facts.expiration_kind != signing::SuiTransactionExpirationFact::valid_during) {
         fprintf(stderr, "%s expiration was not ValidDuring\n", fixture_path);
         *failures += 1;
         return;
@@ -546,17 +546,17 @@ void expect_epoch_expiration_metadata(
     int* failures)
 {
     const std::vector<uint8_t> bytes = read_hex_fixture(fixture_path);
-    agent_q::SuiParsedTransactionFacts facts = {};
-    const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
-    if (result != agent_q::SuiTransactionFactsResult::ok) {
+    signing::SuiParsedTransactionFacts facts = {};
+    const signing::SuiTransactionFactsResult result =
+        signing::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
+    if (result != signing::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "%s expected ok parse, got %s\n",
                 fixture_path,
-                agent_q::sui_transaction_facts_result_name(result));
+                signing::sui_transaction_facts_result_name(result));
         *failures += 1;
         return;
     }
-    if (facts.expiration_kind != agent_q::SuiTransactionExpirationFact::epoch) {
+    if (facts.expiration_kind != signing::SuiTransactionExpirationFact::epoch) {
         fprintf(stderr, "%s expiration was not Epoch\n", fixture_path);
         *failures += 1;
         return;
@@ -566,17 +566,17 @@ void expect_epoch_expiration_metadata(
 
 void expect_make_move_vec_metadata(
     const char* fixture_path,
-    agent_q::SuiCallArgFactKind expected_input_kind,
+    signing::SuiCallArgFactKind expected_input_kind,
     int* failures)
 {
     const std::vector<uint8_t> bytes = read_hex_fixture(fixture_path);
-    agent_q::SuiParsedTransactionFacts facts = {};
-    const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
-    if (result != agent_q::SuiTransactionFactsResult::ok) {
+    signing::SuiParsedTransactionFacts facts = {};
+    const signing::SuiTransactionFactsResult result =
+        signing::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
+    if (result != signing::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "%s expected ok parse, got %s\n",
                 fixture_path,
-                agent_q::sui_transaction_facts_result_name(result));
+                signing::sui_transaction_facts_result_name(result));
         *failures += 1;
         return;
     }
@@ -584,13 +584,13 @@ void expect_make_move_vec_metadata(
         fprintf(stderr, "%s input kind mismatch for MakeMoveVec fixture\n", fixture_path);
         *failures += 1;
     }
-    if (facts.command_count != 1 || facts.commands[0].kind != agent_q::SuiCommandFactKind::make_move_vec) {
+    if (facts.command_count != 1 || facts.commands[0].kind != signing::SuiCommandFactKind::make_move_vec) {
         fprintf(stderr, "%s did not expose one MakeMoveVec command\n", fixture_path);
         *failures += 1;
         return;
     }
     if (!facts.commands[0].has_make_move_vec_type ||
-        facts.commands[0].make_move_vec_type.kind != agent_q::SuiTypeTagFactKind::struct_) {
+        facts.commands[0].make_move_vec_type.kind != signing::SuiTypeTagFactKind::struct_) {
         fprintf(stderr, "%s MakeMoveVec type was not exposed as a struct tag\n", fixture_path);
         *failures += 1;
     } else {
@@ -601,7 +601,7 @@ void expect_make_move_vec_metadata(
             failures);
     }
     if (facts.commands[0].argument_count != 1 ||
-        facts.commands[0].arguments[0].kind != agent_q::SuiArgumentFactKind::input ||
+        facts.commands[0].arguments[0].kind != signing::SuiArgumentFactKind::input ||
         facts.commands[0].arguments[0].index != 0) {
         fprintf(stderr, "%s MakeMoveVec argument ref was not exposed as Input(0)\n", fixture_path);
         *failures += 1;
@@ -613,18 +613,18 @@ void expect_shared_object_metadata(
     int* failures)
 {
     const std::vector<uint8_t> bytes = read_hex_fixture(fixture_path);
-    agent_q::SuiParsedTransactionFacts facts = {};
-    const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
-    if (result != agent_q::SuiTransactionFactsResult::ok) {
+    signing::SuiParsedTransactionFacts facts = {};
+    const signing::SuiTransactionFactsResult result =
+        signing::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &facts);
+    if (result != signing::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "%s expected ok parse, got %s\n",
                 fixture_path,
-                agent_q::sui_transaction_facts_result_name(result));
+                signing::sui_transaction_facts_result_name(result));
         *failures += 1;
         return;
     }
     if (facts.input_count != 1 ||
-        facts.inputs[0].kind != agent_q::SuiCallArgFactKind::object_shared) {
+        facts.inputs[0].kind != signing::SuiCallArgFactKind::object_shared) {
         fprintf(stderr, "%s did not expose one shared object input\n", fixture_path);
         *failures += 1;
         return;
@@ -647,21 +647,21 @@ void expect_parsed_transaction_facts(
     const std::string& expected_json,
     int* failures)
 {
-    agent_q::SuiParsedTransactionFacts parsed = {};
-    const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &parsed);
-    if (result != agent_q::SuiTransactionFactsResult::ok) {
+    signing::SuiParsedTransactionFacts parsed = {};
+    const signing::SuiTransactionFactsResult result =
+        signing::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &parsed);
+    if (result != signing::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "%s parsed transaction facts returned %s\n",
                 label,
-                agent_q::sui_transaction_facts_result_name(result));
+                signing::sui_transaction_facts_result_name(result));
         *failures += 1;
         return;
     }
-    if (parsed.transaction_data_version != agent_q::SuiTransactionDataVersionFact::v1) {
+    if (parsed.transaction_data_version != signing::SuiTransactionDataVersionFact::v1) {
         fprintf(stderr, "parsed transaction data version was not V1\n");
         *failures += 1;
     }
-    if (parsed.transaction_kind != agent_q::SuiTransactionKindFact::programmable_transaction) {
+    if (parsed.transaction_kind != signing::SuiTransactionKindFact::programmable_transaction) {
         fprintf(stderr, "parsed transaction kind was not ProgrammableTransaction\n");
         *failures += 1;
     }
@@ -683,21 +683,21 @@ void expect_minimum_transaction_facts(
     const std::string& expected_json,
     int* failures)
 {
-    agent_q::SuiMinimumTransactionFacts minimum = {};
-    const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_minimum_transaction_facts(bytes.data(), bytes.size(), &minimum);
-    if (result != agent_q::SuiTransactionFactsResult::ok) {
+    signing::SuiMinimumTransactionFacts minimum = {};
+    const signing::SuiTransactionFactsResult result =
+        signing::parse_sui_minimum_transaction_facts(bytes.data(), bytes.size(), &minimum);
+    if (result != signing::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "%s minimum transaction facts returned %s\n",
                 label,
-                agent_q::sui_transaction_facts_result_name(result));
+                signing::sui_transaction_facts_result_name(result));
         *failures += 1;
         return;
     }
-    if (minimum.transaction_data_version != agent_q::SuiTransactionDataVersionFact::v1) {
+    if (minimum.transaction_data_version != signing::SuiTransactionDataVersionFact::v1) {
         fprintf(stderr, "%s minimum transaction data version was not V1\n", label);
         *failures += 1;
     }
-    if (minimum.transaction_kind != agent_q::SuiTransactionKindFact::programmable_transaction) {
+    if (minimum.transaction_kind != signing::SuiTransactionKindFact::programmable_transaction) {
         fprintf(stderr, "%s minimum transaction kind was not ProgrammableTransaction\n", label);
         *failures += 1;
     }
@@ -709,18 +709,18 @@ void expect_minimum_transaction_facts(
 
 void expect_minimum_reject(
     const char* fixture_path,
-    agent_q::SuiTransactionFactsResult expected,
+    signing::SuiTransactionFactsResult expected,
     int* failures)
 {
     const std::vector<uint8_t> bytes = read_hex_fixture(fixture_path);
-    agent_q::SuiMinimumTransactionFacts minimum = {};
-    const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_minimum_transaction_facts(bytes.data(), bytes.size(), &minimum);
+    signing::SuiMinimumTransactionFacts minimum = {};
+    const signing::SuiTransactionFactsResult result =
+        signing::parse_sui_minimum_transaction_facts(bytes.data(), bytes.size(), &minimum);
     if (result != expected) {
         fprintf(stderr, "%s minimum parser expected %s, got %s\n",
                 fixture_path,
-                agent_q::sui_transaction_facts_result_name(expected),
-                agent_q::sui_transaction_facts_result_name(result));
+                signing::sui_transaction_facts_result_name(expected),
+                signing::sui_transaction_facts_result_name(result));
         *failures += 1;
     }
 }
@@ -735,13 +735,13 @@ void expect_sdk_v2_oracle_facts(
     const std::vector<uint8_t> bytes = read_hex_fixture(tx_path.c_str());
     const std::string oracle = read_file(oracle_path.c_str());
 
-    agent_q::SuiParsedTransactionFacts parsed = {};
-    const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &parsed);
-    if (result != agent_q::SuiTransactionFactsResult::ok) {
+    signing::SuiParsedTransactionFacts parsed = {};
+    const signing::SuiTransactionFactsResult result =
+        signing::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &parsed);
+    if (result != signing::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "%s expected ok parse for SDK v2 oracle comparison, got %s\n",
                 base_name,
-                agent_q::sui_transaction_facts_result_name(result));
+                signing::sui_transaction_facts_result_name(result));
         *failures += 1;
         return;
     }
@@ -782,7 +782,7 @@ void expect_sdk_v2_oracle_facts(
 }
 
 const char* review_row_value(
-    const agent_q::SuiReviewSummary& summary,
+    const signing::SuiReviewSummary& summary,
     const char* label)
 {
     for (uint16_t index = 0; index < summary.row_count; ++index) {
@@ -794,7 +794,7 @@ const char* review_row_value(
 }
 
 void expect_review_row_equal(
-    const agent_q::SuiReviewSummary& summary,
+    const signing::SuiReviewSummary& summary,
     const char* label,
     const char* expected,
     int* failures)
@@ -803,7 +803,7 @@ void expect_review_row_equal(
 }
 
 void expect_review_row_present(
-    const agent_q::SuiReviewSummary& summary,
+    const signing::SuiReviewSummary& summary,
     const char* label,
     int* failures)
 {
@@ -814,7 +814,7 @@ void expect_review_row_present(
 }
 
 void expect_review_row_absent(
-    const agent_q::SuiReviewSummary& summary,
+    const signing::SuiReviewSummary& summary,
     const char* label,
     int* failures)
 {
@@ -825,7 +825,7 @@ void expect_review_row_absent(
 }
 
 void expect_all_review_row_values_non_empty(
-    const agent_q::SuiReviewSummary& summary,
+    const signing::SuiReviewSummary& summary,
     const char* label,
     int* failures)
 {
@@ -847,11 +847,11 @@ void copy_test_string(char* output, size_t output_size, const char* value)
     snprintf(output, output_size, "%s", value);
 }
 
-agent_q::SuiParsedTransactionFacts synthetic_move_call_facts()
+signing::SuiParsedTransactionFacts synthetic_move_call_facts()
 {
-    agent_q::SuiParsedTransactionFacts parsed = {};
-    parsed.transaction_data_version = agent_q::SuiTransactionDataVersionFact::v1;
-    parsed.transaction_kind = agent_q::SuiTransactionKindFact::programmable_transaction;
+    signing::SuiParsedTransactionFacts parsed = {};
+    parsed.transaction_data_version = signing::SuiTransactionDataVersionFact::v1;
+    parsed.transaction_kind = signing::SuiTransactionKindFact::programmable_transaction;
     copy_test_string(
         parsed.sender,
         sizeof(parsed.sender),
@@ -862,9 +862,9 @@ agent_q::SuiParsedTransactionFacts synthetic_move_call_facts()
         "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     copy_test_string(parsed.gas_budget, sizeof(parsed.gas_budget), "5000000");
     copy_test_string(parsed.gas_price, sizeof(parsed.gas_price), "1000");
-    parsed.expiration_kind = agent_q::SuiTransactionExpirationFact::none;
+    parsed.expiration_kind = signing::SuiTransactionExpirationFact::none;
     parsed.command_count = 1;
-    parsed.commands[0].kind = agent_q::SuiCommandFactKind::move_call;
+    parsed.commands[0].kind = signing::SuiCommandFactKind::move_call;
     copy_test_string(
         parsed.commands[0].move_call.package,
         sizeof(parsed.commands[0].move_call.package),
@@ -876,10 +876,10 @@ agent_q::SuiParsedTransactionFacts synthetic_move_call_facts()
 
 void expect_required_value_coverage_hardening(int* failures)
 {
-    agent_q::SuiParsedTransactionFacts parsed = synthetic_move_call_facts();
-    agent_q::SuiReviewSummary summary = {};
-    if (!agent_q::build_sui_review_summary(parsed, &summary) ||
-        summary.status != agent_q::SuiReviewSummaryStatus::ok) {
+    signing::SuiParsedTransactionFacts parsed = synthetic_move_call_facts();
+    signing::SuiReviewSummary summary = {};
+    if (!signing::build_sui_review_summary(parsed, &summary) ||
+        summary.status != signing::SuiReviewSummaryStatus::ok) {
         fprintf(stderr, "synthetic complete review did not start as ok\n");
         *failures += 1;
         return;
@@ -888,8 +888,8 @@ void expect_required_value_coverage_hardening(int* failures)
     parsed = synthetic_move_call_facts();
     parsed.sender[0] = '\0';
     summary = {};
-    if (!agent_q::build_sui_review_summary(parsed, &summary) ||
-        summary.status == agent_q::SuiReviewSummaryStatus::ok) {
+    if (!signing::build_sui_review_summary(parsed, &summary) ||
+        summary.status == signing::SuiReviewSummaryStatus::ok) {
         fprintf(stderr, "empty required sender value must not produce clear review\n");
         *failures += 1;
     }
@@ -897,8 +897,8 @@ void expect_required_value_coverage_hardening(int* failures)
     parsed = synthetic_move_call_facts();
     parsed.commands[0].move_call.function[0] = '\0';
     summary = {};
-    if (!agent_q::build_sui_review_summary(parsed, &summary) ||
-        summary.status == agent_q::SuiReviewSummaryStatus::ok) {
+    if (!signing::build_sui_review_summary(parsed, &summary) ||
+        summary.status == signing::SuiReviewSummaryStatus::ok) {
         fprintf(stderr, "empty required command function value must not produce clear review\n");
         *failures += 1;
     }
@@ -906,39 +906,39 @@ void expect_required_value_coverage_hardening(int* failures)
 
 void expect_display_budget_overflow_summary(int* failures)
 {
-    agent_q::SuiParsedTransactionFacts parsed = synthetic_move_call_facts();
-    parsed.command_count = static_cast<uint16_t>(agent_q::kSuiPolicyFactMaxCommands);
+    signing::SuiParsedTransactionFacts parsed = synthetic_move_call_facts();
+    parsed.command_count = static_cast<uint16_t>(signing::kSuiPolicyFactMaxCommands);
     for (uint16_t command_index = 0; command_index < parsed.command_count; ++command_index) {
-        agent_q::SuiCommandFact& command = parsed.commands[command_index];
-        command.kind = agent_q::SuiCommandFactKind::move_call;
+        signing::SuiCommandFact& command = parsed.commands[command_index];
+        command.kind = signing::SuiCommandFactKind::move_call;
         copy_test_string(
             command.move_call.package,
             sizeof(command.move_call.package),
             "0x2222222222222222222222222222222222222222222222222222222222222222");
         copy_test_string(command.move_call.module, sizeof(command.move_call.module), "pay");
         copy_test_string(command.move_call.function, sizeof(command.move_call.function), "spend");
-        command.move_call.type_argument_count = static_cast<uint16_t>(agent_q::kSuiPolicyFactMaxTypeArguments);
+        command.move_call.type_argument_count = static_cast<uint16_t>(signing::kSuiPolicyFactMaxTypeArguments);
         for (uint16_t type_index = 0; type_index < command.move_call.type_argument_count; ++type_index) {
-            command.move_call.type_arguments[type_index].kind = agent_q::SuiTypeTagFactKind::u64;
+            command.move_call.type_arguments[type_index].kind = signing::SuiTypeTagFactKind::u64;
             copy_test_string(
                 command.move_call.type_arguments[type_index].canonical,
                 sizeof(command.move_call.type_arguments[type_index].canonical),
                 "u64");
         }
-        command.argument_count = static_cast<uint16_t>(agent_q::kSuiPolicyFactMaxCommandArguments);
+        command.argument_count = static_cast<uint16_t>(signing::kSuiPolicyFactMaxCommandArguments);
         command.move_call.argument_count = command.argument_count;
         for (uint16_t arg_index = 0; arg_index < command.argument_count; ++arg_index) {
-            command.arguments[arg_index].kind = agent_q::SuiArgumentFactKind::gas_coin;
+            command.arguments[arg_index].kind = signing::SuiArgumentFactKind::gas_coin;
         }
     }
 
-    agent_q::SuiReviewSummary summary = {};
-    if (!agent_q::build_sui_review_summary(parsed, &summary)) {
+    signing::SuiReviewSummary summary = {};
+    if (!signing::build_sui_review_summary(parsed, &summary)) {
         fprintf(stderr, "display budget overflow should build an insufficient review summary\n");
         *failures += 1;
         return;
     }
-    if (summary.status != agent_q::SuiReviewSummaryStatus::insufficient_review) {
+    if (summary.status != signing::SuiReviewSummaryStatus::insufficient_review) {
         fprintf(stderr, "display budget overflow should remain insufficient_review\n");
         *failures += 1;
     }
@@ -951,22 +951,22 @@ void expect_review_summary(
     const char* fixture_path,
     const char* expected_type,
     const char* expected_risk,
-    agent_q::SuiReviewSummaryStatus expected_status,
+    signing::SuiReviewSummaryStatus expected_status,
     int* failures)
 {
     const std::vector<uint8_t> bytes = read_hex_fixture(fixture_path);
-    agent_q::SuiParsedTransactionFacts parsed = {};
-    const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &parsed);
-    if (result != agent_q::SuiTransactionFactsResult::ok) {
+    signing::SuiParsedTransactionFacts parsed = {};
+    const signing::SuiTransactionFactsResult result =
+        signing::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &parsed);
+    if (result != signing::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "%s expected ok parse for review summary, got %s\n",
                 fixture_path,
-                agent_q::sui_transaction_facts_result_name(result));
+                signing::sui_transaction_facts_result_name(result));
         *failures += 1;
         return;
     }
-    agent_q::SuiReviewSummary summary = {};
-    if (!agent_q::build_sui_review_summary(parsed, &summary)) {
+    signing::SuiReviewSummary summary = {};
+    if (!signing::build_sui_review_summary(parsed, &summary)) {
         fprintf(stderr, "%s failed to build review summary\n", fixture_path);
         *failures += 1;
         return;
@@ -989,11 +989,11 @@ void expect_review_summary(
         expect_review_row_equal(summary, "Gas0 version", parsed.gas_payments[0].version, failures);
         expect_review_row_equal(summary, "Gas0 digest", parsed.gas_payments[0].digest_hex, failures);
     }
-    if (parsed.expiration_kind == agent_q::SuiTransactionExpirationFact::epoch) {
+    if (parsed.expiration_kind == signing::SuiTransactionExpirationFact::epoch) {
         expect_review_row_equal(summary, "Expiration", "epoch", failures);
         expect_review_row_equal(summary, "Exp epoch", parsed.expiration_epoch, failures);
     }
-    if (parsed.expiration_kind == agent_q::SuiTransactionExpirationFact::valid_during) {
+    if (parsed.expiration_kind == signing::SuiTransactionExpirationFact::valid_during) {
         expect_review_row_equal(summary, "Expiration", "valid_during", failures);
         expect_review_row_equal(summary, "Chain digest", parsed.valid_during.chain_digest_hex, failures);
         expect_review_row_equal(summary, "Nonce", parsed.valid_during.nonce, failures);
@@ -1008,7 +1008,7 @@ void expect_review_summary(
         expect_review_row_present(summary, "Cmd0 args", failures);
     }
     if (parsed.command_count > 0) {
-        if (parsed.commands[0].kind == agent_q::SuiCommandFactKind::move_call) {
+        if (parsed.commands[0].kind == signing::SuiCommandFactKind::move_call) {
             expect_review_row_equal(summary, "Cmd0 package", parsed.commands[0].move_call.package, failures);
             expect_review_row_equal(summary, "Cmd0 module", parsed.commands[0].move_call.module, failures);
             expect_review_row_equal(summary, "Cmd0 function", parsed.commands[0].move_call.function, failures);
@@ -1020,7 +1020,7 @@ void expect_review_summary(
                     failures);
             }
         }
-        if (parsed.commands[0].kind == agent_q::SuiCommandFactKind::publish) {
+        if (parsed.commands[0].kind == signing::SuiCommandFactKind::publish) {
             expect_review_row_present(summary, "Cmd0 modules", failures);
             expect_review_row_present(summary, "Cmd0 deps", failures);
             if (parsed.commands[0].publish.dependency_count > 0) {
@@ -1031,7 +1031,7 @@ void expect_review_summary(
                     failures);
             }
         }
-        if (parsed.commands[0].kind == agent_q::SuiCommandFactKind::upgrade) {
+        if (parsed.commands[0].kind == signing::SuiCommandFactKind::upgrade) {
             expect_review_row_equal(summary, "Cmd0 package", parsed.commands[0].upgrade.package, failures);
             expect_review_row_present(summary, "Cmd0 modules", failures);
             expect_review_row_present(summary, "Cmd0 deps", failures);
@@ -1043,23 +1043,23 @@ void expect_review_summary(
                 failures);
             }
         }
-        if (parsed.commands[0].kind == agent_q::SuiCommandFactKind::split_coins &&
+        if (parsed.commands[0].kind == signing::SuiCommandFactKind::split_coins &&
             parsed.commands[0].argument_count > 1) {
             expect_review_row_present(summary, "Cmd0 amount0", failures);
         }
     }
     if (parsed.command_count > 1 &&
-        parsed.commands[1].kind == agent_q::SuiCommandFactKind::transfer_objects) {
+        parsed.commands[1].kind == signing::SuiCommandFactKind::transfer_objects) {
         expect_review_row_present(summary, "Cmd1 recipient", failures);
     }
     if (parsed.input_count > 0) {
-        if (parsed.inputs[0].kind == agent_q::SuiCallArgFactKind::object_shared) {
+        if (parsed.inputs[0].kind == signing::SuiCallArgFactKind::object_shared) {
             expect_review_row_equal(summary, "Input0 object", parsed.inputs[0].object_ref.object_id, failures);
             expect_review_row_equal(summary, "Input0 version", parsed.inputs[0].shared_initial_version, failures);
             expect_review_row_absent(summary, "Input0 digest", failures);
             expect_review_row_present(summary, "Input0 mutable", failures);
         }
-        if (parsed.inputs[0].kind == agent_q::SuiCallArgFactKind::funds_withdrawal) {
+        if (parsed.inputs[0].kind == signing::SuiCallArgFactKind::funds_withdrawal) {
             expect_review_row_equal(summary, "Input0 amount", parsed.inputs[0].funds_withdrawal.amount, failures);
             expect_review_row_equal(summary, "Input0 type", parsed.inputs[0].funds_withdrawal.type.canonical, failures);
             expect_review_row_present(summary, "Input0 source", failures);
@@ -1072,24 +1072,24 @@ void expect_synthetic_swap_shape_review_summary(
     int* failures)
 {
     const std::vector<uint8_t> bytes = read_hex_fixture(fixture_path);
-    agent_q::SuiParsedTransactionFacts parsed = {};
-    const agent_q::SuiTransactionFactsResult result =
-        agent_q::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &parsed);
-    if (result != agent_q::SuiTransactionFactsResult::ok) {
+    signing::SuiParsedTransactionFacts parsed = {};
+    const signing::SuiTransactionFactsResult result =
+        signing::parse_sui_parsed_transaction_facts(bytes.data(), bytes.size(), &parsed);
+    if (result != signing::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "%s expected ok parse for synthetic swap shape, got %s\n",
                 fixture_path,
-                agent_q::sui_transaction_facts_result_name(result));
+                signing::sui_transaction_facts_result_name(result));
         *failures += 1;
         return;
     }
-    agent_q::SuiReviewSummary summary = {};
-    if (!agent_q::build_sui_review_summary(parsed, &summary)) {
+    signing::SuiReviewSummary summary = {};
+    if (!signing::build_sui_review_summary(parsed, &summary)) {
         fprintf(stderr, "%s failed to build synthetic swap-shape review summary\n", fixture_path);
         *failures += 1;
         return;
     }
-    if (summary.status != agent_q::SuiReviewSummaryStatus::ok ||
-        summary.row_count > agent_q::kSuiReviewSummaryMaxRows) {
+    if (summary.status != signing::SuiReviewSummaryStatus::ok ||
+        summary.row_count > signing::kSuiReviewSummaryMaxRows) {
         fprintf(stderr, "%s expected bounded ok review, got status/rows mismatch\n", fixture_path);
         *failures += 1;
     }
@@ -1161,49 +1161,49 @@ int main(int argc, char** argv)
         (fixture_dir + "/valid_sui_transfer_tx.bcs.hex").c_str(),
         "Programmable transaction",
         "High",
-        agent_q::SuiReviewSummaryStatus::ok,
+        signing::SuiReviewSummaryStatus::ok,
         &failures);
     expect_review_summary(
         (fixture_dir + "/move_call_tx.bcs.hex").c_str(),
         "Move call",
         "High",
-        agent_q::SuiReviewSummaryStatus::ok,
+        signing::SuiReviewSummaryStatus::ok,
         &failures);
     expect_review_summary(
         (fixture_dir + "/publish_tx.bcs.hex").c_str(),
         "Publish package",
         "High",
-        agent_q::SuiReviewSummaryStatus::insufficient_review,
+        signing::SuiReviewSummaryStatus::insufficient_review,
         &failures);
     expect_review_summary(
         (fixture_dir + "/upgrade_tx.bcs.hex").c_str(),
         "Upgrade package",
         "High",
-        agent_q::SuiReviewSummaryStatus::insufficient_review,
+        signing::SuiReviewSummaryStatus::insufficient_review,
         &failures);
     expect_review_summary(
         (fixture_dir + "/merge_coins_tx.bcs.hex").c_str(),
         "Programmable transaction",
         "High",
-        agent_q::SuiReviewSummaryStatus::ok,
+        signing::SuiReviewSummaryStatus::ok,
         &failures);
     expect_review_summary(
         (fixture_dir + "/result_reference_transfer_tx.bcs.hex").c_str(),
         "Programmable transaction",
         "High",
-        agent_q::SuiReviewSummaryStatus::ok,
+        signing::SuiReviewSummaryStatus::ok,
         &failures);
     expect_review_summary(
         (fixture_dir + "/make_move_vec_tx.bcs.hex").c_str(),
         "Programmable transaction",
         "High",
-        agent_q::SuiReviewSummaryStatus::ok,
+        signing::SuiReviewSummaryStatus::ok,
         &failures);
     expect_review_summary(
         (fixture_dir + "/shared_object_move_call_tx.bcs.hex").c_str(),
         "Move call",
         "High",
-        agent_q::SuiReviewSummaryStatus::ok,
+        signing::SuiReviewSummaryStatus::ok,
         &failures);
     expect_synthetic_swap_shape_review_summary(
         (fixture_dir + "/synthetic_swap_shape_tx.bcs.hex").c_str(),
@@ -1211,11 +1211,11 @@ int main(int argc, char** argv)
     expect_required_value_coverage_hardening(&failures);
     expect_display_budget_overflow_summary(&failures);
 
-    agent_q::SuiPolicySubjectFacts facts = {};
-    const agent_q::SuiTransactionFactsResult result =
+    signing::SuiPolicySubjectFacts facts = {};
+    const signing::SuiTransactionFactsResult result =
         parse_policy_subject(valid.data(), valid.size(), &facts);
-    if (result != agent_q::SuiTransactionFactsResult::ok) {
-        fprintf(stderr, "valid fixture returned %s\n", agent_q::sui_transaction_facts_result_name(result));
+    if (result != signing::SuiTransactionFactsResult::ok) {
+        fprintf(stderr, "valid fixture returned %s\n", signing::sui_transaction_facts_result_name(result));
         failures += 1;
     } else {
         expect_equal("sender", json_string_field(expected_json, "sender").c_str(), facts.sender, &failures);
@@ -1233,14 +1233,14 @@ int main(int argc, char** argv)
     const std::vector<uint8_t> sponsored_gas_owner =
         read_hex_fixture((fixture_dir + "/sponsored_gas_owner_tx.bcs.hex").c_str());
     facts = {};
-    const agent_q::SuiTransactionFactsResult sponsored_result =
+    const signing::SuiTransactionFactsResult sponsored_result =
         parse_policy_subject(
             sponsored_gas_owner.data(),
             sponsored_gas_owner.size(),
             &facts);
-    if (sponsored_result != agent_q::SuiTransactionFactsResult::ok) {
+    if (sponsored_result != signing::SuiTransactionFactsResult::ok) {
         fprintf(stderr, "sponsored gas owner fixture returned %s\n",
-                agent_q::sui_transaction_facts_result_name(sponsored_result));
+                signing::sui_transaction_facts_result_name(sponsored_result));
         failures += 1;
     } else {
         expect_equal(
@@ -1252,23 +1252,23 @@ int main(int argc, char** argv)
 
     expect_reject(
         (fixture_dir + "/malformed_short_tx.bcs.hex").c_str(),
-        agent_q::SuiTransactionFactsResult::malformed,
+        signing::SuiTransactionFactsResult::malformed,
         &failures);
     expect_minimum_reject(
         (fixture_dir + "/malformed_short_tx.bcs.hex").c_str(),
-        agent_q::SuiTransactionFactsResult::malformed,
+        signing::SuiTransactionFactsResult::malformed,
         &failures);
     expect_reject(
         (fixture_dir + "/trailing_bytes_tx.bcs.hex").c_str(),
-        agent_q::SuiTransactionFactsResult::malformed,
+        signing::SuiTransactionFactsResult::malformed,
         &failures);
     expect_reject(
         (fixture_dir + "/transaction_kind_only_sui_transfer_tx.bcs.hex").c_str(),
-        agent_q::SuiTransactionFactsResult::transaction_kind_only,
+        signing::SuiTransactionFactsResult::transaction_kind_only,
         &failures);
     expect_minimum_reject(
         (fixture_dir + "/transaction_kind_only_sui_transfer_tx.bcs.hex").c_str(),
-        agent_q::SuiTransactionFactsResult::transaction_kind_only,
+        signing::SuiTransactionFactsResult::transaction_kind_only,
         &failures);
     expect_supported_policy_subject(
         (fixture_dir + "/merge_coins_tx.bcs.hex").c_str(),
@@ -1296,29 +1296,29 @@ int main(int argc, char** argv)
         &failures);
     expect_make_move_vec_metadata(
         (fixture_dir + "/make_move_vec_tx.bcs.hex").c_str(),
-        agent_q::SuiCallArgFactKind::object_imm_or_owned,
+        signing::SuiCallArgFactKind::object_imm_or_owned,
         &failures);
     expect_shared_object_metadata(
         (fixture_dir + "/shared_object_move_call_tx.bcs.hex").c_str(),
         &failures);
     expect_make_move_vec_metadata(
         (fixture_dir + "/receiving_object_make_move_vec_tx.bcs.hex").c_str(),
-        agent_q::SuiCallArgFactKind::object_receiving,
+        signing::SuiCallArgFactKind::object_receiving,
         &failures);
     expect_reject(
         (fixture_dir + "/move_call_out_of_range_input_tx.bcs.hex").c_str(),
-        agent_q::SuiTransactionFactsResult::malformed,
+        signing::SuiTransactionFactsResult::malformed,
         &failures);
     expect_reject(
         (fixture_dir + "/wrong_command_order_tx.bcs.hex").c_str(),
-        agent_q::SuiTransactionFactsResult::malformed,
+        signing::SuiTransactionFactsResult::malformed,
         &failures);
     expect_supported_policy_subject(
         (fixture_dir + "/result_reference_transfer_tx.bcs.hex").c_str(),
         &failures);
     expect_reject(
         (fixture_dir + "/too_many_commands_tx.bcs.hex").c_str(),
-        agent_q::SuiTransactionFactsResult::malformed,
+        signing::SuiTransactionFactsResult::malformed,
         &failures);
     const std::vector<uint8_t> large_pure_input =
         read_hex_fixture((fixture_dir + "/large_pure_input_tx.bcs.hex").c_str());
@@ -1326,7 +1326,7 @@ int main(int argc, char** argv)
         read_file((fixture_dir + "/large_pure_input_tx.sdk-v2-facts.json").c_str());
     expect_reject(
         (fixture_dir + "/large_pure_input_tx.bcs.hex").c_str(),
-        agent_q::SuiTransactionFactsResult::too_large,
+        signing::SuiTransactionFactsResult::too_large,
         &failures);
     expect_minimum_transaction_facts(
         "large_pure_input_tx",
@@ -1336,24 +1336,24 @@ int main(int argc, char** argv)
 
     const std::vector<uint8_t> future_transaction_data_version = {1};
     facts = {};
-    const agent_q::SuiTransactionFactsResult future_version_result =
+    const signing::SuiTransactionFactsResult future_version_result =
         parse_policy_subject(
             future_transaction_data_version.data(),
             future_transaction_data_version.size(),
             &facts);
-    if (future_version_result != agent_q::SuiTransactionFactsResult::unsupported_version) {
+    if (future_version_result != signing::SuiTransactionFactsResult::unsupported_version) {
         fprintf(stderr, "future transaction-data version expected unsupported_version, got %s\n",
-                agent_q::sui_transaction_facts_result_name(future_version_result));
+                signing::sui_transaction_facts_result_name(future_version_result));
         failures += 1;
     }
 
     std::vector<uint8_t> oversized((128 * 1024) + 1, 0);
     facts = {};
-    const agent_q::SuiTransactionFactsResult oversized_result =
+    const signing::SuiTransactionFactsResult oversized_result =
         parse_policy_subject(oversized.data(), oversized.size(), &facts);
-    if (oversized_result != agent_q::SuiTransactionFactsResult::too_large) {
+    if (oversized_result != signing::SuiTransactionFactsResult::too_large) {
         fprintf(stderr, "oversized tx expected too_large, got %s\n",
-                agent_q::sui_transaction_facts_result_name(oversized_result));
+                signing::sui_transaction_facts_result_name(oversized_result));
         failures += 1;
     }
 
@@ -1366,15 +1366,15 @@ int main(int argc, char** argv)
 CPP
 
 "${CXX_BIN}" -std=c++17 -I"${COMMON_ROOT}" -I"${COMMON_SUI_DIR}" \
-  -c "${COMMON_SUI_DIR}/agent_q_sui_bcs_reader.cpp" -o "${TMP_DIR}/agent_q_sui_bcs_reader.o"
+  -c "${COMMON_SUI_DIR}/bcs_reader.cpp" -o "${TMP_DIR}/sui_bcs_reader.o"
 "${CXX_BIN}" -std=c++17 -I"${COMMON_ROOT}" -I"${COMMON_SUI_DIR}" \
-  -c "${COMMON_SUI_DIR}/agent_q_sui_transaction_facts.cpp" -o "${TMP_DIR}/agent_q_sui_transaction_facts.o"
+  -c "${COMMON_SUI_DIR}/transaction_facts.cpp" -o "${TMP_DIR}/sui_transaction_facts.o"
 "${CXX_BIN}" -std=c++17 -I"${COMMON_ROOT}" -I"${COMMON_SUI_DIR}" \
   -c "${TMP_DIR}/sui_transaction_facts_test.cpp" -o "${TMP_DIR}/sui_transaction_facts_test.o"
 
 "${CXX_BIN}" \
-  "${TMP_DIR}/agent_q_sui_bcs_reader.o" \
-  "${TMP_DIR}/agent_q_sui_transaction_facts.o" \
+  "${TMP_DIR}/sui_bcs_reader.o" \
+  "${TMP_DIR}/sui_transaction_facts.o" \
   "${TMP_DIR}/sui_transaction_facts_test.o" \
   -o "${TMP_DIR}/sui_transaction_facts_test"
 

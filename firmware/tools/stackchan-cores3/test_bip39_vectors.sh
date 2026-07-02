@@ -25,18 +25,18 @@ DEFAULT_BIP39_WORDLIST_DIR="${REPO_ROOT}/.firmware-cache/bip39/bips"
 # shellcheck source=/dev/null
 source "${COMMON_SOURCE_ENV}"
 
-BIP39_WORDLIST_FILE="${AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE:-}"
-if [[ -z "${BIP39_WORDLIST_FILE}" && -n "${AGENT_Q_BIP39_WORDLIST_ROOT:-}" && -n "${AGENT_Q_BIP39_ENGLISH_WORDLIST_PATH:-}" ]]; then
-  BIP39_WORDLIST_FILE="${AGENT_Q_BIP39_WORDLIST_ROOT}/${AGENT_Q_BIP39_ENGLISH_WORDLIST_PATH}"
+BIP39_WORDLIST_FILE="${BIP39_ENGLISH_WORDLIST_FILE:-}"
+if [[ -z "${BIP39_WORDLIST_FILE}" && -n "${BIP39_WORDLIST_ROOT:-}" && -n "${BIP39_ENGLISH_WORDLIST_PATH:-}" ]]; then
+  BIP39_WORDLIST_FILE="${BIP39_WORDLIST_ROOT}/${BIP39_ENGLISH_WORDLIST_PATH}"
 fi
-if [[ -z "${BIP39_WORDLIST_FILE}" && -n "${AGENT_Q_BIP39_ENGLISH_WORDLIST_PATH:-}" ]]; then
-  CACHED_WORDLIST_FILE="${DEFAULT_BIP39_WORDLIST_DIR}/${AGENT_Q_BIP39_ENGLISH_WORDLIST_PATH}"
+if [[ -z "${BIP39_WORDLIST_FILE}" && -n "${BIP39_ENGLISH_WORDLIST_PATH:-}" ]]; then
+  CACHED_WORDLIST_FILE="${DEFAULT_BIP39_WORDLIST_DIR}/${BIP39_ENGLISH_WORDLIST_PATH}"
   if [[ -f "${CACHED_WORDLIST_FILE}" ]]; then
     BIP39_WORDLIST_FILE="${CACHED_WORDLIST_FILE}"
   fi
 fi
 if [[ -z "${BIP39_WORDLIST_FILE}" || ! -f "${BIP39_WORDLIST_FILE}" ]]; then
-  echo "Missing pinned BIP-39 English wordlist. Run firmware/tools/stackchan-cores3/build.sh or set AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE." >&2
+  echo "Missing pinned BIP-39 English wordlist. Run firmware/tools/stackchan-cores3/build.sh or set BIP39_ENGLISH_WORDLIST_FILE." >&2
   exit 1
 fi
 
@@ -53,50 +53,50 @@ if [[ ! -f "${MBEDTLS_INCLUDE_DIR}/mbedtls/sha256.h" || ! -f "${MBEDTLS_LIBRARY_
   exit 1
 fi
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-bip39-vectors.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/bip39-vectors.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 python3 "${SCRIPT_DIR}/generate_bip39_wordlist.py" \
   "${BIP39_WORDLIST_FILE}" \
-  "${TMP_DIR}/agent_q_bip39_wordlist.cpp"
+  "${TMP_DIR}/bip39_wordlist.cpp"
 
 cat >"${TMP_DIR}/bip39_vector_test.cpp" <<'CPP'
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_bip39.h"
+#include "bip39.h"
 
 namespace {
 
 bool run_fill_vector(uint8_t fill, const char* expected)
 {
-    uint8_t entropy[agent_q::kBip39EntropyBytes] = {};
+    uint8_t entropy[signing::kBip39EntropyBytes] = {};
     memset(entropy, fill, sizeof(entropy));
 
-    char output[agent_q::kBip39MnemonicMaxChars] = {};
-    if (!agent_q::make_bip39_mnemonic_12_words(entropy, output, sizeof(output))) {
+    char output[signing::kBip39MnemonicMaxChars] = {};
+    if (!signing::make_bip39_mnemonic_12_words(entropy, output, sizeof(output))) {
         fprintf(stderr, "make_bip39_mnemonic_12_words failed for fill 0x%02x\n", fill);
-        agent_q::wipe_sensitive_buffer(entropy, sizeof(entropy));
-        agent_q::wipe_sensitive_buffer(output, sizeof(output));
+        signing::wipe_sensitive_buffer(entropy, sizeof(entropy));
+        signing::wipe_sensitive_buffer(output, sizeof(output));
         return false;
     }
 
     if (strcmp(output, expected) != 0) {
         fprintf(stderr, "BIP-39 vector mismatch for fill 0x%02x\nexpected: %s\nactual:   %s\n", fill, expected, output);
-        agent_q::wipe_sensitive_buffer(entropy, sizeof(entropy));
-        agent_q::wipe_sensitive_buffer(output, sizeof(output));
+        signing::wipe_sensitive_buffer(entropy, sizeof(entropy));
+        signing::wipe_sensitive_buffer(output, sizeof(output));
         return false;
     }
 
-    agent_q::wipe_sensitive_buffer(entropy, sizeof(entropy));
-    agent_q::wipe_sensitive_buffer(output, sizeof(output));
+    signing::wipe_sensitive_buffer(entropy, sizeof(entropy));
+    signing::wipe_sensitive_buffer(output, sizeof(output));
     return true;
 }
 
-bool parse_expected_words(const char* mnemonic, uint16_t words[agent_q::kBip39MnemonicWordCount])
+bool parse_expected_words(const char* mnemonic, uint16_t words[signing::kBip39MnemonicWordCount])
 {
-    char copy[agent_q::kBip39MnemonicMaxChars] = {};
+    char copy[signing::kBip39MnemonicMaxChars] = {};
     if (strlen(mnemonic) >= sizeof(copy)) {
         return false;
     }
@@ -118,50 +118,50 @@ bool parse_expected_words(const char* mnemonic, uint16_t words[agent_q::kBip39Mn
         if (*cursor == ' ') {
             *cursor++ = '\0';
         }
-        if (word_count >= agent_q::kBip39MnemonicWordCount ||
-            !agent_q::bip39_english_word_index(start, &words[word_count])) {
-            agent_q::wipe_sensitive_buffer(copy, sizeof(copy));
+        if (word_count >= signing::kBip39MnemonicWordCount ||
+            !signing::bip39_english_word_index(start, &words[word_count])) {
+            signing::wipe_sensitive_buffer(copy, sizeof(copy));
             return false;
         }
         ++word_count;
     }
 
-    agent_q::wipe_sensitive_buffer(copy, sizeof(copy));
-    return word_count == agent_q::kBip39MnemonicWordCount;
+    signing::wipe_sensitive_buffer(copy, sizeof(copy));
+    return word_count == signing::kBip39MnemonicWordCount;
 }
 
 bool run_decode_vector(uint8_t fill, const char* mnemonic)
 {
-    uint16_t words[agent_q::kBip39MnemonicWordCount] = {};
+    uint16_t words[signing::kBip39MnemonicWordCount] = {};
     if (!parse_expected_words(mnemonic, words)) {
         fprintf(stderr, "Could not parse expected mnemonic words\n");
         return false;
     }
 
-    uint8_t entropy[agent_q::kBip39EntropyBytes] = {};
-    const agent_q::Bip39EntropyDecodeResult result =
-        agent_q::decode_bip39_entropy_12_words(
-            words, agent_q::kBip39MnemonicWordCount, entropy, sizeof(entropy));
-    if (result != agent_q::Bip39EntropyDecodeResult::ok) {
+    uint8_t entropy[signing::kBip39EntropyBytes] = {};
+    const signing::Bip39EntropyDecodeResult result =
+        signing::decode_bip39_entropy_12_words(
+            words, signing::kBip39MnemonicWordCount, entropy, sizeof(entropy));
+    if (result != signing::Bip39EntropyDecodeResult::ok) {
         fprintf(stderr, "decode_bip39_entropy_12_words failed for fill 0x%02x\n", fill);
-        agent_q::wipe_sensitive_buffer(entropy, sizeof(entropy));
+        signing::wipe_sensitive_buffer(entropy, sizeof(entropy));
         return false;
     }
 
     for (size_t index = 0; index < sizeof(entropy); ++index) {
         if (entropy[index] != fill) {
             fprintf(stderr, "Decoded entropy mismatch at byte %zu for fill 0x%02x\n", index, fill);
-            agent_q::wipe_sensitive_buffer(entropy, sizeof(entropy));
+            signing::wipe_sensitive_buffer(entropy, sizeof(entropy));
             return false;
         }
     }
 
-    words[agent_q::kBip39MnemonicWordCount - 1] ^= 0x01;
-    const agent_q::Bip39EntropyDecodeResult checksum_result =
-        agent_q::decode_bip39_entropy_12_words(
-            words, agent_q::kBip39MnemonicWordCount, entropy, sizeof(entropy));
-    agent_q::wipe_sensitive_buffer(entropy, sizeof(entropy));
-    if (checksum_result != agent_q::Bip39EntropyDecodeResult::checksum_mismatch) {
+    words[signing::kBip39MnemonicWordCount - 1] ^= 0x01;
+    const signing::Bip39EntropyDecodeResult checksum_result =
+        signing::decode_bip39_entropy_12_words(
+            words, signing::kBip39MnemonicWordCount, entropy, sizeof(entropy));
+    signing::wipe_sensitive_buffer(entropy, sizeof(entropy));
+    if (checksum_result != signing::Bip39EntropyDecodeResult::checksum_mismatch) {
         fprintf(stderr, "Checksum mismatch was not rejected for fill 0x%02x\n", fill);
         return false;
     }
@@ -204,12 +204,12 @@ CXX_BIN="${CXX:-c++}"
   -o "${TMP_DIR}/platform_util.o"
 
 "${CXX_BIN}" -std=c++17 \
-  -I"${TARGET_ROOT}/agent_q" \
+  -I"${TARGET_ROOT}/runtime" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
   "${TMP_DIR}/bip39_vector_test.cpp" \
-  "${TARGET_ROOT}/agent_q/agent_q_bip39.cpp" \
-  "${TMP_DIR}/agent_q_bip39_wordlist.cpp" \
+  "${TARGET_ROOT}/runtime/bip39.cpp" \
+  "${TMP_DIR}/bip39_wordlist.cpp" \
   "${TMP_DIR}/sha256.o" \
   "${TMP_DIR}/platform_util.o" \
   -o "${TMP_DIR}/bip39_vector_test"

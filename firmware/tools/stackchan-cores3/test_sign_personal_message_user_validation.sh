@@ -18,29 +18,29 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
-ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 CXX_BIN="${CXX:-c++}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${AGENT_Q_DIR}/agent_q_base64.cpp" \
-  "${AGENT_Q_DIR}/agent_q_base64.h" \
-  "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
-  "${AGENT_Q_DIR}/agent_q_request_id.h" \
-  "${AGENT_Q_DIR}/agent_q_session.cpp" \
-  "${AGENT_Q_DIR}/agent_q_session.h" \
-  "${AGENT_Q_DIR}/agent_q_sign_personal_message_user_validation.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_personal_message_user_validation.h"; do
+  "${RUNTIME_DIR}/base64.cpp" \
+  "${RUNTIME_DIR}/base64.h" \
+  "${RUNTIME_DIR}/request_id.cpp" \
+  "${RUNTIME_DIR}/request_id.h" \
+  "${RUNTIME_DIR}/session.cpp" \
+  "${RUNTIME_DIR}/session.h" \
+  "${RUNTIME_DIR}/sign_personal_message_user_validation.cpp" \
+  "${RUNTIME_DIR}/sign_personal_message_user_validation.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
-    echo "Run firmware/tools/stackchan-cores3/build.sh first, or set AGENT_Q_ARDUINOJSON_ROOT." >&2
+    echo "Run firmware/tools/stackchan-cores3/build.sh first, or set FIRMWARE_ARDUINOJSON_ROOT." >&2
     exit 1
   fi
 done
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-sign-personal-message-validation.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-sign-personal-message-validation.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 cat >"${TMP_DIR}/sign_personal_message_user_validation_test.cpp" <<'CPP'
@@ -52,7 +52,7 @@ cat >"${TMP_DIR}/sign_personal_message_user_validation_test.cpp" <<'CPP'
 
 #include <string>
 
-#include "agent_q_sign_personal_message_user_validation.h"
+#include "sign_personal_message_user_validation.h"
 
 namespace {
 
@@ -99,15 +99,15 @@ void expect(bool condition, const char* label)
 void expect_envelope(
     const char* label,
     const std::string& json,
-    agent_q::AgentQSignPersonalMessageUserValidationResult expected)
+    signing::SignPersonalMessageUserValidationResult expected)
 {
     JsonDocument document = parse_json(label, json);
-    agent_q::AgentQSignPersonalMessageUserEnvelope output = {};
+    signing::SignPersonalMessageUserEnvelope output = {};
     memset(&output, 0xA5, sizeof(output));
-    const agent_q::AgentQSignPersonalMessageUserValidationResult actual =
-        agent_q::validate_sign_personal_message_user_envelope(document, &output);
+    const signing::SignPersonalMessageUserValidationResult actual =
+        signing::validate_sign_personal_message_user_envelope(document, &output);
     expect(actual == expected, label);
-    if (actual != agent_q::AgentQSignPersonalMessageUserValidationResult::ok) {
+    if (actual != signing::SignPersonalMessageUserValidationResult::ok) {
         expect(output.request_id[0] == '\0', "envelope failure clears output");
     }
 }
@@ -115,15 +115,15 @@ void expect_envelope(
 void expect_session(
     const char* label,
     const std::string& json,
-    agent_q::AgentQSignPersonalMessageUserValidationResult expected)
+    signing::SignPersonalMessageUserValidationResult expected)
 {
     JsonDocument document = parse_json(label, json);
-    agent_q::AgentQSignPersonalMessageUserSessionRef output = {};
+    signing::SignPersonalMessageUserSessionRef output = {};
     memset(&output, 0xA5, sizeof(output));
-    const agent_q::AgentQSignPersonalMessageUserValidationResult actual =
-        agent_q::validate_sign_personal_message_user_session_format(document, &output);
+    const signing::SignPersonalMessageUserValidationResult actual =
+        signing::validate_sign_personal_message_user_session_format(document, &output);
     expect(actual == expected, label);
-    if (actual != agent_q::AgentQSignPersonalMessageUserValidationResult::ok) {
+    if (actual != signing::SignPersonalMessageUserValidationResult::ok) {
         expect(output.session_id[0] == '\0', "session failure clears output");
     }
 }
@@ -131,18 +131,18 @@ void expect_session(
 void expect_params(
     const char* label,
     const std::string& json,
-    agent_q::AgentQSignPersonalMessageUserValidationResult expected,
+    signing::SignPersonalMessageUserValidationResult expected,
     size_t expected_decoded_size = 0,
     const char* expected_network = "devnet",
     const char* expected_message = "aGVsbG8=")
 {
     JsonDocument document = parse_json(label, json);
-    agent_q::AgentQSignPersonalMessageUserParams output = {};
+    signing::SignPersonalMessageUserParams output = {};
     memset(&output, 0xA5, sizeof(output));
-    const agent_q::AgentQSignPersonalMessageUserValidationResult actual =
-        agent_q::validate_sign_personal_message_user_params(document, agent_q::AgentQSupportedSignRoute::sui_sign_personal_message, &output);
+    const signing::SignPersonalMessageUserValidationResult actual =
+        signing::validate_sign_personal_message_user_params(document, signing::SupportedSignRoute::sui_sign_personal_message, &output);
     expect(actual == expected, label);
-    if (actual == agent_q::AgentQSignPersonalMessageUserValidationResult::ok) {
+    if (actual == signing::SignPersonalMessageUserValidationResult::ok) {
         expect(strcmp(output.network, expected_network) == 0, "params copies network");
         expect(strcmp(output.message_base64, expected_message) == 0, "params references message");
         expect(output.message_decoded_size == expected_decoded_size, "params records decoded size");
@@ -156,7 +156,7 @@ void expect_params(
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 void wipe_sensitive_buffer(void* data, size_t size)
 {
@@ -167,11 +167,11 @@ void wipe_sensitive_buffer(void* data, size_t size)
     }
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 int main()
 {
-    using Result = agent_q::AgentQSignPersonalMessageUserValidationResult;
+    using Result = signing::SignPersonalMessageUserValidationResult;
 
     const std::string valid = valid_request_with_params(valid_params());
     expect_envelope("valid envelope", valid, Result::ok);
@@ -212,7 +212,7 @@ int main()
                   valid_request_with_params("{\"network\":\"devnet\",\"message\":\"aGVsbG9\"}"),
                   Result::invalid_message);
     const std::string observed_app_message(
-        ((agent_q::kAgentQSuiSignPersonalMessageMaxBytes + 2) / 3) * 4,
+        ((signing::kSuiSignPersonalMessageMaxBytes + 2) / 3) * 4,
         'A');
     expect_params(
         "maximum message remains valid request format",
@@ -220,12 +220,12 @@ int main()
                                   observed_app_message +
                                   "\"}"),
         Result::ok,
-        agent_q::kAgentQSuiSignPersonalMessageMaxBytes,
+        signing::kSuiSignPersonalMessageMaxBytes,
         "devnet",
         observed_app_message.c_str());
 
     const std::string oversized_message(
-        ((agent_q::kAgentQSuiSignPersonalMessageMaxBytes + 3) / 3) * 4,
+        ((signing::kSuiSignPersonalMessageMaxBytes + 3) / 3) * 4,
         'A');
     expect_params(
         "message above capacity is payload capacity failure",
@@ -234,10 +234,10 @@ int main()
                                   "\"}"),
         Result::message_too_large);
 
-    expect(strcmp(agent_q::sign_personal_message_user_validation_result_name(Result::invalid_message),
+    expect(strcmp(signing::sign_personal_message_user_validation_result_name(Result::invalid_message),
                   "invalid_message") == 0,
            "result names expose invalid_message");
-    expect(strcmp(agent_q::sign_personal_message_user_validation_result_name(Result::message_too_large),
+    expect(strcmp(signing::sign_personal_message_user_validation_result_name(Result::message_too_large),
                   "message_too_large") == 0,
            "result names expose message_too_large");
 
@@ -252,13 +252,13 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${ARDUINOJSON_ROOT}" \
-  -I"${AGENT_Q_DIR}" \
-  -I"${AGENT_Q_DIR}/../../common/agent_q" \
+  -I"${RUNTIME_DIR}" \
+  -I"${RUNTIME_DIR}/../../common" \
   "${TMP_DIR}/sign_personal_message_user_validation_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sign_personal_message_user_validation.cpp" \
-  "${AGENT_Q_DIR}/agent_q_base64.cpp" \
-  "${AGENT_Q_DIR}/agent_q_request_id.cpp" \
-  "${AGENT_Q_DIR}/agent_q_session.cpp" \
+  "${RUNTIME_DIR}/sign_personal_message_user_validation.cpp" \
+  "${RUNTIME_DIR}/base64.cpp" \
+  "${RUNTIME_DIR}/request_id.cpp" \
+  "${RUNTIME_DIR}/session.cpp" \
   -o "${TMP_DIR}/sign_personal_message_user_validation_test"
 
 "${TMP_DIR}/sign_personal_message_user_validation_test"

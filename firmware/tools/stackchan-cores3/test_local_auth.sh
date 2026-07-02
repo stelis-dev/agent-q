@@ -7,7 +7,7 @@ Usage: firmware/tools/stackchan-cores3/test_local_auth.sh
 
 Compiles the StackChan CoreS3 local PIN verifier store against host NVS/RNG
 stubs and the pinned MicroSui Monocypher source. This test uses only a host
-C/C++ compiler and does NOT require ESP-IDF. Set AGENT_Q_SIGNING_CRYPTO_ROOT to
+C/C++ compiler and does NOT require ESP-IDF. Set SIGNING_CRYPTO_ROOT to
 override the signing source location; otherwise the pinned .firmware-cache
 checkout from build.sh is used.
 EOF
@@ -20,18 +20,18 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-DEFAULT_SIGNING_DIR="${REPO_ROOT}/.firmware-cache/signing-crypto/microsui-lib"
-SIGNING_ROOT="${AGENT_Q_SIGNING_CRYPTO_ROOT:-${DEFAULT_SIGNING_DIR}}"
-SIGNING_CORE="${SIGNING_ROOT}/src/microsui_core"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+DEFAULT_RUNTIME_DIR="${REPO_ROOT}/.firmware-cache/signing-crypto/microsui-lib"
+CRYPTO_ROOT="${SIGNING_CRYPTO_ROOT:-${DEFAULT_RUNTIME_DIR}}"
+MICROSUI_CORE="${CRYPTO_ROOT}/src/microsui_core"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 
 for required in \
-  "${SIGNING_CORE}/lib/monocypher/monocypher.c" \
-  "${AGENT_Q_DIR}/agent_q_local_auth.cpp" \
-  "${AGENT_Q_DIR}/agent_q_local_auth.h"; do
+  "${MICROSUI_CORE}/lib/monocypher/monocypher.c" \
+  "${RUNTIME_DIR}/local_auth.cpp" \
+  "${RUNTIME_DIR}/local_auth.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
-    echo "Run firmware/tools/stackchan-cores3/build.sh first, or set AGENT_Q_SIGNING_CRYPTO_ROOT." >&2
+    echo "Run firmware/tools/stackchan-cores3/build.sh first, or set SIGNING_CRYPTO_ROOT." >&2
     exit 1
   fi
 done
@@ -39,7 +39,7 @@ done
 CC_BIN="${CC:-cc}"
 CXX_BIN="${CXX:-c++}"
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-local-auth.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-local-auth.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/stubs"
@@ -89,11 +89,11 @@ esp_err_t nvs_commit(nvs_handle_t handle);
 }
 H
 
-cat >"${TMP_DIR}/stubs/agent_q_bip39.cpp" <<'CPP'
+cat >"${TMP_DIR}/stubs/bip39.cpp" <<'CPP'
 #include <stddef.h>
 #include <stdint.h>
 
-namespace agent_q {
+namespace signing {
 
 size_t g_test_wipe_calls = 0;
 size_t g_test_last_wipe_size = 0;
@@ -109,10 +109,10 @@ void wipe_sensitive_buffer(void* data, size_t size)
     }
 }
 
-}  // namespace agent_q
+}  // namespace signing
 CPP
 
-cat >"${TMP_DIR}/stubs/agent_q_entropy.cpp" <<'CPP'
+cat >"${TMP_DIR}/stubs/entropy.cpp" <<'CPP'
 #include <stddef.h>
 #include <stdint.h>
 
@@ -123,7 +123,7 @@ uint8_t g_rng_counter = 1;
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 bool init_secure_random_from_early_boot_entropy()
 {
@@ -153,7 +153,7 @@ void test_set_rng_fails(bool value)
     g_rng_fails = value;
 }
 
-}  // namespace agent_q
+}  // namespace signing
 CPP
 
 cat >"${TMP_DIR}/local_auth_test.cpp" <<'CPP'
@@ -163,11 +163,11 @@ cat >"${TMP_DIR}/local_auth_test.cpp" <<'CPP'
 
 #include <vector>
 
-#include "agent_q_local_auth_test.h"
+#include "local_auth_test.h"
 #include "esp_err.h"
 #include "nvs.h"
 
-namespace agent_q {
+namespace signing {
 void test_set_rng_fails(bool value);
 extern size_t g_test_wipe_calls;
 extern size_t g_test_last_wipe_size;
@@ -294,114 +294,114 @@ int main()
 {
     bool verified = true;
 
-    expect(agent_q::kLocalPinDigits == 6, "PIN is exactly six digits");
-    expect(agent_q::is_valid_local_pin("000000"), "valid all-zero PIN shape");
-    expect(agent_q::is_valid_local_pin("123456"), "valid numeric PIN shape");
-    expect(!agent_q::is_valid_local_pin("12345"), "short PIN rejected");
-    expect(!agent_q::is_valid_local_pin("1234567"), "long PIN rejected");
-    expect(!agent_q::is_valid_local_pin("12345a"), "non-digit PIN rejected");
-    expect(!agent_q::is_valid_local_pin(nullptr), "null PIN rejected");
+    expect(signing::kLocalPinDigits == 6, "PIN is exactly six digits");
+    expect(signing::is_valid_local_pin("000000"), "valid all-zero PIN shape");
+    expect(signing::is_valid_local_pin("123456"), "valid numeric PIN shape");
+    expect(!signing::is_valid_local_pin("12345"), "short PIN rejected");
+    expect(!signing::is_valid_local_pin("1234567"), "long PIN rejected");
+    expect(!signing::is_valid_local_pin("12345a"), "non-digit PIN rejected");
+    expect(!signing::is_valid_local_pin(nullptr), "null PIN rejected");
 
-    expect(agent_q::local_auth_status() == agent_q::AgentQLocalAuthStatus::missing, "missing local auth status");
-    expect(!agent_q::verify_local_pin("123456", &verified), "missing local auth verify fails");
+    expect(signing::local_auth_status() == signing::LocalAuthStatus::missing, "missing local auth status");
+    expect(!signing::verify_local_pin("123456", &verified), "missing local auth verify fails");
     expect(!verified, "missing local auth leaves verified false");
 
-    expect(agent_q::store_local_pin_verifier("123456"), "store local PIN verifier");
-    agent_q::g_test_wipe_calls = 0;
-    agent_q::g_test_last_wipe_size = 0;
-    expect(agent_q::local_auth_status() == agent_q::AgentQLocalAuthStatus::active, "stored local auth active");
-    expect(agent_q::g_test_wipe_calls > 0, "status check wipes local auth record copy");
-    expect(agent_q::g_test_last_wipe_size == agent_q::kLocalAuthPreparedRecordBytes,
+    expect(signing::store_local_pin_verifier("123456"), "store local PIN verifier");
+    signing::g_test_wipe_calls = 0;
+    signing::g_test_last_wipe_size = 0;
+    expect(signing::local_auth_status() == signing::LocalAuthStatus::active, "stored local auth active");
+    expect(signing::g_test_wipe_calls > 0, "status check wipes local auth record copy");
+    expect(signing::g_test_last_wipe_size == signing::kLocalAuthPreparedRecordBytes,
            "status check wipes full local auth record copy");
     expect(g_blob.size() > 4 && g_blob[4] == 0, "local auth current format marker is zero");
     {
         const std::vector<uint8_t> current_auth_blob = g_blob;
         g_blob[4] = 1;
-        expect(agent_q::local_auth_status() == agent_q::AgentQLocalAuthStatus::invalid,
+        expect(signing::local_auth_status() == signing::LocalAuthStatus::invalid,
                "nonzero local auth format marker fails closed");
         g_blob = current_auth_blob;
-        expect(agent_q::local_auth_status() == agent_q::AgentQLocalAuthStatus::active,
+        expect(signing::local_auth_status() == signing::LocalAuthStatus::active,
                "restored current local auth format marker is active");
     }
     verified = false;
-    expect(agent_q::verify_local_pin("123456", &verified), "verify correct PIN call succeeds");
+    expect(signing::verify_local_pin("123456", &verified), "verify correct PIN call succeeds");
     expect(verified, "correct PIN verifies");
     verified = true;
-    expect(agent_q::verify_local_pin("654321", &verified), "verify wrong PIN call succeeds");
+    expect(signing::verify_local_pin("654321", &verified), "verify wrong PIN call succeeds");
     expect(!verified, "wrong PIN does not verify");
 
     std::vector<uint8_t> original_blob = g_blob;
-    expect(agent_q::store_local_pin_verifier("123456"), "store same PIN with fresh salt");
+    expect(signing::store_local_pin_verifier("123456"), "store same PIN with fresh salt");
     expect(g_blob != original_blob, "fresh salt changes stored verifier record");
     verified = false;
-    expect(agent_q::verify_local_pin("123456", &verified) && verified, "fresh-salt record verifies");
+    expect(signing::verify_local_pin("123456", &verified) && verified, "fresh-salt record verifies");
 
-    expect(agent_q::wipe_local_auth(), "wipe local auth");
+    expect(signing::wipe_local_auth(), "wipe local auth");
     expect(g_blob.empty(), "local auth blob wiped");
-    expect(agent_q::local_auth_status() == agent_q::AgentQLocalAuthStatus::missing, "wiped local auth missing");
+    expect(signing::local_auth_status() == signing::LocalAuthStatus::missing, "wiped local auth missing");
 
-    expect(agent_q::store_local_pin_verifier("222222"), "restore local auth");
+    expect(signing::store_local_pin_verifier("222222"), "restore local auth");
     g_blob[0] = 0;
-    expect(agent_q::local_auth_status() == agent_q::AgentQLocalAuthStatus::invalid, "corrupt local auth invalid");
+    expect(signing::local_auth_status() == signing::LocalAuthStatus::invalid, "corrupt local auth invalid");
     verified = true;
-    expect(!agent_q::verify_local_pin("222222", &verified), "corrupt local auth verify fails closed");
+    expect(!signing::verify_local_pin("222222", &verified), "corrupt local auth verify fails closed");
     expect(!verified, "corrupt local auth leaves verified false");
 
-    expect(agent_q::store_local_pin_verifier("333333"), "restore local auth again");
+    expect(signing::store_local_pin_verifier("333333"), "restore local auth again");
     g_blob.push_back(0);
-    expect(agent_q::local_auth_status() == agent_q::AgentQLocalAuthStatus::invalid, "oversized local auth invalid");
+    expect(signing::local_auth_status() == signing::LocalAuthStatus::invalid, "oversized local auth invalid");
 
     g_blob.clear();
     g_commit_fails = true;
-    expect(!agent_q::store_local_pin_verifier("444444"), "commit failure fails closed");
+    expect(!signing::store_local_pin_verifier("444444"), "commit failure fails closed");
     expect(g_blob.empty(), "commit failure leaves no local auth when none existed");
-    expect(agent_q::local_auth_status() == agent_q::AgentQLocalAuthStatus::missing, "commit failure status missing");
+    expect(signing::local_auth_status() == signing::LocalAuthStatus::missing, "commit failure status missing");
     g_commit_fails = false;
 
-    expect(agent_q::store_local_pin_verifier("666666"), "restore local auth before failed replacement");
+    expect(signing::store_local_pin_verifier("666666"), "restore local auth before failed replacement");
     const std::vector<uint8_t> previous_blob = g_blob;
     g_commit_fails = true;
-    expect(!agent_q::store_local_pin_verifier("777777"), "failed replacement refuses storage");
+    expect(!signing::store_local_pin_verifier("777777"), "failed replacement refuses storage");
     expect(g_blob == previous_blob, "failed replacement preserves previous verifier record");
     verified = false;
-    expect(agent_q::verify_local_pin("666666", &verified) && verified, "old PIN still verifies after failed replacement");
+    expect(signing::verify_local_pin("666666", &verified) && verified, "old PIN still verifies after failed replacement");
     verified = true;
-    expect(agent_q::verify_local_pin("777777", &verified), "new PIN verify call succeeds after failed replacement");
+    expect(signing::verify_local_pin("777777", &verified), "new PIN verify call succeeds after failed replacement");
     expect(!verified, "new PIN does not verify after failed replacement");
     g_commit_fails = false;
 
-    expect(agent_q::store_local_pin_verifier("101010"), "restore local auth before set failure with replacement");
+    expect(signing::store_local_pin_verifier("101010"), "restore local auth before set failure with replacement");
     g_set_fails_after_write = true;
-    expect(agent_q::store_local_pin_verifier("202020"), "set failure with active replacement is treated as success");
+    expect(signing::store_local_pin_verifier("202020"), "set failure with active replacement is treated as success");
     verified = false;
-    expect(agent_q::verify_local_pin("202020", &verified) && verified, "replacement PIN verifies after set failure");
+    expect(signing::verify_local_pin("202020", &verified) && verified, "replacement PIN verifies after set failure");
     verified = true;
-    expect(agent_q::verify_local_pin("101010", &verified), "old PIN verify call succeeds after set failure replacement");
+    expect(signing::verify_local_pin("101010", &verified), "old PIN verify call succeeds after set failure replacement");
     expect(!verified, "old PIN no longer verifies after set failure replacement");
     g_set_fails_after_write = false;
 
-    expect(agent_q::store_local_pin_verifier("303030"), "restore local auth before corrupt set failure");
+    expect(signing::store_local_pin_verifier("303030"), "restore local auth before corrupt set failure");
     g_set_fails_with_corrupt_write = true;
-    expect(!agent_q::store_local_pin_verifier("404040"), "corrupt set failure refuses storage");
-    expect(agent_q::local_auth_status() == agent_q::AgentQLocalAuthStatus::missing,
+    expect(!signing::store_local_pin_verifier("404040"), "corrupt set failure refuses storage");
+    expect(signing::local_auth_status() == signing::LocalAuthStatus::missing,
            "corrupt set failure wipes ambiguous verifier state");
     g_set_fails_with_corrupt_write = false;
 
-    expect(agent_q::wipe_local_auth(), "wipe local auth before empty RNG failure");
-    agent_q::test_set_rng_fails(true);
-    expect(!agent_q::store_local_pin_verifier("555555"), "RNG failure refuses empty storage");
+    expect(signing::wipe_local_auth(), "wipe local auth before empty RNG failure");
+    signing::test_set_rng_fails(true);
+    expect(!signing::store_local_pin_verifier("555555"), "RNG failure refuses empty storage");
     expect(g_blob.empty(), "RNG failure leaves no local auth when none existed");
-    agent_q::test_set_rng_fails(false);
+    signing::test_set_rng_fails(false);
 
-    expect(agent_q::store_local_pin_verifier("888888"), "restore local auth before RNG replacement failure");
+    expect(signing::store_local_pin_verifier("888888"), "restore local auth before RNG replacement failure");
     const std::vector<uint8_t> rng_previous_blob = g_blob;
-    agent_q::test_set_rng_fails(true);
-    expect(!agent_q::store_local_pin_verifier("999999"), "RNG replacement failure refuses storage");
+    signing::test_set_rng_fails(true);
+    expect(!signing::store_local_pin_verifier("999999"), "RNG replacement failure refuses storage");
     expect(g_blob == rng_previous_blob, "RNG replacement failure preserves previous verifier record");
-    agent_q::test_set_rng_fails(false);
+    signing::test_set_rng_fails(false);
 
     g_open_fails = true;
-    expect(agent_q::local_auth_status() == agent_q::AgentQLocalAuthStatus::storage_error, "storage error status");
+    expect(signing::local_auth_status() == signing::LocalAuthStatus::storage_error, "storage error status");
     g_open_fails = false;
 
     if (failures != 0) {
@@ -413,17 +413,17 @@ int main()
 }
 CPP
 
-"${CC_BIN}" -std=c99 -I"${SIGNING_CORE}" \
-  -c "${SIGNING_CORE}/lib/monocypher/monocypher.c" -o "${TMP_DIR}/monocypher.o"
+"${CC_BIN}" -std=c99 -I"${MICROSUI_CORE}" \
+  -c "${MICROSUI_CORE}/lib/monocypher/monocypher.c" -o "${TMP_DIR}/monocypher.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
-  -I"${SIGNING_CORE}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${MICROSUI_CORE}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/local_auth_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_local_auth.cpp" \
-  "${TMP_DIR}/stubs/agent_q_bip39.cpp" \
-  "${TMP_DIR}/stubs/agent_q_entropy.cpp" \
+  "${RUNTIME_DIR}/local_auth.cpp" \
+  "${TMP_DIR}/stubs/bip39.cpp" \
+  "${TMP_DIR}/stubs/entropy.cpp" \
   "${TMP_DIR}/monocypher.o" \
   -o "${TMP_DIR}/local_auth_test"
 

@@ -21,48 +21,48 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-USB_SERVER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_request_server.cpp"
-USB_APPROVAL_HISTORY_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_approval_history_handler.cpp"
-USB_CONNECT_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_connect_handler.cpp"
-USB_OPERATION_TYPE_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_operation_type.h"
-USB_OPERATION_MANIFEST_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_operation_manifest.cpp"
-USB_OPERATION_RESPONSE_WRITER_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_operation_response_writer.h"
-USB_OPERATION_DISPATCH_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_operation_dispatch.cpp"
-USB_ENVELOPE_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_request_envelope.cpp"
-USB_LINE_RECEIVER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_line_receiver.cpp"
-UI_EVENT_BRIDGE_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_ui_event_bridge.cpp"
-USB_LINE_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_request_line_handler.cpp"
-USB_DEVICE_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_device_handlers.cpp"
-USB_DISCONNECT_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_disconnect_handler.cpp"
-USB_SIGNING_OUTCOME_WRITER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_signing_outcome_writer.cpp"
-USB_RETAINED_RESPONSE_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_retained_response_handlers.cpp"
-USB_SESSION_READ_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_session_read_handlers.cpp"
-USB_POLICY_PROPOSE_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_policy_propose_handler.cpp"
-USB_POLICY_PROPOSE_OUTCOME_WRITER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_policy_propose_outcome_writer.cpp"
-USB_SIGNING_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_usb_signing_handlers.cpp"
-CONNECT_REVIEW_RESPONSE_FLOW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_connect_review_response_flow.cpp"
-LOCAL_SETTINGS_RESET_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_local_settings_reset_ui_flow.cpp"
-LOCAL_PIN_AUTH_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_local_pin_auth_ui_flow.cpp"
-POLICY_UPDATE_REVIEW_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_policy_update_review_ui_flow.cpp"
-USER_SIGNING_REVIEW_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_review_ui_flow.cpp"
-MODAL_DRAWING_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_modal_drawing.h"
-REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_request_backed_local_pin_context.cpp"
-TRANSIENT_UI_FLOW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_transient_ui_flow.cpp"
-SIGNING_PREFLIGHT_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_signing_preflight.cpp"
-POLICY_SIGNING_EXECUTION_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_policy_signing_execution.cpp"
-USER_REVIEW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_review_view_model.cpp"
-USER_SIGNING_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_critical_section.cpp"
-USER_SIGNING_CONFIRMATION_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_confirmation.cpp"
-USER_FLOW_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_flow.h"
-USER_SIGNING_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_user_signing_critical_section.h"
-SIGN_TRANSACTION_INGRESS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_sign_transaction_user_ingress.cpp"
-SIGN_PERSONAL_MESSAGE_INGRESS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q/agent_q_sign_personal_message_user_ingress.cpp"
+USB_SERVER="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_request_server.cpp"
+USB_APPROVAL_HISTORY_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_approval_history_handler.cpp"
+USB_CONNECT_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_connect_handler.cpp"
+USB_OPERATION_TYPE_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_operation_type.h"
+USB_OPERATION_MANIFEST_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_operation_manifest.cpp"
+USB_OPERATION_RESPONSE_WRITER_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_operation_response_writer.h"
+USB_OPERATION_DISPATCH_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_operation_dispatch.cpp"
+USB_ENVELOPE_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_request_envelope.cpp"
+USB_LINE_RECEIVER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_line_receiver.cpp"
+UI_EVENT_BRIDGE_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/ui_event_bridge.cpp"
+USB_LINE_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_request_line_handler.cpp"
+USB_DEVICE_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_device_handlers.cpp"
+USB_DISCONNECT_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_disconnect_handler.cpp"
+USB_SIGNING_OUTCOME_WRITER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_signing_outcome_writer.cpp"
+USB_RETAINED_RESPONSE_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_retained_response_handlers.cpp"
+USB_SESSION_READ_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_session_read_handlers.cpp"
+USB_POLICY_PROPOSE_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_policy_propose_handler.cpp"
+USB_POLICY_PROPOSE_OUTCOME_WRITER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_policy_propose_outcome_writer.cpp"
+USB_SIGNING_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_signing_handlers.cpp"
+CONNECT_REVIEW_RESPONSE_FLOW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/connect_review_response_flow.cpp"
+LOCAL_SETTINGS_RESET_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/local_settings_reset_ui_flow.cpp"
+LOCAL_PIN_AUTH_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/local_pin_auth_ui_flow.cpp"
+POLICY_UPDATE_REVIEW_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/policy_update_review_ui_flow.cpp"
+USER_SIGNING_REVIEW_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/user_signing_review_ui_flow.cpp"
+MODAL_DRAWING_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/modal_drawing.h"
+REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/request_backed_local_pin_context.cpp"
+TRANSIENT_UI_FLOW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/transient_ui_flow.cpp"
+SIGNING_PREFLIGHT_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/signing_preflight.cpp"
+POLICY_SIGNING_EXECUTION_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/policy_signing_execution.cpp"
+USER_REVIEW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/user_signing_review_view_model.cpp"
+USER_SIGNING_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/user_signing_critical_section.cpp"
+USER_SIGNING_CONFIRMATION_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/user_signing_confirmation.cpp"
+USER_FLOW_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/user_signing_flow.h"
+USER_SIGNING_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/user_signing_critical_section.h"
+SIGN_TRANSACTION_INGRESS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/sign_transaction_user_ingress.cpp"
+SIGN_PERSONAL_MESSAGE_INGRESS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/sign_personal_message_user_ingress.cpp"
 MCP_SOURCE="${REPO_ROOT}/packages/agent-q/src/mcp.ts"
 PROVIDER_SOURCE="${REPO_ROOT}/packages/provider-sui/src/provider-sui.ts"
 CORE_SOURCE="${REPO_ROOT}/packages/core/src"
 
 failures=0
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-sign-api-boundary.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-sign-api-boundary.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 expect_absent() {
@@ -156,23 +156,23 @@ fi
 
 expect_present "${USB_SIGNING_HANDLER_SOURCE}" 'g_sign_transaction_preflight_scratch' \
   "USB signing handler must keep large transaction preflight scratch off the USB task stack"
-expect_absent "${USB_SIGNING_HANDLER_SOURCE}" 'AgentQSignTransactionPreflightOutput[[:space:]]+preflight[[:space:]]*(=|;)' \
+expect_absent "${USB_SIGNING_HANDLER_SOURCE}" 'SignTransactionPreflightOutput[[:space:]]+preflight[[:space:]]*(=|;)' \
   "USB signing handler must not allocate transaction preflight output as a stack local"
-expect_present "${USER_FLOW_HEADER}" 'AgentQUserSigningFlowCoreSnapshot' \
+expect_present "${USER_FLOW_HEADER}" 'UserSigningFlowCoreSnapshot' \
   "user signing flow must expose a small core snapshot for non-review lifecycle paths"
 expect_present "${USER_FLOW_HEADER}" 'user_signing_flow_snapshot_copy' \
   "user signing flow must expose caller-owned review snapshot copying for large review details"
 expect_present "${USER_SIGNING_REVIEW_UI_SOURCE}" 'g_review_snapshot_scratch' \
   "user signing review UI must keep large review snapshots off the task stack"
-expect_absent "${USER_SIGNING_REVIEW_UI_SOURCE}" 'AgentQUserSigningFlowSnapshot[[:space:]]+[A-Za-z_]+[[:space:]]*=' \
+expect_absent "${USER_SIGNING_REVIEW_UI_SOURCE}" 'UserSigningFlowSnapshot[[:space:]]+[A-Za-z_]+[[:space:]]*=' \
   "user signing review UI must not allocate large review snapshots as stack locals"
-expect_absent "${USB_SERVER}" 'AgentQUserSigningFlowSnapshot[[:space:]]+[A-Za-z_]+[[:space:]]*=' \
+expect_absent "${USB_SERVER}" 'UserSigningFlowSnapshot[[:space:]]+[A-Za-z_]+[[:space:]]*=' \
   "USB request server must use the small user-signing core snapshot outside review rendering"
-expect_absent "${USER_SIGNING_SOURCE}" 'AgentQUserSigningFlowSnapshot' \
+expect_absent "${USER_SIGNING_SOURCE}" 'UserSigningFlowSnapshot' \
   "user signing critical section must not copy large review snapshots"
-expect_absent "${USER_SIGNING_CONFIRMATION_SOURCE}" 'AgentQUserSigningFlowSnapshot' \
+expect_absent "${USER_SIGNING_CONFIRMATION_SOURCE}" 'UserSigningFlowSnapshot' \
   "user signing confirmation must not bind or copy large review snapshots"
-expect_absent "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'AgentQUserSigningFlowSnapshot' \
+expect_absent "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'UserSigningFlowSnapshot' \
   "request-backed local PIN context must not copy large review snapshots"
 
 expect_present "${USB_OPERATION_MANIFEST_SOURCE}" '"sign_transaction"' \
@@ -187,11 +187,11 @@ expect_absent "${USB_SERVER}" 'response\["type"\]|write_signing_' \
   "USB request server must not own public signing response JSON"
 expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" '"signing"' \
   "session-read handler must advertise shared signing capabilities"
-expect_present "${USB_OPERATION_RESPONSE_WRITER_HEADER}" 'AgentQUsbOperationResponseWriter' \
+expect_present "${USB_OPERATION_RESPONSE_WRITER_HEADER}" 'UsbOperationResponseWriter' \
   "USB operation response writer boundary must be shared outside the USB server"
 expect_present "${USB_OPERATION_DISPATCH_SOURCE}" 'dispatch_usb_operation' \
   "USB operation dispatch boundary must live outside the USB server"
-expect_present "${USB_OPERATION_DISPATCH_SOURCE}" 'AgentQUsbOperationHandlers' \
+expect_present "${USB_OPERATION_DISPATCH_SOURCE}" 'UsbOperationHandlers' \
   "USB operation dispatch boundary must route through an explicit handler table"
 expect_present "${USB_SERVER}" 'usb_operation_handlers' \
   "USB request server must provide its public operation handler table"
@@ -277,7 +277,7 @@ expect_present "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'request_backed_loca
   "request-backed local PIN context must own request-backed resume delegation"
 expect_absent "${USB_SERVER}" 'RequestBackedPinOwner|request_backed_pin_owner_for_purpose|protocol_pin_approval_refresh_deadline_for_local_pin_purpose|protocol_pin_approval_pause_deadline_for_local_pin_purpose|user_signing_flow_refresh_pin_deadline|user_signing_confirmation_mark_pin_verification_started' \
   "USB request server must not own request-backed local PIN owner/deadline delegation"
-expect_absent "${USB_SERVER}" 'agent_q::user_signing_flow_pause_review_deadline\(|agent_q::user_signing_flow_resume_review_deadline\(|agent_q::modal_pause_screen_bottom_timeout_timer_bar\(\)|agent_q::modal_resume_screen_bottom_timeout_timer_bar\(\)' \
+expect_absent "${USB_SERVER}" 'signing::user_signing_flow_pause_review_deadline\(|signing::user_signing_flow_resume_review_deadline\(|signing::modal_pause_screen_bottom_timeout_timer_bar\(\)|signing::modal_resume_screen_bottom_timeout_timer_bar\(\)' \
   "USB request server must not coordinate user signing review scroll state or timer display directly"
 expect_absent "${MODAL_DRAWING_HEADER}" 'modal_pause_screen_bottom_timeout_timer_bar|modal_resume_screen_bottom_timeout_timer_bar' \
   "modal drawing must not expose unscoped bottom timer pause/resume controls"
@@ -381,19 +381,19 @@ SIGN_TRANSACTION_PREFLIGHT_SNIPPET="${TMP_DIR}/sign-transaction-preflight.cpp"
 COMMON_POST_INGRESS_PREFLIGHT_SNIPPET="${TMP_DIR}/common-post-ingress-preflight.cpp"
 POST_IDENTITY_PREFLIGHT_SNIPPET="${TMP_DIR}/post-identity-preflight.cpp"
 awk '
-  /AgentQSigningPreflightResult evaluate_post_identity_preflight/ { capture = 1 }
+  /PreflightResult evaluate_post_identity_preflight/ { capture = 1 }
   capture { print }
-  /AgentQSigningPreflightResult evaluate_common_post_ingress_preflight/ { capture = 0 }
+  /PreflightResult evaluate_common_post_ingress_preflight/ { capture = 0 }
 ' "${SIGNING_PREFLIGHT_SOURCE}" >"${POST_IDENTITY_PREFLIGHT_SNIPPET}"
 awk '
-  /AgentQSigningPreflightResult evaluate_common_post_ingress_preflight/ { capture = 1 }
+  /PreflightResult evaluate_common_post_ingress_preflight/ { capture = 1 }
   capture { print }
   /^}  \/\/ namespace/ { capture = 0 }
 ' "${SIGNING_PREFLIGHT_SOURCE}" >"${COMMON_POST_INGRESS_PREFLIGHT_SNIPPET}"
 awk '
-  /AgentQSigningPreflightResult evaluate_sign_transaction_preflight/ { capture = 1 }
+  /PreflightResult evaluate_sign_transaction_preflight/ { capture = 1 }
   capture { print }
-  /AgentQSigningPreflightResult evaluate_sign_personal_message_preflight/ { capture = 0 }
+  /PreflightResult evaluate_sign_personal_message_preflight/ { capture = 0 }
 ' "${SIGNING_PREFLIGHT_SOURCE}" >"${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}"
 awk '
   /void handle_usb_sign_transaction_request/ { capture = 1 }
@@ -408,7 +408,7 @@ expect_order "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'evaluate_transaction_prefligh
   "sign_transaction policy authorization must consume prepared Sui transaction data"
 expect_order "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'evaluate_transaction_preflight' 'begin_transaction_user_signing' \
   "sign_transaction user authorization must consume prepared Sui transaction data"
-expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'classify_sign_route\(AgentQSignOperation::sign_transaction' 'evaluate_sign_transaction_user_ingress' \
+expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'classify_sign_route\(SignOperation::sign_transaction' 'evaluate_sign_transaction_user_ingress' \
   "sign_transaction preflight must identify the route before state/session work"
 expect_order "${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}" 'evaluate_sign_transaction_user_ingress' 'evaluate_common_post_ingress_preflight' \
   "sign_transaction preflight must complete before common request identity/retry work"
@@ -436,14 +436,14 @@ expect_order "${SIGN_TRANSACTION_INGRESS_SOURCE}" 'validate_sign_transaction_use
 SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET="${TMP_DIR}/sign-personal-message-branch.cpp"
 SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET="${TMP_DIR}/sign-personal-message-preflight.cpp"
 awk '
-  /AgentQSigningPreflightResult evaluate_sign_personal_message_preflight/ { capture = 1 }
+  /PreflightResult evaluate_sign_personal_message_preflight/ { capture = 1 }
   capture { print }
-  /^\}  \/\/ namespace agent_q/ { capture = 0 }
+  /^\}  \/\/ namespace signing/ { capture = 0 }
 ' "${SIGNING_PREFLIGHT_SOURCE}" >"${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}"
 awk '
   /void handle_usb_sign_personal_message_request/ { capture = 1 }
   capture { print }
-  /^}  \/\/ namespace agent_q/ { capture = 0 }
+  /^}  \/\/ namespace signing/ { capture = 0 }
 ' "${USB_SIGNING_HANDLER_SOURCE}" >"${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}"
 expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'make_preflight_runtime\(ops' \
   "sign_personal_message handler snippet must be captured"
@@ -451,7 +451,7 @@ expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'evaluate_personal_mess
   "sign_personal_message handler must delegate signing preflight to the extracted helper"
 expect_order "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'evaluate_personal_message_preflight' 'begin_personal_message_user_signing' \
   "sign_personal_message user authorization must consume prepared Sui message data"
-expect_order "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'classify_sign_route\(AgentQSignOperation::sign_personal_message' 'evaluate_sign_personal_message_user_ingress' \
+expect_order "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'classify_sign_route\(SignOperation::sign_personal_message' 'evaluate_sign_personal_message_user_ingress' \
   "sign_personal_message must identify the route before state/session work"
 expect_order "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'evaluate_sign_personal_message_user_ingress' 'evaluate_common_post_ingress_preflight' \
   "sign_personal_message preflight must complete before common request identity/retry work"
@@ -467,7 +467,7 @@ expect_order "${SIGN_PERSONAL_MESSAGE_INGRESS_SOURCE}" 'validate_sign_personal_m
   "sign_personal_message preflight must check session before exact envelope"
 expect_order "${SIGN_PERSONAL_MESSAGE_INGRESS_SOURCE}" 'validate_sign_personal_message_user_envelope' 'validate_sign_personal_message_user_params' \
   "sign_personal_message preflight must exact-check the request before shallow params"
-expect_present "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'AgentQSigningAuthorizationMode::policy' \
+expect_present "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'AuthorizationMode::policy' \
   "sign_personal_message branch must explicitly handle policy mode"
 expect_present "${USB_SIGNING_HANDLER_SOURCE}" 'personal_message_policy_mode' \
   "sign_personal_message policy mode must fail closed as unsupported"
@@ -480,9 +480,9 @@ expect_absent "${USB_SERVER}" 'decode_sign_personal_message_request' \
 expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'begin_personal_message_user_signing' \
   "sign_personal_message user mode must enter the user-confirmed flow owner"
 
-expect_present "${USER_FLOW_HEADER}" 'AgentQSigningRoute signing_route' \
+expect_present "${USER_FLOW_HEADER}" 'Route signing_route' \
   "user signing flow snapshot must carry verified signing route identity"
-expect_present "${USER_SIGNING_HEADER}" 'AgentQSigningRoute signing_route' \
+expect_present "${USER_SIGNING_HEADER}" 'Route signing_route' \
   "user signing output must carry verified signing route identity"
 expect_present "${USER_REVIEW_SOURCE}" 'snapshot\.signing_route' \
   "clear-signing review must branch on verified signing route identity"
@@ -594,18 +594,18 @@ USB_CLEAR_IDENTIFICATION_SNIPPET="${TMP_DIR}/usb-clear-identification.cpp"
 awk '
   /void clear_identification_if_needed/ { capture = 1 }
   capture { print }
-  /void clear_agent_q_message_if_needed/ { capture = 0 }
+  /void clear_signing_message_if_needed/ { capture = 0 }
 ' "${USB_SERVER}" >"${USB_CLEAR_IDENTIFICATION_SNIPPET}"
 expect_absent "${USB_CLEAR_IDENTIFICATION_SNIPPET}" 'identification_display_deadline_reached|avatar_overlay_mode\(\)|avatar_overlay_clear' \
   "USB clear_identification_if_needed must not inline temporary identification expiry logic"
 USB_CLEAR_MESSAGE_SNIPPET="${TMP_DIR}/usb-clear-message.cpp"
 awk '
-  /void clear_agent_q_message_if_needed/ { capture = 1 }
+  /void clear_signing_message_if_needed/ { capture = 1 }
   capture { print }
   /void clear_connect_review_state/ { capture = 0 }
 ' "${USB_SERVER}" >"${USB_CLEAR_MESSAGE_SNIPPET}"
 expect_absent "${USB_CLEAR_MESSAGE_SNIPPET}" 'avatar_overlay_message_deadline_reached|avatar_overlay_clear' \
-  "USB clear_agent_q_message_if_needed must not inline temporary message expiry logic"
+  "USB clear_signing_message_if_needed must not inline temporary message expiry logic"
 
 expect_present "${USB_CONNECT_HANDLER_SOURCE}" '\{"id", "version", "method", "payload"\}' \
   "extracted connect handler must exact-check top-level request fields"
@@ -653,8 +653,8 @@ for source_dir in \
   "${REPO_ROOT}/packages/core/src" \
   "${REPO_ROOT}/packages/provider-sui/src" \
   "${REPO_ROOT}/packages/agent-q/src" \
-  "${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q" \
-  "${REPO_ROOT}/firmware/src/common/agent_q"; do
+  "${REPO_ROOT}/firmware/src/stackchan-cores3/runtime" \
+  "${REPO_ROOT}/firmware/src/common"; do
   expect_tree_absent "${source_dir}" 'common\.network' \
     "Production source must not retain Sui network policy facts"
 done

@@ -11,7 +11,7 @@ PBKDF2-HMAC-SHA512 seed -> SLIP-0010 m/44'/784'/0'/0'/0' -> Ed25519 public key
 byte_conversions, key_management) and asserts known Sui SDK address vectors.
 
 This test uses only a host C/C++ compiler and the pinned signing source; it does
-NOT require ESP-IDF. Set AGENT_Q_SIGNING_CRYPTO_ROOT to override the source
+NOT require ESP-IDF. Set SIGNING_CRYPTO_ROOT to override the source
 location, otherwise the pinned .firmware-cache checkout from build.sh is used.
 EOF
 }
@@ -23,20 +23,20 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-DEFAULT_SIGNING_DIR="${REPO_ROOT}/.firmware-cache/signing-crypto/microsui-lib"
-SIGNING_ROOT="${AGENT_Q_SIGNING_CRYPTO_ROOT:-${DEFAULT_SIGNING_DIR}}"
-SIGNING_CORE="${SIGNING_ROOT}/src/microsui_core"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+DEFAULT_RUNTIME_DIR="${REPO_ROOT}/.firmware-cache/signing-crypto/microsui-lib"
+CRYPTO_ROOT="${SIGNING_CRYPTO_ROOT:-${DEFAULT_RUNTIME_DIR}}"
+MICROSUI_CORE="${CRYPTO_ROOT}/src/microsui_core"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 
 for required in \
-  "${SIGNING_CORE}/lib/monocypher/monocypher.c" \
-  "${SIGNING_CORE}/byte_conversions.c" \
-  "${SIGNING_CORE}/key_management.c" \
-  "${AGENT_Q_DIR}/agent_q_sui_key_derivation.cpp" \
-  "${AGENT_Q_DIR}/agent_q_sui_account.cpp"; do
+  "${MICROSUI_CORE}/lib/monocypher/monocypher.c" \
+  "${MICROSUI_CORE}/byte_conversions.c" \
+  "${MICROSUI_CORE}/key_management.c" \
+  "${RUNTIME_DIR}/sui_key_derivation.cpp" \
+  "${RUNTIME_DIR}/sui_account.cpp"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
-    echo "Run firmware/tools/stackchan-cores3/build.sh first, or set AGENT_Q_SIGNING_CRYPTO_ROOT." >&2
+    echo "Run firmware/tools/stackchan-cores3/build.sh first, or set SIGNING_CRYPTO_ROOT." >&2
     exit 1
   fi
 done
@@ -44,14 +44,14 @@ done
 CC_BIN="${CC:-cc}"
 CXX_BIN="${CXX:-c++}"
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-sui-account.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sui-account.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 cat >"${TMP_DIR}/sui_account_vector_test.cpp" <<'CPP'
 #include <cstdio>
 #include <cstring>
 
-#include "agent_q_sui_account.h"
+#include "sui_account.h"
 
 extern "C" {
 #include "byte_conversions.h"
@@ -88,7 +88,7 @@ const Vector kVectors[] = {
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 void wipe_sensitive_buffer(void* data, size_t size)
 {
@@ -102,15 +102,15 @@ void wipe_sensitive_buffer(void* data, size_t size)
     }
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 int main()
 {
     int failures = 0;
     for (size_t index = 0; index < sizeof(kVectors) / sizeof(kVectors[0]); ++index) {
-        uint8_t public_key[agent_q::kSuiEd25519PublicKeyBytes] = {};
-        char address[agent_q::kSuiAddressBufferSize] = {};
-        if (!agent_q::derive_sui_ed25519_account(
+        uint8_t public_key[signing::kSuiEd25519PublicKeyBytes] = {};
+        char address[signing::kSuiAddressBufferSize] = {};
+        if (!signing::derive_sui_ed25519_account(
                 kVectors[index].mnemonic, public_key, address, sizeof(address))) {
             fprintf(stderr, "Vector %zu: derivation failed\n", index);
             ++failures;
@@ -136,11 +136,11 @@ int main()
         }
     }
 
-    uint8_t public_key[agent_q::kSuiEd25519PublicKeyBytes];
-    char address[agent_q::kSuiAddressBufferSize];
+    uint8_t public_key[signing::kSuiEd25519PublicKeyBytes];
+    char address[signing::kSuiAddressBufferSize];
     memset(public_key, 0xA5, sizeof(public_key));
     memset(address, 'x', sizeof(address));
-    if (agent_q::derive_sui_ed25519_account("", public_key, address, sizeof(address))) {
+    if (signing::derive_sui_ed25519_account("", public_key, address, sizeof(address))) {
         fprintf(stderr, "Invalid mnemonic unexpectedly derived an account\n");
         ++failures;
     }
@@ -167,26 +167,26 @@ int main()
 }
 CPP
 
-"${CC_BIN}" -std=c99 -I"${SIGNING_CORE}" \
-  -c "${SIGNING_CORE}/lib/monocypher/monocypher.c" -o "${TMP_DIR}/monocypher.o"
-"${CC_BIN}" -std=c99 -I"${SIGNING_CORE}" \
-  -c "${SIGNING_CORE}/byte_conversions.c" -o "${TMP_DIR}/byte_conversions.o"
-"${CC_BIN}" -std=c99 -I"${SIGNING_CORE}" \
-  -c "${SIGNING_CORE}/key_management.c" -o "${TMP_DIR}/key_management.o"
+"${CC_BIN}" -std=c99 -I"${MICROSUI_CORE}" \
+  -c "${MICROSUI_CORE}/lib/monocypher/monocypher.c" -o "${TMP_DIR}/monocypher.o"
+"${CC_BIN}" -std=c99 -I"${MICROSUI_CORE}" \
+  -c "${MICROSUI_CORE}/byte_conversions.c" -o "${TMP_DIR}/byte_conversions.o"
+"${CC_BIN}" -std=c99 -I"${MICROSUI_CORE}" \
+  -c "${MICROSUI_CORE}/key_management.c" -o "${TMP_DIR}/key_management.o"
 
-"${CXX_BIN}" -std=c++17 -I"${SIGNING_CORE}" -I"${AGENT_Q_DIR}" \
-  -c "${AGENT_Q_DIR}/agent_q_sui_key_derivation.cpp" -o "${TMP_DIR}/agent_q_sui_key_derivation.o"
-"${CXX_BIN}" -std=c++17 -I"${SIGNING_CORE}" -I"${AGENT_Q_DIR}" \
-  -c "${AGENT_Q_DIR}/agent_q_sui_account.cpp" -o "${TMP_DIR}/agent_q_sui_account.o"
-"${CXX_BIN}" -std=c++17 -I"${SIGNING_CORE}" -I"${AGENT_Q_DIR}" \
+"${CXX_BIN}" -std=c++17 -I"${MICROSUI_CORE}" -I"${RUNTIME_DIR}" \
+  -c "${RUNTIME_DIR}/sui_key_derivation.cpp" -o "${TMP_DIR}/sui_key_derivation.o"
+"${CXX_BIN}" -std=c++17 -I"${MICROSUI_CORE}" -I"${RUNTIME_DIR}" \
+  -c "${RUNTIME_DIR}/sui_account.cpp" -o "${TMP_DIR}/sui_account.o"
+"${CXX_BIN}" -std=c++17 -I"${MICROSUI_CORE}" -I"${RUNTIME_DIR}" \
   -c "${TMP_DIR}/sui_account_vector_test.cpp" -o "${TMP_DIR}/sui_account_vector_test.o"
 
 "${CXX_BIN}" \
   "${TMP_DIR}/monocypher.o" \
   "${TMP_DIR}/byte_conversions.o" \
   "${TMP_DIR}/key_management.o" \
-  "${TMP_DIR}/agent_q_sui_key_derivation.o" \
-  "${TMP_DIR}/agent_q_sui_account.o" \
+  "${TMP_DIR}/sui_key_derivation.o" \
+  "${TMP_DIR}/sui_account.o" \
   "${TMP_DIR}/sui_account_vector_test.o" \
   -o "${TMP_DIR}/sui_account_vector_test"
 

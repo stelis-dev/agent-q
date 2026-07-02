@@ -25,9 +25,9 @@ Use this package directly when a Node process needs to discover an Agent-Q
 device, open a session, read accounts, and request signatures.
 
 ```ts
-import { createDefaultAgentQDeviceClient } from "@stelis/agent-q-core/device";
+import { createDefaultDeviceClient } from "@stelis/agent-q-core/device";
 
-const client = createDefaultAgentQDeviceClient();
+const client = createDefaultDeviceClient();
 
 await client.scanDevices();
 await client.connectDevice({});
@@ -70,11 +70,11 @@ proof-clear path.
 
 ## Entrypoints
 
-- `@stelis/agent-q-core` exposes the full `AgentQCore`,
-  `createDefaultAgentQCore`, and low-level transport classes used by the
+- `@stelis/agent-q-core` exposes the full `DeviceCore`,
+  `createDefaultDeviceCore`, and low-level transport classes used by the
   `agent-q` local server.
 - `@stelis/agent-q-core/device` exposes the limited
-  `createDefaultAgentQDeviceClient` facade for provider/app code that should not
+  `createDefaultDeviceClient` facade for provider/app code that should not
   see policy proposal or server management methods.
 - `@stelis/agent-q-core/protocol` exposes the shared protocol builders,
   parsers, constants, and response types. It does not expose payload-transfer
@@ -143,7 +143,7 @@ npm --workspace @stelis/agent-q-core test
 ```
 
 Direct USB/Firmware hardware smoke tests live in this package and are opt-in.
-They are skipped unless their `AGENTQ_HW_CLIENT_*` environment gates are set.
+They are skipped unless their `SIGNING_HW_CLIENT_*` environment gates are set.
 
 Run one smoke scenario at a time against a development device running the
 current firmware build. The device must be provisioned, connected over USB, and
@@ -158,16 +158,16 @@ Examples:
 ```sh
 npm --workspace @stelis/agent-q-core run build
 
-AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER=1 \
-AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO=positive \
-AGENTQ_HW_CLIENT_SIGN_TRANSACTION_USER_TX_BYTES=<base64> \
+SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER=1 \
+SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO=positive \
+SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_TX_BYTES=<base64> \
 node --test packages/core/test/hardware-sign-api-smoke.test.mjs
 
-AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY=1 \
-AGENTQ_HW_CLIENT_SIGN_TRANSACTION_POLICY_SCENARIO=rejected \
+SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY=1 \
+SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY_SCENARIO=rejected \
 node --test packages/core/test/hardware-sign-api-smoke.test.mjs
 
-AGENTQ_HW_CLIENT_POLICY_UPDATE=1 \
+SIGNING_HW_CLIENT_POLICY_UPDATE=1 \
 node --test packages/core/test/hardware-sign-api-smoke.test.mjs
 ```
 

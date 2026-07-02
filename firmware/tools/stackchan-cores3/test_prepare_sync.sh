@@ -19,23 +19,23 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 TARGET_ROOT="${REPO_ROOT}/firmware/src/stackchan-cores3"
-FIRMWARE_DIR="${AGENT_Q_STACKCHAN_FIRMWARE_DIR:-${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-prepare-sync.XXXXXX")"
+FIRMWARE_DIR="${STACKCHAN_FIRMWARE_DIR:-${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware}"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/firmware-prepare-sync.XXXXXX")"
 
 if [[ ! -f "${FIRMWARE_DIR}/main/CMakeLists.txt" ||
       ! -f "${FIRMWARE_DIR}/main/main.cpp" ||
       ! -f "${FIRMWARE_DIR}/main/hal/hal.cpp" ||
       ! -f "${FIRMWARE_DIR}/xiaozhi-esp32/main/mcp_server.cc" ]]; then
   echo "Missing prepared StackChan firmware tree: ${FIRMWARE_DIR}" >&2
-  echo "Run firmware/tools/stackchan-cores3/build.sh first, or set AGENT_Q_STACKCHAN_FIRMWARE_DIR." >&2
+  echo "Run firmware/tools/stackchan-cores3/build.sh first, or set STACKCHAN_FIRMWARE_DIR." >&2
   rm -rf "${TMP_DIR}"
   exit 1
 fi
 
-GENERATED_WORDLIST="${FIRMWARE_DIR}/main/agent_q/agent_q_bip39_wordlist.cpp"
-WORDLIST_BACKUP="${TMP_DIR}/agent_q_bip39_wordlist.cpp"
+GENERATED_WORDLIST="${FIRMWARE_DIR}/main/runtime/bip39_wordlist.cpp"
+WORDLIST_BACKUP="${TMP_DIR}/bip39_wordlist.cpp"
 TARGET_FILE=""
-TARGET_FILE_BACKUP="${TMP_DIR}/agent_q_entropy.cpp"
+TARGET_FILE_BACKUP="${TMP_DIR}/entropy.cpp"
 TARGET_DIR=""
 TARGET_DIR_BACKUP="${TMP_DIR}/policy"
 SYNC_ROOT_DIR=""
@@ -86,7 +86,7 @@ for index in range(2048):
 Path(sys.argv[1]).write_text("\n".join(words) + "\n", encoding="utf-8")
 PY
 
-AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE="${WORDLIST_FILE}" "${SCRIPT_DIR}/prepare.sh" "${FIRMWARE_DIR}"
+BIP39_ENGLISH_WORDLIST_FILE="${WORDLIST_FILE}" "${SCRIPT_DIR}/prepare.sh" "${FIRMWARE_DIR}"
 
 grep -Eq '^nvs,[[:space:]]+data,[[:space:]]+nvs,[[:space:]]+0x9000,[[:space:]]+0x10000,' "${FIRMWARE_DIR}/partitions.csv"
 grep -Eq '^otadata,[[:space:]]+data,[[:space:]]+ota,[[:space:]]+0x19000,[[:space:]]+0x2000,' "${FIRMWARE_DIR}/partitions.csv"
@@ -99,7 +99,7 @@ mkdir -p "${EXTERNAL_SYNC_ROOT}"
 printf 'external sync root must not be touched\n' >"${EXTERNAL_SYNC_ROOT}/sentinel.txt"
 rm -rf "${SYNC_ROOT_DIR}"
 ln -s "${EXTERNAL_SYNC_ROOT}" "${SYNC_ROOT_DIR}"
-AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE="${WORDLIST_FILE}" "${SCRIPT_DIR}/prepare.sh" "${FIRMWARE_DIR}"
+BIP39_ENGLISH_WORDLIST_FILE="${WORDLIST_FILE}" "${SCRIPT_DIR}/prepare.sh" "${FIRMWARE_DIR}"
 if [[ -L "${SYNC_ROOT_DIR}" || ! -d "${SYNC_ROOT_DIR}" ]]; then
   echo "prepare.sh did not replace target root symlink: ${SYNC_ROOT_DIR}" >&2
   exit 1
@@ -115,12 +115,12 @@ if [[ -e "${EXTERNAL_SYNC_ROOT}/sign.h" || -e "${EXTERNAL_SYNC_ROOT}/CMakeLists.
 fi
 cmp "${TARGET_ROOT}/components/signing_crypto/sign.h" "${SYNC_ROOT_DIR}/sign.h" >/dev/null
 
-SOURCE_FILE="${TARGET_ROOT}/agent_q/agent_q_entropy.cpp"
-TARGET_FILE="${FIRMWARE_DIR}/main/agent_q/agent_q_entropy.cpp"
+SOURCE_FILE="${TARGET_ROOT}/runtime/entropy.cpp"
+TARGET_FILE="${FIRMWARE_DIR}/main/runtime/entropy.cpp"
 cp "${TARGET_FILE}" "${TARGET_FILE_BACKUP}"
 rm -f "${TARGET_FILE}"
 ln -s "${SOURCE_FILE}" "${TARGET_FILE}"
-AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE="${WORDLIST_FILE}" "${SCRIPT_DIR}/prepare.sh" "${FIRMWARE_DIR}"
+BIP39_ENGLISH_WORDLIST_FILE="${WORDLIST_FILE}" "${SCRIPT_DIR}/prepare.sh" "${FIRMWARE_DIR}"
 if [[ -L "${TARGET_FILE}" || ! -f "${TARGET_FILE}" ]]; then
   echo "prepare.sh did not replace target file symlink: ${TARGET_FILE}" >&2
   exit 1
@@ -128,24 +128,24 @@ fi
 cmp "${SOURCE_FILE}" "${TARGET_FILE}" >/dev/null
 
 rm -f "${TARGET_FILE}"
-ln -s "${TMP_DIR}/missing-agent-q-entropy.cpp" "${TARGET_FILE}"
-AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE="${WORDLIST_FILE}" "${SCRIPT_DIR}/prepare.sh" "${FIRMWARE_DIR}"
+ln -s "${TMP_DIR}/missing-signing-entropy.cpp" "${TARGET_FILE}"
+BIP39_ENGLISH_WORDLIST_FILE="${WORDLIST_FILE}" "${SCRIPT_DIR}/prepare.sh" "${FIRMWARE_DIR}"
 if [[ -L "${TARGET_FILE}" || ! -f "${TARGET_FILE}" ]]; then
   echo "prepare.sh did not replace broken target file symlink: ${TARGET_FILE}" >&2
   exit 1
 fi
 cmp "${SOURCE_FILE}" "${TARGET_FILE}" >/dev/null
 
-TARGET_DIR="${FIRMWARE_DIR}/main/agent_q_common/policy"
+TARGET_DIR="${FIRMWARE_DIR}/main/firmware_common/policy"
 cp -R "${TARGET_DIR}" "${TARGET_DIR_BACKUP}"
 rm -rf "${TARGET_DIR}"
 ln -s "${TMP_DIR}/missing-policy-dir" "${TARGET_DIR}"
-AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE="${WORDLIST_FILE}" "${SCRIPT_DIR}/prepare.sh" "${FIRMWARE_DIR}"
+BIP39_ENGLISH_WORDLIST_FILE="${WORDLIST_FILE}" "${SCRIPT_DIR}/prepare.sh" "${FIRMWARE_DIR}"
 if [[ -L "${TARGET_DIR}" || ! -d "${TARGET_DIR}" ]]; then
   echo "prepare.sh did not replace broken target directory symlink: ${TARGET_DIR}" >&2
   exit 1
 fi
-if [[ ! -f "${TARGET_DIR}/agent_q_policy_document.cpp" ]]; then
+if [[ ! -f "${TARGET_DIR}/document.cpp" ]]; then
   echo "prepare.sh did not restore common policy sources under ${TARGET_DIR}" >&2
   exit 1
 fi
@@ -154,7 +154,7 @@ EXTERNAL_WORDLIST_REFERENT="${TMP_DIR}/external-wordlist-output.cpp"
 printf 'external referent must not be overwritten\n' >"${EXTERNAL_WORDLIST_REFERENT}"
 rm -f "${GENERATED_WORDLIST}"
 ln -s "${EXTERNAL_WORDLIST_REFERENT}" "${GENERATED_WORDLIST}"
-AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE="${WORDLIST_FILE}" "${SCRIPT_DIR}/prepare.sh" "${FIRMWARE_DIR}"
+BIP39_ENGLISH_WORDLIST_FILE="${WORDLIST_FILE}" "${SCRIPT_DIR}/prepare.sh" "${FIRMWARE_DIR}"
 if [[ -L "${GENERATED_WORDLIST}" || ! -f "${GENERATED_WORDLIST}" ]]; then
   echo "prepare.sh did not replace generated wordlist symlink: ${GENERATED_WORDLIST}" >&2
   exit 1
@@ -167,7 +167,7 @@ grep -q 'kBip39EnglishWords' "${GENERATED_WORDLIST}"
 
 rm -f "${GENERATED_WORDLIST}"
 ln -s "${TMP_DIR}/missing-wordlist-output.cpp" "${GENERATED_WORDLIST}"
-AGENT_Q_BIP39_ENGLISH_WORDLIST_FILE="${WORDLIST_FILE}" "${SCRIPT_DIR}/prepare.sh" "${FIRMWARE_DIR}"
+BIP39_ENGLISH_WORDLIST_FILE="${WORDLIST_FILE}" "${SCRIPT_DIR}/prepare.sh" "${FIRMWARE_DIR}"
 if [[ -L "${GENERATED_WORDLIST}" || ! -f "${GENERATED_WORDLIST}" ]]; then
   echo "prepare.sh did not replace broken generated wordlist symlink: ${GENERATED_WORDLIST}" >&2
   exit 1

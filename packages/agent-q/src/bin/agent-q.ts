@@ -25,18 +25,18 @@ must still approve the request locally before a session exists.`);
   process.exit(0);
 }
 
-const parsedArgs = parseAgentQArgs(args);
+const parsedArgs = parseServerArgs(args);
 
-await startAgentQ(parsedArgs);
+await startServer(parsedArgs);
 
-interface AgentQArgs {
+interface ServerArgs {
   port: number | undefined;
   requestConnect: boolean;
   deviceId: string | undefined;
   purpose: string | undefined;
 }
 
-async function startAgentQ(agentQArgs: AgentQArgs): Promise<void> {
+async function startServer(serverArgs: ServerArgs): Promise<void> {
   let localApiServer: import("node:http").Server | undefined;
   let localApiServerClosed = false;
   const closeLocalApiServer = async (): Promise<void> => {
@@ -50,19 +50,19 @@ async function startAgentQ(agentQArgs: AgentQArgs): Promise<void> {
     });
   };
   try {
-    const { createDefaultAgentQCore } = await import("@stelis/agent-q-core");
+    const { createDefaultDeviceCore } = await import("@stelis/agent-q-core");
     const { DEFAULT_LOCAL_API_PORT, startLocalApiServer } = await import("../local-api.js");
     const { startStdioMcpServer } = await import("../mcp.js");
     const { requestDeviceConnectionOnStart } = await import("../startup-connect.js");
-    const core = createDefaultAgentQCore();
-    const port = agentQArgs.port ?? DEFAULT_LOCAL_API_PORT;
+    const core = createDefaultDeviceCore();
+    const port = serverArgs.port ?? DEFAULT_LOCAL_API_PORT;
     const localApi = await startLocalApiServer({ core, port });
     localApiServer = localApi.server;
     console.error(`Agent-Q local API listening on ${localApi.url}`);
-    if (agentQArgs.requestConnect) {
+    if (serverArgs.requestConnect) {
       await requestDeviceConnectionOnStart(core, {
-        deviceId: agentQArgs.deviceId,
-        purpose: agentQArgs.purpose,
+        deviceId: serverArgs.deviceId,
+        purpose: serverArgs.purpose,
       });
     }
     if (process.stdin.isTTY) {
@@ -104,9 +104,9 @@ function waitForProcessShutdown(): Promise<void> {
   });
 }
 
-function parseAgentQArgs(rawArgs: string[]): AgentQArgs {
+function parseServerArgs(rawArgs: string[]): ServerArgs {
   const args = rawArgs[0] === "serve" ? rawArgs.slice(1) : rawArgs;
-  const parsed: AgentQArgs = {
+  const parsed: ServerArgs = {
     port: undefined,
     requestConnect: false,
     deviceId: undefined,

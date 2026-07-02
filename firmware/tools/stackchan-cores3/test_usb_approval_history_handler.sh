@@ -18,21 +18,21 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
-ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_approval_history_handler.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_approval_history_handler.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_response_writer.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_response_writer.h" \
-  "${COMMON_ROOT}/agent_q_u64_decimal.h" \
-  "${AGENT_Q_DIR}/agent_q_approval_history.h"; do
+  "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
+  "${RUNTIME_DIR}/usb_active_session_request_guard.h" \
+  "${RUNTIME_DIR}/usb_approval_history_handler.cpp" \
+  "${RUNTIME_DIR}/usb_approval_history_handler.h" \
+  "${RUNTIME_DIR}/usb_operation_response_writer.h" \
+  "${RUNTIME_DIR}/usb_response_writer.h" \
+  "${COMMON_ROOT}/numeric/u64_decimal.h" \
+  "${RUNTIME_DIR}/approval_history.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -41,10 +41,10 @@ for required in \
 done
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-approval-history-handler.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-usb-approval-history-handler.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
-mkdir -p "${TMP_DIR}/agent_q_common"
-ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
+mkdir -p "${TMP_DIR}/firmware_common"
+ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
 
 cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <ArduinoJson.h>
@@ -55,9 +55,9 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdlib.h>
 #include <string.h>
 
-#include "agent_q_usb_approval_history_handler.h"
+#include "usb_approval_history_handler.h"
 
-namespace agent_q {
+namespace signing {
 
 bool approval_history_parse_sequence(const char* value, uint64_t* output)
 {
@@ -74,23 +74,23 @@ bool approval_history_parse_sequence(const char* value, uint64_t* output)
     return true;
 }
 
-const char* approval_history_confirmation_kind_to_string(AgentQApprovalHistoryConfirmationKind value)
+const char* approval_history_confirmation_kind_to_string(ApprovalHistoryConfirmationKind value)
 {
-    return value == AgentQApprovalHistoryConfirmationKind::policy ? "policy" : "physical_confirm";
+    return value == ApprovalHistoryConfirmationKind::policy ? "policy" : "physical_confirm";
 }
 
-const char* approval_history_signing_record_kind_to_string(AgentQSigningHistoryRecordKind value)
+const char* approval_history_signing_record_kind_to_string(HistoryRecordKind value)
 {
-    return value == AgentQSigningHistoryRecordKind::terminal ? "terminal" : "confirmation";
+    return value == HistoryRecordKind::terminal ? "terminal" : "confirmation";
 }
 
 const char* approval_history_signing_terminal_result_to_string(
-    AgentQSigningHistoryTerminalResult value)
+    HistoryTerminalResult value)
 {
-    return value == AgentQSigningHistoryTerminalResult::signed_success ? "signed_success" : "signing_failed";
+    return value == HistoryTerminalResult::signed_success ? "signed_success" : "signing_failed";
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 namespace {
 
@@ -106,7 +106,7 @@ bool g_material_ready = true;
 bool g_busy = false;
 bool g_payload_admission_error = false;
 bool g_session_valid = true;
-agent_q::AgentQApprovalHistoryReadResult g_read_history_result = agent_q::AgentQApprovalHistoryReadResult::ok;
+signing::ApprovalHistoryReadResult g_read_history_result = signing::ApprovalHistoryReadResult::ok;
 bool g_json_write_ok = true;
 size_t g_last_limit = 0;
 uint64_t g_last_before = 0;
@@ -139,7 +139,7 @@ void reset_state()
     g_busy = false;
     g_payload_admission_error = false;
     g_session_valid = true;
-    g_read_history_result = agent_q::AgentQApprovalHistoryReadResult::ok;
+    g_read_history_result = signing::ApprovalHistoryReadResult::ok;
     g_json_write_ok = true;
     g_last_limit = 0;
     g_last_before = 0;
@@ -180,7 +180,7 @@ bool material_ready()
     return g_material_ready;
 }
 
-bool write_busy(const char* id, const agent_q::AgentQUsbOperationResponseWriter& writer)
+bool write_busy(const char* id, const signing::UsbOperationResponseWriter& writer)
 {
     g_busy_calls += 1;
     g_last_id = id;
@@ -192,10 +192,10 @@ bool write_busy(const char* id, const agent_q::AgentQUsbOperationResponseWriter&
 
 bool write_payload_admission_error(
     const char* id,
-    agent_q::AgentQUsbOperationType operation,
-    const agent_q::AgentQUsbOperationResponseWriter& writer)
+    signing::UsbOperationType operation,
+    const signing::UsbOperationResponseWriter& writer)
 {
-    assert(operation == agent_q::AgentQUsbOperationType::get_approval_history);
+    assert(operation == signing::UsbOperationType::get_approval_history);
     g_payload_admission_calls += 1;
     g_last_id = id;
     if (!g_payload_admission_error) {
@@ -207,7 +207,7 @@ bool write_payload_admission_error(
 bool require_session(
     const char* id,
     const char* session_id,
-    const agent_q::AgentQUsbOperationResponseWriter& writer)
+    const signing::UsbOperationResponseWriter& writer)
 {
     g_require_session_calls += 1;
     g_last_id = id;
@@ -218,25 +218,25 @@ bool require_session(
     return g_session_valid;
 }
 
-agent_q::AgentQApprovalHistoryReadResult read_history_page(
+signing::ApprovalHistoryReadResult read_history_page(
     uint64_t before_sequence,
     size_t limit,
-    agent_q::AgentQApprovalHistoryPage* output)
+    signing::ApprovalHistoryPage* output)
 {
     g_read_history_calls += 1;
     g_last_before = before_sequence;
     g_last_limit = limit;
-    if (output != nullptr && g_read_history_result == agent_q::AgentQApprovalHistoryReadResult::ok) {
+    if (output != nullptr && g_read_history_result == signing::ApprovalHistoryReadResult::ok) {
         memset(output, 0, sizeof(*output));
         output->count = 1;
         output->has_more = true;
         output->records[0].sequence = 7;
         output->records[0].uptime_ms = 1234;
-        output->records[0].event_kind = agent_q::AgentQApprovalHistoryEventKind::signing;
-        output->records[0].confirmation_kind = agent_q::AgentQApprovalHistoryConfirmationKind::policy;
-        output->records[0].signing_record_kind = agent_q::AgentQSigningHistoryRecordKind::terminal;
+        output->records[0].event_kind = signing::ApprovalHistoryEventKind::signing;
+        output->records[0].confirmation_kind = signing::ApprovalHistoryConfirmationKind::policy;
+        output->records[0].signing_record_kind = signing::HistoryRecordKind::terminal;
         output->records[0].signing_terminal_result =
-            agent_q::AgentQSigningHistoryTerminalResult::signed_success;
+            signing::HistoryTerminalResult::signed_success;
         snprintf(output->records[0].reason_code, sizeof(output->records[0].reason_code), "signed");
         snprintf(output->records[0].chain, sizeof(output->records[0].chain), "sui");
         snprintf(output->records[0].method, sizeof(output->records[0].method), "sign_transaction");
@@ -244,17 +244,17 @@ agent_q::AgentQApprovalHistoryReadResult read_history_page(
     return g_read_history_result;
 }
 
-agent_q::AgentQUsbOperationResponseWriter make_writer()
+signing::UsbOperationResponseWriter make_writer()
 {
-    return agent_q::AgentQUsbOperationResponseWriter{
+    return signing::UsbOperationResponseWriter{
         write_error,
         log_write_failure,
     };
 }
 
-agent_q::AgentQUsbApprovalHistoryHandlerOps make_ops()
+signing::UsbApprovalHistoryHandlerOps make_ops()
 {
-    return agent_q::AgentQUsbApprovalHistoryHandlerOps{
+    return signing::UsbApprovalHistoryHandlerOps{
         material_ready,
         write_busy,
         write_payload_admission_error,
@@ -273,7 +273,7 @@ JsonDocument parse_request(const char* json)
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 bool usb_response_write_json(JsonDocument& response)
 {
@@ -308,7 +308,7 @@ bool usb_response_write_success_result(const char* id, const char* method, JsonO
     return usb_response_write_json(response);
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 int main()
 {
@@ -316,7 +316,7 @@ int main()
         reset_state();
         g_material_ready = false;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{}}");
-        agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
         assert(g_busy_calls == 0);
@@ -330,7 +330,7 @@ int main()
         reset_state();
         g_busy = true;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{}}");
-        agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_material_calls == 1);
         assert(g_busy_calls == 1);
         assert(g_payload_admission_calls == 0);
@@ -345,7 +345,7 @@ int main()
         reset_state();
         g_payload_admission_error = true;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{}}");
-        agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_material_calls == 1);
         assert(g_busy_calls == 1);
         assert(g_payload_admission_calls == 1);
@@ -359,7 +359,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":7}");
-        agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
         assert(g_payload_admission_calls == 1);
@@ -372,7 +372,7 @@ int main()
         reset_state();
         g_session_valid = false;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{}}");
-        agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_require_session_calls == 1);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
@@ -383,7 +383,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"extra\":1}");
-        agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_read_history_calls == 0);
@@ -393,7 +393,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":7}");
-        agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_read_history_calls == 0);
@@ -403,7 +403,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{\"limit\":0}}");
-        agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_read_history_calls == 0);
@@ -413,7 +413,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{\"beforeSeq\":7}}");
-        agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_read_history_calls == 0);
@@ -423,7 +423,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{\"limit\":2,\"beforeSeq\":\"42\"}}");
-        agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_read_history_calls == 1);
         assert(g_json_write_calls == 1);
@@ -444,9 +444,9 @@ int main()
 
     {
         reset_state();
-        g_read_history_result = agent_q::AgentQApprovalHistoryReadResult::storage_error;
+        g_read_history_result = signing::ApprovalHistoryReadResult::storage_error;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{}}");
-        agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_read_history_calls == 1);
         assert(g_json_write_calls == 0);
         assert(g_write_error_calls == 1);
@@ -457,7 +457,7 @@ int main()
         reset_state();
         g_json_write_ok = false;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{}}");
-        agent_q::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_read_history_calls == 1);
         assert(g_json_write_calls == 1);
         assert(g_write_error_calls == 1);
@@ -472,11 +472,11 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${ARDUINOJSON_ROOT}" \
   -I"${COMMON_ROOT}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   -I"${TMP_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_active_session_request_guard.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_approval_history_handler.cpp" \
+  "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
+  "${RUNTIME_DIR}/usb_approval_history_handler.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

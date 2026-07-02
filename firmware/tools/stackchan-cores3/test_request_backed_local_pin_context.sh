@@ -19,16 +19,16 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
-COMMON_ROOT="${REPO_ROOT}/firmware/src/common/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 CXX_BIN="${CXX:-c++}"
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-request-backed-local-pin.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-request-backed-local-pin.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-mkdir -p "${TMP_DIR}/freertos" "${TMP_DIR}/agent_q_common"
-ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/agent_q_common/sui"
-ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/agent_q_common/policy"
+mkdir -p "${TMP_DIR}/freertos" "${TMP_DIR}/firmware_common"
+ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/firmware_common/sui"
+ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
 cat >"${TMP_DIR}/freertos/FreeRTOS.h" <<'H'
 #pragma once
 #include <stdint.h>
@@ -49,43 +49,43 @@ cat >"${TMP_DIR}/request_backed_local_pin_context_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_policy_update_flow.h"
-#include "agent_q_protocol_pin_approval.h"
-#include "agent_q_request_backed_local_pin_context.h"
-#include "agent_q_sui_zklogin_proposal_flow.h"
-#include "agent_q_user_signing_confirmation.h"
-#include "agent_q_user_signing_flow.h"
+#include "policy_update_flow.h"
+#include "protocol_pin_approval.h"
+#include "request_backed_local_pin_context.h"
+#include "sui_zklogin_proposal_flow.h"
+#include "user_signing_confirmation.h"
+#include "user_signing_flow.h"
 
 namespace {
 
 int failures = 0;
 
-agent_q::AgentQProtocolPinApprovalSnapshot g_protocol_snapshot = {};
-agent_q::AgentQUserSigningFlowSnapshot g_user_snapshot = {};
+signing::ProtocolPinApprovalSnapshot g_protocol_snapshot = {};
+signing::UserSigningFlowSnapshot g_user_snapshot = {};
 bool g_protocol_request_id_result = false;
 bool g_protocol_refresh_result = false;
 bool g_protocol_pause_result = false;
 bool g_protocol_deadline_reached = false;
-agent_q::AgentQUserSigningTransitionResult g_user_refresh_result =
-    agent_q::AgentQUserSigningTransitionResult::inactive;
-agent_q::AgentQUserSigningTransitionResult g_user_prepare_pin_result =
-    agent_q::AgentQUserSigningTransitionResult::inactive;
-agent_q::AgentQTimeoutWindow g_user_prepare_pin_output = {};
-agent_q::AgentQUserSigningConfirmationResult g_user_pause_result =
-    agent_q::AgentQUserSigningConfirmationResult::inactive;
+signing::UserSigningTransitionResult g_user_refresh_result =
+    signing::UserSigningTransitionResult::inactive;
+signing::UserSigningTransitionResult g_user_prepare_pin_result =
+    signing::UserSigningTransitionResult::inactive;
+signing::TimeoutWindow g_user_prepare_pin_output = {};
+signing::UserSigningConfirmationResult g_user_pause_result =
+    signing::UserSigningConfirmationResult::inactive;
 bool g_user_deadline_reached = false;
-agent_q::AgentQPolicyUpdateFlowTransitionResult g_policy_mark_result =
-    agent_q::AgentQPolicyUpdateFlowTransitionResult::ok;
-agent_q::AgentQSuiZkLoginProposalTransitionResult g_sui_zklogin_mark_result =
-    agent_q::AgentQSuiZkLoginProposalTransitionResult::ok;
-agent_q::AgentQLocalPinAuthPurpose g_last_protocol_request_id_purpose =
-    agent_q::AgentQLocalPinAuthPurpose::none;
-agent_q::AgentQLocalPinAuthPurpose g_last_protocol_refresh_purpose =
-    agent_q::AgentQLocalPinAuthPurpose::none;
-agent_q::AgentQLocalPinAuthPurpose g_last_protocol_pause_purpose =
-    agent_q::AgentQLocalPinAuthPurpose::none;
-agent_q::AgentQLocalPinAuthPurpose g_last_protocol_deadline_purpose =
-    agent_q::AgentQLocalPinAuthPurpose::none;
+signing::PolicyUpdateFlowTransitionResult g_policy_mark_result =
+    signing::PolicyUpdateFlowTransitionResult::ok;
+signing::SuiZkLoginProposalTransitionResult g_sui_zklogin_mark_result =
+    signing::SuiZkLoginProposalTransitionResult::ok;
+signing::LocalPinAuthPurpose g_last_protocol_request_id_purpose =
+    signing::LocalPinAuthPurpose::none;
+signing::LocalPinAuthPurpose g_last_protocol_refresh_purpose =
+    signing::LocalPinAuthPurpose::none;
+signing::LocalPinAuthPurpose g_last_protocol_pause_purpose =
+    signing::LocalPinAuthPurpose::none;
+signing::LocalPinAuthPurpose g_last_protocol_deadline_purpose =
+    signing::LocalPinAuthPurpose::none;
 TickType_t g_last_protocol_refresh_now = 0;
 TickType_t g_last_protocol_pause_now = 0;
 TickType_t g_last_protocol_deadline_now = 0;
@@ -93,7 +93,7 @@ TickType_t g_last_user_refresh_now = 0;
 TickType_t g_last_user_pause_now = 0;
 TickType_t g_last_user_deadline_now = 0;
 TickType_t g_last_user_prepare_pin_now = 0;
-agent_q::AgentQTimeoutWindow g_last_user_prepare_pin_input = {};
+signing::TimeoutWindow g_last_user_prepare_pin_input = {};
 
 void expect(bool condition, const char* label)
 {
@@ -103,22 +103,22 @@ void expect(bool condition, const char* label)
     }
 }
 
-agent_q::AgentQTimeoutWindow window(TickType_t started_at, TickType_t deadline)
+signing::TimeoutWindow window(TickType_t started_at, TickType_t deadline)
 {
-    return agent_q::timeout_window_from_deadline(started_at, deadline);
+    return signing::timeout_window_from_deadline(started_at, deadline);
 }
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
-AgentQProtocolPinApprovalSnapshot protocol_pin_approval_snapshot()
+ProtocolPinApprovalSnapshot protocol_pin_approval_snapshot()
 {
     return g_protocol_snapshot;
 }
 
 bool protocol_pin_approval_request_id_for_local_pin_purpose(
-    AgentQLocalPinAuthPurpose purpose,
+    LocalPinAuthPurpose purpose,
     char* output,
     size_t output_size)
 {
@@ -131,7 +131,7 @@ bool protocol_pin_approval_request_id_for_local_pin_purpose(
 }
 
 bool protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
-    AgentQLocalPinAuthPurpose purpose,
+    LocalPinAuthPurpose purpose,
     TickType_t now)
 {
     g_last_protocol_refresh_purpose = purpose;
@@ -140,7 +140,7 @@ bool protocol_pin_approval_refresh_deadline_for_local_pin_purpose(
 }
 
 bool protocol_pin_approval_pause_deadline_for_local_pin_purpose(
-    AgentQLocalPinAuthPurpose purpose,
+    LocalPinAuthPurpose purpose,
     TickType_t now)
 {
     g_last_protocol_pause_purpose = purpose;
@@ -149,7 +149,7 @@ bool protocol_pin_approval_pause_deadline_for_local_pin_purpose(
 }
 
 bool protocol_pin_approval_deadline_reached_for_local_pin_purpose(
-    AgentQLocalPinAuthPurpose purpose,
+    LocalPinAuthPurpose purpose,
     TickType_t now)
 {
     g_last_protocol_deadline_purpose = purpose;
@@ -157,20 +157,20 @@ bool protocol_pin_approval_deadline_reached_for_local_pin_purpose(
     return g_protocol_deadline_reached;
 }
 
-AgentQUserSigningFlowSnapshot user_signing_flow_snapshot()
+UserSigningFlowSnapshot user_signing_flow_snapshot()
 {
     return g_user_snapshot;
 }
 
-AgentQUserSigningFlowCoreSnapshot user_signing_flow_core_snapshot()
+UserSigningFlowCoreSnapshot user_signing_flow_core_snapshot()
 {
     return g_user_snapshot;
 }
 
-AgentQUserSigningTransitionResult user_signing_flow_cap_request_backed_pin_input_window(
+UserSigningTransitionResult user_signing_flow_cap_request_backed_pin_input_window(
     TickType_t now,
-    AgentQTimeoutWindow pin_input_window,
-    AgentQTimeoutWindow* output)
+    TimeoutWindow pin_input_window,
+    TimeoutWindow* output)
 {
     g_last_user_prepare_pin_now = now;
     g_last_user_prepare_pin_input = pin_input_window;
@@ -180,7 +180,7 @@ AgentQUserSigningTransitionResult user_signing_flow_cap_request_backed_pin_input
     return g_user_prepare_pin_result;
 }
 
-AgentQUserSigningTransitionResult user_signing_flow_refresh_pin_deadline(TickType_t now)
+UserSigningTransitionResult user_signing_flow_refresh_pin_deadline(TickType_t now)
 {
     g_last_user_refresh_now = now;
     return g_user_refresh_result;
@@ -192,70 +192,70 @@ bool user_signing_flow_apply_deadline_transition(TickType_t now)
     return g_user_deadline_reached;
 }
 
-AgentQUserSigningConfirmationResult
+UserSigningConfirmationResult
 user_signing_confirmation_mark_pin_verification_started(TickType_t now)
 {
     g_last_user_pause_now = now;
     return g_user_pause_result;
 }
 
-AgentQPolicyUpdateFlowTransitionResult policy_update_flow_mark_pin_verifying()
+PolicyUpdateFlowTransitionResult policy_update_flow_mark_pin_verifying()
 {
     return g_policy_mark_result;
 }
 
-AgentQSuiZkLoginProposalTransitionResult sui_zklogin_proposal_flow_mark_pin_verifying()
+SuiZkLoginProposalTransitionResult sui_zklogin_proposal_flow_mark_pin_verifying()
 {
     return g_sui_zklogin_mark_result;
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 int main()
 {
-    using Purpose = agent_q::AgentQLocalPinAuthPurpose;
-    using Owner = agent_q::AgentQRequestBackedLocalPinOwner;
+    using Purpose = signing::LocalPinAuthPurpose;
+    using Owner = signing::RequestBackedLocalPinOwner;
 
-    expect(agent_q::request_backed_local_pin_owner_for_purpose(Purpose::connect) ==
+    expect(signing::request_backed_local_pin_owner_for_purpose(Purpose::connect) ==
                Owner::protocol_pin_approval,
            "connect is owned by protocol PIN approval");
-    expect(agent_q::request_backed_local_pin_owner_for_purpose(Purpose::policy_update) ==
+    expect(signing::request_backed_local_pin_owner_for_purpose(Purpose::policy_update) ==
                Owner::protocol_pin_approval,
            "policy update is owned by protocol PIN approval");
-    expect(agent_q::request_backed_local_pin_owner_for_purpose(Purpose::sui_zklogin_proposal) ==
+    expect(signing::request_backed_local_pin_owner_for_purpose(Purpose::sui_zklogin_proposal) ==
                Owner::protocol_pin_approval,
            "Sui zkLogin proposal is owned by protocol PIN approval");
-    expect(agent_q::request_backed_local_pin_owner_for_purpose(Purpose::user_signing) ==
+    expect(signing::request_backed_local_pin_owner_for_purpose(Purpose::user_signing) ==
                Owner::user_signing,
            "user signing is owned by user signing flow");
-    expect(agent_q::request_backed_local_pin_owner_for_purpose(Purpose::settings_signing_mode) ==
+    expect(signing::request_backed_local_pin_owner_for_purpose(Purpose::settings_signing_mode) ==
                Owner::none,
            "settings PIN action is not request backed");
-    expect(agent_q::request_backed_local_pin_purpose(Purpose::user_signing),
+    expect(signing::request_backed_local_pin_purpose(Purpose::user_signing),
            "user signing is request backed");
-    expect(agent_q::request_backed_local_pin_purpose(Purpose::sui_zklogin_proposal),
+    expect(signing::request_backed_local_pin_purpose(Purpose::sui_zklogin_proposal),
            "Sui zkLogin proposal is request backed");
-    expect(!agent_q::request_backed_local_pin_purpose(Purpose::settings_change_pin),
+    expect(!signing::request_backed_local_pin_purpose(Purpose::settings_change_pin),
            "settings change PIN is not request backed");
 
     char request_id[32] = "unchanged";
-    expect(!agent_q::request_backed_local_pin_request_id(
+    expect(!signing::request_backed_local_pin_request_id(
                Purpose::settings_change_pin,
                request_id,
                sizeof(request_id)),
            "non-request-backed purpose has no request id");
     expect(request_id[0] == '\0', "non-request-backed request id output clears");
 
-    g_protocol_snapshot = agent_q::AgentQProtocolPinApprovalSnapshot{
+    g_protocol_snapshot = signing::ProtocolPinApprovalSnapshot{
         true,
-        agent_q::AgentQProtocolPinApprovalPurpose::connect,
+        signing::ProtocolPinApprovalPurpose::connect,
         "connect-1",
         "",
         window(10, 100),
         window(10, 90),
     };
     g_protocol_request_id_result = true;
-    expect(agent_q::request_backed_local_pin_request_id(
+    expect(signing::request_backed_local_pin_request_id(
                Purpose::connect,
                request_id,
                sizeof(request_id)) &&
@@ -265,7 +265,7 @@ int main()
            "protocol request id receives local PIN purpose");
 
     g_user_snapshot = {};
-    expect(!agent_q::request_backed_local_pin_request_id(
+    expect(!signing::request_backed_local_pin_request_id(
                Purpose::user_signing,
                request_id,
                sizeof(request_id)),
@@ -273,23 +273,23 @@ int main()
     g_user_snapshot.active = true;
     snprintf(g_user_snapshot.request_id, sizeof(g_user_snapshot.request_id), "%s", "sign-1");
     g_user_snapshot.request_window = window(20, 80);
-    expect(agent_q::request_backed_local_pin_request_id(
+    expect(signing::request_backed_local_pin_request_id(
                Purpose::user_signing,
                request_id,
                sizeof(request_id)) &&
                strcmp(request_id, "sign-1") == 0,
            "user-signing request id comes from user signing flow");
-    g_user_prepare_pin_result = agent_q::AgentQUserSigningTransitionResult::ok;
+    g_user_prepare_pin_result = signing::UserSigningTransitionResult::ok;
     g_user_prepare_pin_output = window(40, 80);
 
-    agent_q::AgentQTimeoutWindow capped =
-        agent_q::request_backed_local_pin_cap_input_window(
+    signing::TimeoutWindow capped =
+        signing::request_backed_local_pin_cap_input_window(
             Purpose::connect,
             30,
             window(30, 150));
     expect(capped.started_at == 30 && capped.deadline == 100,
            "protocol-backed PIN input deadline caps to request window");
-    capped = agent_q::request_backed_local_pin_cap_input_window(
+    capped = signing::request_backed_local_pin_cap_input_window(
         Purpose::user_signing,
         40,
         window(40, 120));
@@ -299,75 +299,75 @@ int main()
                g_last_user_prepare_pin_input.started_at == 40 &&
                g_last_user_prepare_pin_input.deadline == 120,
            "user-signing PIN cap passes tick and requested window to state owner");
-    g_user_prepare_pin_result = agent_q::AgentQUserSigningTransitionResult::inactive;
-    capped = agent_q::request_backed_local_pin_cap_input_window(
+    g_user_prepare_pin_result = signing::UserSigningTransitionResult::inactive;
+    capped = signing::request_backed_local_pin_cap_input_window(
         Purpose::settings_signing_mode,
         40,
         window(40, 120));
-    expect(!agent_q::timeout_window_valid(capped),
+    expect(!signing::timeout_window_valid(capped),
            "non-request-backed purpose cannot cap request window");
-    capped = agent_q::request_backed_local_pin_cap_input_window(
+    capped = signing::request_backed_local_pin_cap_input_window(
         Purpose::connect,
         70,
         window(30, 60));
-    expect(!agent_q::timeout_window_valid(capped),
+    expect(!signing::timeout_window_valid(capped),
            "request-backed PIN cap rejects stale input windows");
-    capped = agent_q::request_backed_local_pin_cap_input_window(
+    capped = signing::request_backed_local_pin_cap_input_window(
         Purpose::connect,
         70,
         window(90, 120));
-    expect(!agent_q::timeout_window_valid(capped),
+    expect(!signing::timeout_window_valid(capped),
            "request-backed PIN cap rejects future input windows");
 
     g_protocol_refresh_result = true;
-    expect(agent_q::request_backed_local_pin_resume_input_window(Purpose::policy_update, 55),
+    expect(signing::request_backed_local_pin_resume_input_window(Purpose::policy_update, 55),
            "protocol-backed resume delegates to protocol owner");
     expect(g_last_protocol_refresh_purpose == Purpose::policy_update &&
                g_last_protocol_refresh_now == 55,
            "protocol resume receives purpose and tick");
-    g_user_refresh_result = agent_q::AgentQUserSigningTransitionResult::ok;
-    expect(agent_q::request_backed_local_pin_resume_input_window(Purpose::user_signing, 56),
+    g_user_refresh_result = signing::UserSigningTransitionResult::ok;
+    expect(signing::request_backed_local_pin_resume_input_window(Purpose::user_signing, 56),
            "user-signing resume delegates to user signing flow");
     expect(g_last_user_refresh_now == 56, "user resume receives tick");
 
-    g_policy_mark_result = agent_q::AgentQPolicyUpdateFlowTransitionResult::inactive;
-    expect(!agent_q::request_backed_local_pin_pause_input_window(Purpose::policy_update, 60),
+    g_policy_mark_result = signing::PolicyUpdateFlowTransitionResult::inactive;
+    expect(!signing::request_backed_local_pin_pause_input_window(Purpose::policy_update, 60),
            "policy update pause fails before protocol pause when policy stage transition fails");
-    g_policy_mark_result = agent_q::AgentQPolicyUpdateFlowTransitionResult::ok;
+    g_policy_mark_result = signing::PolicyUpdateFlowTransitionResult::ok;
     g_protocol_pause_result = true;
-    expect(agent_q::request_backed_local_pin_pause_input_window(Purpose::policy_update, 61),
+    expect(signing::request_backed_local_pin_pause_input_window(Purpose::policy_update, 61),
            "policy update pause marks policy stage then pauses protocol owner");
     expect(g_last_protocol_pause_purpose == Purpose::policy_update &&
                g_last_protocol_pause_now == 61,
            "policy update pause delegates protocol purpose and tick");
-    g_sui_zklogin_mark_result = agent_q::AgentQSuiZkLoginProposalTransitionResult::wrong_stage;
-    expect(!agent_q::request_backed_local_pin_pause_input_window(Purpose::sui_zklogin_proposal, 62),
+    g_sui_zklogin_mark_result = signing::SuiZkLoginProposalTransitionResult::wrong_stage;
+    expect(!signing::request_backed_local_pin_pause_input_window(Purpose::sui_zklogin_proposal, 62),
            "Sui zkLogin pause fails before protocol pause when proposal stage transition fails");
-    g_sui_zklogin_mark_result = agent_q::AgentQSuiZkLoginProposalTransitionResult::ok;
+    g_sui_zklogin_mark_result = signing::SuiZkLoginProposalTransitionResult::ok;
     g_protocol_pause_result = true;
-    expect(agent_q::request_backed_local_pin_pause_input_window(Purpose::sui_zklogin_proposal, 63),
+    expect(signing::request_backed_local_pin_pause_input_window(Purpose::sui_zklogin_proposal, 63),
            "Sui zkLogin pause marks proposal stage then pauses protocol owner");
     expect(g_last_protocol_pause_purpose == Purpose::sui_zklogin_proposal &&
                g_last_protocol_pause_now == 63,
            "Sui zkLogin pause delegates protocol purpose and tick");
-    g_user_pause_result = agent_q::AgentQUserSigningConfirmationResult::ok;
-    expect(agent_q::request_backed_local_pin_pause_input_window(Purpose::user_signing, 64),
+    g_user_pause_result = signing::UserSigningConfirmationResult::ok;
+    expect(signing::request_backed_local_pin_pause_input_window(Purpose::user_signing, 64),
            "user-signing pause delegates to confirmation flow");
     expect(g_last_user_pause_now == 64, "user pause receives tick");
-    expect(agent_q::request_backed_local_pin_pause_input_window(Purpose::settings_change_pin, 65),
+    expect(signing::request_backed_local_pin_pause_input_window(Purpose::settings_change_pin, 65),
            "non-request-backed pause is a no-op success");
 
     g_protocol_deadline_reached = true;
-    expect(agent_q::request_backed_local_pin_deadline_reached(Purpose::connect, 70),
+    expect(signing::request_backed_local_pin_deadline_reached(Purpose::connect, 70),
            "protocol-backed deadline delegates to protocol owner");
     expect(g_last_protocol_deadline_purpose == Purpose::connect &&
                g_last_protocol_deadline_now == 70,
            "protocol deadline receives purpose and tick");
     g_user_deadline_reached = true;
-    expect(agent_q::request_backed_local_pin_deadline_reached(Purpose::user_signing, 71),
+    expect(signing::request_backed_local_pin_deadline_reached(Purpose::user_signing, 71),
            "user-signing deadline delegates to user signing flow");
     expect(g_last_user_deadline_now == 71, "user deadline receives tick");
-    expect(!agent_q::request_backed_local_pin_deadline_reached(Purpose::settings_signing_mode, 72),
+    expect(!signing::request_backed_local_pin_deadline_reached(Purpose::settings_signing_mode, 72),
            "non-request-backed deadline is never reached");
 
     if (failures != 0) {
@@ -381,10 +381,10 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${COMMON_ROOT}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   -I"${TMP_DIR}" \
   "${TMP_DIR}/request_backed_local_pin_context_test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_request_backed_local_pin_context.cpp" \
+  "${RUNTIME_DIR}/request_backed_local_pin_context.cpp" \
   -o "${TMP_DIR}/request_backed_local_pin_context_test"
 
 "${TMP_DIR}/request_backed_local_pin_context_test"

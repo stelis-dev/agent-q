@@ -1,4 +1,4 @@
-import type { AgentQCore } from "@stelis/agent-q-core";
+import type { DeviceCore } from "@stelis/agent-q-core";
 import { toPublicErrorFromUnknown } from "@stelis/agent-q-core/adapter-internal";
 import {
   SIGNING_OUTCOME_ERROR_MESSAGES,
@@ -55,7 +55,7 @@ The signer calls the local Agent-Q server, and the server sends signing requests
 to Firmware. Signing material stays under Firmware control on the device.`;
 
 export type SuiSignCliCore = Pick<
-  AgentQCore,
+  DeviceCore,
   "connectDevice" | "disconnectDevice" | "getAccounts" | "signTransaction"
 >;
 

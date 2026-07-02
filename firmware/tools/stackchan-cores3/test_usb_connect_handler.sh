@@ -18,17 +18,17 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-AGENT_Q_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/agent_q"
+RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
-ARDUINOJSON_ROOT="${AGENT_Q_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_connect_handler.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_connect_handler.h" \
-  "${AGENT_Q_DIR}/agent_q_usb_operation_response_writer.h" \
-  "${AGENT_Q_DIR}/agent_q_connect_approval.h" \
-  "${AGENT_Q_DIR}/agent_q_timeout_window.h"; do
+  "${RUNTIME_DIR}/usb_connect_handler.cpp" \
+  "${RUNTIME_DIR}/usb_connect_handler.h" \
+  "${RUNTIME_DIR}/usb_operation_response_writer.h" \
+  "${RUNTIME_DIR}/connect_approval.h" \
+  "${RUNTIME_DIR}/timeout_window.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -37,7 +37,7 @@ for required in \
 done
 
 CXX_BIN="${CXX:-c++}"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-q-usb-connect-handler.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-usb-connect-handler.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 mkdir -p "${TMP_DIR}/freertos"
 
@@ -57,7 +57,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "agent_q_usb_connect_handler.h"
+#include "usb_connect_handler.h"
 
 namespace {
 
@@ -72,9 +72,9 @@ int g_show_unavailable_calls = 0;
 int g_reset_queue_calls = 0;
 int g_show_review_calls = 0;
 int g_record_waiting_calls = 0;
-agent_q::AgentQTimeoutTick g_current_tick = 17;
-agent_q::AgentQTimeoutTick g_last_make_window_now = 0;
-agent_q::AgentQTimeoutTick g_last_begin_now = 0;
+signing::TimeoutTick g_current_tick = 17;
+signing::TimeoutTick g_last_make_window_now = 0;
+signing::TimeoutTick g_last_begin_now = 0;
 bool g_material_ready = true;
 bool g_busy = false;
 bool g_begin_ok = true;
@@ -82,7 +82,7 @@ const char* g_last_id = nullptr;
 const char* g_last_client_name = nullptr;
 const char* g_last_error_code = nullptr;
 const char* g_last_rejected_code = nullptr;
-agent_q::AgentQTimeoutWindow g_last_window = {};
+signing::TimeoutWindow g_last_window = {};
 
 void reset_state()
 {
@@ -107,7 +107,7 @@ void reset_state()
     g_last_client_name = nullptr;
     g_last_error_code = nullptr;
     g_last_rejected_code = nullptr;
-    g_last_window = agent_q::AgentQTimeoutWindow{0, 0};
+    g_last_window = signing::TimeoutWindow{0, 0};
 }
 
 bool write_error(const char* id, const char* code)
@@ -131,7 +131,7 @@ bool material_ready()
     return g_material_ready;
 }
 
-bool write_busy(const char* id, const agent_q::AgentQUsbOperationResponseWriter& writer)
+bool write_busy(const char* id, const signing::UsbOperationResponseWriter& writer)
 {
     g_busy_calls += 1;
     g_last_id = id;
@@ -141,23 +141,23 @@ bool write_busy(const char* id, const agent_q::AgentQUsbOperationResponseWriter&
     return g_busy;
 }
 
-agent_q::AgentQTimeoutTick current_tick()
+signing::TimeoutTick current_tick()
 {
     return g_current_tick;
 }
 
-agent_q::AgentQTimeoutWindow make_window(agent_q::AgentQTimeoutTick now)
+signing::TimeoutWindow make_window(signing::TimeoutTick now)
 {
     g_make_window_calls += 1;
     g_last_make_window_now = now;
-    return agent_q::AgentQTimeoutWindow{now, now + 18};
+    return signing::TimeoutWindow{now, now + 18};
 }
 
 bool begin_connect(
     const char* request_id,
     const char* client_name,
-    agent_q::AgentQTimeoutTick now,
-    agent_q::AgentQTimeoutWindow window)
+    signing::TimeoutTick now,
+    signing::TimeoutWindow window)
 {
     g_begin_calls += 1;
     g_last_id = request_id;
@@ -169,7 +169,7 @@ bool begin_connect(
 
 }  // namespace
 
-namespace agent_q {
+namespace signing {
 
 bool usb_response_write_connect_rejected(const char* id, const char* code)
 {
@@ -179,7 +179,7 @@ bool usb_response_write_connect_rejected(const char* id, const char* code)
     return true;
 }
 
-}  // namespace agent_q
+}  // namespace signing
 
 namespace {
 
@@ -205,17 +205,17 @@ void record_waiting(const char* id, const char* client_name)
     g_last_client_name = client_name;
 }
 
-agent_q::AgentQUsbOperationResponseWriter make_writer()
+signing::UsbOperationResponseWriter make_writer()
 {
-    return agent_q::AgentQUsbOperationResponseWriter{
+    return signing::UsbOperationResponseWriter{
         write_error,
         log_write_failure,
     };
 }
 
-agent_q::AgentQUsbConnectHandlerOps make_ops()
+signing::UsbConnectHandlerOps make_ops()
 {
-    return agent_q::AgentQUsbConnectHandlerOps{
+    return signing::UsbConnectHandlerOps{
         material_ready,
         write_busy,
         current_tick,
@@ -249,7 +249,7 @@ int main()
         reset_state();
         g_material_ready = false;
         JsonDocument request = parse_request(valid_request());
-        agent_q::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
         assert(g_busy_calls == 0);
@@ -260,7 +260,7 @@ int main()
         reset_state();
         g_busy = true;
         JsonDocument request = parse_request(valid_request());
-        agent_q::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_busy_calls == 1);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "busy") == 0);
@@ -270,7 +270,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":{\"clientName\":\"Agent-Q\"},\"sessionId\":\"bad\"}");
-        agent_q::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
@@ -279,7 +279,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":7}");
-        agent_q::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
@@ -288,7 +288,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":{\"clientName\":\"Agent-Q\",\"extra\":true}}");
-        agent_q::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
@@ -297,7 +297,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":{}}");
-        agent_q::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
@@ -306,7 +306,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":{\"clientName\":\"\"}}");
-        agent_q::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
@@ -315,7 +315,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":{\"clientName\":\"bad\\nname\"}}");
-        agent_q::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
@@ -330,7 +330,7 @@ int main()
         request["version"] = 1;
         request["method"] = "connect";
         request["payload"]["clientName"] = long_name;
-        agent_q::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
@@ -340,7 +340,7 @@ int main()
         reset_state();
         g_begin_ok = false;
         JsonDocument request = parse_request(valid_request());
-        agent_q::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_make_window_calls == 1);
         assert(g_begin_calls == 1);
         assert(strcmp(g_last_client_name, "Agent-Q") == 0);
@@ -359,7 +359,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request(valid_request());
-        agent_q::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_make_window_calls == 1);
         assert(g_begin_calls == 1);
         assert(strcmp(g_last_client_name, "Agent-Q") == 0);
@@ -382,9 +382,9 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
-  -I"${AGENT_Q_DIR}" \
+  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${AGENT_Q_DIR}/agent_q_usb_connect_handler.cpp" \
+  "${RUNTIME_DIR}/usb_connect_handler.cpp" \
   -o "${TMP_DIR}/test_usb_connect_handler"
 
 "${TMP_DIR}/test_usb_connect_handler"

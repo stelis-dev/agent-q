@@ -8,7 +8,7 @@ It describes source behavior only. It is not a product-active claim.
 
 ## Current Status
 
-- The current policy schema is `agentq.policy`.
+- The current policy schema is `signing.policy`.
 - Firmware stores one active policy document.
 - Firmware owns policy validation, policy storage, policy evaluation, and
   signing decisions.
@@ -27,7 +27,7 @@ It describes source behavior only. It is not a product-active claim.
 ## Policy Document Shape
 
 ```text
-schema = agentq.policy
+schema = signing.policy
 defaultAction = reject
 
 blockchains[]
@@ -190,7 +190,7 @@ total amount of at most 1 SUI.
 
 ```json
 {
-  "schema": "agentq.policy",
+  "schema": "signing.policy",
   "defaultAction": "reject",
   "blockchains": [
     {
