@@ -102,9 +102,14 @@ the host process, MCP, or host-triggered API.
 
 ## State Layers And Owners
 
-Agent-Q separates product state from target-local runtime state. Product state
-is common across hardware targets. Target-local runtime state may differ by
-hardware and must be documented in each target's `SPEC.md`.
+Agent-Q separates protocol-visible product state from target-local runtime
+state. Protocol-visible state names and shared product invariants are common for
+targets that implement the corresponding capability. A target's full state
+composition may differ by hardware or product variant, and target-local runtime
+state must be documented in each target's `SPEC.md`. Common state capability
+modules may be used inside a target composition; they do not by themselves
+define a complete target state machine unless that whole state machine is proven
+as a shared product invariant.
 
 | Layer | Examples | Owner | May gate protocol APIs? |
 |---|---|---|---:|

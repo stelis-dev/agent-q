@@ -198,5 +198,10 @@ current device state
   -> previous device state continues
 ```
 
-Firmware may use hardware-specific rendering and controls, but the product
-behavior must remain the same across hardware targets.
+Firmware may use hardware-specific rendering and controls. Shared protocol
+outcomes and shared product invariants must remain consistent when a target
+implements the corresponding capability. A target may compose a different state
+machine, user experience, transport, power behavior, or capability subset when
+its hardware or product variant requires it. That target-specific behavior must
+be documented in the target `SPEC.md` and must still enforce the shared protocol
+and state gates for every capability it implements.

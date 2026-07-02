@@ -85,6 +85,47 @@ Non-negotiable boundaries:
   behavior as implemented behavior.
 - Do not create separate chain-specific product APIs. Chains must be exposed as
   supported methods in the shared protocol.
+- Host, CLI, provider, MCP, and Admin surfaces must see the same shared
+  protocol interface for every Firmware target. The device request envelope,
+  device response envelope, method names, enum values, status field names,
+  public error codes, and method result schemas are global protocol contracts,
+  not target-specific contracts. Firmware targets may use different internal
+  state machines, storage layouts, UI, input devices, transports, and material
+  types, and they may return different state values, capability values, account
+  values, or shared error codes according to their current target-local state.
+  A target may leave a protocol method unimplemented or unavailable, but it must
+  express that through the shared method table, shared capability/account
+  schemas, and a normal `DeviceResponse` failure using shared error codes such
+  as `unsupported_method`, `unsupported_chain`, `invalid_state`, or
+  `auth_unavailable`. Once a request envelope is parseable enough to identify
+  the method, "not implemented on this target" or "not available in this state"
+  is a protocol error response, not a missing interface, silent drop, alternate
+  schema, or target-specific parser path. It must not create target-specific
+  method names, enum variants, request schemas, response schemas, result shapes,
+  or error objects for the same product operation. External applications must
+  never need a hardware-specific parser to talk to a Firmware target.
+- Shared protocol terms, external product terms, and user-facing Firmware UI
+  terms for the same product operation must stay consistent across Firmware
+  targets. A hardware target may use target-specific words only inside its
+  internal implementation, hardware-specific source, hardware-specific SPEC, or
+  diagnostic evidence when those words describe real hardware behavior. Do not
+  expose target-specific names, button labels, board concepts, chain variants,
+  transport details, or storage-material names as alternate public vocabulary
+  for a shared product operation. If a target must explain hardware-specific
+  behavior to the user, keep that wording local to the target UI or target
+  documentation and map it back to the shared protocol term at the boundary.
+- `device.state` and `provisioning.state` are protocol-visible status
+  projections, not complete target-internal state machines. External consumers
+  must not infer mnemonic storage, root material, proof type, key origin,
+  hardware setup step, or signing readiness from those fields alone. A target
+  maps its own internal setup and material state into the shared status values.
+  For `provisioning.state = "provisioned"`, the target is saying that its own
+  local setup is complete and the target-owned material required for its
+  implemented account/signing capabilities is available. That may mean
+  mnemonic/root material on one target and an active credential proof with
+  matching target-owned key material on another. Availability details must be
+  exposed through shared method results, capabilities, accounts, and explicit
+  error responses, not through target-specific status schemas.
 - Before a public release, do not add automatic backward-compatibility,
   migration, or named handling for previous Firmware storage, protocol, policy,
   or approval-history formats unless the user explicitly approves that product
