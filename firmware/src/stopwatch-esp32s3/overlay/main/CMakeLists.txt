@@ -9,7 +9,7 @@ idf_component_register(
         "runtime/usb_transport.cpp"
         "firmware_common/protocol/device_contract.cpp"
         "firmware_common/protocol/request_id.cpp"
-        "firmware_common/protocol/usb_request_line.cpp"
+        "firmware_common/protocol/request_line.cpp"
         "apps/common/audio/audio.cpp"
         "apps/common/key_manager/key_manager.cpp"
         "hal/hal.cpp"

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "protocol/usb_request_line.h"
+#include "protocol/request_line.h"
 
 namespace signing {
 

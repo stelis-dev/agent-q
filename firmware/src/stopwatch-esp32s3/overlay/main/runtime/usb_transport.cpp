@@ -17,13 +17,13 @@
 #include "protocol/json_input.h"
 #include "protocol/protocol_constants.h"
 #include "protocol/request_id.h"
-#include "protocol/usb_request_line.h"
+#include "protocol/request_line.h"
 
 namespace stopwatch_target {
 namespace {
 
 constexpr const char* kTag = "StopWatchUSB";
-constexpr size_t kLineBufferBytes = signing::kUsbRequestLineMaxBytes + 1;
+constexpr size_t kLineBufferBytes = signing::kRequestLineMaxBytes + 1;
 constexpr size_t kReadChunkBytes = 512;
 constexpr size_t kWriteChunkBytes = 512;
 constexpr uint32_t kWriteTimeoutMs = 100;
@@ -198,7 +198,7 @@ void handle_request_line(const char* line)
     }
 
     const DeserializationError parse_error =
-        deserializeJson(request, line, DeserializationOption::NestingLimit(signing::kUsbRequestJsonNestingLimit));
+        deserializeJson(request, line, DeserializationOption::NestingLimit(signing::kRequestJsonNestingLimit));
     if (parse_error) {
         ++g_status.invalid_lines;
         reject_line(nullptr, nullptr, "invalid_request");
@@ -260,21 +260,21 @@ void handle_request_line(const char* line)
 
 void feed_byte(char value)
 {
-    switch (signing::usb_request_line_feed(
+    switch (signing::request_line_feed(
         value,
         g_line_buffer,
         sizeof(g_line_buffer),
         &g_line_size,
         &g_discarding_line)) {
-        case signing::UsbLineFeedResult::line_ready:
+        case signing::RequestLineFeedResult::line_ready:
             handle_request_line(g_line_buffer);
             break;
-        case signing::UsbLineFeedResult::rejected_nul:
-        case signing::UsbLineFeedResult::rejected_too_long:
+        case signing::RequestLineFeedResult::rejected_nul:
+        case signing::RequestLineFeedResult::rejected_too_long:
             ++g_status.invalid_lines;
             reject_line(nullptr, nullptr, "invalid_request");
             break;
-        case signing::UsbLineFeedResult::none:
+        case signing::RequestLineFeedResult::none:
             break;
     }
 }
@@ -287,7 +287,7 @@ bool usb_transport_init()
     if (!usb_serial_jtag_is_driver_installed()) {
         usb_serial_jtag_driver_config_t config = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
         config.tx_buffer_size = 1024;
-        config.rx_buffer_size = signing::kUsbRequestLineMaxBytes + kReadChunkBytes;
+        config.rx_buffer_size = signing::kRequestLineMaxBytes + kReadChunkBytes;
         const esp_err_t result = usb_serial_jtag_driver_install(&config);
         if (result != ESP_OK) {
             ESP_LOGE(kTag, "USB serial driver install failed: %s", esp_err_to_name(result));

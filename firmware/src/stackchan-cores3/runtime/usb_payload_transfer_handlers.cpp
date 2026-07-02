@@ -346,7 +346,7 @@ void handle_usb_payload_transfer_chunk_request(
         !json_value_c_string(request["chunk"], &chunk_base64) ||
         !validate_canonical_base64_syntax(
             chunk_base64,
-            kUsbRequestLineMaxBytes,
+            kRequestLineMaxBytes,
             &decoded_size)) {
         writer.write_error(id, "invalid_params");
         return;

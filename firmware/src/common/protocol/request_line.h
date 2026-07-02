@@ -4,7 +4,7 @@
 
 namespace signing {
 
-constexpr size_t kUsbRequestLineMaxBytes = 16 * 1024;
+constexpr size_t kRequestLineMaxBytes = 16 * 1024;
 
 // Framing for the newline-delimited request stream from the host. One JSON object per
 // line; a leading/trailing newline isolates partial bytes left by a failed write. This
@@ -22,7 +22,7 @@ constexpr size_t kUsbRequestLineMaxBytes = 16 * 1024;
 //
 // Pure logic over caller-owned state so it is exhaustively host-tested.
 
-enum class UsbLineFeedResult {
+enum class RequestLineFeedResult {
     none,               // byte ignored or accumulated; no complete line yet
     line_ready,         // a complete, NUL-terminated line is in `buffer`
     rejected_nul,       // the line held a NUL byte; it is discarded to the next newline
@@ -31,7 +31,7 @@ enum class UsbLineFeedResult {
 
 // Feed one byte. `buffer`/`capacity` is the line store; `*size` is the bytes held so far;
 // `*discarding` tracks a rejected line being skipped to the next newline.
-UsbLineFeedResult usb_request_line_feed(
+RequestLineFeedResult request_line_feed(
     char c,
     char* buffer,
     size_t capacity,

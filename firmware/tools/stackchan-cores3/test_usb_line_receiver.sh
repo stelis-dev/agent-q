@@ -12,8 +12,8 @@ CXX_BIN="${CXX:-c++}"
 for required in \
   "${RUNTIME_DIR}/usb_line_receiver.cpp" \
   "${RUNTIME_DIR}/usb_line_receiver.h" \
-  "${COMMON_ROOT}/protocol/usb_request_line.cpp" \
-  "${COMMON_ROOT}/protocol/usb_request_line.h"; do
+  "${COMMON_ROOT}/protocol/request_line.cpp" \
+  "${COMMON_ROOT}/protocol/request_line.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
@@ -125,7 +125,7 @@ int main()
     g_lines.clear();
     g_errors.clear();
     signing::usb_line_receiver_reset();
-    std::vector<uint8_t> oversized(signing::kUsbRequestLineMaxBytes + 1, 'z');
+    std::vector<uint8_t> oversized(signing::kRequestLineMaxBytes + 1, 'z');
     oversized.push_back('\n');
     oversized.push_back('h');
     oversized.push_back('i');
@@ -160,7 +160,7 @@ CPP
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/usb_line_receiver_test.cpp" \
   "${RUNTIME_DIR}/usb_line_receiver.cpp" \
-  "${COMMON_ROOT}/protocol/usb_request_line.cpp" \
+  "${COMMON_ROOT}/protocol/request_line.cpp" \
   -o "${TMP_DIR}/usb_line_receiver_test"
 
 "${TMP_DIR}/usb_line_receiver_test"

@@ -43,8 +43,8 @@ for required_common_protocol in \
   protocol_constants.h \
   request_id.cpp \
   request_id.h \
-  usb_request_line.cpp \
-  usb_request_line.h; do
+  request_line.cpp \
+  request_line.h; do
   if [[ ! -f "${COMMON_PROTOCOL}/${required_common_protocol}" ]]; then
     echo "Missing tracked common protocol source: ${COMMON_PROTOCOL}/${required_common_protocol}" >&2
     exit 1

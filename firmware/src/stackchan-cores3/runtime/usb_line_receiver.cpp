@@ -2,13 +2,13 @@
 
 #include <stdint.h>
 
-#include "protocol/usb_request_line.h"
+#include "protocol/request_line.h"
 #include "driver/usb_serial_jtag.h"
 
 namespace signing {
 namespace {
 
-constexpr size_t kLineBufferSize = kUsbRequestLineMaxBytes + 1;
+constexpr size_t kLineBufferSize = kRequestLineMaxBytes + 1;
 // Drain bounded chunks per poll. The line buffer remains the framing bound.
 constexpr size_t kReadBufferSize = 512;
 
@@ -45,28 +45,28 @@ void usb_line_receiver_poll(
     }
 
     for (int index = 0; index < read_count; ++index) {
-        switch (usb_request_line_feed(
+        switch (request_line_feed(
             static_cast<char>(buffer[index]),
             g_line_buffer,
             sizeof(g_line_buffer),
             &g_line_size,
             &g_discarding_invalid_line)) {
-            case UsbLineFeedResult::line_ready:
+            case RequestLineFeedResult::line_ready:
                 if (handle_line != nullptr) {
                     handle_line(g_line_buffer);
                 }
                 break;
-            case UsbLineFeedResult::rejected_nul:
+            case RequestLineFeedResult::rejected_nul:
                 report_line_error(
                     write_error,
                     "invalid_request");
                 break;
-            case UsbLineFeedResult::rejected_too_long:
+            case RequestLineFeedResult::rejected_too_long:
                 report_line_error(
                     write_error,
                     "invalid_request");
                 break;
-            case UsbLineFeedResult::none:
+            case RequestLineFeedResult::none:
                 break;
         }
     }

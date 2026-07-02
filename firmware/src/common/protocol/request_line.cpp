@@ -1,8 +1,8 @@
-#include "usb_request_line.h"
+#include "request_line.h"
 
 namespace signing {
 
-UsbLineFeedResult usb_request_line_feed(
+RequestLineFeedResult request_line_feed(
     char c,
     char* buffer,
     size_t capacity,
@@ -10,37 +10,37 @@ UsbLineFeedResult usb_request_line_feed(
     bool* discarding)
 {
     if (buffer == nullptr || size == nullptr || discarding == nullptr || capacity == 0) {
-        return UsbLineFeedResult::none;
+        return RequestLineFeedResult::none;
     }
     if (c == '\r') {
-        return UsbLineFeedResult::none;
+        return RequestLineFeedResult::none;
     }
     if (c == '\n') {
         if (*discarding) {
             *discarding = false;
             *size = 0;
-            return UsbLineFeedResult::none;
+            return RequestLineFeedResult::none;
         }
         buffer[*size] = '\0';
         const bool has_line = *size > 0;
         *size = 0;
-        return has_line ? UsbLineFeedResult::line_ready : UsbLineFeedResult::none;
+        return has_line ? RequestLineFeedResult::line_ready : RequestLineFeedResult::none;
     }
     if (*discarding) {
-        return UsbLineFeedResult::none;
+        return RequestLineFeedResult::none;
     }
     if (c == '\0') {
         *size = 0;
         *discarding = true;
-        return UsbLineFeedResult::rejected_nul;
+        return RequestLineFeedResult::rejected_nul;
     }
     if (*size + 1 >= capacity) {
         *size = 0;
         *discarding = true;
-        return UsbLineFeedResult::rejected_too_long;
+        return RequestLineFeedResult::rejected_too_long;
     }
     buffer[(*size)++] = c;
-    return UsbLineFeedResult::none;
+    return RequestLineFeedResult::none;
 }
 
 }  // namespace signing

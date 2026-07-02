@@ -904,7 +904,7 @@ void expect_required_value_coverage_hardening(int* failures)
     }
 }
 
-void expect_display_budget_overflow_summary(int* failures)
+void expect_review_capacity_overflow_summary(int* failures)
 {
     signing::SuiParsedTransactionFacts parsed = synthetic_move_call_facts();
     parsed.command_count = static_cast<uint16_t>(signing::kSuiPolicyFactMaxCommands);
@@ -934,17 +934,17 @@ void expect_display_budget_overflow_summary(int* failures)
 
     signing::SuiReviewSummary summary = {};
     if (!signing::build_sui_review_summary(parsed, &summary)) {
-        fprintf(stderr, "display budget overflow should build an insufficient review summary\n");
+        fprintf(stderr, "review capacity overflow should build an insufficient review summary\n");
         *failures += 1;
         return;
     }
     if (summary.status != signing::SuiReviewSummaryStatus::insufficient_review) {
-        fprintf(stderr, "display budget overflow should remain insufficient_review\n");
+        fprintf(stderr, "review capacity overflow should remain insufficient_review\n");
         *failures += 1;
     }
     expect_review_row_equal(summary, "Type", "Transaction review incomplete", failures);
-    expect_review_row_equal(summary, "Reason", "Transaction review exceeds display capacity", failures);
-    expect_all_review_row_values_non_empty(summary, "display-budget-overflow", failures);
+    expect_review_row_equal(summary, "Reason", "Transaction review exceeds review capacity", failures);
+    expect_all_review_row_values_non_empty(summary, "review-capacity-overflow", failures);
 }
 
 void expect_review_summary(
@@ -1209,7 +1209,7 @@ int main(int argc, char** argv)
         (fixture_dir + "/synthetic_swap_shape_tx.bcs.hex").c_str(),
         &failures);
     expect_required_value_coverage_hardening(&failures);
-    expect_display_budget_overflow_summary(&failures);
+    expect_review_capacity_overflow_summary(&failures);
 
     signing::SuiPolicySubjectFacts facts = {};
     const signing::SuiTransactionFactsResult result =

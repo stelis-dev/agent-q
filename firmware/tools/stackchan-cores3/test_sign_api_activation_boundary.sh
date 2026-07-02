@@ -201,7 +201,7 @@ expect_present "${USB_LINE_RECEIVER_SOURCE}" 'usb_serial_jtag_read_bytes' \
   "USB line receiver must own physical USB serial reads"
 expect_present "${USB_SERVER}" 'usb_line_receiver_poll' \
   "USB request server must delegate physical line receive to the extracted line receiver"
-expect_absent "${USB_SERVER}" 'usb_request_line_feed|g_line_buffer|g_line_size|g_discarding_invalid_line' \
+expect_absent "${USB_SERVER}" 'request_line_feed|g_line_buffer|g_line_size|g_discarding_invalid_line' \
   "USB request server must not own line-framing accumulator state"
 expect_present "${UI_EVENT_BRIDGE_SOURCE}" 'modal_drawing_set_callbacks' \
   "UI event bridge must own modal callback registration"

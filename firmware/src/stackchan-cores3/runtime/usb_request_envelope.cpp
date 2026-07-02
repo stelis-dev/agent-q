@@ -198,7 +198,7 @@ UsbRequestEnvelopeParseStatus parse_usb_request_envelope(
     }
 
     const DeserializationError error =
-        deserializeJson(request, line, DeserializationOption::NestingLimit(kUsbRequestJsonNestingLimit));
+        deserializeJson(request, line, DeserializationOption::NestingLimit(kRequestJsonNestingLimit));
     if (error) {
         return UsbRequestEnvelopeParseStatus::invalid_json;
     }

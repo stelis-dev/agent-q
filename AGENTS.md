@@ -577,6 +577,29 @@ Project-specific rules:
 - `firmware/build/` is ignored and is for build output only.
 - Firmware source is organized by hardware under
   `firmware/src/<hardware-id>/`.
+- Firmware target directories own hardware-specific state composition, UI
+  composition, display/touch/button/haptic/power behavior, board runtime, and
+  hardware-specific storage or identity adapters.
+- Firmware common source owns hardware-independent product contracts and proven
+  reusable capability modules, not whole hardware product flows by default.
+  Examples include protocol envelopes, method/error tables, request/session id
+  validation, payload transport primitives, timeout/deadline helpers, approval
+  state cores, local-authentication cores, policy parsers, signing validators,
+  and sensitive scratch cleanup helpers when their contract is independent of
+  display, input, power, and board runtime.
+- Firmware common source names must describe the owned responsibility, not the
+  first target or transport that happened to use it. Do not use target,
+  transport, display, touch, button, haptic, power, or board-specific names in
+  common source unless that dependency is part of the common contract itself.
+- A full Firmware state machine may differ by hardware or product variant.
+  Common code should therefore be promoted as state capability modules used
+  inside target-specific state composition, unless the complete state machine is
+  itself proven as a shared product invariant.
+- Do not move code to `firmware/src/common/` merely because another target is
+  expected to need it. Promote it only when it owns a tested current product
+  invariant or when at least two completed target slices prove the same
+  contract and owner boundary. Record any exception as a plan failure and
+  replacement baseline before implementation continues.
 - Treat Admin as a host process capability, not a separate product area.
 - Avoid hardware-specific wording in common documents.
 - Use concrete hardware names only in hardware-specific source, plans, or notes.

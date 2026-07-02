@@ -4826,10 +4826,10 @@ void init_usb_request_server()
         usb_serial_jtag_driver_config_t config = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
         config.tx_buffer_size = 1024;
         // The protocol accepts one bounded JSONL request frame up to
-        // kUsbRequestLineMaxBytes. The driver RX queue must be at least
+        // kRequestLineMaxBytes. The driver RX queue must be at least
         // that large so a single host write cannot overflow before the request
         // task drains it.
-        config.rx_buffer_size = signing::kUsbRequestLineMaxBytes + 512;
+        config.rx_buffer_size = signing::kRequestLineMaxBytes + 512;
         const esp_err_t result = usb_serial_jtag_driver_install(&config);
         if (result != ESP_OK) {
             ESP_LOGE(kTag, "USB serial driver install failed: %s", esp_err_to_name(result));

@@ -2071,7 +2071,7 @@ bool build_generic_review_summary(
            add_common_review_rows(out, parsed);
 }
 
-bool build_incomplete_display_review_summary(
+bool build_incomplete_review_capacity_summary(
     const SuiParsedTransactionFacts& parsed,
     SuiReviewSummary* out)
 {
@@ -2086,7 +2086,7 @@ bool build_incomplete_display_review_summary(
                out,
                SuiReviewRowKind::warning,
                "Reason",
-               "Transaction review exceeds display capacity") &&
+               "Transaction review exceeds review capacity") &&
            add_review_row(out, SuiReviewRowKind::wrapped_value, "Sender", parsed.sender) &&
            add_review_row(out, SuiReviewRowKind::wrapped_value, "Gas owner", parsed.gas_owner) &&
            add_review_row(out, SuiReviewRowKind::normal, "Gas max", parsed.gas_budget) &&
@@ -2495,7 +2495,7 @@ bool build_sui_review_summary(
         built = build_generic_review_summary(parsed, out);
     }
     if (!built) {
-        return build_incomplete_display_review_summary(parsed, out);
+        return build_incomplete_review_capacity_summary(parsed, out);
     }
     out->status = review_coverage_complete_for_user_confirmation(parsed, *out)
                       ? SuiReviewSummaryStatus::ok
