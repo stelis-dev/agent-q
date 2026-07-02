@@ -285,6 +285,31 @@ int main()
         nullptr,
         "invalid_request");
     expect_error(
+        "{\"id\":\"req_missing_version\",\"method\":\"get_status\"}",
+        "req_missing_version",
+        nullptr,
+        "invalid_request");
+    expect_error(
+        "{\"id\":\"req_string_version\",\"version\":\"1\",\"method\":\"get_status\"}",
+        "req_string_version",
+        nullptr,
+        "invalid_request");
+    expect_error(
+        "{\"id\":\"req_bool_version\",\"version\":true,\"method\":\"get_status\"}",
+        "req_bool_version",
+        nullptr,
+        "invalid_request");
+    expect_error(
+        "{\"id\":\"req_missing_method\",\"version\":1}",
+        "req_missing_method",
+        nullptr,
+        "invalid_request");
+    expect_error(
+        "{\"id\":\"req_bad_method_type\",\"version\":1,\"method\":7}",
+        "req_bad_method_type",
+        nullptr,
+        "invalid_request");
+    expect_error(
         "{\"id\":\"req_version\",\"version\":2,\"method\":\"get_status\"}",
         "req_version",
         nullptr,

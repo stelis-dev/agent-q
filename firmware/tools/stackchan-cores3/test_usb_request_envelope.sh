@@ -147,8 +147,13 @@ int main()
         Type::payload_transfer_begin);
     expect_status(
         "{\"id\":\"req_missing_method\",\"version\":1}",
-        Status::unsupported_method,
+        Status::invalid_request,
         "req_missing_method",
+        Type::unsupported);
+    expect_status(
+        "{\"id\":\"req_bad_method_type\",\"version\":1,\"method\":7}",
+        Status::invalid_request,
+        "req_bad_method_type",
         Type::unsupported);
     expect_status(
         "{\"id\":\"req_unknown\",\"version\":1,\"method\":\"unknown\"}",
@@ -184,6 +189,26 @@ int main()
         "{\"id\":\"req_version\",\"version\":2,\"method\":\"get_status\"}",
         Status::unsupported_version,
         "req_version",
+        Type::unsupported);
+    expect_status(
+        "{\"id\":\"req_missing_version\",\"method\":\"get_status\"}",
+        Status::invalid_request,
+        "req_missing_version",
+        Type::unsupported);
+    expect_status(
+        "{\"id\":\"req_string_version\",\"version\":\"1\",\"method\":\"get_status\"}",
+        Status::invalid_request,
+        "req_string_version",
+        Type::unsupported);
+    expect_status(
+        "{\"id\":\"req_float_version\",\"version\":1.5,\"method\":\"get_status\"}",
+        Status::invalid_request,
+        "req_float_version",
+        Type::unsupported);
+    expect_status(
+        "{\"id\":\"req_bool_version\",\"version\":true,\"method\":\"get_status\"}",
+        Status::invalid_request,
+        "req_bool_version",
         Type::unsupported);
     expect_status(
         "{\"id\":\"req_bad_type\",\"version\":1,\"type\":7}",

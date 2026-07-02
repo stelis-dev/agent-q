@@ -65,8 +65,32 @@ test("validates DeviceRequest session and payload rules from the method table", 
     { code: "unsupported_method" },
   );
   assert.throws(
+    () => parseDeviceRequest({ id: "req_missing_method", version: 1 }),
+    { code: "invalid_request" },
+  );
+  assert.throws(
+    () => parseDeviceRequest({ id: "req_bad_method_type", version: 1, method: 7 }),
+    { code: "invalid_request" },
+  );
+  assert.throws(
     () => parseDeviceRequest({ id: "req_bad_version", version: 2, method: "get_status" }),
     { code: "unsupported_version" },
+  );
+  assert.throws(
+    () => parseDeviceRequest({ id: "req_missing_version", method: "get_status" }),
+    { code: "invalid_request" },
+  );
+  assert.throws(
+    () => parseDeviceRequest({ id: "req_bad_version_type", version: "1", method: "get_status" }),
+    { code: "invalid_request" },
+  );
+  assert.throws(
+    () => parseDeviceRequest({ id: "req_float_version", version: 1.5, method: "get_status" }),
+    { code: "invalid_request" },
+  );
+  assert.throws(
+    () => parseDeviceRequest({ id: "req_bool_version", version: true, method: "get_status" }),
+    { code: "invalid_request" },
   );
 });
 

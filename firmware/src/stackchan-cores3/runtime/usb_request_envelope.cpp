@@ -156,7 +156,7 @@ UsbRequestEnvelopeParseStatus parse_device_method_envelope(
     }
     const char* method = nullptr;
     if (!json_value_c_string(object["method"], &method)) {
-        return UsbRequestEnvelopeParseStatus::unsupported_method;
+        return UsbRequestEnvelopeParseStatus::invalid_request;
     }
     const DeviceMethodRow* method_row = device_method_row(method);
     if (method_row == nullptr) {
@@ -212,7 +212,11 @@ UsbRequestEnvelopeParseStatus parse_usb_request_envelope(
     }
     output->id = id;
 
-    const int version = request["version"] | 0;
+    JsonVariantConst version_value = request["version"];
+    if (!version_value.is<int>()) {
+        return UsbRequestEnvelopeParseStatus::invalid_request;
+    }
+    const int version = version_value.as<int>();
     if (version != kProtocolVersion) {
         return UsbRequestEnvelopeParseStatus::unsupported_version;
     }

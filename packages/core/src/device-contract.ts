@@ -305,8 +305,14 @@ export function parseDeviceRequest(value: unknown): DeviceRequest {
   if (!isSafeRequestId(record.id)) {
     throw new ProtocolError("invalid_request", "Device request id is invalid.");
   }
+  if (typeof record.version !== "number" || !Number.isInteger(record.version)) {
+    throw new ProtocolError("invalid_request", "Device request version is invalid.");
+  }
   if (record.version !== PROTOCOL_VERSION) {
     throw new ProtocolError("unsupported_version", "Protocol version is not supported.");
+  }
+  if (typeof record.method !== "string") {
+    throw new ProtocolError("invalid_request", "Device request method is invalid.");
   }
   if (!isDeviceMethod(record.method)) {
     throw new ProtocolError("unsupported_method", "Device method is not supported.");
