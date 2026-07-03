@@ -19,6 +19,8 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_DIR="${REPO_ROOT}/firmware/src/common"
+USB_RESPONSE_WRITER_SOURCE="${RUNTIME_DIR}/usb_response_writer.cpp"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
 ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
@@ -26,6 +28,7 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${RUNTIME_DIR}/usb_disconnect_handler.cpp" \
   "${RUNTIME_DIR}/usb_disconnect_handler.h" \
+  "${USB_RESPONSE_WRITER_SOURCE}" \
   "${RUNTIME_DIR}/usb_operation_response_writer.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -33,6 +36,23 @@ for required in \
     exit 1
   fi
 done
+
+if ! grep -q 'usb_response_write_empty_success_result' "${USB_RESPONSE_WRITER_SOURCE}"; then
+  echo "usb_response_writer must route empty success results through a shared helper." >&2
+  exit 1
+fi
+if ! grep -q 'JsonObject object = result.to<JsonObject>();' "${USB_RESPONSE_WRITER_SOURCE}"; then
+  echo "empty success helper must create a real empty JSON object before response preparation." >&2
+  exit 1
+fi
+if ! grep -q 'return usb_response_write_empty_success_result(id, "ack_result");' "${USB_RESPONSE_WRITER_SOURCE}"; then
+  echo "ack_result must use the empty success helper." >&2
+  exit 1
+fi
+if ! grep -q 'return usb_response_write_empty_success_result(id, "disconnect");' "${USB_RESPONSE_WRITER_SOURCE}"; then
+  echo "disconnect must use the empty success helper." >&2
+  exit 1
+fi
 
 CXX_BIN="${CXX:-c++}"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-usb-disconnect-handler.XXXXXX")"
@@ -355,6 +375,7 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${ARDUINOJSON_ROOT}" \
+  -I"${COMMON_DIR}" \
   -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
   "${RUNTIME_DIR}/usb_disconnect_handler.cpp" \

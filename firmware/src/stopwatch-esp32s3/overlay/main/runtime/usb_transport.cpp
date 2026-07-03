@@ -168,12 +168,14 @@ void record_error(const char* id, const char* method, const char* code)
     copy_status_text(g_status.last_error, sizeof(g_status.last_error), code);
 }
 
-void reject_line(const char* id, const char* method, const char* code)
+bool reject_line(const char* id, const char* method, const char* code)
 {
     record_error(id, method, code);
     if (!write_error_response(id, method, code)) {
         record_error(id, method, "internal_output_error");
+        return false;
     }
+    return true;
 }
 
 void handle_request_line(const char* line)
@@ -244,8 +246,9 @@ void handle_request_line(const char* line)
 
     // This target has no provisioning flow yet. Per the protocol state gate,
     // connect fails closed before provisioned-only payload details matter.
-    ++g_status.rejected_connects;
-    reject_line(id, method, "invalid_state");
+    if (reject_line(id, method, "invalid_state")) {
+        ++g_status.rejected_connects;
+    }
 }
 
 void feed_byte(char value)

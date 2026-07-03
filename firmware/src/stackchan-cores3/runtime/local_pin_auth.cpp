@@ -118,7 +118,6 @@ bool processing_stage(LocalPinAuthStage stage)
 bool timeout_bound_processing_stage(LocalPinAuthStage stage)
 {
     return stage == LocalPinAuthStage::pin_verifying ||
-           stage == LocalPinAuthStage::committing_setting ||
            stage == LocalPinAuthStage::committing_pin_change;
 }
 

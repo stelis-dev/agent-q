@@ -523,13 +523,15 @@ int main()
                    signing::LocalPinAuthSubmitResult::started_verification,
                "settings toggle starts current-PIN verification");
         signing::LocalAuthWorkerResult verify_result = make_verify_result(true);
-        expect(signing::local_pin_auth_complete_verify_job(verify_result, pin_window(301, 360), 0, 305) ==
+        expect(signing::local_pin_auth_complete_verify_job(verify_result, pin_window(301, 360), 0, 350) ==
                    signing::LocalPinAuthVerifyResult::started_setting_commit,
                "verified settings toggle starts commit stage");
-        expect(signing::local_pin_auth_commit_if_ready(304) ==
+        expect(!signing::local_pin_auth_fail_processing_if_expired(340),
+               "settings toggle commit delay is not a worker processing timeout");
+        expect(signing::local_pin_auth_commit_if_ready(349) ==
                    signing::LocalPinAuthCommitResult::not_ready,
                "settings toggle does not commit before delay");
-        expect(signing::local_pin_auth_commit_if_ready(305) ==
+        expect(signing::local_pin_auth_commit_if_ready(350) ==
                    signing::LocalPinAuthCommitResult::setting_stored,
                "settings toggle stores target setting");
         expect(signing::test_human_approval_input_mode() ==

@@ -162,8 +162,17 @@ expect_manifest_operation_wiring \
   'PayloadDeliveryOperationKind::identify_device' \
   "identify_device manifest entry must bind USB operation to payload admission kind"
 expect_request_server_wiring \
-  'write_payload_delivery_connect_busy' \
-  "connect production ops must use payload delivery admission"
+  'write_connect_admission_error' \
+  "connect production ops must use connect admission wrapper"
+expect_request_server_wiring \
+  'signing::session_active\(\)' \
+  "connect admission must detect a live session before payload-delivery busy admission"
+expect_request_server_wiring \
+  'write_connect_approved_response\(id\)' \
+  "connect admission must recover an existing live session on the current USB link"
+expect_request_server_wiring \
+  'write_payload_delivery_connect_busy\(id, writer\)' \
+  "connect admission wrapper must still use payload delivery admission"
 expect_request_server_wiring \
   'UsbOperationType::connect' \
   "connect admission must use its named USB operation"

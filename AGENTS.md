@@ -202,6 +202,12 @@ no longer describes the product outcome, stop and explicitly decide whether the
 original work is complete, blocked, or being replaced before starting a newly
 named work item.
 
+Judge an accepted work unit as binary: `1` only when the accepted boundary is
+fully implemented and verified, otherwise `0`. Progress notes may describe what
+has been implemented, but they must not create a middle success state for the
+unit. Do not use percentages, partial-pass language, or "mostly done" wording as
+a completion judgment.
+
 For non-trivial work:
 
 1. State the current task goal.
@@ -454,6 +460,15 @@ first use and state what they do and do not mean.
 - State uncertainty plainly when evidence is incomplete.
 - Do not soften missing work, removed behavior, or incorrect prior claims.
 - If work was not done, say it was not done.
+- Plainly reporting unfinished work, remaining technical debt, or skipped
+  verification is required, but that report is evidence that the work is not
+  complete. It must not be used as support for completion. The work remains
+  unfinished until the accepted boundary is actually finished, verified, or
+  explicitly replaced from evidence.
+- Do not use labels such as "blocked", "partially complete", "unverified",
+  "deferred", or "known debt" to make failed work look smaller. Use those labels
+  only to state the missing requirement, why the accepted boundary is not
+  complete, and what must happen before completion can be claimed.
 - If a previous answer claimed completion incorrectly, say the claim was
   incorrect and state what is actually complete.
 - Do not present planned behavior as implemented behavior.
@@ -493,6 +508,8 @@ When asked for a review, prioritize defect discovery.
   readiness.
 - Do not add production secrets or real key material.
 - If technical debt remains, name it explicitly and explain the blocker.
+  Technical debt inside the accepted work boundary that can be fixed in the
+  current work must be fixed before completion.
 
 Fixture and evidence privacy:
 
@@ -659,23 +676,32 @@ Avoid unless explicitly requested:
 Work is complete only when:
 
 - the requested behavior is implemented, not merely planned or reported
-- do not silently or arbitrarily lower an accepted goal, especially by making a
-  change that conflicts with the primary product objective. If a goal appears
-  impossible or unsafe, stop and make an explicit replacement decision from
-  evidence before implementing a smaller behavior
-- do not turn an implementation shortfall into a new definition of success. If
-  the accepted goal was not achieved, document the gap as unfinished work; do
-  not rewrite the goal so the smaller implemented behavior appears complete
+- the accepted work unit can be judged `1`: every baseline requirement is
+  implemented and verified, and every known in-boundary defect, technical debt,
+  and verification gap has been fixed rather than described
+- any missing requirement, unresolved in-boundary defect, in-boundary technical
+  debt, or required-but-unrun verification makes the accepted work unit `0`
+  until fixed or until the accepted boundary is explicitly replaced from
+  evidence
+- the accepted goal has not been silently lowered or redefined around the
+  implemented subset. If the goal appears impossible or unsafe, stop and make an
+  explicit replacement decision from evidence before implementing or claiming a
+  smaller behavior
+- labels such as "blocked", "partially complete", "unverified", "deferred", or
+  "known debt" are failure labels for completion purposes unless the accepted
+  boundary has been explicitly replaced from evidence
 - affected code, docs, interfaces, user flows, and product claims have been
   reviewed after the change
 - the affected boundary still looks robust from product purpose, files, docs,
   protocol, tests, and user flows
-- relevant checks, tests, builds, or manual verification have been run when
-  available
+- required checks, tests, builds, or manual verification have been run. If a
+  required verification cannot be run, the unit remains `0` until the accepted
+  boundary is explicitly replaced from evidence
 - errors introduced by the change have been fixed
-- remaining limitations or skipped checks are stated plainly
+- only out-of-boundary limitations or optional checks remain, and they are stated
+  plainly with their risk
 - non-trivial work is compared against the specification baseline, with every
-  baseline requirement classified as implemented and verified, missing,
+  baseline requirement classified and no in-boundary requirement left missing,
   weakened, or unverified
 - final `git status --short` has been checked and unexpected files are
   classified or cleaned up

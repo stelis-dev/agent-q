@@ -196,6 +196,13 @@ void clear_connect_review_state();
 void cancel_policy_update_after_session_loss(const char* log_reason);
 void cancel_sui_zklogin_proposal_after_session_loss(const char* log_reason);
 void cancel_user_signing_after_session_loss(const char* log_reason);
+signing::UsbSessionLossPlan current_usb_session_loss_plan(TickType_t now);
+void clear_session_bound_state_for_plan(
+    const signing::UsbSessionLossPlan& plan,
+    const char* local_pin_reason,
+    const char* user_signing_reason,
+    bool force_user_signing_clear,
+    const char* log_message);
 void show_persistent_error_recovery_if_needed();
 void finish_user_signing_terminal(
     const char* request_id,
@@ -644,7 +651,12 @@ bool persist_persistent_material_state(signing::ProvisioningPersistedState state
 
 void handle_persistent_material_consistency_error(const char* message)
 {
-    clear_active_session();
+    clear_session_bound_state_for_plan(
+        current_usb_session_loss_plan(xTaskGetTickCount()),
+        "persistent material consistency error during local PIN authorization",
+        "persistent material consistency error during user_signing",
+        true,
+        "Persistent material consistency error; session-bound state cleared");
     ESP_LOGE(kTag, "%s", message != nullptr ? message : "Persistent material consistency error; failing closed");
 }
 
@@ -920,6 +932,23 @@ bool user_signing_signed_response_fits(
 
 void execute_user_signing_critical_section_and_finish(const char* request_id)
 {
+    const signing::UserSigningFlowCoreSnapshot snapshot =
+        signing::user_signing_flow_core_snapshot();
+    if (!provisioned_material_ready()) {
+        if (request_id != nullptr && request_id[0] != '\0') {
+            signing::usb_response_write_method_error(
+                request_id,
+                snapshot.method,
+                "invalid_state");
+        }
+        signing::user_signing_flow_clear();
+        signing::avatar_overlay_show_message(
+            "Signing unavailable",
+            MessageKind::error,
+            UiMode::result,
+            kResultDisplayMs);
+        return;
+    }
     signing::UserSigningOutput signing_output = {};
     UserSigningOutputReadyContext ready_context{request_id};
     const signing::UserSigningHandoffReport signing_report =
@@ -1022,14 +1051,66 @@ signing::UsbSessionLossPlan current_usb_session_loss_plan(TickType_t now)
         signing::user_signing_flow_core_snapshot();
     return signing::usb_session_loss_plan(signing::UsbSessionLossInput{
         signing::session_active(),
-	        signing::connect_approval_active(),
-	        protocol_pin_loss_purpose(protocol_pin),
-	        local_pin_loss_purpose(pin_auth),
-	        signing::policy_update_flow_active(),
-	        signing::sui_zklogin_proposal_flow_active(),
-	        user_signing.active,
-	        user_signing.stage == signing::UserSigningStage::signing_critical_section,
-	    });
+        signing::connect_approval_active(),
+        protocol_pin_loss_purpose(protocol_pin),
+        local_pin_loss_purpose(pin_auth),
+        signing::policy_update_flow_active(),
+        signing::sui_zklogin_proposal_flow_active(),
+        user_signing.active,
+        user_signing.stage == signing::UserSigningStage::signing_critical_section,
+    });
+}
+
+void clear_session_bound_state_for_plan(
+    const signing::UsbSessionLossPlan& plan,
+    const char* local_pin_reason,
+    const char* user_signing_reason,
+    bool force_user_signing_clear,
+    const char* log_message)
+{
+    if (!plan.relevant && !force_user_signing_clear) {
+        return;
+    }
+
+    if (plan.clear_session) {
+        clear_active_session();
+    }
+    if (plan.clear_connect_approval) {
+        clear_connect_review_state();
+    }
+    if (plan.clear_protocol_pin) {
+        signing::protocol_pin_approval_clear();
+    }
+    if (plan.wipe_local_pin_auth) {
+        wipe_local_pin_auth_scratch(local_pin_reason);
+    }
+    if (plan.clear_policy_update_flow) {
+        signing::policy_update_flow_clear();
+    }
+    if (plan.clear_sui_zklogin_proposal_flow) {
+        signing::sui_zklogin_proposal_flow_clear();
+    }
+    if (plan.cancel_user_signing) {
+        cancel_user_signing_after_session_loss(user_signing_reason);
+    } else if (force_user_signing_clear) {
+        signing::user_signing_flow_clear();
+    }
+    if (plan.clear_connect_review_panel) {
+        clear_signing_panel_if_kind(UiPanelKind::connect_review, SensitiveUiClearPolicy::preserve);
+    }
+    if (plan.clear_local_pin_panel) {
+        clear_signing_panel_if_kind(UiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
+    }
+    if (plan.clear_policy_update_review_panel) {
+        clear_signing_panel_if_kind(UiPanelKind::policy_update_review, SensitiveUiClearPolicy::preserve);
+    }
+    if (plan.clear_sui_zklogin_review_panel) {
+        clear_signing_panel_if_kind(UiPanelKind::sui_zklogin_review, SensitiveUiClearPolicy::preserve);
+    }
+    if (plan.clear_user_signing_review_panel || force_user_signing_clear) {
+        clear_signing_panel_if_kind(UiPanelKind::user_signing_review, SensitiveUiClearPolicy::preserve);
+    }
+    ESP_LOGW(kTag, "%s", log_message);
 }
 
 void show_usb_disconnected_message()
@@ -1068,47 +1149,12 @@ void clear_usb_session_state_for_host_loss()
 
     // Line-framing state is transport state and is reset at the disconnect edge, which
     // always precedes this confirm-path call; this function clears session-bound state.
-    if (!plan.relevant) {
-        return;
-    }
-
-    if (plan.clear_session) {
-        clear_active_session();
-    }
-    if (plan.clear_connect_approval) {
-        clear_connect_review_state();
-    }
-    if (plan.clear_protocol_pin) {
-        signing::protocol_pin_approval_clear();
-    }
-    if (plan.wipe_local_pin_auth) {
-        wipe_local_pin_auth_scratch("USB host link lost during local PIN authorization");
-    }
-    if (plan.clear_policy_update_flow) {
-        signing::policy_update_flow_clear();
-    }
-    if (plan.clear_sui_zklogin_proposal_flow) {
-        signing::sui_zklogin_proposal_flow_clear();
-    }
-    if (plan.cancel_user_signing) {
-        cancel_user_signing_after_session_loss("USB host link lost during user_signing");
-    }
-    if (plan.clear_connect_review_panel) {
-        clear_signing_panel_if_kind(UiPanelKind::connect_review, SensitiveUiClearPolicy::preserve);
-    }
-    if (plan.clear_local_pin_panel) {
-        clear_signing_panel_if_kind(UiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
-    }
-    if (plan.clear_policy_update_review_panel) {
-        clear_signing_panel_if_kind(UiPanelKind::policy_update_review, SensitiveUiClearPolicy::preserve);
-    }
-    if (plan.clear_sui_zklogin_review_panel) {
-        clear_signing_panel_if_kind(UiPanelKind::sui_zklogin_review, SensitiveUiClearPolicy::preserve);
-    }
-    if (plan.clear_user_signing_review_panel) {
-        clear_signing_panel_if_kind(UiPanelKind::user_signing_review, SensitiveUiClearPolicy::preserve);
-    }
-    ESP_LOGW(kTag, "USB host SOF lost; session-bound state cleared");
+    clear_session_bound_state_for_plan(
+        plan,
+        "USB host link lost during local PIN authorization",
+        "USB host link lost during user_signing",
+        false,
+        "USB host SOF lost; session-bound state cleared");
 }
 
 // Hold the session briefly after a USB drop so a transient resume can reconnect
@@ -1339,6 +1385,27 @@ bool write_payload_delivery_connect_busy(
         id,
         writer,
         signing::UsbOperationType::connect);
+}
+
+bool write_connect_admission_error(
+    const char* id,
+    const UsbOperationResponseWriter& writer)
+{
+    if (signing::session_active()) {
+        return false;
+    }
+    return write_payload_delivery_connect_busy(id, writer);
+}
+
+bool write_existing_session_connect_response(const char* id)
+{
+    if (!signing::session_active()) {
+        return false;
+    }
+    if (!write_connect_approved_response(id)) {
+        signing::usb_response_log_write_failure("connect", id);
+    }
+    return true;
 }
 
 bool write_payload_delivery_policy_propose_busy(
@@ -3934,7 +4001,8 @@ const signing::UsbConnectHandlerOps& connect_handler_ops()
 {
     static const signing::UsbConnectHandlerOps ops = {
         provisioned_material_ready,
-        write_payload_delivery_connect_busy,
+        write_connect_admission_error,
+        write_existing_session_connect_response,
         current_timeout_tick,
         make_connect_approval_window,
         signing::connect_approval_begin,

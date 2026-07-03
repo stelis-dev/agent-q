@@ -42,7 +42,7 @@ export const DEVICE_METHOD_ROWS = [
     payloadRule: "required",
     payloadSchemaOwner: "ConnectPayload",
     resultSchemaOwner: "ConnectResult",
-    firmwareGate: "provisioned_material_policy_auth_approval",
+    firmwareGate: "session_recovery_or_material_bootstrap_approval",
   },
   {
     method: "disconnect",
@@ -58,7 +58,7 @@ export const DEVICE_METHOD_ROWS = [
     payloadRule: "forbidden",
     payloadSchemaOwner: "no payload",
     resultSchemaOwner: "CapabilitiesResult",
-    firmwareGate: "active_session_provisioned_material",
+    firmwareGate: "active_session_target_capability_state",
   },
   {
     method: "get_accounts",
@@ -66,7 +66,7 @@ export const DEVICE_METHOD_ROWS = [
     payloadRule: "forbidden",
     payloadSchemaOwner: "no payload",
     resultSchemaOwner: "AccountsResult",
-    firmwareGate: "active_session_account_material",
+    firmwareGate: "active_session_account_availability",
   },
   {
     method: "policy_get",

@@ -26,10 +26,14 @@ state as signing readiness and must not decide whether signing is safe.
 
 ## Product State Diagram
 
-This diagram shows product state, not UI state. Firmware owns these transitions.
-The host process, MCP clients, and Admin Page requests may submit requests, but they are
-not authority. Firmware state transitions occur only as consequences of
-Firmware-owned conditions and validated local input.
+This diagram shows the shared product-state flow, not UI state and not a full
+target-internal state machine. Firmware targets use this top-level flow and
+shared state vocabulary at the protocol boundary, but each hardware target
+defines its own internal conditions, stored material, local authentication,
+power behavior, and UI substates before it projects into the shared states.
+The host process, MCP clients, and Admin Page requests may submit requests, but
+they are not authority. Firmware state transitions occur only as consequences
+of Firmware-owned conditions and validated local input.
 
 ```mermaid
 stateDiagram-v2
@@ -45,6 +49,7 @@ stateDiagram-v2
 
     Unprovisioned: get_status, identify_device
     Unprovisioned: device-local setup bubble and backup phrase controls
+    Unprovisioned: target-owned material-install bootstrap when a target has local setup but missing target-owned material
     Provisioning: get_status
     Provisioning: device-local cancel
     Provisioned: get_status, identify_device, connect, disconnect
@@ -135,6 +140,15 @@ or pending approval.
 
 No root signing material is stored.
 
+For targets whose implemented account/signing capability does not use root
+signing material, this projection means the target-owned material required for
+that capability is not yet available. A limited material-install bootstrap
+under `unprovisioned` is valid only after target-local setup is complete and
+only for installing the target-owned material required by implemented
+capabilities. That bootstrap uses shared protocol methods, shared schemas, and
+shared errors. It does not expose signing readiness or account readiness until
+the target-owned material exists.
+
 Allowed:
 
 - `get_status`
@@ -142,10 +156,11 @@ Allowed:
 - device-local setup speech bubble, Generate/Import choice, backup phrase
   Cancel/Confirm controls, and mnemonic import word-entry controls
 
-Rejected:
+Rejected unless the target-specific exception below applies:
 
-- `connect` until persistent root material, active policy, local PIN verifier,
-  and signing authorization mode exist and the device is `provisioned`
+- `connect` in the current StackChan root-material flow until persistent root
+  material, active policy, local PIN verifier, and signing authorization mode
+  exist and the device is `provisioned`
 - `get_capabilities`
 - `get_accounts`
 - `policy_get`
@@ -156,6 +171,16 @@ Rejected:
 - policy read/write
 - signing
 - external evidence or price fetch
+
+Target-specific exception:
+
+- A target with completed local setup but missing target-owned account/signing
+  material admits a limited `connect`, `disconnect`, `get_capabilities`,
+  `get_accounts`, `credential_prepare`, `credential_propose`, and
+  `payload_transfer` path only for installing that missing material. The path
+  remains Firmware-owned and approval-gated. It does not allow policy
+  read/write, approval history, transaction signing, personal-message signing,
+  or any target-specific public schema.
 
 Current mnemonic setup and mnemonic import are volatile substates under
 `unprovisioned` until the user physically confirms backup or completes local
@@ -303,10 +328,14 @@ the current StackChan CoreS3 source. Firmware stores at most one Sui active
 identity: native Ed25519 when no zkLogin proof record is active, or zkLogin when
 a locally stored proof record is active. `get_accounts` and
 `get_capabilities.chains[].accounts` project only that active identity.
-`credential_prepare` returns native scheme-prefixed Ed25519 public material for
-an external zkLogin nonce/JWT/prover flow, but only while native identity is
-active. `credential_propose` accepts bounded zkLogin proof material, shows a
-device-local review, requires local PIN, and stores the proof only after commit.
+On StackChan CoreS3, `credential_prepare` returns native scheme-prefixed
+Ed25519 public material for an external zkLogin nonce/JWT/prover flow, but only
+while native identity is active. The same shared credential methods also cover a
+limited material-install bootstrap when a target's local setup is complete and
+its target-owned credential material is missing.
+`credential_propose` accepts bounded zkLogin proof material, shows a
+device-local review, requires local authentication, and stores the proof only
+after commit.
 It does not store raw JWTs and does not claim local OAuth, prover, or Sui
 validator verification. The stored proof record includes its Sui network; when
 zkLogin is active, `sign_transaction` and `sign_personal_message` require the
@@ -674,7 +703,10 @@ Rejected until unlocked:
 - policy update
 - signing
 
-This state is reserved until an unlock model is implemented.
+Targets use this projection only after they implement a target-local unlock
+model. While locked, status and identification remain available when the target
+allows those read-like operations, but account, policy, credential, and signing
+methods fail closed until the target-local unlock gate succeeds.
 
 ## API / State Matrix
 
@@ -682,15 +714,18 @@ This state is reserved until an unlock model is implemented.
 |---|---:|---:|---:|---:|---:|---|
 | `get_status` | O | O | O | O | O | Firmware |
 | `identify_device` | O | O* | O | O | O | Firmware |
-| `connect` | X | X | O | X | TBD | Firmware |
+| `connect` | B | X | O | X | X | Firmware |
 | `disconnect` | S | S | S | S | S | Firmware |
 | USB provisioning/reset/diagnostic requests | X | X | X | X | X | Firmware |
-| `get_capabilities` | X | X | O | X | X | Firmware |
-| `get_accounts` | X | X | O | X | X | Firmware |
+| `get_capabilities` | B | X | O | X | X | Firmware |
+| `get_accounts` | B | X | O | X | X | Firmware |
 | `policy_get` | X | X | O | X | X | Firmware |
 | `get_approval_history` | X | X | O | X | X | Firmware |
-| `credential_prepare` | X | X | O (source-wired-not-product-active; native Sui identity only) | X | X | Firmware |
-| `credential_propose` | X | X | O (source-wired-not-product-active; native Sui identity only; review + PIN before persistence) | X | X | Firmware |
+| `get_result` | X | X | O | X | X | Firmware |
+| `ack_result` | X | X | O | X | X | Firmware |
+| `credential_prepare` | B | X | O (source-wired-not-product-active; StackChan native Sui identity only) | X | X | Firmware |
+| `credential_propose` | B | X | O (source-wired-not-product-active; StackChan native Sui identity only; review + local authentication before persistence) | X | X | Firmware |
+| `payload_transfer` actions | B | X | O | X | X | Firmware |
 | `sign_transaction` | X | X | O (source-wired-not-product-active) | X | X | Firmware |
 | `sign_personal_message` | X | X | O (source-wired-not-product-active; user authorization mode only) | X | X | Firmware |
 | policy read | X | X | O | X | X | Firmware |
@@ -700,6 +735,21 @@ This state is reserved until an unlock model is implemented.
 persistent-material consistency before emitting status, and a detected
 inconsistency can fail closed into `error` and clear stale runtime session state.
 
+`B` means target-owned material-install bootstrap only. The target must have
+completed its local setup but still lack the target-owned material required for
+its implemented account/signing capabilities. Bootstrap access is limited to
+installing that material through shared methods and shared schemas; it must not
+grant account readiness, signing readiness, policy access, approval-history
+access, or target-specific protocol behavior.
+
+The `connect` row first recovers an already approved live Firmware session on
+the current USB physical link. That recovery returns the existing session id
+and does not start a new approval, create a replacement session, clear
+session-bound scratch, or grant authority beyond the already approved session.
+If no live session exists, `connect` admits a new Firmware session only when the
+target's current session policy allows one. Firmware returns `invalid_state`
+when its current session policy refuses both session recovery and new admission.
+
 `O*`: allowed only when the request does not disrupt local setup UI. `S` means
 session cleanup only: Firmware does not require material readiness, but a
 missing or mismatched session returns `invalid_session`. `S` operations may
@@ -708,7 +758,9 @@ state is active, because external session teardown must not interleave with
 device-local sensitive UI. Idle Settings menu is not itself a sensitive flow and
 does not end the active RAM session. Other `O` operations may still return
 `busy` while a physical approval prompt or device-only setup material display is
-active.
+active. The current StackChan `get_status` path is not part of that busy-return
+class for physical prompts or payload delivery; it remains a safe status read
+except for its material-consistency fail-closed path.
 
 The host process may hide unavailable operations, but Firmware must still reject them.
 
@@ -722,18 +774,27 @@ scratch where applicable, input deadline, and the RAM-only stored-PIN attempt
 budget shared with reset PIN verification. Submitting a complete PIN pauses
 the input deadline while stored-PIN verification runs. A wrong PIN result
 returns to the same PIN-entry state by resuming the remaining paused input
-window, unless the shared lockout is active. The input pause does not pause the
+window, unless the shared lockout is active. While that lockout is active, PIN
+input, delete, and submit stay unavailable until lockout release. On the
+current StackChan target, this lockout is the RAM-only PIN attempt budget for
+the local PIN flow; it is not projected as the protocol-visible `locked` device
+state. Protocol-backed connect, policy-update, and device-confirmed signing PIN
+flows keep their request-backed PIN input window paused while lockout is active.
+After lockout release, the owner resumes the remaining PIN input window when
+the request/session state is still valid; otherwise the owner closes through its
+normal timeout, session, or cleanup path. The input pause does not pause the
 local-auth worker watchdog; a stalled or lost worker result fails closed as
-local authentication unavailable. Protocol-backed PIN purposes (`connect`,
-`policy_update`, and device-confirmed signing) also have an immutable outer
-request window owned by their protocol state owner. That request window is the
-admission boundary for review/PIN entry and caps PIN input windows before the
-PIN is submitted. A request-backed sensitive flow owner stores a timeout window
-only when it is structurally valid and currently open at the owner-observed
-tick; callers may create candidate windows, but caller freshness is not the
-state authority. After a complete PIN has been submitted, the request window is
-not the terminal timeout authority for stored-PIN cryptographic processing; the
-local-auth worker watchdog, session/material checks, and the next state guards
+local authentication unavailable.
+Protocol-backed PIN purposes (`connect`, `policy_update`, and device-confirmed
+signing) also have an immutable outer request window owned by their protocol
+state owner. That request window is the admission boundary for review/PIN entry
+and caps PIN input windows before the PIN is submitted. A request-backed
+sensitive flow owner stores a timeout window only when it is structurally valid
+and currently open at the owner-observed tick; callers may create candidate
+windows, but caller freshness is not the state authority. After a complete PIN
+has been submitted, the request window is not the terminal timeout authority
+for stored-PIN cryptographic processing; the local-auth worker watchdog,
+session/material checks, and the next state guards
 remain authoritative. For policy updates,
 `local_pin_auth` owns
 only PIN verification; the pending proposal summary, policy hash, commit stage,

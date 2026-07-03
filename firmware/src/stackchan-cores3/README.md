@@ -80,13 +80,14 @@ The current implementation includes:
   clearing stale runtime session state.
 - a USB JSONL `identify_device` request that shows a short temporary code over
   the current screen and then returns to the previous device state.
-- protocol handling for `connect` and `disconnect`. The current target accepts
-  `connect` only after material-backed `provisioned` state and device-local
+- protocol handling for `connect` and `disconnect`. The current target creates a
+  new session only after material-backed `provisioned` state and device-local
   approval. The target shows a connect review modal first; the device-local
   human approval input mode then selects either stored-PIN entry or physical
-  Confirm. Changing that input mode is a local Settings action and requires
-  stored PIN verification. Firmware sessions are RAM-only and do not authorize
-  signing.
+  Confirm. A sessionless `connect` on the same USB physical link can recover an
+  already approved live RAM session without new approval or replacement.
+  Changing that input mode is a local Settings action and requires stored PIN
+  verification. Firmware sessions are RAM-only and do not authorize signing.
 - a USB JSONL `get_capabilities` request that returns Firmware-authored Sui
   account identity capability over an approved session while `provisioned`:
   native Ed25519 when no zkLogin proof is active, or the active zkLogin identity
@@ -188,8 +189,10 @@ The current implementation includes:
   raises pitch after the default avatar is attached or the screen wakes, then
   moves to centered yaw and lowered pitch before screen-off or power-off.
 
-Runtime Firmware sessions are implemented only as RAM-held protocol sessions
-after material-backed provisioning. Sessions do not authorize signing.
+Runtime Firmware sessions are implemented only as RAM-held protocol sessions.
+The current target creates a new session after material-backed provisioning and
+can recover an approved live session on the same USB physical link. Sessions do
+not authorize signing.
 
 This target reports read-only identity capability with no delegated public
 methods plus top-level `signing`, derives read-only public account identity

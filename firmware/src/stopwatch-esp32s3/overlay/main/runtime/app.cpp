@@ -74,7 +74,7 @@ void RuntimeApp::onOpen()
         display_restore_brightness_ = 80;
     }
     GetHAL().setBackLightBrightness(display_restore_brightness_, false);
-    sync_power_button_policy();
+    sync_power_button_policy(GetHAL().isExternalPowerPresent());
 
     LvglLockGuard lock;
     create_ui();
@@ -87,8 +87,9 @@ void RuntimeApp::onRunning()
 
     if (key_manager_) {
         const input::KeyEvent key_event = key_manager_->update();
-        sync_power_button_policy();
-        handle_power_button();
+        const bool external_power_present = GetHAL().isExternalPowerPresent();
+        sync_power_button_policy(external_power_present);
+        handle_power_button(external_power_present);
         handle_key_event(key_event);
     }
 
@@ -229,11 +230,11 @@ void RuntimeApp::handle_key_event(input::KeyEvent event)
     }
 }
 
-void RuntimeApp::handle_power_button()
+void RuntimeApp::handle_power_button(bool external_power_present)
 {
     switch (GetHAL().readPowerButtonEvent()) {
         case Hal::PowerButtonEvent::shortClick:
-            if (usb_power_present_for_power_policy()) {
+            if (external_power_present) {
                 set_display_on(!display_on_);
             }
             break;
@@ -242,21 +243,15 @@ void RuntimeApp::handle_power_button()
     }
 }
 
-void RuntimeApp::sync_power_button_policy()
+void RuntimeApp::sync_power_button_policy(bool external_power_present)
 {
-    const bool external_power_present = GetHAL().isExternalPowerPresent();
-    if (power_policy_synced_ && external_power_present_ == external_power_present) {
+    if (power_policy_synced_ && synced_external_power_present_ == external_power_present) {
         return;
     }
     if (GetHAL().setPowerButtonSingleClickResetEnabled(!external_power_present)) {
-        external_power_present_ = external_power_present;
+        synced_external_power_present_ = external_power_present;
         power_policy_synced_ = true;
     }
-}
-
-bool RuntimeApp::usb_power_present_for_power_policy() const
-{
-    return external_power_present_;
 }
 
 void RuntimeApp::set_display_on(bool display_on, bool feedback, bool lvgl_locked)

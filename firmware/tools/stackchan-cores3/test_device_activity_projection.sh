@@ -287,8 +287,8 @@ int main()
            "payload delivery finalized projects to busy");
     expect(!signing::device_activity_allows_local_settings_start(activity),
            "payload delivery finalized blocks local settings start");
-    expect(!signing::device_activity_blocks_user_signing_ingress(activity),
-           "payload delivery finalized leaves signing admission request-aware");
+    expect(signing::device_activity_blocks_user_signing_ingress(activity),
+           "payload delivery finalized blocks signing ingress");
     expect_usb_block(activity, false, false, true, "Device has a pending signable payload.");
     expect_usb_block(activity, false, true, false, nullptr);
 

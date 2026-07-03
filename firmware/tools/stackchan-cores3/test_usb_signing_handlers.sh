@@ -123,6 +123,8 @@ signing::UserSigningFlowBeginResult g_begin_result =
     signing::UserSigningFlowBeginResult::ok;
 bool g_policy_response_ok = true;
 bool g_show_review_ok = true;
+bool g_material_ready_initial = true;
+bool g_material_ready_after_preflight = true;
 const char* g_policy_code = "policy_signed";
 const char* g_policy_message = "Policy authorized signing.";
 
@@ -179,6 +181,8 @@ void reset_state()
     g_begin_result = signing::UserSigningFlowBeginResult::ok;
     g_policy_response_ok = true;
     g_show_review_ok = true;
+    g_material_ready_initial = true;
+    g_material_ready_after_preflight = true;
     g_policy_code = "policy_signed";
     g_policy_message = "Policy authorized signing.";
     g_last_id = nullptr;
@@ -207,7 +211,7 @@ void log_write_failure(const char*, const char* id)
 bool material_ready()
 {
     g_material_calls += 1;
-    return true;
+    return g_material_calls == 1 ? g_material_ready_initial : g_material_ready_after_preflight;
 }
 
 bool busy()
@@ -673,6 +677,53 @@ void test_retry_consumed_writes_no_error()
     assert(g_begin_tx_calls == 0);
 }
 
+void test_policy_transaction_rechecks_material_after_preflight()
+{
+    reset_state();
+    g_mode = signing::AuthorizationMode::policy;
+    g_material_ready_after_preflight = false;
+    JsonDocument request;
+    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    assert(g_tx_preflight_calls == 1);
+    assert(g_material_calls == 2);
+    assert(g_write_error_calls == 1);
+    assert(strcmp(g_last_error_code, "invalid_state") == 0);
+    assert(g_policy_eval_calls == 0);
+    assert(g_policy_execute_calls == 0);
+    assert(g_policy_response_calls == 0);
+    assert(g_clear_tx_prepared_calls == 2);
+}
+
+void test_user_transaction_rechecks_material_after_preflight()
+{
+    reset_state();
+    g_material_ready_after_preflight = false;
+    JsonDocument request;
+    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    assert(g_tx_preflight_calls == 1);
+    assert(g_material_calls == 2);
+    assert(g_write_error_calls == 1);
+    assert(strcmp(g_last_error_code, "invalid_state") == 0);
+    assert(g_begin_tx_calls == 0);
+    assert(g_show_review_calls == 0);
+    assert(g_clear_tx_prepared_calls == 2);
+}
+
+void test_personal_message_rechecks_material_after_preflight()
+{
+    reset_state();
+    g_material_ready_after_preflight = false;
+    JsonDocument request;
+    signing::handle_usb_sign_personal_message_request("id-2", request, make_writer(), make_ops());
+    assert(g_pm_preflight_calls == 1);
+    assert(g_material_calls == 2);
+    assert(g_write_error_calls == 1);
+    assert(strcmp(g_last_error_code, "invalid_state") == 0);
+    assert(g_begin_pm_calls == 0);
+    assert(g_show_review_calls == 0);
+    assert(g_clear_pm_prepared_calls == 1);
+}
+
 void test_policy_signed_path_cleans_outputs()
 {
     reset_state();
@@ -838,6 +889,9 @@ int main()
     test_transaction_preparation_unsupported_notifies();
     test_transaction_preparation_payload_too_large_notifies();
     test_retry_consumed_writes_no_error();
+    test_policy_transaction_rechecks_material_after_preflight();
+    test_user_transaction_rechecks_material_after_preflight();
+    test_personal_message_rechecks_material_after_preflight();
     test_policy_signed_path_cleans_outputs();
     test_policy_response_failure_logs_and_cleans();
     test_policy_signing_failed_path_cleans_outputs();

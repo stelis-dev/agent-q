@@ -19,6 +19,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
 ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
@@ -28,7 +29,8 @@ for required in \
   "${RUNTIME_DIR}/usb_connect_handler.h" \
   "${RUNTIME_DIR}/usb_operation_response_writer.h" \
   "${RUNTIME_DIR}/connect_approval.h" \
-  "${RUNTIME_DIR}/timeout_window.h"; do
+  "${RUNTIME_DIR}/timeout_window.h" \
+  "${COMMON_ROOT}/protocol/request_id.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -67,6 +69,7 @@ int g_material_calls = 0;
 int g_busy_calls = 0;
 int g_make_window_calls = 0;
 int g_begin_calls = 0;
+int g_existing_session_calls = 0;
 int g_write_rejected_calls = 0;
 int g_show_unavailable_calls = 0;
 int g_reset_queue_calls = 0;
@@ -78,6 +81,7 @@ signing::TimeoutTick g_last_begin_now = 0;
 bool g_material_ready = true;
 bool g_busy = false;
 bool g_begin_ok = true;
+bool g_existing_session = false;
 const char* g_last_id = nullptr;
 const char* g_last_client_name = nullptr;
 const char* g_last_error_code = nullptr;
@@ -92,6 +96,7 @@ void reset_state()
     g_busy_calls = 0;
     g_make_window_calls = 0;
     g_begin_calls = 0;
+    g_existing_session_calls = 0;
     g_write_rejected_calls = 0;
     g_show_unavailable_calls = 0;
     g_reset_queue_calls = 0;
@@ -103,6 +108,7 @@ void reset_state()
     g_material_ready = true;
     g_busy = false;
     g_begin_ok = true;
+    g_existing_session = false;
     g_last_id = nullptr;
     g_last_client_name = nullptr;
     g_last_error_code = nullptr;
@@ -139,6 +145,13 @@ bool write_busy(const char* id, const signing::UsbOperationResponseWriter& write
         writer.write_error(id, "busy");
     }
     return g_busy;
+}
+
+bool write_existing_session(const char* id)
+{
+    g_existing_session_calls += 1;
+    g_last_id = id;
+    return g_existing_session;
 }
 
 signing::TimeoutTick current_tick()
@@ -218,6 +231,7 @@ signing::UsbConnectHandlerOps make_ops()
     return signing::UsbConnectHandlerOps{
         material_ready,
         write_busy,
+        write_existing_session,
         current_tick,
         make_window,
         begin_connect,
@@ -248,11 +262,14 @@ int main()
     {
         reset_state();
         g_material_ready = false;
+        g_existing_session = true;
         JsonDocument request = parse_request(valid_request());
         signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        assert(g_material_calls == 1);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
         assert(g_busy_calls == 0);
+        assert(g_existing_session_calls == 0);
         assert(g_begin_calls == 0);
     }
 
@@ -338,6 +355,29 @@ int main()
 
     {
         reset_state();
+        g_existing_session = true;
+        JsonDocument request = parse_request(valid_request());
+        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        assert(g_existing_session_calls == 1);
+        assert(g_begin_calls == 0);
+        assert(g_reset_queue_calls == 0);
+        assert(g_show_review_calls == 0);
+        assert(g_write_error_calls == 0);
+    }
+
+    {
+        reset_state();
+        g_existing_session = true;
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":{\"clientName\":\"Agent-Q\",\"extra\":true}}");
+        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        assert(g_existing_session_calls == 0);
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "invalid_params") == 0);
+        assert(g_begin_calls == 0);
+    }
+
+    {
+        reset_state();
         g_begin_ok = false;
         JsonDocument request = parse_request(valid_request());
         signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
@@ -382,6 +422,7 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
+  -I"${COMMON_ROOT}" \
   -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
   "${RUNTIME_DIR}/usb_connect_handler.cpp" \

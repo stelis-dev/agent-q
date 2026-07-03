@@ -12,6 +12,7 @@ struct UsbConnectHandlerOps {
     bool (*write_connect_admission_error)(
         const char* id,
         const UsbOperationResponseWriter& writer);
+    bool (*write_existing_session_connect_response)(const char* id);
     TimeoutTick (*current_tick)();
     TimeoutWindow (*make_approval_window)(TimeoutTick now);
     bool (*begin_connect_approval)(

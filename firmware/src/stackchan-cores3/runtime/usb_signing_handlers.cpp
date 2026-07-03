@@ -651,6 +651,11 @@ void handle_usb_sign_transaction_request(
         clear_sign_transaction_preflight_scratch(ops, preflight);
         return;
     }
+    if (!ops.material_ready()) {
+        writer.write_error(id, "invalid_state");
+        clear_sign_transaction_preflight_scratch(ops, preflight);
+        return;
+    }
     if (preflight.signing_mode == AuthorizationMode::policy) {
         handle_sign_transaction_policy_mode_with_prepared_borrow(
             id,
@@ -704,6 +709,11 @@ void handle_usb_sign_personal_message_request(
             &preflight);
     if (preflight_result != PreflightResult::ok) {
         write_sign_personal_message_preflight_error(id, preflight_result, preflight, writer, ops);
+        return;
+    }
+    if (!ops.material_ready()) {
+        writer.write_error(id, "invalid_state");
+        ops.clear_prepared_personal_message(&preflight.prepared);
         return;
     }
 

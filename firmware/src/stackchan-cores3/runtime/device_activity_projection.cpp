@@ -131,7 +131,7 @@ bool device_activity_blocks_user_signing_ingress(
            activity.policy_update_active ||
            activity.sui_zklogin_proposal_active ||
            activity.provisioning_flow_active ||
-           activity.payload_delivery_receiving ||
+           activity.payload_delivery_active ||
            activity.local_reset_active ||
            activity.local_pin_auth_flow_active ||
            activity.user_signing_active;

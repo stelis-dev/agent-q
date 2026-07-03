@@ -19,6 +19,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 LOCAL_PIN_AUTH_UI_HEADER="${RUNTIME_DIR}/local_pin_auth_ui_flow.h"
 LOCAL_PIN_AUTH_UI_SOURCE="${RUNTIME_DIR}/local_pin_auth_ui_flow.cpp"
 MODAL_TRANSITION_SOURCE="${RUNTIME_DIR}/modal_transition.cpp"
@@ -885,6 +886,7 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
+  -I"${COMMON_ROOT}" \
   -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/protocol_pin_approval_test.cpp" \
   "${RUNTIME_DIR}/protocol_pin_approval.cpp" \

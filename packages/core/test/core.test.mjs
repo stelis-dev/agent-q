@@ -746,6 +746,42 @@ test("connectDevice approved stores in-memory session and does not persist sessi
   });
 });
 
+test("connectDevice can restore a lost runtime session mirror from Firmware connect recovery", async () => {
+  await withStore(async (store) => {
+    let connectCalls = 0;
+    const coreBeforeRestart = new DeviceCore(
+      store,
+      defaultDriver({
+        async connectDevice() {
+          connectCalls += 1;
+          return connectResult({ sessionId: "session_approved" });
+        },
+      }),
+    );
+    await coreBeforeRestart.scanDevices();
+    await coreBeforeRestart.selectDevice({ deviceId: device.deviceId });
+    await coreBeforeRestart.connectDevice({});
+
+    const coreAfterRestart = new DeviceCore(
+      store,
+      defaultDriver({
+        async connectDevice() {
+          connectCalls += 1;
+          return connectResult({ sessionId: "session_approved" });
+        },
+      }),
+    );
+
+    const result = await coreAfterRestart.connectDevice({});
+    assert.equal(connectCalls, 2);
+    assert.equal(result.source, "connected");
+    assert.equal(result.sessionTtlMs, MAX_SESSION_TTL_MS);
+    assert.equal("sessionId" in result, false, "restored connect result must not expose sessionId");
+    const listed = await coreAfterRestart.listDevices();
+    assert.equal(listed.devices[0].runtimeSession?.sessionTtlMs, MAX_SESSION_TTL_MS);
+  });
+});
+
 test("connectDevice reuses an active runtime session without fresh Firmware approval", async () => {
   await withStore(async (store) => {
     let connectCalls = 0;

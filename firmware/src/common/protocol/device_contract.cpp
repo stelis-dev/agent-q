@@ -8,10 +8,10 @@ namespace {
 constexpr DeviceMethodRow kDeviceMethods[] = {
     {"get_status", DeviceSessionRule::forbidden, DevicePayloadRule::forbidden, "no payload", "StatusResult", "status_material_consistency"},
     {"identify_device", DeviceSessionRule::forbidden, DevicePayloadRule::required, "IdentifyDevicePayload", "IdentifyDeviceResult", "identification_display"},
-    {"connect", DeviceSessionRule::forbidden, DevicePayloadRule::required, "ConnectPayload", "ConnectResult", "provisioned_material_policy_auth_approval"},
+    {"connect", DeviceSessionRule::forbidden, DevicePayloadRule::required, "ConnectPayload", "ConnectResult", "session_recovery_or_material_bootstrap_approval"},
     {"disconnect", DeviceSessionRule::required, DevicePayloadRule::forbidden, "no payload", "DisconnectResult", "active_session_cleanup"},
-    {"get_capabilities", DeviceSessionRule::required, DevicePayloadRule::forbidden, "no payload", "CapabilitiesResult", "active_session_provisioned_material"},
-    {"get_accounts", DeviceSessionRule::required, DevicePayloadRule::forbidden, "no payload", "AccountsResult", "active_session_account_material"},
+    {"get_capabilities", DeviceSessionRule::required, DevicePayloadRule::forbidden, "no payload", "CapabilitiesResult", "active_session_target_capability_state"},
+    {"get_accounts", DeviceSessionRule::required, DevicePayloadRule::forbidden, "no payload", "AccountsResult", "active_session_account_availability"},
     {"policy_get", DeviceSessionRule::required, DevicePayloadRule::forbidden, "no payload", "PolicyGetResult", "active_session_policy_store"},
     {"get_approval_history", DeviceSessionRule::required, DevicePayloadRule::required, "ApprovalHistoryPayload", "ApprovalHistoryResult", "active_session_approval_history_store"},
     {"sign_transaction", DeviceSessionRule::required, DevicePayloadRule::required, "SuiSignTransactionPayload", "SignTransactionResult", "active_session_account_binding_signing_authorization"},

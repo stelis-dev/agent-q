@@ -160,10 +160,16 @@ void usb_response_log_write_failure(const char* response_type, const char* id)
              id != nullptr ? id : "");
 }
 
-bool usb_response_write_ack_result(const char* id)
+bool usb_response_write_empty_success_result(const char* id, const char* method)
 {
     JsonDocument result;
-    return usb_response_write_success_result(id, "ack_result", result.as<JsonObjectConst>());
+    JsonObject object = result.to<JsonObject>();
+    return usb_response_write_success_result(id, method, object);
+}
+
+bool usb_response_write_ack_result(const char* id)
+{
+    return usb_response_write_empty_success_result(id, "ack_result");
 }
 
 bool usb_response_write_connect_approved(
@@ -188,8 +194,7 @@ bool usb_response_write_connect_rejected(
 
 bool usb_response_write_disconnect_success(const char* id)
 {
-    JsonDocument result;
-    return usb_response_write_success_result(id, "disconnect", result.as<JsonObjectConst>());
+    return usb_response_write_empty_success_result(id, "disconnect");
 }
 
 }  // namespace signing

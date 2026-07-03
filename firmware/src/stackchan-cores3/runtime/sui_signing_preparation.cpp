@@ -170,10 +170,7 @@ SuiSigningPreparationResult prepare_sui_sign_transaction_owned_common(
     }
     out->user_mode_authorization_covered =
         authorization_coverage.user_mode_authorization_covered;
-    out->policy_mode_authorization_covered =
-        authorization_coverage.policy_mode_authorization_covered;
     out->user_authorization_outcome = authorization_coverage.user_outcome;
-    out->policy_authorization_outcome = authorization_coverage.policy_outcome;
     const SuiActiveIdentity active_identity = resolve_active_sui_identity();
     SuiAccountSettings account_settings = kDefaultSuiAccountSettings;
     if (active_identity.kind != SuiActiveIdentityKind::error &&

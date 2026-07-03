@@ -36,8 +36,11 @@ Implemented today:
 
 - USB device discovery, status handshake, and identification.
 - host-local device selection and registry (labels, purpose routing).
-- A connect/disconnect runtime session held in Firmware RAM after
-  material-backed `provisioned` state. The session does not authorize signing.
+- A connect/disconnect runtime session held in Firmware RAM. The current
+  StackChan CoreS3 target creates a new session only after material-backed
+  `provisioned` state and device-local approval. A sessionless `connect` on the
+  same USB physical link may recover that already approved live RAM session
+  without a new approval. The session does not authorize signing.
 - Device-local approval on the StackChan CoreS3 target for `connect`. The
   target shows a connect review modal first; the device-local human approval
   input mode then selects local 6-digit PIN entry or physical Confirm. Changing

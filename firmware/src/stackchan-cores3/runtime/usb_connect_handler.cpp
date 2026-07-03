@@ -65,6 +65,11 @@ void handle_usb_connect_request(
         return;
     }
 
+    if (ops.write_existing_session_connect_response != nullptr &&
+        ops.write_existing_session_connect_response(id)) {
+        return;
+    }
+
     if (ops.current_tick == nullptr ||
         ops.make_approval_window == nullptr ||
         ops.begin_connect_approval == nullptr ||
