@@ -32,6 +32,13 @@ enum class ApprovalHistoryReadResult {
     invalid,
 };
 
+enum class ApprovalHistoryStorageStatus {
+    missing,
+    active,
+    invalid,
+    storage_error,
+};
+
 enum class ApprovalHistoryEventKind {
     policy_update,
     signing,
@@ -115,6 +122,7 @@ ApprovalHistoryReadResult approval_history_read_page(
     uint64_t before_sequence,
     size_t limit,
     ApprovalHistoryPage* output);
+ApprovalHistoryStorageStatus approval_history_status();
 bool approval_history_wipe();
 
 const char* approval_history_confirmation_kind_to_string(ApprovalHistoryConfirmationKind value);

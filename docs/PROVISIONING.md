@@ -68,9 +68,9 @@ Rules:
   PIN verifier, signing authorization mode, and Sui account settings are all
   present. New setup initializes the Sui account setting to reject gas sponsors.
 - The local PIN verifier is a DEV_PROFILE UX gate for connect approval when
-  enabled, settings changes, local reset, the current policy-update proposal
-  flow, and sensitive local writes. It is not root-material encryption or
-  physical extraction defense.
+  enabled, settings changes, storage maintenance actions, the current
+  policy-update proposal flow, and sensitive local writes. It is not
+  root-material encryption or physical extraction defense.
 
 ### Import Existing Mnemonic
 
@@ -114,8 +114,16 @@ staged Sui `sign_transaction` request validation for bounded
 `sign_personal_message` implementation path.
 Hardware smoke coverage exists for StackChan CoreS3 local setup and PIN entry.
 Targeted hardware verification remains required after setup UI or state changes.
-Local settings reset/material wipe is implemented for provisioned StackChan
-CoreS3 devices, with hardware smoke coverage for local reset.
+Local settings storage maintenance is implemented for provisioned StackChan
+CoreS3 devices. The normal Settings menu exposes one destructive Device reset
+action; it erases root material and returns the device to `unprovisioned`.
+Root-preserving settings repair is
+reserved for persistent-material consistency errors when root material and a
+valid local PIN verifier remain. It restores recoverable mutable settings,
+including zkLogin proof state, without erasing root material. Current-tree
+hardware smoke has confirmed root-preserving settings repair after
+current-schema mutable-settings corruption and explicit Device reset returning
+the device to `unprovisioned`.
 Device-local Import is implemented for DEV_PROFILE. USB, host process, and MCP mnemonic
 import and host-assisted import are not implemented. Execution-effect-complete
 arbitrary Sui transaction review or policy simulation is not implemented.
@@ -173,14 +181,20 @@ The current DEV_PROFILE runtime implements the StackChan CoreS3 mnemonic UI flow
 persistent root material storage path. It loads and reports `provisioning.state`, but
 does not persist `provisioning` during the normal create-new-mnemonic flow.
 After physical backup confirmation, Firmware stores the binary BIP-39 root
-entropy, the active default-reject policy, a salt + PIN verifier, signing
-authorization mode, and Sui account settings in ordinary DEV_PROFILE
-device-local NVS and only then moves to `provisioned`.
-Existing DEV_PROFILE devices with `prov_state = provisioned` but missing,
+entropy and salt + PIN verifier in protected DEV_PROFILE device-local NVS
+authority storage, stores mutable policy and account settings in a separate
+DEV_PROFILE NVS settings namespace, and only then moves to `provisioned`.
+DEV_PROFILE storage with `prov_state = provisioned` but missing,
 unreadable, or unsupported current active policy material, signing authorization
-mode, or Sui account settings fail closed. Destructive local reset,
-error-state erase, or development flash erase is the supported recovery path;
-Firmware recognizes only the current tracked storage layout as product state.
+mode, or Sui account settings fail closed. Settings repair, Device reset, or
+development flash erase is the supported recovery path according to the
+remaining authority-gate material; Firmware recognizes only the current tracked
+storage layout as product state. Settings repair rebuilds mutable settings and
+zkLogin proof state without deleting root entropy or the local PIN verifier.
+The protected root-material and local-PIN records are permanent keystore
+records, not part of the mutable settings schema or a compatibility path. They
+must not be renamed or moved by firmware updates as a settings repair
+mechanism.
 If the persisted state and required material records disagree after boot or
 during runtime checks, Firmware reports `provisioning.state = error`; it does
 not keep reporting `provisioned` while rejecting all session APIs.
@@ -320,20 +334,30 @@ StackChan CoreS3 source implements settings actions as normal device-local UX
 from the `provisioned` state. The Change PIN action verifies the current stored
 PIN, accepts and repeats a new 6-digit PIN, stores only the replacement
 salt/verifier, and returns to Settings; no root material is changed and no PIN is
-sent over USB. Reset uses the same Settings entry point: a Reset menu action,
-stored PIN verification, root material wipe, active policy wipe, PIN verifier
-wipe, signing authorization mode wipe, Sui zkLogin proof material wipe,
-approval history wipe, policy-update terminal marker wipe, session cleanup,
-human approval input mode setting wipe, and `unprovisioned` persistence.
-Firmware writes an internal reset-pending marker before destructive wipe starts,
-so boot can resume an interrupted reset wipe. PIN failure, timeout, or cancel
-leaves existing material and settings intact. Wrong reset PIN attempts use a
-RAM-only short lockout shared with connect and Settings PIN verification; it is
-not cleared by closing and reopening a local PIN flow. Power cycling clears it.
-The same destructive wipe machinery is also used by the StackChan CoreS3
-device-local error-state erase recovery. That path is PIN-less because the
-stored PIN verifier may be unreadable, but it still requires on-device
-destructive confirmation, cannot read or export material, and is not exposed as
+sent over USB.
+
+Device reset is the normal destructive device-local Settings path. It erases
+root material, active policy, PIN verifier, signing authorization mode, Sui
+account settings, Sui zkLogin proof material, approval history,
+policy-update terminal marker, human approval input mode setting, active runtime
+session, and returns the device to `unprovisioned`. Firmware writes an internal storage-action
+marker before committing Device reset or internal settings repair so boot can
+resume an interrupted action without using a partition erase. A pending marker
+keeps control of the next recovery operation; a pending Device reset cannot be
+reclassified as settings repair because root material and the PIN verifier still
+read as present. PIN failure, timeout, or cancel leaves existing material and
+settings intact.
+
+The StackChan CoreS3 device-local error-state recovery path chooses settings
+repair when root material and a valid PIN verifier remain, and chooses Device
+reset when the authority gate is unavailable. Settings repair preserves root
+material and the local PIN verifier, restores recoverable mutable settings to
+current defaults, clears Sui zkLogin proof material, approval history,
+policy-update terminal marker, and the active runtime session, and keeps
+`provisioning.state = provisioned`. Device reset recovery has no PIN
+requirement because the stored PIN verifier may be unreadable, but it still
+requires on-device destructive confirmation, cannot read or export material, and
+is not exposed as
 a USB, host process, or MCP import request.
 
 ## Current Implementation Summary

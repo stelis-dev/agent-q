@@ -89,11 +89,11 @@ signing::SuiZkLoginProposalSnapshot sui_zklogin_proposal(
     return snapshot;
 }
 
-signing::LocalResetSnapshot local_reset(
+signing::StorageMaintenanceSnapshot storage_maintenance(
     bool active,
-    signing::LocalResetStage stage)
+    signing::StorageMaintenanceStage stage)
 {
-    signing::LocalResetSnapshot snapshot{};
+    signing::StorageMaintenanceSnapshot snapshot{};
     snapshot.flow_active = active;
     snapshot.stage = stage;
     return snapshot;
@@ -124,7 +124,7 @@ signing::DeviceActivityFacts idle_facts()
         false,
         policy_update(false, signing::PolicyUpdateFlowStage::idle),
         sui_zklogin_proposal(false, signing::SuiZkLoginProposalStage::idle),
-        local_reset(false, signing::LocalResetStage::none),
+        storage_maintenance(false, signing::StorageMaintenanceStage::none),
         user_signing(false, signing::UserSigningStage::none),
     };
 }
@@ -250,7 +250,7 @@ int main()
     }
 
     facts = idle_facts();
-    facts.local_reset = local_reset(true, signing::LocalResetStage::settings_menu);
+    facts.storage_maintenance = storage_maintenance(true, signing::StorageMaintenanceStage::settings_menu);
     activity = project(facts);
     expect(activity.device_state == signing::ProjectedDeviceState::idle,
            "idle settings menu remains idle for device.state");
@@ -260,13 +260,13 @@ int main()
     expect_usb_block(activity, true, false, false, nullptr);
 
     facts = idle_facts();
-    facts.local_reset = local_reset(true, signing::LocalResetStage::pin_entry);
+    facts.storage_maintenance = storage_maintenance(true, signing::StorageMaintenanceStage::pin_entry);
     activity = project(facts);
     expect(activity.device_state == signing::ProjectedDeviceState::busy,
-           "local reset PIN entry projects to busy");
+           "local action PIN entry projects to busy");
     expect(signing::device_activity_blocks_user_signing_ingress(activity),
-           "local reset blocks signing ingress");
-    expect_usb_block(activity, true, false, true, "Device is showing local reset UI.");
+           "storage maintenance blocks signing ingress");
+    expect_usb_block(activity, true, false, true, "Device is showing storage maintenance UI.");
 
     facts = idle_facts();
     facts.payload_delivery_receiving = true;

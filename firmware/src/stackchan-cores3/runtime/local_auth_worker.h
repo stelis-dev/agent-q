@@ -10,7 +10,7 @@ constexpr uint32_t kLocalAuthWorkerMaxMs = 10000;
 
 enum class LocalAuthWorkerOwner {
     provisioning_setup,
-    local_reset,
+    storage_maintenance,
     local_pin_auth,
 };
 

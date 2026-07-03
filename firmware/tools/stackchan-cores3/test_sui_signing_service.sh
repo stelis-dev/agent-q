@@ -7,7 +7,7 @@ Usage: firmware/tools/stackchan-cores3/test_sui_signing_service.sh
 
 Compiles the internal Agent-Q Sui signing substrate against the pinned MicroSui
 signing source. It verifies deterministic transaction signatures for the Sui
-standard account 0 derivation path, invalid-input output wiping, and the
+standard account 0 derivation path, invalid-input output committing, and the
 stored-root signing boundary using host stubs. This is not a protocol signing
 test and does not require ESP-IDF.
 EOF

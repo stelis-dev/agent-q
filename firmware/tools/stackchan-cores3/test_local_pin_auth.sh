@@ -199,7 +199,7 @@ bool verify_local_pin(const char* pin, bool* verified)
     return true;
 }
 
-bool wipe_local_auth()
+bool clear_local_auth()
 {
     return true;
 }

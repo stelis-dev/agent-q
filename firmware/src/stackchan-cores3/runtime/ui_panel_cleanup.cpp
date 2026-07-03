@@ -29,7 +29,7 @@ bool provisioning_panel_for_kind(
         case UiPanelKind::settings_menu:
         case UiPanelKind::chain_settings_menu:
         case UiPanelKind::sui_settings:
-        case UiPanelKind::reset_pin_entry:
+        case UiPanelKind::action_pin_entry:
         case UiPanelKind::error_recovery:
         case UiPanelKind::local_pin_auth:
         case UiPanelKind::policy_update_review:
@@ -67,8 +67,8 @@ UiPanelCleanupPlan ui_panel_cleanup_plan(const UiPanelCleanupInput& input)
         return plan;
     }
 
-    if (input.local_reset_stage_matches) {
-        plan.wipe_local_reset = true;
+    if (input.storage_maintenance_stage_matches) {
+        plan.clear_storage_maintenance = true;
         return plan;
     }
 
@@ -76,7 +76,7 @@ UiPanelCleanupPlan ui_panel_cleanup_plan(const UiPanelCleanupInput& input)
         if (input.event == UiPanelCleanupEvent::external_delete) {
             plan.recover_local_pin_auth_panel = true;
         } else if (input.local_pin_auth_stage_matches) {
-            plan.wipe_local_pin_auth = true;
+            plan.clear_local_pin_auth = true;
         }
     }
 

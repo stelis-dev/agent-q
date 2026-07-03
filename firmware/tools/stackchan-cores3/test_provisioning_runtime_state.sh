@@ -59,7 +59,7 @@ using PersistedState = signing::ProvisioningPersistedState;
 using StorageStatus = signing::ProvisioningStateStorageStatus;
 using ConsistencyResult = signing::PersistentMaterialConsistencyResult;
 using RuntimeFailure = signing::PersistentMaterialRuntimeFailure;
-using ResetResult = signing::LocalResetCommitResult;
+using ResetResult = signing::StorageMaintenanceCommitResult;
 
 StorageStatus g_store_status = StorageStatus::missing;
 char g_store_value[signing::kProvisioningStateStoreValueSize] = {};
@@ -68,7 +68,7 @@ bool g_store_save_fails = false;
 PersistedState g_saved_state = PersistedState::unprovisioned;
 int g_store_load_count = 0;
 int g_store_save_count = 0;
-bool g_reset_marker_present = false;
+bool g_storage_action_marker_present = false;
 ResetResult g_reset_result = ResetResult::ok;
 int g_reset_resume_count = 0;
 RuntimeState g_validate_loaded_effective = RuntimeState::unprovisioned;
@@ -102,7 +102,7 @@ void reset_stubs()
     g_saved_state = PersistedState::unprovisioned;
     g_store_load_count = 0;
     g_store_save_count = 0;
-    g_reset_marker_present = false;
+    g_storage_action_marker_present = false;
     g_reset_result = ResetResult::ok;
     g_reset_resume_count = 0;
     g_validate_loaded_effective = RuntimeState::unprovisioned;
@@ -143,21 +143,16 @@ signing::PersistentMaterialOps material_ops()
 
 void clear_session_callback() {}
 
-bool persist_unprovisioned_callback()
-{
-    return signing::provisioning_runtime_state_persist(RuntimeState::unprovisioned);
-}
-
 void record_material_failure_callback(RuntimeFailure failure)
 {
     signing::persistent_material_record_runtime_failure(failure, material_ops());
 }
 
-signing::LocalResetPersistenceOps reset_ops()
+signing::StorageMaintenancePersistenceOps reset_ops()
 {
-    return signing::LocalResetPersistenceOps{
+    return signing::StorageMaintenancePersistenceOps{
         clear_session_callback,
-        persist_unprovisioned_callback,
+        persist_callback,
         record_material_failure_callback,
     };
 }
@@ -262,14 +257,14 @@ bool persistent_material_validate_runtime_state(
     return g_runtime_validate_result;
 }
 
-LocalResetCommitResult local_reset_resume_pending_if_needed(
-    const LocalResetPersistenceOps& ops,
+StorageMaintenanceCommitResult storage_maintenance_resume_pending_if_needed(
+    const StorageMaintenancePersistenceOps& ops,
     bool* marker_present)
 {
     (void)ops;
     ++g_reset_resume_count;
     if (marker_present != nullptr) {
-        *marker_present = g_reset_marker_present;
+        *marker_present = g_storage_action_marker_present;
     }
     return g_reset_result;
 }
@@ -281,7 +276,7 @@ int main()
     reset_stubs();
     signing::provisioning_runtime_state_load(reset_ops(), material_ops());
     expect(g_begin_load_count == 1, "load begins a fresh material validation epoch");
-    expect(g_reset_resume_count == 1, "load checks pending local reset marker first");
+    expect(g_reset_resume_count == 1, "load checks pending storage action marker first");
     expect(g_store_load_count == 1, "load reads provisioning state when no reset marker");
     expect(g_validate_loaded_count == 1, "load validates stored state against material");
     expect(signing::provisioning_runtime_state_is_unprovisioned(),
@@ -320,7 +315,7 @@ int main()
     expect(g_store_save_count == 0, "unknown stored state is not normalized by runtime owner");
 
     reset_stubs();
-    g_reset_marker_present = true;
+    g_storage_action_marker_present = true;
     g_reset_result = ResetResult::ok;
     signing::provisioning_runtime_state_load(reset_ops(), material_ops());
     expect(g_store_load_count == 0, "pending reset marker avoids normal provisioning load");
@@ -330,11 +325,11 @@ int main()
            "successful pending reset is not error");
 
     reset_stubs();
-    g_reset_marker_present = true;
+    g_storage_action_marker_present = true;
     g_reset_result = ResetResult::root_wipe_error;
     signing::provisioning_runtime_state_load(reset_ops(), material_ops());
     expect(g_record_failure_count == 1, "failed pending reset records material failure");
-    expect(g_last_failure == RuntimeFailure::pending_reset_resume_failed,
+    expect(g_last_failure == RuntimeFailure::pending_storage_action_resume_failed,
            "pending reset failure is typed");
     expect(strcmp(signing::provisioning_runtime_state_reported(), "error") == 0,
            "failed pending reset enters error");

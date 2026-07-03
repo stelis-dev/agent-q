@@ -6,7 +6,7 @@ usage() {
 Usage: firmware/tools/stackchan-cores3/test_persistent_material.sh
 
 Compiles the StackChan CoreS3 persistent material coordinator against host
-stubs and verifies setup commit rollback, reset wipe coverage,
+stubs and verifies setup commit rollback, Device reset and internal settings repair coverage,
 provisioning-state storage envelope consistency classification, policy-update
 marker coverage, typed runtime material failure handling, and
 persistent-material consistency error latch ownership. This test uses only a
@@ -24,6 +24,47 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 CXX_BIN="${CXX:-c++}"
+
+require_pattern() {
+  local file="$1"
+  local pattern="$2"
+  local label="$3"
+  if ! grep -Fq "${pattern}" "${file}"; then
+    printf 'FAILED: %s\n' "${label}" >&2
+    printf '  file: %s\n' "${file}" >&2
+    printf '  missing: %s\n' "${pattern}" >&2
+    exit 1
+  fi
+}
+
+require_pattern \
+  "${RUNTIME_DIR}/root_material.cpp" \
+  "kNvsNamespace = kSigningKeyMaterialNvsNamespace" \
+  "root material must use the protected signing-key namespace"
+require_pattern \
+  "${RUNTIME_DIR}/local_auth.cpp" \
+  "kNvsNamespace = kAuthorityGateNvsNamespace" \
+  "local authentication verifier must use the protected authority-gate namespace"
+require_pattern \
+  "${RUNTIME_DIR}/usb_request_server.cpp" \
+  "kNvsNamespace = signing::kDeviceIdentityNvsNamespace" \
+  "protocol device id must use the stable device-identity namespace"
+
+for mutable_file in \
+  provisioning_state_store.cpp \
+  policy_store.cpp \
+  policy_update_marker.cpp \
+  signing_mode.cpp \
+  human_approval_settings.cpp \
+  sui_account_settings.cpp \
+  sui_zklogin_proof_store.cpp \
+  approval_history.cpp \
+  storage_maintenance.cpp; do
+  require_pattern \
+    "${RUNTIME_DIR}/${mutable_file}" \
+    "kNvsNamespace = kMutableSettingsNvsNamespace" \
+    "${mutable_file} must use the mutable settings namespace"
+done
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-persistent-material.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
@@ -83,10 +124,14 @@ signing::SuiAccountSettingsStatus g_sui_account_settings_status =
     signing::SuiAccountSettingsStatus::missing;
 signing::HumanApprovalInputMode g_human_approval_input_mode =
     signing::HumanApprovalInputMode::pin;
+signing::HumanApprovalInputModeStatus g_human_approval_setting_status =
+    signing::HumanApprovalInputModeStatus::missing;
 signing::PolicyUpdateMarkerStatus g_policy_update_marker_status =
     signing::PolicyUpdateMarkerStatus::clear;
 signing::SuiZkLoginProofRecordStatus g_zklogin_proof_status =
     signing::SuiZkLoginProofRecordStatus::missing;
+signing::ApprovalHistoryStorageStatus g_approval_history_status =
+    signing::ApprovalHistoryStorageStatus::missing;
 signing::ProvisioningPersistedState g_persisted_state =
     signing::ProvisioningPersistedState::unprovisioned;
 int g_consistency_error_count = 0;
@@ -131,8 +176,10 @@ void reset_stubs()
     g_sui_account_settings = signing::kDefaultSuiAccountSettings;
     g_sui_account_settings_status = signing::SuiAccountSettingsStatus::missing;
     g_human_approval_input_mode = signing::HumanApprovalInputMode::pin;
+    g_human_approval_setting_status = signing::HumanApprovalInputModeStatus::missing;
     g_policy_update_marker_status = signing::PolicyUpdateMarkerStatus::clear;
     g_zklogin_proof_status = signing::SuiZkLoginProofRecordStatus::missing;
+    g_approval_history_status = signing::ApprovalHistoryStorageStatus::missing;
     g_persisted_state = signing::ProvisioningPersistedState::unprovisioned;
     g_consistency_error_count = 0;
     signing::persistent_material_begin_load();
@@ -279,7 +326,7 @@ bool verify_local_pin(const char*, bool*)
     return false;
 }
 
-bool wipe_local_auth()
+bool clear_local_auth()
 {
     g_auth_present = false;
     g_auth_status = LocalAuthStatus::missing;
@@ -393,6 +440,7 @@ bool store_human_approval_input_mode(HumanApprovalInputMode mode)
         return false;
     }
     g_human_approval_setting_present = true;
+    g_human_approval_setting_status = HumanApprovalInputModeStatus::active;
     g_human_approval_input_mode = mode;
     return true;
 }
@@ -400,8 +448,19 @@ bool store_human_approval_input_mode(HumanApprovalInputMode mode)
 bool wipe_human_approval_input_mode()
 {
     g_human_approval_setting_present = false;
+    g_human_approval_setting_status = HumanApprovalInputModeStatus::missing;
     g_human_approval_input_mode = HumanApprovalInputMode::pin;
     return true;
+}
+
+HumanApprovalInputModeStatus human_approval_input_mode_status()
+{
+    if (g_human_approval_setting_status != HumanApprovalInputModeStatus::missing) {
+        return g_human_approval_setting_status;
+    }
+    return g_human_approval_setting_present
+               ? HumanApprovalInputModeStatus::active
+               : HumanApprovalInputModeStatus::missing;
 }
 
 bool approval_history_wipe()
@@ -410,7 +469,18 @@ bool approval_history_wipe()
         return false;
     }
     g_approval_history_present = false;
+    g_approval_history_status = ApprovalHistoryStorageStatus::missing;
     return true;
+}
+
+ApprovalHistoryStorageStatus approval_history_status()
+{
+    if (g_approval_history_status != ApprovalHistoryStorageStatus::missing) {
+        return g_approval_history_status;
+    }
+    return g_approval_history_present
+               ? ApprovalHistoryStorageStatus::active
+               : ApprovalHistoryStorageStatus::missing;
 }
 
 PolicyUpdateMarkerStatus policy_update_marker_status()
@@ -467,7 +537,8 @@ int main()
     using Storage = signing::ProvisioningStateStorageStatus;
     using Consistency = signing::PersistentMaterialConsistencyResult;
     using Commit = signing::PersistentMaterialCommitResult;
-    using Wipe = signing::PersistentMaterialWipeResult;
+    using Wipe = signing::PersistentMaterialWalletEraseResult;
+    using SettingsReset = signing::PersistentMaterialSettingsResetResult;
 
     uint8_t root[signing::kRootMaterialBytes] = {};
     State effective = State::unprovisioned;
@@ -596,18 +667,96 @@ int main()
     g_zklogin_proof_present = true;
     g_zklogin_proof_status = signing::SuiZkLoginProofRecordStatus::active;
     expect(signing::persistent_material_record_runtime_failure(
-               signing::PersistentMaterialRuntimeFailure::local_reset_root_wipe_failed, ops()) ==
+               signing::PersistentMaterialRuntimeFailure::wallet_erase_root_wipe_failed, ops()) ==
                Consistency::consistency_error,
-           "local reset material failure latches consistency error before wipe");
-    expect(signing::persistent_material_wipe_all() == Wipe::ok,
-           "wipe all succeeds");
+           "storage maintenance material failure latches consistency error before wipe");
+    expect(signing::persistent_material_wallet_erase() == Wipe::ok,
+           "Device reset succeeds");
     expect(!g_root_present && !g_policy_present && !g_auth_present &&
                !g_signing_mode_present && !g_sui_account_settings_present &&
                !g_human_approval_setting_present && !g_approval_history_present &&
                !g_policy_update_marker_present && !g_zklogin_proof_present,
-           "wipe all removes required, signing-mode, Sui account settings, reset-scoped settings, approval-history, policy-update marker, and zkLogin proof material");
+           "Device reset removes required, signing-mode, Sui account settings, reset-scoped settings, approval-history, policy-update marker, and zkLogin proof material");
     expect(!signing::persistent_material_consistency_error_active(),
-           "wipe all success clears consistency error latch");
+           "Device reset success clears consistency error latch");
+
+    reset_stubs();
+    g_root_present = true;
+    g_policy_present = true;
+    g_policy_status = signing::PolicyStoreStatus::active;
+    g_auth_present = true;
+    g_auth_status = signing::LocalAuthStatus::active;
+    g_signing_mode_present = true;
+    g_signing_mode_status = signing::AuthorizationModeStatus::active;
+    g_sui_account_settings_present = true;
+    g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
+    expect(!signing::persistent_material_status().complete(),
+           "recoverable settings are incomplete when human approval mode is missing");
+    expect(!signing::persistent_material_validate_runtime_state(State::provisioned, ops()),
+           "provisioned runtime fails closed when human approval mode is missing");
+
+    reset_stubs();
+    g_root_present = true;
+    g_policy_present = true;
+    g_policy_status = signing::PolicyStoreStatus::active;
+    g_auth_present = true;
+    g_auth_status = signing::LocalAuthStatus::active;
+    g_signing_mode_present = true;
+    g_signing_mode_status = signing::AuthorizationModeStatus::active;
+    g_signing_mode = signing::AuthorizationMode::policy;
+    g_sui_account_settings_present = true;
+    g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
+    g_sui_account_settings.accept_gas_sponsor = true;
+    g_human_approval_setting_present = true;
+    g_human_approval_input_mode = signing::HumanApprovalInputMode::confirm;
+    g_approval_history_present = true;
+    g_policy_update_marker_present = true;
+    g_policy_update_marker_status = signing::PolicyUpdateMarkerStatus::pending;
+    g_zklogin_proof_present = true;
+    g_zklogin_proof_status = signing::SuiZkLoginProofRecordStatus::active;
+    expect(signing::persistent_material_can_reset_recoverable_settings(),
+           "settings repair is available when root and local auth are valid");
+    expect(signing::persistent_material_reset_recoverable_settings() == SettingsReset::ok,
+           "settings repair succeeds with root and local auth");
+    expect(g_root_present && g_auth_present,
+           "settings repair preserves signing key material and local auth verifier");
+    expect(g_policy_present && g_policy_status == signing::PolicyStoreStatus::active,
+           "settings repair restores active default policy");
+    expect(g_signing_mode_present && g_signing_mode == signing::AuthorizationMode::user,
+           "settings repair restores user signing mode");
+    expect(g_human_approval_setting_present &&
+               g_human_approval_input_mode == signing::HumanApprovalInputMode::pin,
+           "settings repair restores PIN approval mode");
+    expect(g_sui_account_settings_present && !g_sui_account_settings.accept_gas_sponsor,
+           "settings repair restores default Sui account settings");
+    expect(!g_approval_history_present && !g_policy_update_marker_present && !g_zklogin_proof_present,
+           "settings repair clears mutable history, pending policy marker, and zkLogin proof");
+
+    reset_stubs();
+    g_root_present = true;
+    g_auth_present = true;
+    g_auth_status = signing::LocalAuthStatus::active;
+    expect(signing::persistent_material_can_reset_recoverable_settings(),
+           "settings repair is available with protected key and PIN verifier only");
+    expect(signing::persistent_material_reset_recoverable_settings() == SettingsReset::ok,
+           "settings repair rebuilds missing mutable settings from protected key and PIN verifier");
+    expect(g_root_present && g_auth_present,
+           "settings repair still preserves protected key and PIN verifier when mutable settings were missing");
+    expect(g_policy_present && g_policy_status == signing::PolicyStoreStatus::active &&
+               g_signing_mode_present && g_sui_account_settings_present &&
+               g_human_approval_setting_present,
+           "settings repair creates all required mutable defaults from missing settings");
+
+    reset_stubs();
+    g_root_present = true;
+    g_auth_present = true;
+    g_auth_status = signing::LocalAuthStatus::invalid;
+    expect(!signing::persistent_material_can_reset_recoverable_settings(),
+           "settings repair is unavailable when local auth verifier is invalid");
+    expect(signing::persistent_material_reset_recoverable_settings() == SettingsReset::auth_unavailable,
+           "settings repair does not recreate a missing or invalid local auth verifier");
+    expect(g_root_present && g_auth_present,
+           "failed settings repair preserves key and invalid auth material for fail-closed handling");
 
     reset_stubs();
     g_policy_update_marker_status = signing::PolicyUpdateMarkerStatus::pending;
@@ -625,6 +774,14 @@ int main()
            "missing state with zkLogin proof material fails closed");
     expect(g_consistency_error_count == 1,
            "missing state with zkLogin proof material reports consistency error");
+
+    reset_stubs();
+    g_approval_history_present = true;
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::missing, nullptr, &effective, ops()) ==
+               Consistency::consistency_error,
+           "missing state with approval history material fails closed");
+    expect(g_consistency_error_count == 1,
+           "missing state with approval history material reports consistency error");
 
     reset_stubs();
     g_root_present = true;
@@ -648,7 +805,7 @@ int main()
     g_policy_update_marker_present = true;
     g_policy_update_marker_status = signing::PolicyUpdateMarkerStatus::pending;
     g_policy_update_marker_wipe_fails = true;
-    expect(signing::persistent_material_wipe_all() == Wipe::policy_update_marker_wipe_error,
+    expect(signing::persistent_material_wallet_erase() == Wipe::policy_update_marker_wipe_error,
            "policy-update marker wipe failure is reported");
     expect(g_policy_update_marker_present,
            "failed policy-update marker wipe leaves marker for caller-owned fail-closed handling");
@@ -657,7 +814,7 @@ int main()
     g_zklogin_proof_present = true;
     g_zklogin_proof_status = signing::SuiZkLoginProofRecordStatus::active;
     g_zklogin_proof_wipe_fails = true;
-    expect(signing::persistent_material_wipe_all() == Wipe::zklogin_proof_wipe_error,
+    expect(signing::persistent_material_wallet_erase() == Wipe::zklogin_proof_wipe_error,
            "zkLogin proof wipe failure is reported");
     expect(g_zklogin_proof_present,
            "failed zkLogin proof wipe leaves proof for caller-owned fail-closed handling");
@@ -666,7 +823,7 @@ int main()
     g_signing_mode_present = true;
     g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_signing_mode_wipe_fails = true;
-    expect(signing::persistent_material_wipe_all() == Wipe::signing_mode_wipe_error,
+    expect(signing::persistent_material_wallet_erase() == Wipe::signing_mode_wipe_error,
            "signing mode wipe failure is reported");
     expect(g_signing_mode_present,
            "failed signing mode wipe leaves signing mode for caller-owned fail-closed handling");
@@ -675,7 +832,7 @@ int main()
     g_sui_account_settings_present = true;
     g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
     g_sui_account_settings_wipe_fails = true;
-    expect(signing::persistent_material_wipe_all() == Wipe::sui_account_settings_wipe_error,
+    expect(signing::persistent_material_wallet_erase() == Wipe::sui_account_settings_wipe_error,
            "Sui account settings wipe failure is reported");
     expect(g_sui_account_settings_present,
            "failed Sui account settings wipe leaves settings for caller-owned fail-closed handling");
@@ -772,6 +929,24 @@ int main()
     g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_sui_account_settings_present = true;
     g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
+    g_approval_history_status = signing::ApprovalHistoryStorageStatus::invalid;
+    expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
+               Consistency::consistency_error,
+           "complete provisioned material with invalid approval history fails closed");
+    expect(g_consistency_error_count == 1,
+           "invalid approval history under provisioned state reports consistency error");
+
+    reset_stubs();
+    g_root_present = true;
+    g_policy_present = true;
+    g_policy_status = signing::PolicyStoreStatus::active;
+    g_auth_present = true;
+    g_auth_status = signing::LocalAuthStatus::active;
+    g_signing_mode_present = true;
+    g_signing_mode_status = signing::AuthorizationModeStatus::active;
+    g_sui_account_settings_present = true;
+    g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
+    g_human_approval_setting_present = true;
     expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
                Consistency::ok,
            "complete native provisioned material is valid");
@@ -788,6 +963,7 @@ int main()
     g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_sui_account_settings_present = true;
     g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
+    g_human_approval_setting_present = true;
     g_zklogin_proof_present = true;
     g_zklogin_proof_status = signing::SuiZkLoginProofRecordStatus::active;
     expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==

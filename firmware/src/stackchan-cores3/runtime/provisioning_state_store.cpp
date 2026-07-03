@@ -5,12 +5,13 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "nvs.h"
+#include "persistent_storage_names.h"
 
 namespace signing {
 namespace {
 
 constexpr const char* kTag = "ProvState";
-constexpr const char* kNvsNamespace = "signing";
+constexpr const char* kNvsNamespace = kMutableSettingsNvsNamespace;
 constexpr const char* kProvisioningStateKey = "prov_state";
 
 }  // namespace

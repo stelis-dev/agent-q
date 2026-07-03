@@ -7,6 +7,7 @@
 #include "esp_log.h"
 #include "mbedtls/sha256.h"
 #include "nvs.h"
+#include "persistent_storage_names.h"
 
 #include "policy/document.h"
 
@@ -14,7 +15,7 @@ namespace signing {
 namespace {
 
 constexpr const char* kTag = "PolicyStore";
-constexpr const char* kNvsNamespace = "signing";
+constexpr const char* kNvsNamespace = kMutableSettingsNvsNamespace;
 constexpr const char* kPolicySlotKeys[2] = {"pol_s0", "pol_s1"};
 constexpr const char* kPolicyCommitKeys[2] = {"pol_c0", "pol_c1"};
 constexpr const char* kPolicyPendingKey = "pol_p";
@@ -897,7 +898,7 @@ bool wipe_policy()
     nvs_handle_t nvs = 0;
     esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
     if (result != ESP_OK) {
-        ESP_LOGW(kTag, "NVS open failed while wiping policy: %s", esp_err_to_name(result));
+        ESP_LOGW(kTag, "NVS open failed while clearing policy: %s", esp_err_to_name(result));
         return false;
     }
 

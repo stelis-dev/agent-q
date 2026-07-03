@@ -199,6 +199,9 @@ def assert_not_contains(text: str, forbidden: str, label: str) -> None:
         raise SystemExit(f"Agent-Q firmware hardening failed; {label} remains.")
 
 
+NVS_FLASH_ERASE = "nvs_flash_" + "erase"
+
+
 def assert_no_symlink_ancestors(path: Path, root: Path, label: str) -> None:
     try:
         relative = path.relative_to(root)
@@ -226,6 +229,37 @@ def read_text_file(path: Path, label: str) -> str:
     if path.is_symlink() or not path.is_file():
         raise SystemExit(f"Could not patch {label}; expected regular file at {path}.")
     return path.read_text()
+
+
+def assert_generated_tree_not_contains(forbidden: str, label: str) -> None:
+    search_roots = [
+        firmware_dir / "main",
+        firmware_dir / "components",
+        firmware_dir / "xiaozhi-esp32",
+    ]
+    suffixes = {
+        ".c",
+        ".cc",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".ipp",
+    }
+    for root in search_roots:
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if path.is_symlink() or not path.is_file() or path.suffix not in suffixes:
+                continue
+            try:
+                text = path.read_text()
+            except UnicodeDecodeError:
+                continue
+            if forbidden in text:
+                relative = path.relative_to(firmware_dir)
+                raise SystemExit(
+                    f"Agent-Q firmware hardening failed; {label} remains in {relative}."
+                )
 
 
 def patch_partition_table(text: str) -> str:
@@ -436,6 +470,27 @@ write_text_if_changed(main_path, main_cpp)
 
 hal_path = firmware_dir / "main/hal/hal.cpp"
 hal = read_text_file(hal_path, "hal.cpp")
+hal = replace_any_once(
+    hal,
+    [
+        """    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(NVS_FLASH_ERASE_CALL());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+""".replace("NVS_FLASH_ERASE_CALL", NVS_FLASH_ERASE),
+        """    esp_err_t ret = nvs_flash_init();
+    ESP_ERROR_CHECK(ret);
+""",
+    ],
+    """    esp_err_t ret = nvs_flash_init();
+    if (ret != ESP_OK) {
+        mclog::tagError(_tag, "NVS init failed; continuing so storage state can fail closed: {}", esp_err_to_name(ret));
+    }
+""",
+    "hal.cpp NVS init without automatic erase",
+)
 hal = replace_once(
     hal,
     "    xiaozhi_mcp_init();\n",
@@ -457,8 +512,150 @@ hal = replace_function(
 """,
     "hal.cpp xiaozhi runtime disabled",
 )
+hal = replace_function(
+    hal,
+    "void Hal::factoryReset()",
+    """{
+    mclog::tagWarn(_tag, "factory reset disabled; use device reset");
+}
+""",
+    "hal.cpp NVS factory reset disabled",
+)
 assert_not_contains(hal, "xiaozhi_mcp_init();", "hal.cpp Xiaozhi MCP registration")
+assert_not_contains(hal, NVS_FLASH_ERASE, "hal.cpp NVS partition erase")
 write_text_if_changed(hal_path, hal)
+
+wifi_manager_path = firmware_dir / "managed_components/78__esp-wifi-connect/wifi_manager.cc"
+wifi_manager = read_text_file(wifi_manager_path, "wifi_manager.cc")
+wifi_manager = replace_once(
+    wifi_manager,
+    """    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(TAG, "Erasing NVS...");
+        ESP_ERROR_CHECK(NVS_FLASH_ERASE_CALL());
+        ret = nvs_flash_init();
+    }
+""".replace("NVS_FLASH_ERASE_CALL", NVS_FLASH_ERASE),
+    """    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGE(TAG, "NVS initialization requires a development flash-erase workflow: %s", esp_err_to_name(ret));
+        return false;
+    }
+""",
+    "wifi_manager.cc NVS init without automatic erase",
+)
+assert_not_contains(wifi_manager, NVS_FLASH_ERASE, "wifi_manager.cc NVS partition erase")
+write_text_if_changed(wifi_manager_path, wifi_manager)
+
+bleprph_path = firmware_dir / "main/hal/utils/bleprph/bleprph.c"
+bleprph = read_text_file(bleprph_path, "bleprph.c")
+bleprph = remove_once(
+    bleprph,
+    f"    //     ESP_ERROR_CHECK({NVS_FLASH_ERASE}());\n",
+    NVS_FLASH_ERASE,
+    "bleprph.c commented NVS partition erase",
+)
+assert_not_contains(bleprph, NVS_FLASH_ERASE, "bleprph.c NVS partition erase")
+write_text_if_changed(bleprph_path, bleprph)
+
+espnow_storage_path = firmware_dir / "components/esp-now/src/utils/src/espnow_storage.c"
+espnow_storage = read_text_file(espnow_storage_path, "espnow_storage.c")
+espnow_storage = replace_once(
+    espnow_storage,
+    (
+        """        if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+            // NVS partition was truncated and needs to be erased
+            // Retry nvs_flash_init
+            ret = NVS_FLASH_ERASE_CALL();
+"""
+        "            \n"
+        """            if(ret == ESP_OK) {
+                ret = nvs_flash_init();
+            }
+        }
+"""
+    ).replace("NVS_FLASH_ERASE_CALL", NVS_FLASH_ERASE),
+    """        if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+            ESP_LOGE(TAG, "nvs_flash_init requires a development flash-erase workflow: %s", esp_err_to_name(ret));
+            return ret;
+        }
+""",
+    "espnow_storage.c NVS init without automatic erase",
+)
+assert_not_contains(espnow_storage, NVS_FLASH_ERASE, "espnow_storage.c NVS partition erase")
+write_text_if_changed(espnow_storage_path, espnow_storage)
+
+rndis_board_path = firmware_dir / "xiaozhi-esp32/main/boards/common/rndis_board.cc"
+rndis_board = read_text_file(rndis_board_path, "rndis_board.cc")
+rndis_board = replace_any_once(
+    rndis_board,
+    [
+        """    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        /* NVS partition was truncated and needs to be erased
+         * Retry nvs_flash_init */
+        ESP_ERROR_CHECK(NVS_FLASH_ERASE_CALL());
+        ESP_ERROR_CHECK(nvs_flash_init());
+    }
+""".replace("NVS_FLASH_ERASE_CALL", NVS_FLASH_ERASE),
+        """    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGE(TAG, "NVS initialization requires a development flash-erase workflow: %d", ret);
+        ESP_ERROR_CHECK(ret);
+    }
+""",
+    ],
+    """    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGE(TAG, "NVS initialization requires a development flash-erase workflow: %d", ret);
+        return;
+    }
+""",
+    "rndis_board.cc NVS init without automatic erase",
+)
+assert_not_contains(rndis_board, NVS_FLASH_ERASE, "rndis_board.cc NVS partition erase")
+write_text_if_changed(rndis_board_path, rndis_board)
+
+system_reset_path = firmware_dir / "xiaozhi-esp32/main/boards/common/system_reset.cc"
+system_reset = read_text_file(system_reset_path, "system_reset.cc")
+system_reset = replace_function(
+    system_reset,
+    "void SystemReset::ResetNvsFlash()",
+    """{
+    ESP_LOGW(TAG, "NVS partition erase disabled for Agent-Q firmware");
+    esp_err_t ret = nvs_flash_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize NVS flash");
+    }
+}
+""",
+    "system_reset.cc NVS erase disabled",
+)
+assert_not_contains(system_reset, NVS_FLASH_ERASE, "system_reset.cc NVS partition erase")
+write_text_if_changed(system_reset_path, system_reset)
+
+sensecap_path = firmware_dir / "xiaozhi-esp32/main/boards/sensecap-watcher/sensecap_watcher.cc"
+sensecap = read_text_file(sensecap_path, "sensecap_watcher.cc")
+sensecap = replace_once(
+    sensecap,
+    """                ESP_LOGI(TAG, "Factory reset");
+                NVS_FLASH_ERASE_CALL();
+                esp_restart();
+""".replace("NVS_FLASH_ERASE_CALL", NVS_FLASH_ERASE),
+    """                ESP_LOGI(TAG, "Factory reset requested; NVS partition erase disabled");
+                esp_restart();
+""",
+    "sensecap_watcher.cc button factory erase disabled",
+)
+sensecap = replace_once(
+    sensecap,
+    """                NVS_FLASH_ERASE_CALL();
+                esp_restart();
+                return 0;
+""".replace("NVS_FLASH_ERASE_CALL", NVS_FLASH_ERASE),
+    """                ESP_LOGI(TAG, "Factory reset requested; NVS partition erase disabled");
+                esp_restart();
+                return 0;
+""",
+    "sensecap_watcher.cc console factory erase disabled",
+)
+assert_not_contains(sensecap, NVS_FLASH_ERASE, "sensecap_watcher.cc NVS partition erase")
+write_text_if_changed(sensecap_path, sensecap)
 
 launcher_path = firmware_dir / "main/apps/app_launcher/app_launcher.cpp"
 launcher_header_path = firmware_dir / "main/apps/app_launcher/app_launcher.h"
@@ -853,6 +1050,36 @@ assert_not_contains(mcp, "self.screen.snapshot", "Xiaozhi screen snapshot MCP to
 assert_not_contains(mcp, "camera->SetExplainUrl", "Xiaozhi vision upload capability")
 write_text_if_changed(mcp_path, mcp)
 
+xiaozhi_main_path = firmware_dir / "xiaozhi-esp32/main/main.cc"
+xiaozhi_main = read_text_file(xiaozhi_main_path, "xiaozhi main.cc")
+xiaozhi_main = replace_any_once(
+    xiaozhi_main,
+    [
+        """    // Initialize NVS flash for WiFi configuration
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(TAG, "Erasing NVS flash to fix corruption");
+        ESP_ERROR_CHECK(NVS_FLASH_ERASE_CALL());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+""".replace("NVS_FLASH_ERASE_CALL", NVS_FLASH_ERASE),
+        """    // Initialize NVS flash without automatic erase.
+    esp_err_t ret = nvs_flash_init();
+    ESP_ERROR_CHECK(ret);
+""",
+    ],
+    """    // Initialize NVS flash without automatic erase.
+    esp_err_t ret = nvs_flash_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "NVS init failed; continuing so storage state can fail closed: %s", esp_err_to_name(ret));
+    }
+""",
+    "xiaozhi main.cc NVS init without automatic erase",
+)
+assert_not_contains(xiaozhi_main, NVS_FLASH_ERASE, "xiaozhi main.cc NVS partition erase")
+write_text_if_changed(xiaozhi_main_path, xiaozhi_main)
+
 ws_avatar_path = firmware_dir / "main/hal/hal_ws_avatar.cpp"
 ws_avatar = read_text_file(ws_avatar_path, "hal_ws_avatar.cpp")
 ws_avatar = replace_function(
@@ -866,6 +1093,8 @@ ws_avatar = replace_function(
     "hal_ws_avatar.cpp websocket avatar disabled",
 )
 write_text_if_changed(ws_avatar_path, ws_avatar)
+
+assert_generated_tree_not_contains(NVS_FLASH_ERASE, "NVS partition erase")
 PY
 
 python3 - "${FIRMWARE_DIR}/sdkconfig.defaults" "${FIRMWARE_DIR}/sdkconfig" <<'PY'

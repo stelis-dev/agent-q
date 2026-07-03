@@ -117,9 +117,9 @@ void on_settings_cancel_clicked(lv_event_t*)
     enqueue_ui_event(UiEventKind::settings_cancel_requested);
 }
 
-void on_settings_reset_clicked(lv_event_t*)
+void on_settings_wallet_erase_clicked(lv_event_t*)
 {
-    enqueue_ui_event(UiEventKind::settings_reset_requested);
+    enqueue_ui_event(UiEventKind::settings_wallet_erase_requested);
 }
 
 void on_settings_human_approval_input_clicked(lv_event_t*)
@@ -162,9 +162,9 @@ void on_sui_settings_clear_clicked(lv_event_t*)
     enqueue_ui_event(UiEventKind::sui_settings_clear_requested);
 }
 
-void on_error_recovery_erase_clicked(lv_event_t*)
+void on_error_recovery_action_clicked(lv_event_t*)
 {
-    enqueue_ui_event(UiEventKind::error_recovery_erase_requested);
+    enqueue_ui_event(UiEventKind::error_recovery_action_requested);
 }
 
 void on_error_recovery_cancel_clicked(lv_event_t*)
@@ -172,9 +172,9 @@ void on_error_recovery_cancel_clicked(lv_event_t*)
     enqueue_ui_event(UiEventKind::error_recovery_cancel_requested);
 }
 
-void on_reset_cancel_clicked(lv_event_t*)
+void on_storage_action_cancel_clicked(lv_event_t*)
 {
-    enqueue_ui_event(UiEventKind::reset_cancel_requested);
+    enqueue_ui_event(UiEventKind::storage_action_cancel_requested);
 }
 
 void on_backup_phrase_cancel_clicked(lv_event_t*)
@@ -341,14 +341,14 @@ void ui_event_bridge_register_callbacks()
     modal_callbacks.on_settings_signing_mode_clicked = on_settings_signing_mode_clicked;
     modal_callbacks.on_settings_policy_reset_clicked = on_settings_policy_reset_clicked;
     modal_callbacks.on_settings_change_pin_clicked = on_settings_change_pin_clicked;
-    modal_callbacks.on_settings_reset_clicked = on_settings_reset_clicked;
+    modal_callbacks.on_settings_wallet_erase_clicked = on_settings_wallet_erase_clicked;
     modal_callbacks.on_chain_settings_sui_clicked = on_chain_settings_sui_clicked;
     modal_callbacks.on_sui_settings_back_clicked = on_sui_settings_back_clicked;
     modal_callbacks.on_sui_settings_gas_sponsor_clicked = on_sui_settings_gas_sponsor_clicked;
     modal_callbacks.on_sui_settings_clear_clicked = on_sui_settings_clear_clicked;
-    modal_callbacks.on_error_recovery_erase_clicked = on_error_recovery_erase_clicked;
+    modal_callbacks.on_error_recovery_action_clicked = on_error_recovery_action_clicked;
     modal_callbacks.on_error_recovery_cancel_clicked = on_error_recovery_cancel_clicked;
-    modal_callbacks.on_reset_cancel_clicked = on_reset_cancel_clicked;
+    modal_callbacks.on_storage_action_cancel_clicked = on_storage_action_cancel_clicked;
     modal_callbacks.on_backup_phrase_cancel_clicked = on_backup_phrase_cancel_clicked;
     modal_callbacks.on_backup_phrase_confirm_clicked = on_backup_phrase_confirm_clicked;
     modal_callbacks.on_pin_digit_clicked = on_pin_digit_clicked;

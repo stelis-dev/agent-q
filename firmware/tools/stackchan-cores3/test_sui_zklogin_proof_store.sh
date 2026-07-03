@@ -112,7 +112,7 @@ cat >"${TMP_DIR}/sui_zklogin_proof_store_test.cpp" <<'CPP'
 
 namespace {
 
-constexpr const char* kExpectedNamespace = "signing";
+constexpr const char* kExpectedNamespace = "signing_state";
 constexpr const char* kExpectedProofKey = "sui_zkl_proof";
 constexpr const char* kNativeAddress =
     "0x1111111111111111111111111111111111111111111111111111111111111111";

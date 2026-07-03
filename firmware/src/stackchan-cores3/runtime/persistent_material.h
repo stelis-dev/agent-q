@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "approval_history.h"
+#include "human_approval_settings.h"
 #include "local_auth.h"
 #include "policy_store.h"
 #include "policy_update_marker.h"
@@ -33,20 +35,31 @@ enum class PersistentMaterialConsistencyResult {
 enum class PersistentMaterialRuntimeFailure {
     root_material_unreadable,
     active_policy_unavailable,
-    pending_reset_resume_failed,
-    local_reset_root_wipe_failed,
-    local_reset_policy_wipe_failed,
-    local_reset_local_auth_wipe_failed,
-    local_reset_human_approval_setting_wipe_failed,
-    local_reset_signing_mode_wipe_failed,
-    local_reset_sui_account_settings_wipe_failed,
-    local_reset_approval_history_wipe_failed,
-    local_reset_policy_update_marker_wipe_failed,
-    local_reset_zklogin_proof_wipe_failed,
-    local_reset_material_remaining,
-    local_reset_state_storage_failed,
-    local_reset_marker_clear_failed,
-    local_reset_auth_unavailable,
+    pending_storage_action_resume_failed,
+    wallet_erase_root_wipe_failed,
+    wallet_erase_policy_wipe_failed,
+    wallet_erase_local_auth_wipe_failed,
+    wallet_erase_human_approval_setting_wipe_failed,
+    wallet_erase_signing_mode_wipe_failed,
+    wallet_erase_sui_account_settings_wipe_failed,
+    wallet_erase_approval_history_wipe_failed,
+    wallet_erase_policy_update_marker_wipe_failed,
+    wallet_erase_zklogin_proof_wipe_failed,
+    wallet_erase_material_remaining,
+    wallet_erase_state_storage_failed,
+    wallet_erase_marker_clear_failed,
+    wallet_erase_auth_unavailable,
+    settings_reset_policy_store_failed,
+    settings_reset_human_approval_setting_store_failed,
+    settings_reset_signing_mode_store_failed,
+    settings_reset_sui_account_settings_store_failed,
+    settings_reset_approval_history_wipe_failed,
+    settings_reset_policy_update_marker_wipe_failed,
+    settings_reset_zklogin_proof_wipe_failed,
+    settings_reset_material_incomplete,
+    settings_reset_state_storage_failed,
+    settings_reset_marker_clear_failed,
+    settings_reset_auth_unavailable,
     local_pin_auth_unavailable,
     pin_change_auth_unavailable,
 };
@@ -63,7 +76,7 @@ enum class PersistentMaterialCommitResult {
     state_storage_error,
 };
 
-enum class PersistentMaterialWipeResult {
+enum class PersistentMaterialWalletEraseResult {
     ok,
     root_wipe_error,
     policy_wipe_error,
@@ -77,17 +90,37 @@ enum class PersistentMaterialWipeResult {
     material_remaining_error,
 };
 
+enum class PersistentMaterialSettingsResetResult {
+    ok,
+    key_unavailable,
+    auth_unavailable,
+    policy_store_error,
+    human_approval_setting_store_error,
+    signing_mode_store_error,
+    sui_account_settings_store_error,
+    approval_history_wipe_error,
+    policy_update_marker_wipe_error,
+    zklogin_proof_wipe_error,
+    material_incomplete_error,
+};
+
 struct PersistentMaterialStatus {
     bool root_present;
     PolicyStoreStatus policy_status;
     LocalAuthStatus local_auth_status;
+    HumanApprovalInputModeStatus human_approval_setting_status;
     AuthorizationModeStatus signing_mode_status;
     SuiAccountSettingsStatus sui_account_settings_status;
+    ApprovalHistoryStorageStatus approval_history_status;
     PolicyUpdateMarkerStatus policy_update_marker_status;
     SuiZkLoginProofRecordStatus zklogin_proof_status;
 
     bool complete() const;
     bool any_material() const;
+    bool signing_key_material_present() const;
+    bool authority_gate_active() const;
+    bool recoverable_settings_complete() const;
+    bool recoverable_settings_material_present() const;
 };
 
 struct PersistentMaterialOps {
@@ -106,6 +139,7 @@ const char* provisioning_persisted_state_to_string(ProvisioningPersistedState st
 
 PersistentMaterialStatus persistent_material_status();
 bool persistent_material_exists();
+bool persistent_material_can_reset_recoverable_settings();
 bool persistent_material_consistency_error_active();
 void persistent_material_begin_load();
 PersistentMaterialConsistencyResult persistent_material_record_runtime_failure(
@@ -129,6 +163,7 @@ PersistentMaterialCommitResult persistent_material_commit_setup_with_prepared_au
     size_t root_material_size,
     const LocalAuthPreparedRecord* prepared_auth,
     const PersistentMaterialOps& ops);
-PersistentMaterialWipeResult persistent_material_wipe_all();
+PersistentMaterialWalletEraseResult persistent_material_wallet_erase();
+PersistentMaterialSettingsResetResult persistent_material_reset_recoverable_settings();
 
 }  // namespace signing

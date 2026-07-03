@@ -155,20 +155,23 @@ The current implementation includes:
   These setup transitions are not exposed as USB JSONL requests.
 - device-local settings flows for `provisioned` devices: human approval input
   mode toggle, signing authorization mode toggle, policy reset to the default
-  reject policy, Change PIN, and Reset, plus a chain account menu whose current
-  Sui account view displays active identity/proof state and can clear the local
-  zkLogin proof. Policy reset, signing-mode changes, zkLogin proof clear, and
-  Change PIN require local PIN verification. Proof clear wipes only Sui
-  zkLogin proof material, ends the active session, and restores the Sui account
-  view from current device state. Change PIN verifies the current stored
-  6-digit PIN, accepts and repeats a new PIN, and replaces only the salt/PIN
-  verifier. Reset requires the local Settings Reset action plus the stored PIN,
-  wipes root material, active policy, Sui zkLogin proof material, PIN verifier,
-  signing authorization mode, approval history, policy-update terminal marker,
-  human approval input mode setting, runtime session, and provisioning state,
-  and is not exposed as a USB JSONL request. Hardware smoke coverage exists for
-  local reset. Targeted hardware verification remains required after settings
-  or reset UI/state changes.
+  reject policy, Change PIN, and Device reset, plus a chain
+  account menu whose current Sui account view displays active identity/proof
+  state and can clear the local zkLogin proof. Policy reset, signing-mode
+  changes, zkLogin proof clear, Change PIN, and Device reset require local PIN
+  verification. Proof clear wipes only Sui zkLogin proof material, ends the
+  active session, and restores the Sui account view from current device state.
+  Change PIN verifies the current stored 6-digit PIN, accepts and repeats a new
+  PIN, and replaces only the salt/PIN verifier. Device reset is the single
+  user-facing wallet initialization action in Settings: it erases root material
+  and returns the device to
+  `unprovisioned`. Root-preserving settings repair is an internal
+  storage-maintenance path for material/state consistency errors, not a normal
+  Settings menu action and not a USB JSONL request. Current-tree hardware smoke
+  has confirmed root-preserving settings repair after current-schema
+  mutable-settings corruption and explicit Device reset returning the device to
+  `unprovisioned`. Targeted hardware verification remains required after
+  storage-maintenance UI/state changes.
 - a locked-down Agent-Q firmware profile that keeps only the local launcher,
   local default avatar idle surface, and USB Agent-Q request server. It does not
   start the StackChan/Xiaozhi remote AI runtime, does not register Xiaozhi MCP
@@ -417,7 +420,7 @@ or approval UI by itself.
 
 The StackChan persistent-material test is target-specific. It compiles the
 tracked `persistent_material.cpp` coordinator with host material stubs,
-then verifies setup commit ordering and rollback, reset wipe coverage,
+then verifies setup commit ordering and rollback, storage-action coverage,
 provisioning-state storage envelope classification, loaded-state consistency
 classification, typed runtime material failure handling, persistent-material
 consistency error latch ownership, and policy-update marker wipe coverage.
@@ -440,11 +443,12 @@ tracked `local_auth_worker.cpp` task boundary with host FreeRTOS stubs,
 then verifies worker request queue entries carry only job metadata and never raw
 PIN bytes.
 
-The StackChan local-reset test is target-specific. It compiles the tracked
-`local_reset.cpp` state machine with host NVS/material stubs, then
-verifies normal reset and error-state erase recovery transitions, reset-pending
-marker behavior, destructive wipe orchestration, and failure cleanup. This is a
-host-side state-machine check, not hardware UX proof.
+The StackChan storage-maintenance test is target-specific. It compiles the
+tracked `storage_maintenance.cpp` state machine with host NVS/material stubs,
+then verifies internal settings repair, Device reset, storage-action pending marker
+behavior, root-preserving settings repair, destructive Device reset
+orchestration, and failure cleanup. This is a host-side state-machine check,
+not hardware UX proof.
 
 The StackChan provisioning-flow test is target-specific. It compiles the
 tracked `provisioning_flow.cpp` state machine with host stubs, then
@@ -500,35 +504,47 @@ In the hardware firmware tree:
 
 ## Persistent Storage
 
-This target stores the protocol `deviceId`, provisioning state, DEV_PROFILE root
-entropy, committed active policy records, local PIN verifier, human approval
-input mode setting, signing authorization mode, one optional bounded Sui
-zkLogin proof record, and approval-history ring buffer in NVS namespace
-`signing`. The StackChan build preparation step patches the generated firmware
+This target stores root signing material and the local PIN verifier separately
+from mutable settings. The current `signing` NVS namespace holds protected
+authority material: DEV_PROFILE root entropy and the local PIN verifier. The
+protocol `deviceId` lives in the `device_identity` namespace because it is
+stable device identity, not signing key material, authority-gate material, or
+recoverable mutable settings. The `signing_state` NVS namespace holds mutable settings:
+provisioning state, committed active policy records, human approval input mode,
+signing authorization mode, Sui account settings, one optional bounded Sui
+zkLogin proof record, approval-history ring buffer, and storage-maintenance
+marker. Internal settings repair rebuilds `signing_state` and never deletes the
+root entropy or local PIN verifier. The protected root-material and local-PIN
+storage names under `signing` are the current permanent keystore contract, not
+a mutable settings schema or compatibility path. Firmware updates must not
+rename or move those records as part of settings repair. The StackChan build preparation step patches the generated firmware
 partition table to use a 64 KiB NVS partition; the upstream 16 KiB default is
 not sufficient for the current Agent-Q material set.
-If NVS has `prov_state = provisioned` and valid root entropy but no active
+If current storage has `prov_state = provisioned` and valid root entropy but no active
 canonical policy record, local PIN verifier, or signing authorization mode,
 Firmware fails closed with a material/state consistency error. Unsupported
 current policy-history or policy-storage blobs are not accepted as product
-state; destructive local reset or error-state erase is the supported import
-path. Devices missing the current local PIN verifier or signing authorization
-mode fail closed until reprovisioned.
+state; settings repair, Device reset, or development flash erase is the
+supported recovery path according to the remaining authority-gate material.
+Devices missing the current local PIN verifier or signing authorization mode
+fail closed until Device reset or development flash erase.
 
-| Key | Purpose |
-|---|---|
-| `device_id` | host process reconnect and device-selection identity |
-| `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy, active policy, local PIN verifier, and signing authorization mode present |
-| `root_entropy` | DEV_PROFILE BIP-39 root entropy blob; not exported over USB |
-| `pol_s0`, `pol_s1` | Active policy canonical record slots |
-| `pol_c0`, `pol_c1` | Active policy commit metadata records |
-| `pol_p` | Active policy pending-write marker used to distinguish interrupted inactive-slot writes from post-commit corruption |
-| `pol_um` | Policy-update terminal marker; presence means an incomplete policy-update terminal sequence is material inconsistency |
-| `pin_auth` | DEV_PROFILE salt + PBKDF2-HMAC-SHA512 local PIN verifier; not root encryption |
-| `sign_auth_mode` | Device-local signing authorization mode; setup initializes it to user and Settings can change it after local PIN verification |
-| `human_approval` | Human approval input mode setting; setup initializes it to `pin`, missing or invalid read fails closed to `pin`, and local reset erases it back to the missing-key default |
-| `sui_zkl_proof` | Bounded Sui zkLogin proof record used only for active account projection and final zkLogin signature-envelope construction; local proof clear, reset, and error-state erase wipe it |
-| `approval_hist` | Fixed-size 32-record binary approval-history ring buffer; local reset and error-state erase wipe it |
+| Namespace | Key | Purpose |
+|---|---|---|
+| `device_identity` | `device_id` | host process reconnect and device-selection identity; not wallet material |
+| `signing` | `root_entropy` | DEV_PROFILE BIP-39 root entropy blob; not exported over USB; erased only by explicit destructive Device reset or development flash erase |
+| `signing` | `pin_auth` | DEV_PROFILE salt + PBKDF2-HMAC-SHA512 local PIN verifier; protected authority-gate material, not root encryption |
+| `signing_state` | `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy, active policy, local PIN verifier, and signing authorization mode present |
+| `signing_state` | `pol_s0`, `pol_s1` | Active policy canonical record slots |
+| `signing_state` | `pol_c0`, `pol_c1` | Active policy commit metadata records |
+| `signing_state` | `pol_p` | Active policy pending-write marker used to distinguish interrupted inactive-slot writes from post-commit corruption |
+| `signing_state` | `pol_um` | Policy-update terminal marker; presence means an incomplete policy-update terminal sequence is material inconsistency |
+| `signing_state` | `sign_auth_mode` | Device-local signing authorization mode; setup initializes it to user and Settings can change it after local PIN verification |
+| `signing_state` | `human_approval` | Human approval input mode setting; setup initializes it to `pin`, missing or invalid read fails closed to `pin`, internal settings repair restores the default, and Device reset removes it |
+| `signing_state` | `sui_acct_set` | Sui account setting flags, including whether the active account accepts gas sponsors |
+| `signing_state` | `sui_zkl_proof` | Bounded Sui zkLogin proof record used only for active account projection and final zkLogin signature-envelope construction; local proof clear, internal settings repair, Device reset, and error-state Device reset wipe it |
+| `signing_state` | `approval_hist` | Fixed-size 32-record binary approval-history ring buffer; internal settings repair, Device reset, and error-state Device reset wipe it |
+| `signing_state` | `storage_action` | Internal Firmware-owned marker used to resume an interrupted settings repair or Device reset commit at boot; not a protocol state or host API |
 
 Device-local backup phrase setup stores generated phrase text and imported mnemonic
 word-entry scratch only in RAM. Generate displays only up-to-4-letter prefixes
@@ -541,6 +557,10 @@ is stored as DEV_PROFILE scaffolding only after the repeated PIN matches; this
 build does not enable USER_PROFILE encrypted storage. Three-letter BIP-39 words
 are displayed as the full word.
 
-Agent-Q-owned modules are sources under `runtime/` in this target tree. These
-modules may share the `signing` namespace. New keys should be named by feature,
-such as `<feature>_<name>`, to avoid collisions.
+Agent-Q-owned modules are sources under `runtime/` in this target tree. Storage
+keys must stay in the namespace that matches their authority: protected root and
+local-authentication material under `signing`, stable device identity under
+`device_identity`, and mutable settings and proof state under `signing_state`.
+Protected root and local-authentication key names are fixed keystore records.
+New mutable settings keys should be named by feature, such as
+`<feature>_<name>`, to avoid collisions.

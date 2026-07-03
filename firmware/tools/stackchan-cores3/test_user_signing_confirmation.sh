@@ -494,7 +494,7 @@ bool store_local_pin_verifier(const char*)
     return false;
 }
 
-bool wipe_local_auth()
+bool clear_local_auth()
 {
     return true;
 }

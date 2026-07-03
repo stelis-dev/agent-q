@@ -22,14 +22,14 @@ struct ModalDrawingCallbacks {
     lv_event_cb_t on_settings_signing_mode_clicked = nullptr;
     lv_event_cb_t on_settings_policy_reset_clicked = nullptr;
     lv_event_cb_t on_settings_change_pin_clicked = nullptr;
-    lv_event_cb_t on_settings_reset_clicked = nullptr;
+    lv_event_cb_t on_settings_wallet_erase_clicked = nullptr;
     lv_event_cb_t on_chain_settings_sui_clicked = nullptr;
     lv_event_cb_t on_sui_settings_back_clicked = nullptr;
     lv_event_cb_t on_sui_settings_gas_sponsor_clicked = nullptr;
     lv_event_cb_t on_sui_settings_clear_clicked = nullptr;
-    lv_event_cb_t on_error_recovery_erase_clicked = nullptr;
+    lv_event_cb_t on_error_recovery_action_clicked = nullptr;
     lv_event_cb_t on_error_recovery_cancel_clicked = nullptr;
-    lv_event_cb_t on_reset_cancel_clicked = nullptr;
+    lv_event_cb_t on_storage_action_cancel_clicked = nullptr;
     lv_event_cb_t on_backup_phrase_cancel_clicked = nullptr;
     lv_event_cb_t on_backup_phrase_confirm_clicked = nullptr;
     lv_event_cb_t on_pin_digit_clicked = nullptr;
@@ -100,7 +100,7 @@ bool modal_draw_settings_menu_panel();
 bool modal_draw_chain_settings_menu_panel();
 bool modal_draw_sui_settings_panel(const SuiSettingsViewModel& model);
 bool modal_draw_error_recovery_panel(bool confirm);
-bool modal_draw_reset_pin_panel(const char* notice = nullptr);
+bool modal_draw_action_pin_panel(const char* notice = nullptr);
 bool modal_draw_local_pin_auth_panel(const char* notice = nullptr);
 bool modal_draw_policy_update_review_panel(
     const PolicyUpdateReviewViewModel& model,

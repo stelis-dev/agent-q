@@ -9,6 +9,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "nvs.h"
+#include "persistent_storage_names.h"
 
 extern "C" {
 #include "byte_conversions.h"
@@ -19,7 +20,7 @@ namespace signing {
 namespace {
 
 constexpr const char* kTag = "SuiZkLogin";
-constexpr const char* kNvsNamespace = "signing";
+constexpr const char* kNvsNamespace = kMutableSettingsNvsNamespace;
 constexpr const char* kProofRecordKey = "sui_zkl_proof";
 constexpr uint8_t kStoredRecordMagic[4] = {'A', 'Q', 'Z', 'L'};
 constexpr uint8_t kStoredRecordVersion = 0;
@@ -532,7 +533,7 @@ bool wipe_sui_zklogin_proof_record()
         return true;
     }
     if (result != ESP_OK) {
-        ESP_LOGW(kTag, "NVS open failed while wiping zkLogin proof: %s", esp_err_to_name(result));
+        ESP_LOGW(kTag, "NVS open failed while clearing zkLogin proof: %s", esp_err_to_name(result));
         return false;
     }
 

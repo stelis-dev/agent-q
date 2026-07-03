@@ -19,6 +19,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 CXX_BIN="${CXX:-c++}"
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-connect-approval.XXXXXX")"
@@ -176,6 +177,7 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
+  -I"${COMMON_ROOT}" \
   -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/connect_approval_test.cpp" \
   "${RUNTIME_DIR}/connect_approval.cpp" \

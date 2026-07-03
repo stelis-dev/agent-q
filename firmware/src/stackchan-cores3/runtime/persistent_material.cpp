@@ -53,7 +53,7 @@ void rollback_setup_material()
     wipe_human_approval_input_mode();
     wipe_signing_authorization_mode();
     wipe_sui_account_settings();
-    wipe_local_auth();
+    clear_local_auth();
     wipe_policy();
     wipe_root_material();
 }
@@ -65,34 +65,56 @@ const char* runtime_failure_message(PersistentMaterialRuntimeFailure failure)
             return "Root material unreadable while provisioned; failing closed";
         case PersistentMaterialRuntimeFailure::active_policy_unavailable:
             return "Active policy unavailable while provisioned; failing closed";
-        case PersistentMaterialRuntimeFailure::pending_reset_resume_failed:
-            return "Pending local reset could not be completed during boot; failing closed";
-        case PersistentMaterialRuntimeFailure::local_reset_root_wipe_failed:
-            return "Local reset could not wipe root material; failing closed";
-        case PersistentMaterialRuntimeFailure::local_reset_policy_wipe_failed:
-            return "Local reset could not wipe active policy; failing closed";
-        case PersistentMaterialRuntimeFailure::local_reset_local_auth_wipe_failed:
-            return "Local reset could not wipe local PIN verifier; failing closed";
-        case PersistentMaterialRuntimeFailure::local_reset_human_approval_setting_wipe_failed:
-            return "Local reset could not wipe human approval input mode; failing closed";
-        case PersistentMaterialRuntimeFailure::local_reset_signing_mode_wipe_failed:
-            return "Local reset could not wipe signing authorization mode; failing closed";
-        case PersistentMaterialRuntimeFailure::local_reset_sui_account_settings_wipe_failed:
-            return "Local reset could not wipe Sui account settings; failing closed";
-        case PersistentMaterialRuntimeFailure::local_reset_approval_history_wipe_failed:
-            return "Local reset could not wipe approval history; failing closed";
-        case PersistentMaterialRuntimeFailure::local_reset_policy_update_marker_wipe_failed:
-            return "Local reset could not wipe policy update marker; failing closed";
-        case PersistentMaterialRuntimeFailure::local_reset_zklogin_proof_wipe_failed:
-            return "Local reset could not wipe Sui zkLogin proof record; failing closed";
-        case PersistentMaterialRuntimeFailure::local_reset_material_remaining:
-            return "Local reset reported success but persistent material remains; failing closed";
-        case PersistentMaterialRuntimeFailure::local_reset_state_storage_failed:
-            return "Local reset wiped material but could not persist unprovisioned state; failing closed";
-        case PersistentMaterialRuntimeFailure::local_reset_marker_clear_failed:
-            return "Local reset completed but could not clear reset marker; failing closed";
-        case PersistentMaterialRuntimeFailure::local_reset_auth_unavailable:
-            return "Local reset could not verify stored PIN; failing closed";
+        case PersistentMaterialRuntimeFailure::pending_storage_action_resume_failed:
+            return "Pending storage action could not be completed during boot; failing closed";
+        case PersistentMaterialRuntimeFailure::wallet_erase_root_wipe_failed:
+            return "Device reset could not wipe root material; failing closed";
+        case PersistentMaterialRuntimeFailure::wallet_erase_policy_wipe_failed:
+            return "Device reset could not wipe active policy; failing closed";
+        case PersistentMaterialRuntimeFailure::wallet_erase_local_auth_wipe_failed:
+            return "Device reset could not wipe local PIN verifier; failing closed";
+        case PersistentMaterialRuntimeFailure::wallet_erase_human_approval_setting_wipe_failed:
+            return "Device reset could not wipe human approval input mode; failing closed";
+        case PersistentMaterialRuntimeFailure::wallet_erase_signing_mode_wipe_failed:
+            return "Device reset could not wipe signing authorization mode; failing closed";
+        case PersistentMaterialRuntimeFailure::wallet_erase_sui_account_settings_wipe_failed:
+            return "Device reset could not wipe Sui account settings; failing closed";
+        case PersistentMaterialRuntimeFailure::wallet_erase_approval_history_wipe_failed:
+            return "Device reset could not wipe approval history; failing closed";
+        case PersistentMaterialRuntimeFailure::wallet_erase_policy_update_marker_wipe_failed:
+            return "Device reset could not wipe policy update marker; failing closed";
+        case PersistentMaterialRuntimeFailure::wallet_erase_zklogin_proof_wipe_failed:
+            return "Device reset could not wipe Sui zkLogin proof record; failing closed";
+        case PersistentMaterialRuntimeFailure::wallet_erase_material_remaining:
+            return "Device reset reported success but persistent material remains; failing closed";
+        case PersistentMaterialRuntimeFailure::wallet_erase_state_storage_failed:
+            return "Device reset wiped material but could not persist unprovisioned state; failing closed";
+        case PersistentMaterialRuntimeFailure::wallet_erase_marker_clear_failed:
+            return "Device reset completed but could not clear pending marker; failing closed";
+        case PersistentMaterialRuntimeFailure::wallet_erase_auth_unavailable:
+            return "Device reset could not verify stored PIN; failing closed";
+        case PersistentMaterialRuntimeFailure::settings_reset_policy_store_failed:
+            return "Settings repair could not store default policy; failing closed";
+        case PersistentMaterialRuntimeFailure::settings_reset_human_approval_setting_store_failed:
+            return "Settings repair could not store human approval input mode; failing closed";
+        case PersistentMaterialRuntimeFailure::settings_reset_signing_mode_store_failed:
+            return "Settings repair could not store signing authorization mode; failing closed";
+        case PersistentMaterialRuntimeFailure::settings_reset_sui_account_settings_store_failed:
+            return "Settings repair could not store Sui account settings; failing closed";
+        case PersistentMaterialRuntimeFailure::settings_reset_approval_history_wipe_failed:
+            return "Settings repair could not wipe approval history; failing closed";
+        case PersistentMaterialRuntimeFailure::settings_reset_policy_update_marker_wipe_failed:
+            return "Settings repair could not clear policy update marker; failing closed";
+        case PersistentMaterialRuntimeFailure::settings_reset_zklogin_proof_wipe_failed:
+            return "Settings repair could not wipe Sui zkLogin proof record; failing closed";
+        case PersistentMaterialRuntimeFailure::settings_reset_material_incomplete:
+            return "Settings repair reported success but recoverable settings are incomplete; failing closed";
+        case PersistentMaterialRuntimeFailure::settings_reset_state_storage_failed:
+            return "Settings repair rebuilt settings but could not persist provisioned state; failing closed";
+        case PersistentMaterialRuntimeFailure::settings_reset_marker_clear_failed:
+            return "Settings repair completed but could not clear pending marker; failing closed";
+        case PersistentMaterialRuntimeFailure::settings_reset_auth_unavailable:
+            return "Settings repair could not verify stored PIN; failing closed";
         case PersistentMaterialRuntimeFailure::local_pin_auth_unavailable:
             return "Local PIN verifier unavailable during PIN authorization; failing closed";
         case PersistentMaterialRuntimeFailure::pin_change_auth_unavailable:
@@ -113,16 +135,35 @@ PersistentMaterialConsistencyResult validate_loaded_runtime_state(
             *effective_state = ProvisioningRuntimeState::provisioned;
             return PersistentMaterialConsistencyResult::ok;
         }
+        if (!status.signing_key_material_present()) {
+            latch_consistency_error(
+                ops,
+                "Stored provisioned state is missing signing key material; failing closed");
+            return PersistentMaterialConsistencyResult::consistency_error;
+        }
+        if (!status.authority_gate_active()) {
+            latch_consistency_error(
+                ops,
+                "Stored signing key material exists without valid local authentication verifier; failing closed");
+            return PersistentMaterialConsistencyResult::consistency_error;
+        }
         latch_consistency_error(
             ops,
-            "Stored provisioned state is missing root material, active policy, local PIN verifier, signing mode, Sui account settings, has pending policy update material, or has invalid Sui zkLogin proof state; failing closed");
+            "Stored signing key material and local authentication verifier exist without valid recoverable settings; failing closed");
         return PersistentMaterialConsistencyResult::consistency_error;
     }
 
-    if (status.any_material()) {
+    if (status.signing_key_material_present()) {
         latch_consistency_error(
             ops,
-            "Persistent setup material exists outside provisioned state; failing closed");
+            "Signing key material exists outside provisioned state; failing closed");
+        return PersistentMaterialConsistencyResult::consistency_error;
+    }
+
+    if (status.authority_gate_active() || status.recoverable_settings_material_present()) {
+        latch_consistency_error(
+            ops,
+            "Persistent settings or authority-gate material exists without signing key material; failing closed");
         return PersistentMaterialConsistencyResult::consistency_error;
     }
 
@@ -134,14 +175,9 @@ PersistentMaterialConsistencyResult validate_loaded_runtime_state(
 
 bool PersistentMaterialStatus::complete() const
 {
-    return root_present &&
-           policy_status == PolicyStoreStatus::active &&
-           local_auth_status == LocalAuthStatus::active &&
-           signing_mode_status == AuthorizationModeStatus::active &&
-           sui_account_settings_status == SuiAccountSettingsStatus::active &&
-           policy_update_marker_status == PolicyUpdateMarkerStatus::clear &&
-           (zklogin_proof_status == SuiZkLoginProofRecordStatus::missing ||
-            zklogin_proof_status == SuiZkLoginProofRecordStatus::active);
+    return signing_key_material_present() &&
+           authority_gate_active() &&
+           recoverable_settings_complete();
 }
 
 bool PersistentMaterialStatus::any_material() const
@@ -149,8 +185,44 @@ bool PersistentMaterialStatus::any_material() const
     return root_present ||
            policy_status != PolicyStoreStatus::missing ||
            local_auth_status != LocalAuthStatus::missing ||
+           human_approval_setting_status != HumanApprovalInputModeStatus::missing ||
            signing_mode_status != AuthorizationModeStatus::missing ||
            sui_account_settings_status != SuiAccountSettingsStatus::missing ||
+           approval_history_status != ApprovalHistoryStorageStatus::missing ||
+           policy_update_marker_status != PolicyUpdateMarkerStatus::clear ||
+           zklogin_proof_status != SuiZkLoginProofRecordStatus::missing;
+}
+
+bool PersistentMaterialStatus::signing_key_material_present() const
+{
+    return root_present;
+}
+
+bool PersistentMaterialStatus::authority_gate_active() const
+{
+    return local_auth_status == LocalAuthStatus::active;
+}
+
+bool PersistentMaterialStatus::recoverable_settings_complete() const
+{
+    return policy_status == PolicyStoreStatus::active &&
+           human_approval_setting_status == HumanApprovalInputModeStatus::active &&
+           signing_mode_status == AuthorizationModeStatus::active &&
+           sui_account_settings_status == SuiAccountSettingsStatus::active &&
+           (approval_history_status == ApprovalHistoryStorageStatus::missing ||
+            approval_history_status == ApprovalHistoryStorageStatus::active) &&
+           policy_update_marker_status == PolicyUpdateMarkerStatus::clear &&
+           (zklogin_proof_status == SuiZkLoginProofRecordStatus::missing ||
+            zklogin_proof_status == SuiZkLoginProofRecordStatus::active);
+}
+
+bool PersistentMaterialStatus::recoverable_settings_material_present() const
+{
+    return policy_status != PolicyStoreStatus::missing ||
+           human_approval_setting_status != HumanApprovalInputModeStatus::missing ||
+           signing_mode_status != AuthorizationModeStatus::missing ||
+           sui_account_settings_status != SuiAccountSettingsStatus::missing ||
+           approval_history_status != ApprovalHistoryStorageStatus::missing ||
            policy_update_marker_status != PolicyUpdateMarkerStatus::clear ||
            zklogin_proof_status != SuiZkLoginProofRecordStatus::missing;
 }
@@ -185,8 +257,10 @@ PersistentMaterialStatus persistent_material_status()
         has_root_material(),
         active_policy_status(),
         local_auth_status(),
+        human_approval_input_mode_status(),
         authorization_mode_status(),
         sui_account_settings_status(),
+        approval_history_status(),
         policy_update_marker_status(),
         sui_zklogin_proof_record_status(),
     };
@@ -195,6 +269,12 @@ PersistentMaterialStatus persistent_material_status()
 bool persistent_material_exists()
 {
     return persistent_material_status().any_material();
+}
+
+bool persistent_material_can_reset_recoverable_settings()
+{
+    const PersistentMaterialStatus status = persistent_material_status();
+    return status.signing_key_material_present() && status.authority_gate_active();
 }
 
 bool persistent_material_consistency_error_active()
@@ -267,16 +347,34 @@ bool persistent_material_validate_runtime_state(
         if (status.complete()) {
             return true;
         }
+        if (!status.signing_key_material_present()) {
+            latch_consistency_error(
+                ops,
+                "Provisioned state lost signing key material; failing closed");
+            return false;
+        }
+        if (!status.authority_gate_active()) {
+            latch_consistency_error(
+                ops,
+                "Provisioned state has signing key material without valid local authentication verifier; failing closed");
+            return false;
+        }
         latch_consistency_error(
             ops,
-            "Provisioned state lost root material, active policy, local PIN verifier, signing mode, Sui account settings, has pending policy update material, or has invalid Sui zkLogin proof state; failing closed");
+            "Provisioned state has signing key material and local authentication verifier without valid recoverable settings; failing closed");
         return false;
     }
 
-    if (status.any_material()) {
+    if (status.signing_key_material_present()) {
         latch_consistency_error(
             ops,
-            "Persistent setup material exists outside provisioned state; failing closed");
+            "Signing key material exists outside provisioned state; failing closed");
+        return false;
+    }
+    if (status.authority_gate_active() || status.recoverable_settings_material_present()) {
+        latch_consistency_error(
+            ops,
+            "Persistent settings or authority-gate material exists without signing key material; failing closed");
         return false;
     }
     return true;
@@ -392,11 +490,11 @@ PersistentMaterialCommitResult persistent_material_commit_setup_with_prepared_au
     return PersistentMaterialCommitResult::ok;
 }
 
-PersistentMaterialWipeResult persistent_material_wipe_all()
+PersistentMaterialWalletEraseResult persistent_material_wallet_erase()
 {
     const bool root_wiped = wipe_root_material();
     const bool policy_wiped = wipe_policy();
-    const bool local_auth_wiped = wipe_local_auth();
+    const bool local_auth_wiped = clear_local_auth();
     const bool human_approval_setting_wiped = wipe_human_approval_input_mode();
     const bool signing_mode_wiped = wipe_signing_authorization_mode();
     const bool sui_account_settings_wiped = wipe_sui_account_settings();
@@ -405,37 +503,75 @@ PersistentMaterialWipeResult persistent_material_wipe_all()
     const bool zklogin_proof_wiped = wipe_sui_zklogin_proof_record();
 
     if (!root_wiped) {
-        return PersistentMaterialWipeResult::root_wipe_error;
+        return PersistentMaterialWalletEraseResult::root_wipe_error;
     }
     if (!policy_wiped) {
-        return PersistentMaterialWipeResult::policy_wipe_error;
+        return PersistentMaterialWalletEraseResult::policy_wipe_error;
     }
     if (!local_auth_wiped) {
-        return PersistentMaterialWipeResult::local_auth_wipe_error;
+        return PersistentMaterialWalletEraseResult::local_auth_wipe_error;
     }
     if (!human_approval_setting_wiped) {
-        return PersistentMaterialWipeResult::human_approval_setting_wipe_error;
+        return PersistentMaterialWalletEraseResult::human_approval_setting_wipe_error;
     }
     if (!signing_mode_wiped) {
-        return PersistentMaterialWipeResult::signing_mode_wipe_error;
+        return PersistentMaterialWalletEraseResult::signing_mode_wipe_error;
     }
     if (!sui_account_settings_wiped) {
-        return PersistentMaterialWipeResult::sui_account_settings_wipe_error;
+        return PersistentMaterialWalletEraseResult::sui_account_settings_wipe_error;
     }
     if (!approval_history_wiped) {
-        return PersistentMaterialWipeResult::approval_history_wipe_error;
+        return PersistentMaterialWalletEraseResult::approval_history_wipe_error;
     }
     if (!policy_update_marker_wiped) {
-        return PersistentMaterialWipeResult::policy_update_marker_wipe_error;
+        return PersistentMaterialWalletEraseResult::policy_update_marker_wipe_error;
     }
     if (!zklogin_proof_wiped) {
-        return PersistentMaterialWipeResult::zklogin_proof_wipe_error;
+        return PersistentMaterialWalletEraseResult::zklogin_proof_wipe_error;
     }
     if (persistent_material_exists()) {
-        return PersistentMaterialWipeResult::material_remaining_error;
+        return PersistentMaterialWalletEraseResult::material_remaining_error;
     }
     g_consistency_error = false;
-    return PersistentMaterialWipeResult::ok;
+    return PersistentMaterialWalletEraseResult::ok;
+}
+
+PersistentMaterialSettingsResetResult persistent_material_reset_recoverable_settings()
+{
+    const PersistentMaterialStatus status = persistent_material_status();
+    if (!status.signing_key_material_present()) {
+        return PersistentMaterialSettingsResetResult::key_unavailable;
+    }
+    if (!status.authority_gate_active()) {
+        return PersistentMaterialSettingsResetResult::auth_unavailable;
+    }
+
+    if (!store_default_policy()) {
+        return PersistentMaterialSettingsResetResult::policy_store_error;
+    }
+    if (!store_human_approval_input_mode(HumanApprovalInputMode::pin)) {
+        return PersistentMaterialSettingsResetResult::human_approval_setting_store_error;
+    }
+    if (!store_signing_authorization_mode(AuthorizationMode::user)) {
+        return PersistentMaterialSettingsResetResult::signing_mode_store_error;
+    }
+    if (!store_sui_account_settings(kDefaultSuiAccountSettings)) {
+        return PersistentMaterialSettingsResetResult::sui_account_settings_store_error;
+    }
+    if (!approval_history_wipe()) {
+        return PersistentMaterialSettingsResetResult::approval_history_wipe_error;
+    }
+    if (!policy_update_marker_clear()) {
+        return PersistentMaterialSettingsResetResult::policy_update_marker_wipe_error;
+    }
+    if (!wipe_sui_zklogin_proof_record()) {
+        return PersistentMaterialSettingsResetResult::zklogin_proof_wipe_error;
+    }
+    if (!persistent_material_status().complete()) {
+        return PersistentMaterialSettingsResetResult::material_incomplete_error;
+    }
+    g_consistency_error = false;
+    return PersistentMaterialSettingsResetResult::ok;
 }
 
 }  // namespace signing

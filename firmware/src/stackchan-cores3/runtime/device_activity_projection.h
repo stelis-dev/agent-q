@@ -1,6 +1,6 @@
 #pragma once
 
-#include "local_reset.h"
+#include "storage_maintenance.h"
 #include "policy_update_flow.h"
 #include "sui_zklogin_proposal_flow.h"
 #include "user_signing_flow.h"
@@ -27,7 +27,7 @@ struct DeviceActivityFacts {
     bool payload_delivery_finalized;
     PolicyUpdateFlowSnapshot policy_update;
     SuiZkLoginProposalSnapshot sui_zklogin_proposal;
-    LocalResetSnapshot local_reset;
+    StorageMaintenanceSnapshot storage_maintenance;
     UserSigningFlowCoreSnapshot user_signing;
 };
 
@@ -49,8 +49,8 @@ struct DeviceActivityProjection {
     bool payload_delivery_active;
     bool payload_delivery_receiving;
     bool payload_delivery_finalized;
-    bool local_reset_active;
-    bool local_reset_settings_menu;
+    bool storage_maintenance_active;
+    bool storage_maintenance_settings_menu;
     bool local_pin_auth_flow_active;
     bool user_signing_active;
     bool user_signing_awaiting_approval;

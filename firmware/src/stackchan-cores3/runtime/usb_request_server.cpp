@@ -23,10 +23,11 @@
 #include "local_auth_worker.h"
 #include "local_pin_auth.h"
 #include "local_pin_auth_ui_flow.h"
-#include "local_settings_reset_ui_flow.h"
+#include "storage_maintenance_ui_flow.h"
 #include "local_settings_touch_entry.h"
-#include "local_reset.h"
+#include "storage_maintenance.h"
 #include "modal_drawing.h"
+#include "persistent_storage_names.h"
 #include "persistent_material.h"
 #include "payload_delivery_admission.h"
 #include "payload_delivery_store.h"
@@ -127,7 +128,7 @@ constexpr int kProtocolVersion = signing::kProtocolVersion;
 constexpr const char* kFirmwareName = "Agent-Q Firmware";
 constexpr const char* kHardwareId = "stackchan-cores3";
 constexpr const char* kFirmwareVersion = "0.0.0";
-constexpr const char* kNvsNamespace = "signing";
+constexpr const char* kNvsNamespace = signing::kDeviceIdentityNvsNamespace;
 constexpr const char* kDeviceIdKey = "device_id";
 constexpr uint32_t kIdentifyDisplayDefaultMs = 30000;
 constexpr uint32_t kConnectApprovalDefaultMs = 30000;
@@ -183,8 +184,8 @@ bool write_busy_if_pending_or_local_flow_active_for_operation(
     const UsbOperationResponseWriter& writer,
     signing::UsbOperationType operation);
 signing::PersistentMaterialOps persistent_material_ops();
-signing::LocalResetPersistenceOps local_reset_persistence_ops();
-signing::LocalSettingsResetUiFlowOps local_settings_reset_ui_ops();
+signing::StorageMaintenancePersistenceOps storage_maintenance_persistence_ops();
+signing::StorageMaintenanceUiFlowOps storage_maintenance_ui_ops();
 signing::LocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops();
 const signing::PolicyUpdateReviewUiFlowOps& policy_update_review_ui_flow_ops();
 const signing::SuiZkLoginReviewUiFlowOps& sui_zklogin_review_ui_flow_ops();
@@ -245,18 +246,18 @@ void wipe_setup_scratch(const char* reason)
     }
 }
 
-void wipe_local_reset_scratch(const char* reason)
+void clear_storage_maintenance_flow(const char* reason)
 {
-    const bool had_reset_scratch =
-        signing::local_reset_snapshot(xTaskGetTickCount()).flow_active;
-    signing::local_reset_wipe();
+    const bool had_storage_action_scratch =
+        signing::storage_maintenance_snapshot(xTaskGetTickCount()).flow_active;
+    signing::storage_maintenance_clear_flow();
     signing::local_settings_touch_entry_clear();
-    if (had_reset_scratch) {
-        ESP_LOGW(kTag, "Local reset scratch wiped: %s", reason != nullptr ? reason : "unspecified");
+    if (had_storage_action_scratch) {
+        ESP_LOGW(kTag, "Storage maintenance scratch wiped: %s", reason != nullptr ? reason : "unspecified");
     }
 }
 
-void wipe_local_pin_auth_scratch(const char* reason)
+void clear_local_pin_auth_scratch(const char* reason)
 {
     const bool had_pin_auth = signing::local_pin_auth_flow_active();
     signing::local_pin_auth_clear_flow();
@@ -307,9 +308,9 @@ bool local_pin_auth_accepts_keypad_input()
     return signing::local_pin_auth_ui_accepts_keypad_input();
 }
 
-bool local_reset_panel_matches_stage(UiPanelKind kind)
+bool storage_maintenance_panel_matches_stage(UiPanelKind kind)
 {
-    return signing::local_settings_reset_ui_panel_matches_stage(kind);
+    return signing::storage_maintenance_ui_panel_matches_stage(kind);
 }
 
 bool handle_provisioning_panel_deleted(ProvisioningFlowPanel panel, const char* reason)
@@ -328,7 +329,7 @@ signing::UiPanelCleanupPlan panel_cleanup_plan(
     return signing::ui_panel_cleanup_plan(signing::UiPanelCleanupInput{
         panel_kind,
         event,
-        local_reset_panel_matches_stage(panel_kind),
+        storage_maintenance_panel_matches_stage(panel_kind),
         local_pin_auth_panel_matches_stage(panel_kind),
         policy_update_review_panel_matches_stage(panel_kind),
         sui_zklogin_review_panel_matches_stage(panel_kind),
@@ -347,11 +348,11 @@ void apply_panel_cleanup_plan(
         plan.wipe_setup_if_unhandled) {
         wipe_setup_scratch(setup_reason);
     }
-    if (plan.wipe_local_reset) {
-        wipe_local_reset_scratch(reset_reason);
+    if (plan.clear_storage_maintenance) {
+        clear_storage_maintenance_flow(reset_reason);
     }
-    if (plan.wipe_local_pin_auth) {
-        wipe_local_pin_auth_scratch(local_pin_reason);
+    if (plan.clear_local_pin_auth) {
+        clear_local_pin_auth_scratch(local_pin_reason);
     }
     if (plan.recover_local_pin_auth_panel) {
         // LVGL may delete our transient panel when the underlying app redraws.
@@ -500,7 +501,7 @@ signing::DeviceActivityProjection current_device_activity()
         payload_delivery.state == signing::PayloadDeliveryState::finalized,
         signing::policy_update_flow_snapshot(),
         signing::sui_zklogin_proposal_flow_snapshot(),
-        signing::local_reset_snapshot(now),
+        signing::storage_maintenance_snapshot(now),
         signing::user_signing_flow_core_snapshot(),
     };
     return signing::project_device_activity(facts);
@@ -636,11 +637,6 @@ void clear_active_session()
     signing::payload_delivery_clear_all();
 }
 
-bool persist_unprovisioned_state_for_local_reset()
-{
-    return signing::provisioning_runtime_state_persist(ProvisioningRuntimeState::unprovisioned);
-}
-
 bool persist_persistent_material_state(signing::ProvisioningPersistedState state)
 {
     if (state == signing::ProvisioningPersistedState::provisioned) {
@@ -660,19 +656,19 @@ void handle_persistent_material_consistency_error(const char* message)
     ESP_LOGE(kTag, "%s", message != nullptr ? message : "Persistent material consistency error; failing closed");
 }
 
-void record_local_reset_material_failure(signing::PersistentMaterialRuntimeFailure failure)
+void record_storage_maintenance_material_failure(signing::PersistentMaterialRuntimeFailure failure)
 {
     signing::persistent_material_record_runtime_failure(
         failure,
         persistent_material_ops());
 }
 
-signing::LocalResetPersistenceOps local_reset_persistence_ops()
+signing::StorageMaintenancePersistenceOps storage_maintenance_persistence_ops()
 {
-    return signing::LocalResetPersistenceOps{
+    return signing::StorageMaintenancePersistenceOps{
         clear_active_session,
-        persist_unprovisioned_state_for_local_reset,
-        record_local_reset_material_failure,
+        persist_persistent_material_state,
+        record_storage_maintenance_material_failure,
     };
 }
 
@@ -1081,8 +1077,8 @@ void clear_session_bound_state_for_plan(
     if (plan.clear_protocol_pin) {
         signing::protocol_pin_approval_clear();
     }
-    if (plan.wipe_local_pin_auth) {
-        wipe_local_pin_auth_scratch(local_pin_reason);
+    if (plan.clear_local_pin_auth) {
+        clear_local_pin_auth_scratch(local_pin_reason);
     }
     if (plan.clear_policy_update_flow) {
         signing::policy_update_flow_clear();
@@ -1288,7 +1284,7 @@ bool local_setup_start_allowed()
            !signing::provisioning_flow_active() &&
            !signing::local_pin_auth_flow_active() &&
            !signing::user_signing_flow_active() &&
-           !signing::local_reset_snapshot(xTaskGetTickCount()).flow_active &&
+           !signing::storage_maintenance_snapshot(xTaskGetTickCount()).flow_active &&
            !signing::connect_approval_active() &&
            !signing::protocol_pin_approval_active() &&
            welcome_visible;
@@ -1622,7 +1618,7 @@ void cancel_policy_update_after_session_loss(const char* log_reason)
             signing::local_pin_auth_snapshot(xTaskGetTickCount());
         if (pin_auth.flow_active &&
             pin_auth.purpose == LocalPinAuthPurpose::policy_update) {
-            wipe_local_pin_auth_scratch("session loss canceled pending policy update");
+            clear_local_pin_auth_scratch("session loss canceled pending policy update");
             clear_signing_panel_if_kind(UiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
         }
         write_policy_update_invalid_session_and_clear(request_id, log_reason);
@@ -1674,7 +1670,7 @@ void cancel_sui_zklogin_proposal_after_session_loss(const char* log_reason)
             signing::local_pin_auth_snapshot(xTaskGetTickCount());
         if (pin_auth.flow_active &&
             pin_auth.purpose == LocalPinAuthPurpose::sui_zklogin_proposal) {
-            wipe_local_pin_auth_scratch("session loss canceled pending Sui zkLogin proposal");
+            clear_local_pin_auth_scratch("session loss canceled pending Sui zkLogin proposal");
             clear_signing_panel_if_kind(UiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
         }
         write_sui_zklogin_proposal_invalid_session_and_clear(request_id, log_reason);
@@ -1819,7 +1815,7 @@ bool disconnect_pending_policy_update_for_session(const char* id, const char* se
         signing::local_pin_auth_snapshot(xTaskGetTickCount());
     if (pin_auth.flow_active &&
         pin_auth.purpose == LocalPinAuthPurpose::policy_update) {
-        wipe_local_pin_auth_scratch("disconnect canceled pending policy update");
+        clear_local_pin_auth_scratch("disconnect canceled pending policy update");
         clear_signing_panel_if_kind(UiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
     }
     if (policy_request_id[0] != '\0' &&
@@ -1853,7 +1849,7 @@ bool disconnect_pending_sui_zklogin_proposal_for_session(const char* id, const c
             signing::local_pin_auth_snapshot(xTaskGetTickCount());
         if (pin_auth.flow_active &&
             pin_auth.purpose == LocalPinAuthPurpose::sui_zklogin_proposal) {
-            wipe_local_pin_auth_scratch("disconnect canceled pending Sui zkLogin proposal");
+            clear_local_pin_auth_scratch("disconnect canceled pending Sui zkLogin proposal");
             clear_signing_panel_if_kind(UiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
         }
         clear_signing_panel_if_kind(
@@ -1891,7 +1887,7 @@ bool disconnect_pending_sui_zklogin_proposal_for_session(const char* id, const c
         signing::local_pin_auth_snapshot(xTaskGetTickCount());
     if (pin_auth.flow_active &&
         pin_auth.purpose == LocalPinAuthPurpose::sui_zklogin_proposal) {
-        wipe_local_pin_auth_scratch("disconnect canceled pending Sui zkLogin proposal");
+        clear_local_pin_auth_scratch("disconnect canceled pending Sui zkLogin proposal");
         clear_signing_panel_if_kind(UiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
     }
     clear_signing_panel_if_kind(
@@ -1971,7 +1967,7 @@ void clear_panel_locked(SensitiveUiClearPolicy policy)
     apply_panel_cleanup_plan(
         panel_cleanup_plan(panel_kind, signing::UiPanelCleanupEvent::explicit_clear),
         "sensitive setup panel cleared",
-        "local reset panel cleared",
+        "storage maintenance panel cleared",
         "local PIN authorization panel cleared");
 }
 
@@ -1992,7 +1988,7 @@ bool provisioning_welcome_available()
            !signing::identification_display_active() &&
            !signing::provisioning_flow_active() &&
            !signing::local_pin_auth_flow_active() &&
-           !signing::local_reset_snapshot(xTaskGetTickCount()).flow_active &&
+           !signing::storage_maintenance_snapshot(xTaskGetTickCount()).flow_active &&
            ui_display_idle;
 }
 
@@ -2131,7 +2127,7 @@ bool setup_app_action_allowed()
 {
     if (signing::connect_approval_active() ||
         signing::protocol_pin_approval_active() ||
-        signing::local_reset_snapshot(xTaskGetTickCount()).flow_active) {
+        signing::storage_maintenance_snapshot(xTaskGetTickCount()).flow_active) {
         return false;
     }
     if (!refresh_persistent_material_consistency()) {
@@ -2208,22 +2204,22 @@ void provisioning_ui_log_warn(const char* message)
     ESP_LOGW(kTag, "%s", message != nullptr ? message : "");
 }
 
-TickType_t local_settings_reset_ui_now()
+TickType_t storage_maintenance_ui_now()
 {
     return xTaskGetTickCount();
 }
 
-bool local_settings_reset_ui_display_ready()
+bool storage_maintenance_ui_display_ready()
 {
     LvglLockGuard lock;
     return signing::drawing_surface_ready();
 }
 
-bool local_settings_reset_ui_panel_active()
+bool storage_maintenance_ui_panel_active()
 {
     LvglLockGuard lock;
     return signing::drawing_surface_panel_locked() != nullptr &&
-           local_reset_panel_matches_stage(signing::drawing_surface_panel_kind_locked());
+           storage_maintenance_panel_matches_stage(signing::drawing_surface_panel_kind_locked());
 }
 
 bool local_settings_start_available()
@@ -2239,12 +2235,12 @@ bool local_error_recovery_available()
         current_device_activity());
 }
 
-bool draw_local_settings_reset_processing_overlay(UiPanelKind kind)
+bool draw_storage_maintenance_processing_overlay(UiPanelKind kind)
 {
     return signing::modal_draw_processing_overlay_on_current_panel(kind);
 }
 
-void local_settings_reset_ui_show_message(const char* message, MessageKind kind)
+void storage_maintenance_ui_show_message(const char* message, MessageKind kind)
 {
     signing::avatar_overlay_show_message(
         message,
@@ -2253,7 +2249,7 @@ void local_settings_reset_ui_show_message(const char* message, MessageKind kind)
         kResultDisplayMs);
 }
 
-void local_settings_reset_ui_record_material_failure(
+void storage_maintenance_ui_record_material_failure(
     signing::PersistentMaterialRuntimeFailure failure)
 {
     signing::persistent_material_record_runtime_failure(
@@ -2261,12 +2257,12 @@ void local_settings_reset_ui_record_material_failure(
         persistent_material_ops());
 }
 
-void local_settings_reset_ui_log_warn(const char* message)
+void storage_maintenance_ui_log_warn(const char* message)
 {
     ESP_LOGW(kTag, "%s", message != nullptr ? message : "");
 }
 
-void local_settings_reset_ui_log_error(const char* message)
+void storage_maintenance_ui_log_error(const char* message)
 {
     ESP_LOGE(kTag, "%s", message != nullptr ? message : "");
 }
@@ -2298,29 +2294,29 @@ const signing::ProvisioningUiFlowOps& provisioning_ui_ops()
     return ops;
 }
 
-signing::LocalSettingsResetUiFlowOps local_settings_reset_ui_ops()
+signing::StorageMaintenanceUiFlowOps storage_maintenance_ui_ops()
 {
-    return signing::LocalSettingsResetUiFlowOps{
-        local_settings_reset_ui_now,
+    return signing::StorageMaintenanceUiFlowOps{
+        storage_maintenance_ui_now,
         provisioned_material_ready,
         local_settings_start_available,
         local_error_recovery_available,
         signing::persistent_material_consistency_error_active,
-        local_settings_reset_ui_display_ready,
+        storage_maintenance_ui_display_ready,
         ui_panel_active,
-        local_settings_reset_ui_panel_active,
+        storage_maintenance_ui_panel_active,
         clear_signing_panel_if_kind,
         signing::modal_draw_settings_menu_panel,
         signing::modal_draw_error_recovery_panel,
-        signing::modal_draw_reset_pin_panel,
-        draw_local_settings_reset_processing_overlay,
+        signing::modal_draw_action_pin_panel,
+        draw_storage_maintenance_processing_overlay,
         signing::local_settings_touch_entry_clear,
-        local_settings_reset_ui_show_message,
-        local_settings_reset_ui_record_material_failure,
-        local_settings_reset_ui_log_warn,
-        local_settings_reset_ui_log_error,
-        local_reset_persistence_ops(),
-        signing::kLocalResetEntryMs,
+        storage_maintenance_ui_show_message,
+        storage_maintenance_ui_record_material_failure,
+        storage_maintenance_ui_log_warn,
+        storage_maintenance_ui_log_error,
+        storage_maintenance_persistence_ops(),
+        signing::kStorageMaintenanceEntryMs,
         kLocalProcessingRenderDelayMs,
         kLocalProcessingDisplayMs,
         signing::kLocalAuthWorkerMaxMs,
@@ -2420,9 +2416,9 @@ complete_sui_zklogin_clear_setting_for_local_pin_auth()
 
 bool begin_settings_pin_auth_handoff_for_local_pin_auth(const char* stale_log_message)
 {
-    return signing::local_settings_reset_ui_begin_settings_pin_auth_handoff(
+    return signing::storage_maintenance_ui_begin_settings_pin_auth_handoff(
         stale_log_message,
-        local_settings_reset_ui_ops());
+        storage_maintenance_ui_ops());
 }
 
 void restore_settings_menu_for_local_pin_auth(
@@ -2430,11 +2426,11 @@ void restore_settings_menu_for_local_pin_auth(
     const char* display_failure_message,
     MessageKind display_failure_kind)
 {
-    signing::local_settings_reset_ui_restore_settings_menu(
+    signing::storage_maintenance_ui_restore_settings_menu(
         display_failure_wipe_reason,
         display_failure_message,
         display_failure_kind,
-        local_settings_reset_ui_ops());
+        storage_maintenance_ui_ops());
 }
 
 void restore_sui_settings_for_local_pin_auth(
@@ -2443,14 +2439,14 @@ void restore_sui_settings_for_local_pin_auth(
     MessageKind display_failure_kind)
 {
     const TickType_t now = xTaskGetTickCount();
-    signing::local_reset_begin_settings(
+    signing::storage_maintenance_begin_settings(
         signing::timeout_window_from_deadline(
             now,
-            now + pdMS_TO_TICKS(signing::kLocalResetEntryMs)));
+            now + pdMS_TO_TICKS(signing::kStorageMaintenanceEntryMs)));
     if (draw_sui_settings_panel_from_current_state()) {
         return;
     }
-    wipe_local_reset_scratch(
+    clear_storage_maintenance_flow(
         display_failure_wipe_reason != nullptr && display_failure_wipe_reason[0] != '\0'
             ? display_failure_wipe_reason
             : "local Sui settings display allocation failed");
@@ -2809,7 +2805,7 @@ signing::LocalPinAuthUiFlowOps local_pin_auth_ui_flow_ops()
     ops.timing.local_processing_render_delay_ms = kLocalProcessingRenderDelayMs;
     ops.timing.local_processing_display_ms = kLocalProcessingDisplayMs;
     ops.timing.local_auth_worker_max_ms = signing::kLocalAuthWorkerMaxMs;
-    ops.timing.local_reset_entry_ms = signing::kLocalResetEntryMs;
+    ops.timing.storage_maintenance_entry_ms = signing::kStorageMaintenanceEntryMs;
     return ops;
 }
 
@@ -2853,19 +2849,19 @@ void handle_pin_submit_from_local_ui()
     signing::provisioning_ui_handle_pin_submit(provisioning_ui_ops());
 }
 
-void clear_local_reset_if_needed()
+void clear_storage_maintenance_if_needed()
 {
-    signing::local_settings_reset_ui_clear_if_needed(local_settings_reset_ui_ops());
+    signing::storage_maintenance_ui_clear_if_needed(storage_maintenance_ui_ops());
 }
 
-void commit_local_reset_if_ready()
+void commit_storage_maintenance_if_ready()
 {
-    signing::local_settings_reset_ui_commit_if_ready(local_settings_reset_ui_ops());
+    signing::storage_maintenance_ui_commit_if_ready(storage_maintenance_ui_ops());
 }
 
 void start_local_settings_from_touch()
 {
-    signing::local_settings_reset_ui_start_from_touch(local_settings_reset_ui_ops());
+    signing::storage_maintenance_ui_start_from_touch(storage_maintenance_ui_ops());
 }
 
 void start_local_chain_settings_from_touch()
@@ -2877,45 +2873,45 @@ void start_local_chain_settings_from_touch()
     }
 
     const TickType_t now = xTaskGetTickCount();
-    signing::local_reset_begin_settings(
-        timeout_window_from_now_ms(now, signing::kLocalResetEntryMs));
+    signing::storage_maintenance_begin_settings(
+        timeout_window_from_now_ms(now, signing::kStorageMaintenanceEntryMs));
     show_chain_settings_menu_from_active_settings();
 }
 
-void cancel_local_reset_from_ui(const char* message)
+void cancel_storage_maintenance_from_ui(const char* message)
 {
-    signing::local_settings_reset_ui_cancel_reset_from_ui(
+    signing::storage_maintenance_ui_cancel_action_pin_from_ui(
         message,
-        local_settings_reset_ui_ops());
+        storage_maintenance_ui_ops());
 }
 
 void close_local_settings_from_ui()
 {
-    signing::local_settings_reset_ui_close_settings_from_ui(local_settings_reset_ui_ops());
+    signing::storage_maintenance_ui_close_settings_from_ui(storage_maintenance_ui_ops());
 }
 
 void show_persistent_error_recovery_if_needed()
 {
-    signing::local_settings_reset_ui_show_persistent_error_recovery_if_needed(
-        local_settings_reset_ui_ops());
+    signing::storage_maintenance_ui_show_persistent_error_recovery_if_needed(
+        storage_maintenance_ui_ops());
 }
 
 void cancel_error_recovery_from_ui()
 {
-    signing::local_settings_reset_ui_cancel_error_recovery_from_ui(
-        local_settings_reset_ui_ops());
+    signing::storage_maintenance_ui_cancel_error_recovery_from_ui(
+        storage_maintenance_ui_ops());
 }
 
 void confirm_error_recovery_from_ui()
 {
-    signing::local_settings_reset_ui_confirm_error_recovery_from_ui(
-        local_settings_reset_ui_ops());
+    signing::storage_maintenance_ui_confirm_error_recovery_from_ui(
+        storage_maintenance_ui_ops());
 }
 
-void start_reset_pin_from_settings_menu()
+void start_wallet_erase_pin_from_settings_menu()
 {
-    signing::local_settings_reset_ui_start_reset_pin_from_settings_menu(
-        local_settings_reset_ui_ops());
+    signing::storage_maintenance_ui_start_wallet_erase_pin_from_settings_menu(
+        storage_maintenance_ui_ops());
 }
 
 bool begin_connect_pin_auth(const char* id, const char* client_name)
@@ -3243,15 +3239,15 @@ void start_settings_change_pin_from_settings_menu()
 
 void show_chain_settings_menu_from_active_settings()
 {
-    const signing::LocalResetSnapshot reset =
-        signing::local_reset_snapshot(xTaskGetTickCount());
-    if (reset.stage != signing::LocalResetStage::settings_menu) {
+    const signing::StorageMaintenanceSnapshot reset =
+        signing::storage_maintenance_snapshot(xTaskGetTickCount());
+    if (reset.stage != signing::StorageMaintenanceStage::settings_menu) {
         ESP_LOGW(kTag, "Stale chain settings action ignored");
         return;
     }
 
     if (!signing::modal_draw_chain_settings_menu_panel()) {
-        wipe_local_reset_scratch("Chain settings display allocation failed");
+        clear_storage_maintenance_flow("Chain settings display allocation failed");
         signing::avatar_overlay_show_message(
             "Display error",
             MessageKind::error,
@@ -3300,16 +3296,16 @@ bool draw_sui_settings_panel_from_current_state()
 
 void show_sui_settings_from_chain_settings()
 {
-    const signing::LocalResetSnapshot reset =
-        signing::local_reset_snapshot(xTaskGetTickCount());
-    if (reset.stage != signing::LocalResetStage::settings_menu ||
+    const signing::StorageMaintenanceSnapshot reset =
+        signing::storage_maintenance_snapshot(xTaskGetTickCount());
+    if (reset.stage != signing::StorageMaintenanceStage::settings_menu ||
         !ui_panel_active(UiPanelKind::chain_settings_menu)) {
         ESP_LOGW(kTag, "Stale Sui settings action ignored");
         return;
     }
 
     if (!draw_sui_settings_panel_from_current_state()) {
-        wipe_local_reset_scratch("Sui settings display allocation failed");
+        clear_storage_maintenance_flow("Sui settings display allocation failed");
         signing::avatar_overlay_show_message(
             "Display error",
             MessageKind::error,
@@ -3320,15 +3316,15 @@ void show_sui_settings_from_chain_settings()
 
 void show_chain_settings_menu_from_sui_settings()
 {
-    const signing::LocalResetSnapshot reset =
-        signing::local_reset_snapshot(xTaskGetTickCount());
-    if (reset.stage != signing::LocalResetStage::settings_menu ||
+    const signing::StorageMaintenanceSnapshot reset =
+        signing::storage_maintenance_snapshot(xTaskGetTickCount());
+    if (reset.stage != signing::StorageMaintenanceStage::settings_menu ||
         !ui_panel_active(UiPanelKind::sui_settings)) {
         ESP_LOGW(kTag, "Stale Sui settings back ignored");
         return;
     }
     if (!signing::modal_draw_chain_settings_menu_panel()) {
-        wipe_local_reset_scratch("chain settings display allocation failed after Sui back");
+        clear_storage_maintenance_flow("chain settings display allocation failed after Sui back");
         signing::avatar_overlay_show_message(
             "Display error",
             MessageKind::error,
@@ -3384,29 +3380,29 @@ void handle_local_pin_auth_submit_from_ui()
     signing::local_pin_auth_ui_handle_submit(local_pin_auth_ui_flow_ops());
 }
 
-void handle_reset_pin_digit_from_local_ui(char digit)
+void handle_action_pin_digit_from_local_ui(char digit)
 {
-    signing::local_settings_reset_ui_handle_reset_pin_digit(
+    signing::storage_maintenance_ui_handle_action_pin_digit(
         digit,
-        local_settings_reset_ui_ops());
+        storage_maintenance_ui_ops());
 }
 
-void handle_reset_pin_clear_from_local_ui()
+void handle_action_pin_clear_from_local_ui()
 {
-    signing::local_settings_reset_ui_handle_reset_pin_clear(
-        local_settings_reset_ui_ops());
+    signing::storage_maintenance_ui_handle_action_pin_clear(
+        storage_maintenance_ui_ops());
 }
 
-void handle_reset_pin_backspace_from_local_ui()
+void handle_action_pin_backspace_from_local_ui()
 {
-    signing::local_settings_reset_ui_handle_reset_pin_backspace(
-        local_settings_reset_ui_ops());
+    signing::storage_maintenance_ui_handle_action_pin_backspace(
+        storage_maintenance_ui_ops());
 }
 
-void handle_reset_pin_submit_from_local_ui()
+void handle_action_pin_submit_from_local_ui()
 {
-    signing::local_settings_reset_ui_handle_reset_pin_submit(
-        local_settings_reset_ui_ops());
+    signing::storage_maintenance_ui_handle_action_pin_submit(
+        storage_maintenance_ui_ops());
 }
 
 void commit_local_pin_setting_if_ready()
@@ -3422,11 +3418,11 @@ void handle_setup_auth_worker_result(signing::LocalAuthWorkerResult& worker_resu
         provisioning_ui_ops());
 }
 
-void handle_local_reset_auth_worker_result(const signing::LocalAuthWorkerResult& worker_result)
+void handle_storage_maintenance_auth_worker_result(const signing::LocalAuthWorkerResult& worker_result)
 {
-    signing::local_settings_reset_ui_handle_auth_worker_result(
+    signing::storage_maintenance_ui_handle_auth_worker_result(
         worker_result,
-        local_settings_reset_ui_ops());
+        storage_maintenance_ui_ops());
 }
 
 void handle_local_pin_auth_verify_worker_result(
@@ -3453,8 +3449,8 @@ void drain_local_auth_worker_results()
             case signing::LocalAuthWorkerOwner::provisioning_setup:
                 handle_setup_auth_worker_result(worker_result);
                 break;
-            case signing::LocalAuthWorkerOwner::local_reset:
-                handle_local_reset_auth_worker_result(worker_result);
+            case signing::LocalAuthWorkerOwner::storage_maintenance:
+                handle_storage_maintenance_auth_worker_result(worker_result);
                 break;
             case signing::LocalAuthWorkerOwner::local_pin_auth:
                 if (worker_result.operation == signing::LocalAuthWorkerOperation::verify_pin) {
@@ -3728,8 +3724,8 @@ void drain_ui_events()
             continue;
         }
 
-        if (event.kind == UiEventKind::settings_reset_requested) {
-            start_reset_pin_from_settings_menu();
+        if (event.kind == UiEventKind::settings_wallet_erase_requested) {
+            start_wallet_erase_pin_from_settings_menu();
             continue;
         }
 
@@ -3748,7 +3744,7 @@ void drain_ui_events()
             continue;
         }
 
-        if (event.kind == UiEventKind::error_recovery_erase_requested) {
+        if (event.kind == UiEventKind::error_recovery_action_requested) {
             confirm_error_recovery_from_ui();
             continue;
         }
@@ -3758,8 +3754,8 @@ void drain_ui_events()
             continue;
         }
 
-        if (event.kind == UiEventKind::reset_cancel_requested) {
-            cancel_local_reset_from_ui("Reset canceled");
+        if (event.kind == UiEventKind::storage_action_cancel_requested) {
+            cancel_storage_maintenance_from_ui("Storage action canceled");
             continue;
         }
 
@@ -3851,8 +3847,8 @@ void drain_ui_events()
         if (event.kind == UiEventKind::pin_digit_requested) {
             if (signing::provisioning_flow_snapshot().accepts_setup_pin_input) {
                 handle_pin_digit_from_local_ui(event.digit);
-            } else if (signing::local_settings_reset_ui_accepts_reset_pin_input()) {
-                handle_reset_pin_digit_from_local_ui(event.digit);
+            } else if (signing::storage_maintenance_ui_accepts_action_pin_input()) {
+                handle_action_pin_digit_from_local_ui(event.digit);
             } else if (local_pin_auth_accepts_keypad_input()) {
                 handle_local_pin_auth_digit_from_ui(event.digit);
             }
@@ -3862,8 +3858,8 @@ void drain_ui_events()
         if (event.kind == UiEventKind::pin_clear_requested) {
             if (signing::provisioning_flow_snapshot().accepts_setup_pin_input) {
                 handle_pin_clear_from_local_ui();
-            } else if (signing::local_settings_reset_ui_accepts_reset_pin_input()) {
-                handle_reset_pin_clear_from_local_ui();
+            } else if (signing::storage_maintenance_ui_accepts_action_pin_input()) {
+                handle_action_pin_clear_from_local_ui();
             } else if (local_pin_auth_accepts_keypad_input()) {
                 handle_local_pin_auth_clear_from_ui();
             }
@@ -3873,8 +3869,8 @@ void drain_ui_events()
         if (event.kind == UiEventKind::pin_backspace_requested) {
             if (signing::provisioning_flow_snapshot().accepts_setup_pin_input) {
                 handle_pin_backspace_from_local_ui();
-            } else if (signing::local_settings_reset_ui_accepts_reset_pin_input()) {
-                handle_reset_pin_backspace_from_local_ui();
+            } else if (signing::storage_maintenance_ui_accepts_action_pin_input()) {
+                handle_action_pin_backspace_from_local_ui();
             } else if (local_pin_auth_accepts_keypad_input()) {
                 handle_local_pin_auth_backspace_from_ui();
             }
@@ -3884,8 +3880,8 @@ void drain_ui_events()
         if (event.kind == UiEventKind::pin_submit_requested) {
             if (signing::provisioning_flow_snapshot().accepts_setup_pin_input) {
                 handle_pin_submit_from_local_ui();
-            } else if (signing::local_settings_reset_ui_accepts_reset_pin_input()) {
-                handle_reset_pin_submit_from_local_ui();
+            } else if (signing::storage_maintenance_ui_accepts_action_pin_input()) {
+                handle_action_pin_submit_from_local_ui();
             } else if (local_pin_auth_accepts_keypad_input()) {
                 handle_local_pin_auth_submit_from_ui();
             }
@@ -3895,8 +3891,8 @@ void drain_ui_events()
         if (event.kind == UiEventKind::pin_cancel_requested) {
             if (signing::provisioning_flow_snapshot().accepts_setup_pin_input) {
                 cancel_setup_from_local_ui();
-            } else if (signing::local_settings_reset_ui_accepts_reset_pin_input()) {
-                cancel_local_reset_from_ui("Reset canceled");
+            } else if (signing::storage_maintenance_ui_accepts_action_pin_input()) {
+                cancel_storage_maintenance_from_ui("Storage action canceled");
             } else if (local_pin_auth_accepts_keypad_input()) {
                 cancel_local_pin_auth_from_ui("Settings canceled");
             }
@@ -3909,7 +3905,7 @@ void drain_ui_events()
         apply_panel_cleanup_plan(
             panel_cleanup_plan(event.panel_kind, signing::UiPanelCleanupEvent::external_delete),
             "setup panel deleted",
-            "local reset panel deleted",
+            "storage maintenance panel deleted",
             "local PIN authorization panel deleted");
     }
 }
@@ -4575,7 +4571,7 @@ const signing::PolicyUpdateReviewUiFlowOps& policy_update_review_ui_flow_ops()
         signing::identification_display_clear,
         begin_policy_update_pin_from_review,
         draw_local_pin_auth_panel_for_review_flow,
-        wipe_local_pin_auth_scratch,
+        clear_local_pin_auth_scratch,
         signing::policy_update_flow_review_deadline_reached,
         signing::policy_update_flow_record_timed_out,
         signing::policy_update_flow_record_rejected,
@@ -4599,7 +4595,7 @@ const signing::SuiZkLoginReviewUiFlowOps& sui_zklogin_review_ui_flow_ops()
         signing::identification_display_clear,
         begin_sui_zklogin_pin_from_review,
         draw_local_pin_auth_panel_for_flow,
-        wipe_local_pin_auth_scratch,
+        clear_local_pin_auth_scratch,
         signing::sui_zklogin_proposal_flow_deadline_reached,
         signing::sui_zklogin_proposal_flow_record_timed_out,
         signing::sui_zklogin_proposal_flow_record_rejected,
@@ -4818,7 +4814,7 @@ void run_usb_request_server_maintenance_phase()
     clear_backup_phrase_if_needed();
     clear_import_word_entry_if_needed();
     clear_pin_setup_if_needed();
-    clear_local_reset_if_needed();
+    clear_storage_maintenance_if_needed();
     clear_local_pin_auth_if_needed();
     clear_policy_update_review_if_needed();
     clear_sui_zklogin_review_if_needed();
@@ -4828,7 +4824,7 @@ void run_usb_request_server_maintenance_phase()
 void run_usb_request_server_local_ui_phase()
 {
     drain_ui_events();
-    commit_local_reset_if_ready();
+    commit_storage_maintenance_if_ready();
     commit_local_pin_setting_if_ready();
     poll_local_settings_touch_entry();
     show_persistent_error_recovery_if_needed();
@@ -4875,7 +4871,7 @@ void init_usb_request_server()
 {
     load_or_create_device_id();
     signing::provisioning_runtime_state_load(
-        local_reset_persistence_ops(),
+        storage_maintenance_persistence_ops(),
         persistent_material_ops());
     signing::session_init();
     if (!signing::local_auth_worker_init()) {
@@ -4884,7 +4880,7 @@ void init_usb_request_server()
     signing::connect_approval_clear();
     signing::identification_display_clear();
     wipe_setup_scratch("usb request server init");
-    wipe_local_reset_scratch("usb request server init");
+    clear_storage_maintenance_flow("usb request server init");
     if (!signing::ui_event_bridge_init()) {
         ESP_LOGE(kTag, "UI event bridge init failed");
     }

@@ -1,12 +1,12 @@
 #pragma once
 
-#include "local_reset.h"
+#include "storage_maintenance.h"
 #include "persistent_material.h"
 
 namespace signing {
 
 void provisioning_runtime_state_load(
-    const LocalResetPersistenceOps& reset_ops,
+    const StorageMaintenancePersistenceOps& reset_ops,
     const PersistentMaterialOps& material_ops);
 bool provisioning_runtime_state_persist(ProvisioningRuntimeState next_state);
 const char* provisioning_runtime_state_reported();

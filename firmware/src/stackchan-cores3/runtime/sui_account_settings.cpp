@@ -5,12 +5,13 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "nvs.h"
+#include "persistent_storage_names.h"
 
 namespace signing {
 namespace {
 
 constexpr const char* kTag = "SuiAcctSet";
-constexpr const char* kNvsNamespace = "signing";
+constexpr const char* kNvsNamespace = kMutableSettingsNvsNamespace;
 constexpr const char* kSuiAccountSettingsKey = "sui_acct_set";
 constexpr uint8_t kRejectGasSponsor = 0;
 constexpr uint8_t kAcceptGasSponsor = 1;
@@ -110,7 +111,7 @@ bool wipe_sui_account_settings()
         return true;
     }
     if (result != ESP_OK) {
-        ESP_LOGW(kTag, "NVS open failed while wiping Sui account settings: %s", esp_err_to_name(result));
+        ESP_LOGW(kTag, "NVS open failed while clearing Sui account settings: %s", esp_err_to_name(result));
         return false;
     }
 

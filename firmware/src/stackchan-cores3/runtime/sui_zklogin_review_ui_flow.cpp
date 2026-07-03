@@ -196,8 +196,8 @@ void sui_zklogin_review_ui_continue(const SuiZkLoginReviewUiFlowOps& ops)
             UiPanelKind::sui_zklogin_review,
             draw_local_pin_for_transition,
             &draw_context)) {
-        if (ops.wipe_local_pin_auth_scratch != nullptr) {
-            ops.wipe_local_pin_auth_scratch(
+        if (ops.clear_local_pin_auth_scratch != nullptr) {
+            ops.clear_local_pin_auth_scratch(
                 "Sui zkLogin proposal PIN display allocation failed");
         }
         if (ops.clear_panel_if_kind != nullptr) {

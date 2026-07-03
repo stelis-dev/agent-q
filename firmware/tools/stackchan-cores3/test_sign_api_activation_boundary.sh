@@ -41,7 +41,7 @@ USB_POLICY_PROPOSE_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/ru
 USB_POLICY_PROPOSE_OUTCOME_WRITER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_policy_propose_outcome_writer.cpp"
 USB_SIGNING_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_signing_handlers.cpp"
 CONNECT_REVIEW_RESPONSE_FLOW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/connect_review_response_flow.cpp"
-LOCAL_SETTINGS_RESET_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/local_settings_reset_ui_flow.cpp"
+LOCAL_SETTINGS_RESET_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/storage_maintenance_ui_flow.cpp"
 LOCAL_PIN_AUTH_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/local_pin_auth_ui_flow.cpp"
 POLICY_UPDATE_REVIEW_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/policy_update_review_ui_flow.cpp"
 USER_SIGNING_REVIEW_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/user_signing_review_ui_flow.cpp"
@@ -209,18 +209,18 @@ expect_present "${UI_EVENT_BRIDGE_SOURCE}" 'xQueueCreate' \
   "UI event bridge must own UI input queues"
 expect_present "${USB_SERVER}" 'ui_event_bridge_receive' \
   "USB request server must consume UI events through the bridge"
-expect_present "${LOCAL_SETTINGS_RESET_UI_SOURCE}" 'local_settings_reset_ui_clear_if_needed' \
-  "local settings/reset UI flow must own reset timeout and panel-loss cleanup"
-expect_present "${LOCAL_SETTINGS_RESET_UI_SOURCE}" 'local_settings_reset_ui_handle_auth_worker_result' \
-  "local settings/reset UI flow must own reset PIN worker-result handling"
-expect_present "${LOCAL_SETTINGS_RESET_UI_SOURCE}" 'local_settings_reset_ui_commit_if_ready' \
-  "local settings/reset UI flow must own destructive reset commit handling"
-expect_present "${USB_SERVER}" 'local_settings_reset_ui_clear_if_needed' \
+expect_present "${LOCAL_SETTINGS_RESET_UI_SOURCE}" 'storage_maintenance_ui_clear_if_needed' \
+  "storage maintenance UI flow must own reset timeout and panel-loss cleanup"
+expect_present "${LOCAL_SETTINGS_RESET_UI_SOURCE}" 'storage_maintenance_ui_handle_auth_worker_result' \
+  "storage maintenance UI flow must own action PIN worker-result handling"
+expect_present "${LOCAL_SETTINGS_RESET_UI_SOURCE}" 'storage_maintenance_ui_commit_if_ready' \
+  "storage maintenance UI flow must own destructive reset commit handling"
+expect_present "${USB_SERVER}" 'storage_maintenance_ui_clear_if_needed' \
   "USB request server maintenance phase must delegate local settings/reset cleanup"
-expect_present "${USB_SERVER}" 'local_settings_reset_ui_handle_auth_worker_result' \
-  "USB request server must delegate local reset auth worker results"
-expect_absent "${USB_SERVER}" 'local_reset_submit_pin_for_verification|local_reset_complete_pin_verify_job|local_reset_commit_material' \
-  "USB request server must not own local reset PIN verification or destructive reset commit logic"
+expect_present "${USB_SERVER}" 'storage_maintenance_ui_handle_auth_worker_result' \
+  "USB request server must delegate storage maintenance auth worker results"
+expect_absent "${USB_SERVER}" 'storage_maintenance_submit_pin_for_verification|storage_maintenance_complete_pin_verify_job|storage_maintenance_commit_material' \
+  "USB request server must not own local action PIN verification or destructive reset commit logic"
 expect_present "${LOCAL_PIN_AUTH_UI_SOURCE}" 'local_pin_auth_ui_handle_verify_worker_result' \
   "local PIN auth UI flow must own PIN verifier worker-result handling"
 expect_present "${LOCAL_PIN_AUTH_UI_SOURCE}" 'local_pin_auth_ui_clear_if_needed' \

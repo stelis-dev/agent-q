@@ -20,9 +20,11 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 CXX_BIN="${CXX:-c++}"
 
 for required in \
+  "${COMMON_ROOT}/protocol/request_id.h" \
   "${RUNTIME_DIR}/connect_review_response_flow.cpp" \
   "${RUNTIME_DIR}/connect_review_response_flow.h"; do
   if [[ ! -f "${required}" ]]; then
@@ -370,6 +372,7 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
+  -I"${COMMON_ROOT}" \
   -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
   "${RUNTIME_DIR}/connect_review_response_flow.cpp" \

@@ -65,22 +65,27 @@ Implemented today:
   This is not USER_PROFILE key provisioning.
 - Local settings paths are implemented for provisioned StackChan CoreS3 devices.
   They are device-local UX only: Change PIN verifies the stored PIN and replaces
-  only the local PIN verifier after repeated new PIN entry, and Reset verifies
-  the stored PIN before root material wipe, active policy wipe, PIN verifier
-  wipe, signing authorization mode wipe, Sui zkLogin proof material wipe,
-  approval history wipe, policy-update terminal marker wipe, human approval
-  input mode setting wipe, session cleanup, and return to `unprovisioned`.
+  only the local PIN verifier after repeated new PIN entry. The normal Settings
+  menu exposes one destructive Device reset action. Device reset erases root material, active policy, PIN verifier,
+  signing authorization mode, Sui account settings, Sui zkLogin proof material,
+  approval history, policy-update terminal marker, human approval input mode
+  setting, session state, and returns to `unprovisioned`.
   The same device-local Settings state owns a separate chain account menu whose
   current Sui account view can clear the local zkLogin proof after stored PIN
   verification; there is no host-triggered proof-clear API.
-  Firmware records an internal reset-pending marker so boot can resume an
-  interrupted reset wipe. Host-triggered reset/debug protocol paths are not
-  implemented. StackChan CoreS3 source also uses this
-  destructive wipe machinery for a device-local, PIN-less, erase-only recovery
-  from material/state consistency `error`, because the stored PIN verifier may
-  be unreadable. That path cannot read, repair, unlock, or export material and
-  is not exposed as a host-triggered recovery API. Hardware coverage level is
-  tracked in `docs/IMPLEMENTATION_STATUS.md`.
+  Firmware records an internal storage-action marker so boot can resume an
+  interrupted internal settings repair or Device reset. A pending marker controls
+  the next recovery operation before live repairability is re-evaluated.
+  Host-triggered reset/debug protocol paths are not implemented. StackChan CoreS3 source also uses
+  device-local storage-error recovery: when root material and a valid PIN
+  verifier remain, the recovery action is settings repair after local PIN
+  verification. That repair preserves root material and the PIN verifier while
+  restoring recoverable mutable settings, including zkLogin proof state, to
+  current defaults. When the authority gate is unavailable, the recovery action
+  is PIN-less Device reset after on-device destructive confirmation. Neither path
+  can read, unlock, or export material, and neither is exposed as a
+  host-triggered recovery API. Hardware coverage level is tracked in
+  `docs/IMPLEMENTATION_STATUS.md`.
 - Read-only Sui account and public-key discovery over an approved runtime
   session. Firmware returns exactly one active Sui identity: native Ed25519
   derived from DEV_PROFILE root entropy while no zkLogin proof is active, or
@@ -108,7 +113,7 @@ Implemented today:
   terminal metadata from `policy_propose`. History does not store raw
   transaction bytes, decoded transactions, raw policy documents, full rule
   content, session ids, request ids, client names, PINs, or secret material.
-  Local reset and error-state erase recovery wipe the history.
+  Internal settings repair, Device reset, and error-state Device reset wipe the history.
 - The unified `sign_transaction` path has `source-wired-not-product-active`
   status for bounded Sui transaction bytes submitted either inline as `txBytes`
   or through same-session staged payload delivery. Firmware derives
@@ -338,8 +343,9 @@ DEV_PROFILE - the default development path:
   NVS unless the platform build is separately configured for encrypted storage.
 - The current StackChan CoreS3 local PIN verifier is also stored in ordinary
   NVS. It is a local UX gate for connect approval when enabled, settings
-  changes, local reset, the current policy-update proposal flow, and sensitive
-  local writes, not root material encryption or physical extraction defense.
+  changes, storage maintenance actions, the current policy-update proposal flow,
+  and sensitive local writes, not root material encryption or physical
+  extraction defense.
 - Makes no security claim. Tools and docs must show a "do not use with real
   assets" warning.
 
@@ -499,9 +505,9 @@ Policy-update contract:
 - Once a policy update reaches the post-commit terminal phase, Firmware
   must persist a small policy-update terminal marker until both the policy commit
   and required history record are durable. A leftover terminal marker at boot is
-  persistent-material inconsistency, not a normal `provisioned` state. Local
-  reset and error-state erase wipe the marker with the rest of the policy
-  material.
+  persistent-material inconsistency, not a normal `provisioned` state. Internal
+  settings repair, Device reset, and error-state Device reset wipe the
+  marker with the rest of the recoverable policy material.
 
 ## 9. Firmware Integrity
 
@@ -594,7 +600,7 @@ Must not be reachable through a normal MCP signing path:
 
 - Firmware update.
 - Policy write.
-- Factory reset or root-material wipe.
+- Device reset or root-material wipe.
 - `export_key`, `raw_sign`, `read_memory`, `debug_command`.
 
 Allowed direction:

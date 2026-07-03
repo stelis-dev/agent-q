@@ -32,7 +32,7 @@ bool local_settings_common_blocked(const DeviceActivityProjection& activity)
            activity.local_pin_auth_flow_active ||
            activity.payload_delivery_active ||
            activity.user_signing_active ||
-           activity.local_reset_active;
+           activity.storage_maintenance_active;
 }
 
 }  // namespace
@@ -55,9 +55,9 @@ DeviceActivityProjection project_device_activity(
     const bool user_signing_awaiting =
         facts.user_signing.active &&
         user_signing_stage_awaiting_approval(facts.user_signing.stage);
-    const bool local_reset_settings_menu =
-        facts.local_reset.flow_active &&
-        facts.local_reset.stage == LocalResetStage::settings_menu;
+    const bool storage_maintenance_settings_menu =
+        facts.storage_maintenance.flow_active &&
+        facts.storage_maintenance.stage == StorageMaintenanceStage::settings_menu;
     const bool payload_delivery_active =
         facts.payload_delivery_receiving || facts.payload_delivery_finalized;
 
@@ -76,7 +76,7 @@ DeviceActivityProjection project_device_activity(
         payload_delivery_active ||
         policy_update_busy ||
         sui_zklogin_proposal_busy ||
-        (facts.local_reset.flow_active && !local_reset_settings_menu) ||
+        (facts.storage_maintenance.flow_active && !storage_maintenance_settings_menu) ||
         facts.local_pin_auth_flow_active ||
         facts.user_signing.active) {
         state = ProjectedDeviceState::busy;
@@ -100,8 +100,8 @@ DeviceActivityProjection project_device_activity(
         payload_delivery_active,
         facts.payload_delivery_receiving,
         facts.payload_delivery_finalized,
-        facts.local_reset.flow_active,
-        local_reset_settings_menu,
+        facts.storage_maintenance.flow_active,
+        storage_maintenance_settings_menu,
         facts.local_pin_auth_flow_active,
         facts.user_signing.active,
         user_signing_awaiting,
@@ -132,7 +132,7 @@ bool device_activity_blocks_user_signing_ingress(
            activity.sui_zklogin_proposal_active ||
            activity.provisioning_flow_active ||
            activity.payload_delivery_active ||
-           activity.local_reset_active ||
+           activity.storage_maintenance_active ||
            activity.local_pin_auth_flow_active ||
            activity.user_signing_active;
 }
@@ -186,16 +186,16 @@ DeviceActivityUsbRequestBlock device_activity_usb_request_block(
                 : "Device has a pending signable payload.",
         };
     }
-    if (activity.local_reset_active) {
-        if (options.allow_settings_menu && activity.local_reset_settings_menu) {
+    if (activity.storage_maintenance_active) {
+        if (options.allow_settings_menu && activity.storage_maintenance_settings_menu) {
             return { false, nullptr, nullptr };
         }
         return {
             true,
             "busy",
-            activity.local_reset_settings_menu
+            activity.storage_maintenance_settings_menu
                 ? "Device is showing local settings UI."
-                : "Device is showing local reset UI.",
+                : "Device is showing storage maintenance UI.",
         };
     }
     if (activity.local_pin_auth_flow_active) {

@@ -210,8 +210,8 @@ void policy_update_review_ui_continue(const PolicyUpdateReviewUiFlowOps& ops)
             UiPanelKind::policy_update_review,
             draw_local_pin_for_transition,
             &draw_context)) {
-        if (ops.wipe_local_pin_auth_scratch != nullptr) {
-            ops.wipe_local_pin_auth_scratch("policy update PIN display allocation failed");
+        if (ops.clear_local_pin_auth_scratch != nullptr) {
+            ops.clear_local_pin_auth_scratch("policy update PIN display allocation failed");
         }
         if (ops.clear_panel_if_kind != nullptr) {
             ops.clear_panel_if_kind(

@@ -184,7 +184,7 @@ bool panel_matches_current_stage(ProvisioningFlowPanel panel)
     return false;
 }
 
-void reset_pin_entry(TimeoutWindow input_window)
+void action_pin_entry(TimeoutWindow input_window)
 {
     wipe_sensitive_buffer(g_state.pin_entry, sizeof(g_state.pin_entry));
     g_state.pin_entry_length = 0;
@@ -741,7 +741,7 @@ bool provisioning_flow_clear_pin_entry(TimeoutWindow input_window)
     if (!pin_setup_stage() || !timeout_window_valid(input_window)) {
         return false;
     }
-    reset_pin_entry(input_window);
+    action_pin_entry(input_window);
     return true;
 }
 

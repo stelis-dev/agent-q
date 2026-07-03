@@ -34,22 +34,22 @@ bool runtime_state_to_persisted(
 }  // namespace
 
 void provisioning_runtime_state_load(
-    const LocalResetPersistenceOps& reset_ops,
+    const StorageMaintenancePersistenceOps& reset_ops,
     const PersistentMaterialOps& material_ops)
 {
     g_state = ProvisioningRuntimeState::unprovisioned;
     persistent_material_begin_load();
 
-    bool reset_marker_present = false;
-    const LocalResetCommitResult reset_result =
-        local_reset_resume_pending_if_needed(reset_ops, &reset_marker_present);
-    if (reset_marker_present) {
-        ESP_LOGW(kTag, "Found pending local reset marker; resuming material wipe before loading state");
-        if (reset_result == LocalResetCommitResult::ok) {
-            ESP_LOGW(kTag, "Pending local reset completed during boot");
+    bool storage_action_marker_present = false;
+    const StorageMaintenanceCommitResult reset_result =
+        storage_maintenance_resume_pending_if_needed(reset_ops, &storage_action_marker_present);
+    if (storage_action_marker_present) {
+        ESP_LOGW(kTag, "Found pending storage action marker; resuming storage action before loading state");
+        if (reset_result == StorageMaintenanceCommitResult::ok) {
+            ESP_LOGW(kTag, "Pending storage action completed during boot");
         } else if (!persistent_material_consistency_error_active()) {
             persistent_material_record_runtime_failure(
-                PersistentMaterialRuntimeFailure::pending_reset_resume_failed,
+                PersistentMaterialRuntimeFailure::pending_storage_action_resume_failed,
                 material_ops);
         }
         return;

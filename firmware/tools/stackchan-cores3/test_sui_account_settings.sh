@@ -92,7 +92,7 @@ cat >"${TMP_DIR}/sui_account_settings_test.cpp" <<'CPP'
 
 namespace {
 
-constexpr const char* kExpectedNamespace = "signing";
+constexpr const char* kExpectedNamespace = "signing_state";
 constexpr const char* kExpectedKey = "sui_acct_set";
 
 bool g_has_value = false;

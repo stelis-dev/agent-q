@@ -5,12 +5,13 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "nvs.h"
+#include "persistent_storage_names.h"
 
 namespace signing {
 namespace {
 
 constexpr const char* kTag = "PolicyUpdate";
-constexpr const char* kNvsNamespace = "signing";
+constexpr const char* kNvsNamespace = kMutableSettingsNvsNamespace;
 constexpr const char* kPolicyUpdateMarkerKey = "pol_um";
 constexpr uint8_t kPolicyUpdateMarkerMagic[4] = {'A', 'Q', 'P', 'U'};
 constexpr uint8_t kPolicyUpdateMarkerVersion = 0;
@@ -162,6 +163,9 @@ bool policy_update_marker_clear()
 {
     nvs_handle_t nvs = 0;
     esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
+    if (result == ESP_ERR_NVS_NOT_FOUND) {
+        return true;
+    }
     if (result != ESP_OK) {
         ESP_LOGW(kTag, "NVS open failed while clearing policy update marker: %s", esp_err_to_name(result));
         return false;

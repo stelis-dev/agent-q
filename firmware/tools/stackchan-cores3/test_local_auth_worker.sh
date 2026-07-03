@@ -356,7 +356,7 @@ int main()
     finish_worker_job(job_id);
 
     expect(signing::local_auth_worker_submit_verify(
-               signing::LocalAuthWorkerOwner::local_reset,
+               signing::LocalAuthWorkerOwner::storage_maintenance,
                "444444",
                &job_id),
            "submit succeeds before queued job cancellation");
@@ -401,12 +401,12 @@ int main()
 
     g_fail_next_request_send = true;
     expect(!signing::local_auth_worker_submit_verify(
-               signing::LocalAuthWorkerOwner::local_reset,
+               signing::LocalAuthWorkerOwner::storage_maintenance,
                "111111",
                &job_id),
            "request queue send failure is reported");
     expect(signing::local_auth_worker_submit_verify(
-               signing::LocalAuthWorkerOwner::local_reset,
+               signing::LocalAuthWorkerOwner::storage_maintenance,
                "222222",
                &job_id),
            "submit can retry after request queue send failure");

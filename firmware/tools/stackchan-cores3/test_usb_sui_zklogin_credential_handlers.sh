@@ -19,11 +19,14 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
 ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
+  "${COMMON_ROOT}/protocol/json_input.h" \
+  "${COMMON_ROOT}/protocol/request_id.h" \
   "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
   "${RUNTIME_DIR}/usb_active_session_request_guard.h" \
   "${RUNTIME_DIR}/usb_sui_zklogin_credential_handlers.cpp" \
@@ -465,6 +468,7 @@ CPP
   -I"${TMP_DIR}/stubs" \
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
+  -I"${COMMON_ROOT}" \
   -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
   "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \

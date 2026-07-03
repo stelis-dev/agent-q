@@ -7,6 +7,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "nvs.h"
+#include "persistent_storage_names.h"
 
 extern "C" {
 #include "lib/monocypher/monocypher.h"
@@ -16,7 +17,7 @@ namespace signing {
 namespace {
 
 constexpr const char* kTag = "LocalAuth";
-constexpr const char* kNvsNamespace = "signing";
+constexpr const char* kNvsNamespace = kAuthorityGateNvsNamespace;
 constexpr const char* kLocalAuthKey = "pin_auth";
 constexpr uint8_t kRecordFormatVersion = 0;
 constexpr uint8_t kKdfPbkdf2HmacSha512 = 1;
@@ -332,9 +333,9 @@ bool store_prepared_local_pin_verifier(const LocalAuthPreparedRecord* prepared)
             return false;
         }
 
-        ESP_LOGE(kTag, "Local PIN verifier write left ambiguous auth state; wiping verifier");
+        ESP_LOGE(kTag, "Local PIN verifier write left ambiguous auth state; clearing verifier");
         wipe_sensitive_buffer(&previous_record, sizeof(previous_record));
-        wipe_local_auth();
+        clear_local_auth();
         return false;
     }
 
@@ -343,7 +344,7 @@ bool store_prepared_local_pin_verifier(const LocalAuthPreparedRecord* prepared)
         ESP_LOGE(kTag, "Local PIN verifier write did not produce an active matching verifier");
         wipe_sensitive_buffer(&record, sizeof(record));
         wipe_sensitive_buffer(&previous_record, sizeof(previous_record));
-        wipe_local_auth();
+        clear_local_auth();
         return false;
     }
     wipe_sensitive_buffer(&record, sizeof(record));
@@ -377,12 +378,12 @@ bool verify_local_pin(const char* pin, bool* verified)
     return stored_pin_verifies(pin, verified, true);
 }
 
-bool wipe_local_auth()
+bool clear_local_auth()
 {
     nvs_handle_t nvs = 0;
     esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
     if (result != ESP_OK) {
-        ESP_LOGW(kTag, "NVS open failed while wiping local auth: %s", esp_err_to_name(result));
+        ESP_LOGW(kTag, "NVS open failed while clearing local auth: %s", esp_err_to_name(result));
         return false;
     }
 

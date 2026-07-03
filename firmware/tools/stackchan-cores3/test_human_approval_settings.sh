@@ -7,7 +7,8 @@ Usage: firmware/tools/stackchan-cores3/test_human_approval_settings.sh
 
 Compiles the StackChan CoreS3 human approval input mode store against host NVS
 stubs and verifies the missing-key PIN default, stored Confirm override, invalid
-value fail-closed behavior, and reset wipe back to the missing-key default.
+value fail-closed behavior, internal settings repair default restore, and Device reset
+wipe back to the missing-key default.
 EOF
 }
 

@@ -3,12 +3,13 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "nvs.h"
+#include "persistent_storage_names.h"
 
 namespace signing {
 namespace {
 
 constexpr const char* kTag = "HumanApproval";
-constexpr const char* kNvsNamespace = "signing";
+constexpr const char* kNvsNamespace = kMutableSettingsNvsNamespace;
 constexpr const char* kHumanApprovalInputModeKey = "human_approval";
 constexpr uint8_t kHumanApprovalInputModePin = 0;
 constexpr uint8_t kHumanApprovalInputModeConfirm = 1;
@@ -124,7 +125,7 @@ bool wipe_human_approval_input_mode()
         return true;
     }
     if (result != ESP_OK) {
-        ESP_LOGW(kTag, "NVS open failed while wiping human approval input mode: %s", esp_err_to_name(result));
+        ESP_LOGW(kTag, "NVS open failed while clearing human approval input mode: %s", esp_err_to_name(result));
         return false;
     }
 
@@ -144,6 +145,35 @@ bool wipe_human_approval_input_mode()
 
     ESP_LOGI(kTag, "Wiped human approval input mode");
     return true;
+}
+
+HumanApprovalInputModeStatus human_approval_input_mode_status()
+{
+    nvs_handle_t nvs = 0;
+    esp_err_t result = nvs_open(kNvsNamespace, NVS_READONLY, &nvs);
+    if (result == ESP_ERR_NVS_NOT_FOUND) {
+        return HumanApprovalInputModeStatus::missing;
+    }
+    if (result != ESP_OK) {
+        ESP_LOGW(kTag, "NVS open failed while checking human approval input mode: %s", esp_err_to_name(result));
+        return HumanApprovalInputModeStatus::unreadable;
+    }
+
+    uint8_t value = kHumanApprovalInputModePin;
+    result = nvs_get_u8(nvs, kHumanApprovalInputModeKey, &value);
+    nvs_close(nvs);
+    if (result == ESP_ERR_NVS_NOT_FOUND) {
+        return HumanApprovalInputModeStatus::missing;
+    }
+    if (result != ESP_OK) {
+        ESP_LOGW(kTag, "Human approval input mode status read failed: %s", esp_err_to_name(result));
+        return HumanApprovalInputModeStatus::unreadable;
+    }
+
+    HumanApprovalInputMode mode = HumanApprovalInputMode::pin;
+    return stored_value_to_mode(value, &mode)
+               ? HumanApprovalInputModeStatus::active
+               : HumanApprovalInputModeStatus::invalid;
 }
 
 const char* human_approval_input_mode_label(HumanApprovalInputMode mode)

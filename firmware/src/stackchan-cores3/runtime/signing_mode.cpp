@@ -5,12 +5,13 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "nvs.h"
+#include "persistent_storage_names.h"
 
 namespace signing {
 namespace {
 
 constexpr const char* kTag = "Mode";
-constexpr const char* kNvsNamespace = "signing";
+constexpr const char* kNvsNamespace = kMutableSettingsNvsNamespace;
 constexpr const char* kAuthorizationModeKey = "sign_auth_mode";
 constexpr uint8_t kAuthorizationModeUser = 0;
 constexpr uint8_t kAuthorizationModePolicy = 1;
@@ -126,7 +127,7 @@ bool wipe_signing_authorization_mode()
         return true;
     }
     if (result != ESP_OK) {
-        ESP_LOGW(kTag, "NVS open failed while wiping signing mode: %s", esp_err_to_name(result));
+        ESP_LOGW(kTag, "NVS open failed while clearing signing mode: %s", esp_err_to_name(result));
         return false;
     }
 

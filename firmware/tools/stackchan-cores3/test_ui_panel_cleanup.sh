@@ -115,26 +115,26 @@ int main()
     expect(p.provisioning_panel == ProvisioningPanel::pin_entry, "setup PIN panel maps");
     expect(p.wipe_setup_if_unhandled, "explicit setup clear fallback wipes setup scratch");
 
-    p = plan(Panel::reset_pin_entry, Event::external_delete, true, false);
-    expect(p.wipe_local_reset, "matching reset panel delete wipes local reset owner");
-    expect(!p.route_provisioning_panel_deleted && !p.wipe_local_pin_auth,
+    p = plan(Panel::action_pin_entry, Event::external_delete, true, false);
+    expect(p.clear_storage_maintenance, "matching reset panel delete wipes storage maintenance owner");
+    expect(!p.route_provisioning_panel_deleted && !p.clear_local_pin_auth,
            "reset route does not touch other owners");
 
-    p = plan(Panel::reset_pin_entry, Event::external_delete, false, false);
-    expect(!p.wipe_local_reset && !p.route_provisioning_panel_deleted &&
-               !p.wipe_local_pin_auth,
+    p = plan(Panel::action_pin_entry, Event::external_delete, false, false);
+    expect(!p.clear_storage_maintenance && !p.route_provisioning_panel_deleted &&
+               !p.clear_local_pin_auth,
            "nonmatching reset panel delete is no-op");
 
     p = plan(Panel::local_pin_auth, Event::external_delete, false, false);
     expect(p.recover_local_pin_auth_panel, "external local PIN panel delete requests state-loop recovery");
-    expect(!p.wipe_local_pin_auth, "external local PIN panel delete does not wipe directly");
+    expect(!p.clear_local_pin_auth, "external local PIN panel delete does not wipe directly");
 
     p = plan(Panel::local_pin_auth, Event::explicit_clear, false, true);
-    expect(p.wipe_local_pin_auth, "explicit local PIN clear wipes matching local PIN owner");
+    expect(p.clear_local_pin_auth, "explicit local PIN clear wipes matching local PIN owner");
     expect(!p.recover_local_pin_auth_panel, "explicit local PIN clear does not request recovery");
 
     p = plan(Panel::local_pin_auth, Event::explicit_clear, false, false);
-    expect(!p.wipe_local_pin_auth && !p.recover_local_pin_auth_panel,
+    expect(!p.clear_local_pin_auth && !p.recover_local_pin_auth_panel,
            "explicit local PIN clear without owner match is no-op");
 
     p = plan(Panel::user_signing_review, Event::external_delete);
@@ -143,12 +143,12 @@ int main()
 
 	    p = plan(Panel::policy_update_review, Event::external_delete);
 	    expect(p.recover_policy_update_review_panel, "external policy update review delete requests state-loop recovery");
-	    expect(!p.wipe_local_pin_auth && !p.wipe_user_signing,
+	    expect(!p.clear_local_pin_auth && !p.wipe_user_signing,
 	           "external policy update review delete does not wipe unrelated owners");
 
 	    p = plan(Panel::sui_zklogin_review, Event::external_delete);
 	    expect(p.recover_sui_zklogin_review_panel, "external Sui zkLogin review delete requests state-loop recovery");
-	    expect(!p.wipe_local_pin_auth && !p.wipe_user_signing &&
+	    expect(!p.clear_local_pin_auth && !p.wipe_user_signing &&
 	               !p.recover_policy_update_review_panel,
 	           "external Sui zkLogin review delete does not wipe unrelated owners");
 
@@ -162,7 +162,7 @@ int main()
 
 	    p = plan(Panel::settings_menu, Event::external_delete);
 	    expect(!p.route_provisioning_panel_deleted && !p.wipe_setup_if_unhandled &&
-	               !p.wipe_local_reset && !p.wipe_local_pin_auth &&
+	               !p.clear_storage_maintenance && !p.clear_local_pin_auth &&
 	               !p.recover_local_pin_auth_panel &&
 	               !p.recover_policy_update_review_panel &&
 	               !p.recover_sui_zklogin_review_panel && !p.wipe_user_signing &&
@@ -170,14 +170,14 @@ int main()
 	           "idle settings panel delete has no state cleanup");
 
 	    p = plan(Panel::chain_settings_menu, Event::external_delete, true);
-	    expect(p.wipe_local_reset, "matching chain settings panel delete wipes local settings owner");
+	    expect(p.clear_storage_maintenance, "matching chain settings panel delete wipes local settings owner");
 
 	    p = plan(Panel::sui_settings, Event::external_delete, true);
-	    expect(p.wipe_local_reset, "matching Sui settings panel delete wipes local settings owner");
+	    expect(p.clear_storage_maintenance, "matching Sui settings panel delete wipes local settings owner");
 
 	    p = plan(Panel::connect_review, Event::external_delete);
-	    expect(!p.route_provisioning_panel_deleted && !p.wipe_local_reset &&
-	               !p.wipe_local_pin_auth && !p.recover_local_pin_auth_panel &&
+	    expect(!p.route_provisioning_panel_deleted && !p.clear_storage_maintenance &&
+	               !p.clear_local_pin_auth && !p.recover_local_pin_auth_panel &&
 	               !p.recover_policy_update_review_panel &&
 	               !p.recover_sui_zklogin_review_panel &&
 	               !p.wipe_user_signing && !p.recover_user_signing_review_panel,

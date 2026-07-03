@@ -6,12 +6,13 @@
 #include "esp_log.h"
 #include "mbedtls/sha256.h"
 #include "nvs.h"
+#include "persistent_storage_names.h"
 
 namespace signing {
 namespace {
 
 constexpr const char* kTag = "ApprovalHist";
-constexpr const char* kNvsNamespace = "signing";
+constexpr const char* kNvsNamespace = kMutableSettingsNvsNamespace;
 constexpr const char* kApprovalHistoryKey = "approval_hist";
 // Current-only storage layout. Format version 1 is the only accepted blob shape;
 // unsupported blobs fail closed through the normal invalid-history path.
@@ -892,10 +893,62 @@ ApprovalHistoryReadResult approval_history_read_page(
     return ApprovalHistoryReadResult::ok;
 }
 
+ApprovalHistoryStorageStatus approval_history_status()
+{
+    StoredApprovalHistory& history = g_history_workspace;
+    memset(&history, 0, sizeof(history));
+
+    nvs_handle_t nvs = 0;
+    esp_err_t result = nvs_open(kNvsNamespace, NVS_READONLY, &nvs);
+    if (result == ESP_ERR_NVS_NOT_FOUND) {
+        return ApprovalHistoryStorageStatus::missing;
+    }
+    if (result != ESP_OK) {
+        ESP_LOGW(kTag, "NVS open failed while checking approval history: %s", esp_err_to_name(result));
+        return ApprovalHistoryStorageStatus::storage_error;
+    }
+
+    size_t history_size = 0;
+    result = nvs_get_blob(nvs, kApprovalHistoryKey, nullptr, &history_size);
+    if (result == ESP_ERR_NVS_NOT_FOUND) {
+        nvs_close(nvs);
+        return ApprovalHistoryStorageStatus::missing;
+    }
+    if (result != ESP_OK) {
+        nvs_close(nvs);
+        ESP_LOGW(kTag, "Approval history status size read failed: %s", esp_err_to_name(result));
+        return ApprovalHistoryStorageStatus::storage_error;
+    }
+    if (history_size != sizeof(history)) {
+        nvs_close(nvs);
+        memset(&history, 0, sizeof(history));
+        return ApprovalHistoryStorageStatus::invalid;
+    }
+
+    result = nvs_get_blob(nvs, kApprovalHistoryKey, &history, &history_size);
+    nvs_close(nvs);
+    if (result != ESP_OK || history_size != sizeof(history)) {
+        memset(&history, 0, sizeof(history));
+        ESP_LOGW(kTag, "Approval history status read failed: %s size=%u",
+                 esp_err_to_name(result),
+                 static_cast<unsigned>(history_size));
+        return ApprovalHistoryStorageStatus::storage_error;
+    }
+    if (!valid_history_header(history)) {
+        memset(&history, 0, sizeof(history));
+        return ApprovalHistoryStorageStatus::invalid;
+    }
+    return ApprovalHistoryStorageStatus::active;
+}
+
 bool approval_history_wipe()
 {
     nvs_handle_t nvs = 0;
     esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
+    if (result == ESP_ERR_NVS_NOT_FOUND) {
+        reset_write_budget();
+        return true;
+    }
     if (result != ESP_OK) {
         ESP_LOGW(kTag, "NVS open failed while wiping approval history: %s", esp_err_to_name(result));
         return false;

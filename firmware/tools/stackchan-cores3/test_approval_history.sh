@@ -286,6 +286,8 @@ esp_err_t nvs_commit(nvs_handle_t)
 int main()
 {
     signing::ApprovalHistoryPage page = {};
+    expect(signing::approval_history_status() == signing::ApprovalHistoryStorageStatus::missing,
+           "missing approval history status is missing");
     expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::ok,
            "missing approval history reads as empty");
     expect(page.count == 0 && !page.has_more, "missing approval history page is empty");
@@ -312,6 +314,8 @@ int main()
 
     expect(signing::approval_history_append_required_signing(policy_signing_rejected_input(), 100),
            "append first policy signing rejection");
+    expect(signing::approval_history_status() == signing::ApprovalHistoryStorageStatus::active,
+           "stored approval history status is active");
     expect(g_blob.size() > 4 && g_blob[4] == 1,
            "approval history current format marker is one");
     expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::ok,
@@ -331,9 +335,15 @@ int main()
 
     const std::vector<uint8_t> valid_enum_blob = g_blob;
     g_blob[4] = 0;
+    expect(signing::approval_history_status() == signing::ApprovalHistoryStorageStatus::invalid,
+           "stored unsupported approval history format marker status is invalid");
     expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::invalid,
            "stored unsupported approval history format marker fails closed");
     g_blob = valid_enum_blob;
+    g_open_fails = true;
+    expect(signing::approval_history_status() == signing::ApprovalHistoryStorageStatus::storage_error,
+           "approval history status reports storage error on NVS open failure");
+    g_open_fails = false;
     expect(mutate_first_method_record_byte(16, 0xFF), "mutate stored confirmation enum");
     expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::invalid,
            "stored unsupported confirmation enum fails closed");

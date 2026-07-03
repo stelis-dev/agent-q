@@ -39,7 +39,7 @@ struct PolicyUpdateReviewUiFlowOps {
         TimeoutWindow window,
         uint64_t uptime_ms);
     bool (*draw_local_pin_auth_panel)();
-    void (*wipe_local_pin_auth_scratch)(const char* reason);
+    void (*clear_local_pin_auth_scratch)(const char* reason);
     bool (*review_deadline_reached)(TickType_t now);
     PolicyUpdateFlowTerminalResult (*record_timed_out)(uint64_t uptime_ms);
     PolicyUpdateFlowTerminalResult (*record_rejected)(uint64_t uptime_ms);

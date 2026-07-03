@@ -336,7 +336,7 @@ int main()
     verified = false;
     expect(signing::verify_local_pin("123456", &verified) && verified, "fresh-salt record verifies");
 
-    expect(signing::wipe_local_auth(), "wipe local auth");
+    expect(signing::clear_local_auth(), "wipe local auth");
     expect(g_blob.empty(), "local auth blob wiped");
     expect(signing::local_auth_status() == signing::LocalAuthStatus::missing, "wiped local auth missing");
 
@@ -387,7 +387,7 @@ int main()
            "corrupt set failure wipes ambiguous verifier state");
     g_set_fails_with_corrupt_write = false;
 
-    expect(signing::wipe_local_auth(), "wipe local auth before empty RNG failure");
+    expect(signing::clear_local_auth(), "wipe local auth before empty RNG failure");
     signing::test_set_rng_fails(true);
     expect(!signing::store_local_pin_verifier("555555"), "RNG failure refuses empty storage");
     expect(g_blob.empty(), "RNG failure leaves no local auth when none existed");

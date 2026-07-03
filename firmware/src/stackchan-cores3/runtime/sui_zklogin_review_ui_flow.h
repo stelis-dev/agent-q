@@ -34,7 +34,7 @@ struct SuiZkLoginReviewUiFlowOps {
         const SuiZkLoginProposalSnapshot& current,
         TickType_t now);
     bool (*draw_local_pin_auth_panel)(const char* notice);
-    void (*wipe_local_pin_auth_scratch)(const char* reason);
+    void (*clear_local_pin_auth_scratch)(const char* reason);
     bool (*review_deadline_reached)(TickType_t now);
     SuiZkLoginProposalTerminalResult (*record_timed_out)();
     SuiZkLoginProposalTerminalResult (*record_rejected)();

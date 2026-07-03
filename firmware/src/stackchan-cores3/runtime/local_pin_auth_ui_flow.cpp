@@ -5,7 +5,7 @@
 
 #include "identification_display.h"
 #include "protocol/protocol_constants.h"
-#include "local_reset.h"
+#include "storage_maintenance.h"
 #include "modal_transition.h"
 #include "request_backed_local_pin_context.h"
 
@@ -159,7 +159,7 @@ void finish_connect_approved(
     }
 }
 
-void wipe_local_pin_auth_scratch(
+void clear_local_pin_auth_scratch(
     const LocalPinAuthUiFlowOps& ops,
     const char* reason)
 {
@@ -511,7 +511,7 @@ void handle_local_pin_auth_display_failure(
             request_id,
             sizeof(request_id));
         if (request_id[0] != '\0') {
-            wipe_local_pin_auth_scratch(ops, reason);
+            clear_local_pin_auth_scratch(ops, reason);
             if (clear_panel) {
                 complete_local_pin_processing_to_policy_terminal(
                     ops,
@@ -533,7 +533,7 @@ void handle_local_pin_auth_display_failure(
             request_id,
             sizeof(request_id))) {
         cancel_user_signing_for_pin_loss(ops);
-        wipe_local_pin_auth_scratch(ops, reason);
+        clear_local_pin_auth_scratch(ops, reason);
         if (clear_panel) {
             complete_local_pin_to_user_error_terminal(
                 ops,
@@ -557,7 +557,7 @@ void handle_local_pin_auth_display_failure(
             LocalPinAuthPurpose::sui_zklogin_proposal,
             request_id,
             sizeof(request_id))) {
-        wipe_local_pin_auth_scratch(ops, reason);
+        clear_local_pin_auth_scratch(ops, reason);
         if (clear_panel) {
             complete_local_pin_processing_to_sui_zklogin_terminal(
                 ops,
@@ -577,7 +577,7 @@ void handle_local_pin_auth_display_failure(
             LocalPinAuthPurpose::connect,
             request_id,
             sizeof(request_id))) {
-        wipe_local_pin_auth_scratch(ops, reason);
+        clear_local_pin_auth_scratch(ops, reason);
         write_connect_rejected_from_pin(
             ops,
             request_id,
@@ -593,7 +593,7 @@ void handle_local_pin_auth_display_failure(
         show_message(ops, "Display error", MessageKind::error);
         return;
     }
-    wipe_local_pin_auth_scratch(ops, reason);
+    clear_local_pin_auth_scratch(ops, reason);
     if (clear_panel) {
         complete_local_pin_processing_to_message(
             ops,
@@ -616,7 +616,7 @@ bool finish_request_backed_local_pin_input_timeout_if_reached(
 
     char request_id[kMaxRequestIdSize] = {};
     request_id_for_pin(ops, purpose, request_id, sizeof(request_id));
-    wipe_local_pin_auth_scratch(ops, scratch_reason);
+    clear_local_pin_auth_scratch(ops, scratch_reason);
     switch (request_backed_local_pin_owner_for_purpose(purpose)) {
         case RequestBackedLocalPinOwner::protocol_pin_approval:
             if (purpose == LocalPinAuthPurpose::policy_update &&
@@ -1246,7 +1246,7 @@ bool local_pin_auth_ui_begin_connect(
             ops,
             request_id,
             LocalPinAuthConnectRejectReason::ui_error);
-        wipe_local_pin_auth_scratch(ops, "connect PIN display allocation failed");
+        clear_local_pin_auth_scratch(ops, "connect PIN display allocation failed");
         finish_connect_rejection_cleanup(ops, true);
         show_message(ops, "Display error", MessageKind::error);
         return false;
@@ -1286,7 +1286,7 @@ bool local_pin_auth_ui_begin_sui_zklogin_proposal(
     }
 
     if (!draw_local_pin_panel(ops, "Approve Sui zkLogin")) {
-        wipe_local_pin_auth_scratch(
+        clear_local_pin_auth_scratch(
             ops,
             "Sui zkLogin proposal PIN display allocation failed");
         finish_sui_zklogin_proposal_terminal(
@@ -1321,13 +1321,13 @@ void local_pin_auth_ui_start_settings_human_approval_input(
             now,
             timeout_window_from_deadline(
                 now,
-                now + pdMS_TO_TICKS(ops.timing.local_reset_entry_ms)))) {
+                now + pdMS_TO_TICKS(ops.timing.storage_maintenance_entry_ms)))) {
         show_message(ops, "Settings unavailable", MessageKind::error);
         return;
     }
 
     if (!draw_local_pin_panel(ops)) {
-        wipe_local_pin_auth_scratch(
+        clear_local_pin_auth_scratch(
             ops,
             "human approval input setting display allocation failed");
         show_message(ops, "Display error", MessageKind::error);
@@ -1359,13 +1359,13 @@ void local_pin_auth_ui_start_settings_signing_mode(
             now,
             timeout_window_from_deadline(
                 now,
-                now + pdMS_TO_TICKS(ops.timing.local_reset_entry_ms)))) {
+                now + pdMS_TO_TICKS(ops.timing.storage_maintenance_entry_ms)))) {
         show_message(ops, "Settings unavailable", MessageKind::error);
         return;
     }
 
     if (!draw_local_pin_panel(ops)) {
-        wipe_local_pin_auth_scratch(
+        clear_local_pin_auth_scratch(
             ops,
             "settings signing mode display allocation failed");
         show_message(ops, "Display error", MessageKind::error);
@@ -1386,13 +1386,13 @@ void local_pin_auth_ui_start_settings_policy_reset(
             now,
             timeout_window_from_deadline(
                 now,
-                now + pdMS_TO_TICKS(ops.timing.local_reset_entry_ms)))) {
+                now + pdMS_TO_TICKS(ops.timing.storage_maintenance_entry_ms)))) {
         show_message(ops, "Policy reset unavailable", MessageKind::error);
         return;
     }
 
     if (!draw_local_pin_panel(ops)) {
-        wipe_local_pin_auth_scratch(
+        clear_local_pin_auth_scratch(
             ops,
             "settings policy reset display allocation failed");
         show_message(ops, "Display error", MessageKind::error);
@@ -1413,13 +1413,13 @@ void local_pin_auth_ui_start_settings_change_pin(
             now,
             timeout_window_from_deadline(
                 now,
-                now + pdMS_TO_TICKS(ops.timing.local_reset_entry_ms)))) {
+                now + pdMS_TO_TICKS(ops.timing.storage_maintenance_entry_ms)))) {
         show_message(ops, "Change PIN unavailable", MessageKind::error);
         return;
     }
 
     if (!draw_local_pin_panel(ops)) {
-        wipe_local_pin_auth_scratch(
+        clear_local_pin_auth_scratch(
             ops,
             "settings Change PIN display allocation failed");
         show_message(ops, "Display error", MessageKind::error);
@@ -1450,7 +1450,7 @@ void local_pin_auth_ui_start_settings_sui_accept_gas_sponsor(
             now,
             timeout_window_from_deadline(
                 now,
-                now + pdMS_TO_TICKS(ops.timing.local_reset_entry_ms)))) {
+                now + pdMS_TO_TICKS(ops.timing.storage_maintenance_entry_ms)))) {
         show_message(ops, "Sui setting unavailable", MessageKind::error);
         return;
     }
@@ -1460,7 +1460,7 @@ void local_pin_auth_ui_start_settings_sui_accept_gas_sponsor(
             target_settings.accept_gas_sponsor
                 ? "Accept Sui gas sponsor"
                 : "Reject Sui gas sponsor")) {
-        wipe_local_pin_auth_scratch(
+        clear_local_pin_auth_scratch(
             ops,
             "Sui gas sponsor setting display allocation failed");
         show_message(ops, "Display error", MessageKind::error);
@@ -1486,13 +1486,13 @@ void local_pin_auth_ui_start_settings_sui_zklogin_clear(
             now,
             timeout_window_from_deadline(
                 now,
-                now + pdMS_TO_TICKS(ops.timing.local_reset_entry_ms)))) {
+                now + pdMS_TO_TICKS(ops.timing.storage_maintenance_entry_ms)))) {
         show_message(ops, "Sui clear unavailable", MessageKind::error);
         return;
     }
 
     if (!draw_local_pin_panel(ops, "Clear Sui zkLogin")) {
-        wipe_local_pin_auth_scratch(
+        clear_local_pin_auth_scratch(
             ops,
             "Sui zkLogin clear display allocation failed");
         show_message(ops, "Display error", MessageKind::error);
@@ -1524,7 +1524,7 @@ void local_pin_auth_ui_cancel(
 
     if (purpose == LocalPinAuthPurpose::policy_update &&
         request_id[0] != '\0') {
-        wipe_local_pin_auth_scratch(ops, "local PIN authorization canceled");
+        clear_local_pin_auth_scratch(ops, "local PIN authorization canceled");
         const PolicyUpdateFlowTransitionResult transition =
             return_policy_update_review_from_pin(
                 ops,
@@ -1551,7 +1551,7 @@ void local_pin_auth_ui_cancel(
     }
     if (purpose == LocalPinAuthPurpose::sui_zklogin_proposal &&
         request_id[0] != '\0') {
-        wipe_local_pin_auth_scratch(ops, "local PIN authorization canceled");
+        clear_local_pin_auth_scratch(ops, "local PIN authorization canceled");
         const SuiZkLoginProposalTransitionResult transition =
             return_sui_zklogin_review_from_pin(ops, now);
         if (transition == SuiZkLoginProposalTransitionResult::timed_out) {
@@ -1580,7 +1580,7 @@ void local_pin_auth_ui_cancel(
     }
     if (purpose == LocalPinAuthPurpose::connect &&
         request_id[0] != '\0') {
-        wipe_local_pin_auth_scratch(ops, "local PIN authorization canceled");
+        clear_local_pin_auth_scratch(ops, "local PIN authorization canceled");
         if (!return_connect_review_from_pin(
                 ops,
                 now,
@@ -1629,7 +1629,7 @@ void local_pin_auth_ui_cancel(
         return;
     }
     if (local_pin_auth_settings_purpose(purpose)) {
-        wipe_local_pin_auth_scratch(ops, "local PIN authorization canceled");
+        clear_local_pin_auth_scratch(ops, "local PIN authorization canceled");
         complete_local_pin_processing_to_settings(
             ops,
             "local settings display allocation failed after PIN cancel",
@@ -1638,7 +1638,7 @@ void local_pin_auth_ui_cancel(
         return;
     }
 
-    wipe_local_pin_auth_scratch(ops, "local PIN authorization canceled");
+    clear_local_pin_auth_scratch(ops, "local PIN authorization canceled");
     complete_local_pin_processing_to_message(
         ops,
         message != nullptr && message[0] != '\0' ? message : "Settings canceled",
@@ -1831,7 +1831,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
         request_id_for_pin(ops, purpose, request_id, sizeof(request_id));
         if (!provisioned_material_ready(ops)) {
             cancel_user_signing_for_pin_loss(ops);
-            wipe_local_pin_auth_scratch(ops, "user_signing material state unavailable");
+            clear_local_pin_auth_scratch(ops, "user_signing material state unavailable");
             complete_local_pin_to_user_error_terminal(
                 ops,
                 request_id,
@@ -1846,7 +1846,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
                 ops,
                 worker_result,
                 now,
-                now + pdMS_TO_TICKS(kLocalResetPinLockoutMs));
+                now + pdMS_TO_TICKS(kStorageMaintenancePinLockoutMs));
         switch (confirmation_result) {
             case UserSigningConfirmationResult::not_ready:
                 return;
@@ -1920,7 +1920,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
     if (!provisioned_material_ready(ops)) {
         char request_id[kMaxRequestIdSize] = {};
         request_id_for_pin(ops, purpose, request_id, sizeof(request_id));
-        wipe_local_pin_auth_scratch(ops, "local PIN authorization material state unavailable");
+        clear_local_pin_auth_scratch(ops, "local PIN authorization material state unavailable");
         if (purpose == LocalPinAuthPurpose::policy_update && request_id[0] != '\0') {
             finish_policy_update_unavailable_from_pin(
                 ops,
@@ -1969,7 +1969,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
         local_pin_auth_complete_verify_job(
             worker_result,
             next_input_window,
-            now + pdMS_TO_TICKS(kLocalResetPinLockoutMs),
+            now + pdMS_TO_TICKS(kStorageMaintenancePinLockoutMs),
             now + pdMS_TO_TICKS(ops.timing.local_processing_display_ms));
     if ((result == LocalPinAuthVerifyResult::locked ||
          result == LocalPinAuthVerifyResult::wrong_pin ||
@@ -2001,7 +2001,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
             record_material_failure(
                 ops,
                 PersistentMaterialRuntimeFailure::local_pin_auth_unavailable);
-            wipe_local_pin_auth_scratch(ops, "local PIN authorization verifier unavailable");
+            clear_local_pin_auth_scratch(ops, "local PIN authorization verifier unavailable");
             if (purpose == LocalPinAuthPurpose::policy_update &&
                 request_id[0] != '\0') {
                 finish_policy_update_unavailable_from_pin(
@@ -2120,7 +2120,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
             const LocalPinAuthConnectSessionResult session_result =
                 replace_connect_session_from_pin(ops, request_id);
             if (session_result == LocalPinAuthConnectSessionResult::session_unavailable) {
-                wipe_local_pin_auth_scratch(ops, "connect PIN session creation failed");
+                clear_local_pin_auth_scratch(ops, "connect PIN session creation failed");
                 finish_connect_session_error(ops, request_id);
                 complete_local_pin_processing_to_message(
                     ops,
@@ -2128,7 +2128,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
                     MessageKind::error);
                 return;
             }
-            wipe_local_pin_auth_scratch(ops, "connect PIN approved");
+            clear_local_pin_auth_scratch(ops, "connect PIN approved");
             finish_connect_approved(ops, request_id);
             complete_local_pin_processing_to_message(
                 ops,
@@ -2141,7 +2141,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
                 ops.material_settings.complete_policy_reset_setting != nullptr
                     ? ops.material_settings.complete_policy_reset_setting()
                     : LocalPinAuthSettingsCompletionResult::policy_reset_failed;
-            wipe_local_pin_auth_scratch(
+            clear_local_pin_auth_scratch(
                 ops,
                 completion == LocalPinAuthSettingsCompletionResult::policy_reset
                     ? "settings policy reset committed"
@@ -2154,7 +2154,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
                 ops.material_settings.complete_sui_zklogin_clear_setting != nullptr
                     ? ops.material_settings.complete_sui_zklogin_clear_setting()
                     : LocalPinAuthSettingsCompletionResult::sui_clear_failed;
-            wipe_local_pin_auth_scratch(
+            clear_local_pin_auth_scratch(
                 ops,
                 completion == LocalPinAuthSettingsCompletionResult::sui_proof_cleared
                     ? "Sui zkLogin proof cleared"
@@ -2171,7 +2171,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
                 sizeof(request_id));
             if (ops.policy_update.require_pending_policy_update_session == nullptr ||
                 !ops.policy_update.require_pending_policy_update_session(request_id)) {
-                wipe_local_pin_auth_scratch(
+                clear_local_pin_auth_scratch(
                     ops,
                     "policy update PIN approved but session was unavailable");
                 complete_local_pin_to_policy_error_terminal(
@@ -2182,7 +2182,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
                     "Policy unavailable");
                 return;
             }
-            wipe_local_pin_auth_scratch(ops, "policy update PIN approved");
+            clear_local_pin_auth_scratch(ops, "policy update PIN approved");
             const PolicyUpdateFlowTerminalResult commit_result =
                 commit_policy_update_from_pin(ops);
             complete_local_pin_processing_to_policy_terminal(
@@ -2200,7 +2200,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
                 sizeof(request_id));
             if (ops.sui_zklogin.require_pending_sui_zklogin_proposal_session == nullptr ||
                 !ops.sui_zklogin.require_pending_sui_zklogin_proposal_session(request_id)) {
-                wipe_local_pin_auth_scratch(
+                clear_local_pin_auth_scratch(
                     ops,
                     "Sui zkLogin proposal PIN approved but session was unavailable");
                 complete_local_pin_to_sui_zklogin_error_terminal(
@@ -2211,7 +2211,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
                     "zkLogin unavailable");
                 return;
             }
-            wipe_local_pin_auth_scratch(ops, "Sui zkLogin proposal PIN approved");
+            clear_local_pin_auth_scratch(ops, "Sui zkLogin proposal PIN approved");
             const SuiZkLoginProposalTerminalResult commit_result =
                 commit_sui_zklogin_from_pin(ops);
             complete_local_pin_processing_to_sui_zklogin_terminal(
@@ -2222,7 +2222,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
         }
         case LocalPinAuthVerifyResult::started_setting_commit:
             if (!draw_processing_or_local_pin_panel(ops)) {
-                wipe_local_pin_auth_scratch(ops, "settings PIN commit display allocation failed");
+                clear_local_pin_auth_scratch(ops, "settings PIN commit display allocation failed");
                 complete_local_pin_processing_to_message(
                     ops,
                     "Display error",
@@ -2350,7 +2350,7 @@ void clear_user_signing_processing_if_needed(
     }
     if (local_pin_auth_processing_deadline_expired(now)) {
         cancel_user_signing_for_pin_loss(ops);
-        wipe_local_pin_auth_scratch(ops, "user_signing local PIN verifier timed out");
+        clear_local_pin_auth_scratch(ops, "user_signing local PIN verifier timed out");
         record_material_failure(
             ops,
             PersistentMaterialRuntimeFailure::local_pin_auth_unavailable);
@@ -2420,7 +2420,7 @@ void finish_local_pin_panel_recovery_failure(
 {
     if (purpose == LocalPinAuthPurpose::policy_update &&
         request_id[0] != '\0') {
-        wipe_local_pin_auth_scratch(ops, "policy update PIN UI recovery failed");
+        clear_local_pin_auth_scratch(ops, "policy update PIN UI recovery failed");
         finish_policy_update_terminal(
             ops,
             request_id,
@@ -2429,7 +2429,7 @@ void finish_local_pin_panel_recovery_failure(
     }
     if (purpose == LocalPinAuthPurpose::sui_zklogin_proposal &&
         request_id[0] != '\0') {
-        wipe_local_pin_auth_scratch(ops, "Sui zkLogin proposal PIN UI recovery failed");
+        clear_local_pin_auth_scratch(ops, "Sui zkLogin proposal PIN UI recovery failed");
         finish_sui_zklogin_proposal_terminal(
             ops,
             request_id,
@@ -2444,7 +2444,7 @@ void finish_local_pin_panel_recovery_failure(
             LocalPinAuthConnectRejectReason::ui_error);
         finish_connect_rejection_cleanup(ops, true);
     }
-    wipe_local_pin_auth_scratch(ops, "local PIN UI recovery failed");
+    clear_local_pin_auth_scratch(ops, "local PIN UI recovery failed");
     show_message(ops, "Display error", MessageKind::error);
 }
 
@@ -2455,7 +2455,7 @@ void finish_local_pin_timeout_or_panel_loss(
     bool panel_active,
     const LocalPinAuthUiFlowOps& ops)
 {
-    wipe_local_pin_auth_scratch(
+    clear_local_pin_auth_scratch(
         ops,
         expired ? "local PIN authorization timed out" : "local PIN authorization panel lost");
 
@@ -2538,7 +2538,7 @@ bool clear_user_signing_input_if_needed(
         return true;
     }
     if (local_pin_auth_deadline_expired(now)) {
-        wipe_local_pin_auth_scratch(ops, "user_signing local PIN input timed out");
+        clear_local_pin_auth_scratch(ops, "user_signing local PIN input timed out");
         const UserSigningConfirmationResult result =
             record_user_signing_timeout_from_pin(ops, now);
         if (result == UserSigningConfirmationResult::ok ||

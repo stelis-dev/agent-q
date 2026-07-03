@@ -3,12 +3,13 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "nvs.h"
+#include "persistent_storage_names.h"
 
 namespace signing {
 namespace {
 
 constexpr const char* kTag = "RootMaterial";
-constexpr const char* kNvsNamespace = "signing";
+constexpr const char* kNvsNamespace = kSigningKeyMaterialNvsNamespace;
 constexpr const char* kRootMaterialKey = "root_entropy";
 
 }  // namespace
@@ -85,7 +86,7 @@ bool wipe_root_material()
     nvs_handle_t nvs = 0;
     esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
     if (result != ESP_OK) {
-        ESP_LOGW(kTag, "NVS open failed while wiping root material: %s", esp_err_to_name(result));
+        ESP_LOGW(kTag, "NVS open failed while erasing root material: %s", esp_err_to_name(result));
         return false;
     }
 

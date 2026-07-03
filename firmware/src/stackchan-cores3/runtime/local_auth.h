@@ -25,7 +25,7 @@ bool prepare_local_pin_verifier_record(const char* pin, LocalAuthPreparedRecord*
 bool store_prepared_local_pin_verifier(const LocalAuthPreparedRecord* prepared);
 void wipe_local_pin_verifier_record(LocalAuthPreparedRecord* prepared);
 bool verify_local_pin(const char* pin, bool* verified);
-bool wipe_local_auth();
+bool clear_local_auth();
 LocalAuthStatus local_auth_status();
 
 }  // namespace signing

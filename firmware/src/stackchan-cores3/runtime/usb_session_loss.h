@@ -35,7 +35,7 @@ struct UsbSessionLossPlan {
     bool clear_session;
     bool clear_connect_approval;
     bool clear_protocol_pin;
-    bool wipe_local_pin_auth;
+    bool clear_local_pin_auth;
     bool clear_policy_update_flow;
     bool clear_sui_zklogin_proposal_flow;
     bool cancel_user_signing;

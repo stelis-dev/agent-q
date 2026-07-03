@@ -324,12 +324,12 @@ check_connect_pin_completion_uses_connect_callbacks() {
   ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${begin_connect_draw_failure}"
 
   write_line="$(grep -En 'write_connect_rejected_from_pin' "${begin_connect_draw_failure}" | head -n 1 | cut -d: -f1 || true)"
-  wipe_line="$(grep -En 'wipe_local_pin_auth_scratch' "${begin_connect_draw_failure}" | head -n 1 | cut -d: -f1 || true)"
+  wipe_line="$(grep -En 'clear_local_pin_auth_scratch' "${begin_connect_draw_failure}" | head -n 1 | cut -d: -f1 || true)"
   cleanup_line="$(grep -En 'finish_connect_rejection_cleanup' "${begin_connect_draw_failure}" | head -n 1 | cut -d: -f1 || true)"
 
   if [[ -z "${write_line}" || -z "${wipe_line}" || -z "${cleanup_line}" ||
         "${write_line}" -ge "${wipe_line}" || "${wipe_line}" -ge "${cleanup_line}" ]]; then
-    echo "FAILED: connect PIN display-allocation failure must write rejection before wiping scratch and clear pending state after wiping scratch" >&2
+    echo "FAILED: connect PIN display-allocation failure must write rejection before committing scratch and clear pending state after committing scratch" >&2
     echo "write_line=${write_line:-missing} wipe_line=${wipe_line:-missing} cleanup_line=${cleanup_line:-missing}" >&2
     exit 1
   fi

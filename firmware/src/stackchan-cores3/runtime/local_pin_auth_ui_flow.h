@@ -44,7 +44,7 @@ struct LocalPinAuthTimingOps {
     uint32_t local_processing_render_delay_ms;
     uint32_t local_processing_display_ms;
     uint32_t local_auth_worker_max_ms;
-    uint32_t local_reset_entry_ms;
+    uint32_t storage_maintenance_entry_ms;
 };
 
 struct LocalPinAuthDisplayOps {

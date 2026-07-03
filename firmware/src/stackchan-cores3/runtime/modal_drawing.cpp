@@ -9,7 +9,7 @@
 #include "display_power.h"
 #include "local_auth.h"
 #include "local_pin_auth.h"
-#include "local_reset.h"
+#include "storage_maintenance.h"
 #include "policy_update_flow.h"
 #include "provisioning_flow.h"
 #include "signing_mode.h"
@@ -46,7 +46,7 @@ constexpr int kPanelActionButtonGap = 8;
 // Single source of truth for the bottom two-button decision row (left "reject" /
 // "cancel" + right "confirm" / "sign") shared by every decision modal: connect
 // review, user-signing review, policy-update review, backup-phrase display, PIN
-// setup, reset PIN, error recovery, and local PIN auth. Every one of those rows
+// setup, action PIN, error recovery, and local PIN auth. Every one of those rows
 // MUST use these X/width constants together with kSetupActionButtonY (row Y) and
 // kBackupPhraseButtonHeight (row height) so the layout stays identical across
 // modals. Do NOT introduce a second decision-row constant set; extend these.
@@ -1622,8 +1622,8 @@ bool modal_draw_pin_setup_panel(const char* notice)
 bool modal_draw_settings_menu_panel()
 {
     const TickType_t now = xTaskGetTickCount();
-    const signing::LocalResetSnapshot reset =
-        signing::local_reset_snapshot(now);
+    const signing::StorageMaintenanceSnapshot maintenance =
+        signing::storage_maintenance_snapshot(now);
     avatar_overlay_clear();
 
     LvglLockGuard lock;
@@ -1717,12 +1717,12 @@ bool modal_draw_settings_menu_panel()
             g_callbacks.on_settings_policy_reset_clicked) ||
         !make_settings_menu_row(
             content,
-            "Reset device",
+            "Device reset",
             "RESET",
             4,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kError),
-            g_callbacks.on_settings_reset_clicked) ||
+            g_callbacks.on_settings_wallet_erase_clicked) ||
         !make_setup_button(
             panel,
             "Close",
@@ -1737,7 +1737,7 @@ bool modal_draw_settings_menu_panel()
         return false;
     }
 
-    if (!make_screen_bottom_timeout_timer_bar(panel, reset.input_window, now)) {
+    if (!make_screen_bottom_timeout_timer_bar(panel, maintenance.input_window, now)) {
         drawing_surface_clear_panel_locked();
         return false;
     }
@@ -1749,8 +1749,8 @@ bool modal_draw_settings_menu_panel()
 bool modal_draw_chain_settings_menu_panel()
 {
     const TickType_t now = xTaskGetTickCount();
-    const signing::LocalResetSnapshot reset =
-        signing::local_reset_snapshot(now);
+    const signing::StorageMaintenanceSnapshot maintenance =
+        signing::storage_maintenance_snapshot(now);
     avatar_overlay_clear();
 
     LvglLockGuard lock;
@@ -1818,7 +1818,7 @@ bool modal_draw_chain_settings_menu_panel()
         return false;
     }
 
-    if (!make_screen_bottom_timeout_timer_bar(panel, reset.input_window, now)) {
+    if (!make_screen_bottom_timeout_timer_bar(panel, maintenance.input_window, now)) {
         drawing_surface_clear_panel_locked();
         return false;
     }
@@ -1836,8 +1836,8 @@ bool modal_draw_sui_settings_panel(const SuiSettingsViewModel& model)
     }
 
     const TickType_t now = xTaskGetTickCount();
-    const signing::LocalResetSnapshot reset =
-        signing::local_reset_snapshot(now);
+    const signing::StorageMaintenanceSnapshot maintenance =
+        signing::storage_maintenance_snapshot(now);
     avatar_overlay_clear();
 
     LvglLockGuard lock;
@@ -1953,7 +1953,7 @@ bool modal_draw_sui_settings_panel(const SuiSettingsViewModel& model)
         return false;
     }
 
-    if (!make_screen_bottom_timeout_timer_bar(panel, reset.input_window, now)) {
+    if (!make_screen_bottom_timeout_timer_bar(panel, maintenance.input_window, now)) {
         drawing_surface_clear_panel_locked();
         return false;
     }
@@ -1965,10 +1965,19 @@ bool modal_draw_sui_settings_panel(const SuiSettingsViewModel& model)
 bool modal_draw_error_recovery_panel(bool confirm)
 {
     const TickType_t now = xTaskGetTickCount();
-    const signing::LocalResetSnapshot reset =
-        signing::local_reset_snapshot(now);
-    const bool wiping =
-        reset.stage == signing::LocalResetStage::wiping;
+    const signing::StorageMaintenanceSnapshot maintenance =
+        signing::storage_maintenance_snapshot(now);
+    const bool committing =
+        maintenance.stage == signing::StorageMaintenanceStage::committing;
+    const bool flow_active =
+        maintenance.stage != signing::StorageMaintenanceStage::none;
+    if (!flow_active ||
+        (maintenance.operation != signing::StorageMaintenanceOperation::settings_reset &&
+         maintenance.operation != signing::StorageMaintenanceOperation::wallet_erase)) {
+        return false;
+    }
+    const bool settings_repair =
+        maintenance.operation == signing::StorageMaintenanceOperation::settings_reset;
     avatar_overlay_clear();
 
     LvglLockGuard lock;
@@ -1994,7 +2003,13 @@ bool modal_draw_error_recovery_panel(bool confirm)
         drawing_surface_clear_panel_locked();
         return false;
     }
-    lv_label_set_text(title, wiping ? "Erasing device" : (confirm ? "Erase device data" : "Device data error"));
+    lv_label_set_text(
+        title,
+        committing
+            ? (settings_repair ? "Repairing settings" : "Resetting device")
+            : (settings_repair
+                ? (confirm ? "Repair settings" : "Settings error")
+                : (confirm ? "Device reset" : "Device data error")));
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnErrorContainer), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kModalTitleY);
@@ -2006,11 +2021,15 @@ bool modal_draw_error_recovery_panel(bool confirm)
     }
     lv_label_set_text(
         message,
-        wiping
+        committing
             ? "Processing. Please wait."
             : (confirm
-            ? "This deletes local root material, policy, PIN, and settings."
-            : "Stored device material is inconsistent. Erase before setup."));
+            ? (settings_repair
+                ? "Keeps key. Resets settings."
+                : "This deletes signing key material, local authentication, and settings.")
+            : (settings_repair
+                ? "Stored settings are inconsistent. Repair resets settings and zkLogin."
+                : "Stored authority material is inconsistent. Use Device reset before setup.")));
     lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(message, kScreenWidth - 54);
     lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, 0);
@@ -2018,7 +2037,7 @@ bool modal_draw_error_recovery_panel(bool confirm)
     lv_obj_set_style_text_color(message, lv_color_hex(theme::kOnErrorContainerStrong), 0);
     lv_obj_align(message, LV_ALIGN_TOP_MID, 0, 70);
 
-    if (wiping) {
+    if (committing) {
         if (!make_pin_processing_overlay(panel)) {
             drawing_surface_clear_panel_locked();
             return false;
@@ -2036,33 +2055,33 @@ bool modal_draw_error_recovery_panel(bool confirm)
                 g_callbacks.on_error_recovery_cancel_clicked) ||
             !make_setup_button(
                 panel,
-                "Erase",
+                settings_repair ? "Repair" : "Device reset",
                 kPanelActionButtonRightX,
                 kSetupActionButtonY,
                 kPanelActionButtonWidth,
                 kBackupPhraseButtonHeight,
                 SetupButtonKind::solid_action,
                 lv_color_hex(theme::kError),
-                g_callbacks.on_error_recovery_erase_clicked)) {
+                g_callbacks.on_error_recovery_action_clicked)) {
             drawing_surface_clear_panel_locked();
             return false;
         }
     } else if (!make_setup_button(
                    panel,
-                   "Erase",
+                   settings_repair ? "Repair" : "Device reset",
                    kSettingsMenuButtonCenterX,
                    kSetupActionButtonY,
                    kBackupPhraseButtonWidth,
                    kBackupPhraseButtonHeight,
                    SetupButtonKind::solid_action,
                    lv_color_hex(theme::kError),
-                   g_callbacks.on_error_recovery_erase_clicked)) {
+                   g_callbacks.on_error_recovery_action_clicked)) {
         drawing_surface_clear_panel_locked();
         return false;
     }
 
-    if (confirm && !wiping &&
-        !make_screen_bottom_timeout_timer_bar(panel, reset.input_window, now)) {
+    if (flow_active && !committing &&
+        !make_screen_bottom_timeout_timer_bar(panel, maintenance.input_window, now)) {
         drawing_surface_clear_panel_locked();
         return false;
     }
@@ -2071,18 +2090,25 @@ bool modal_draw_error_recovery_panel(bool confirm)
     return true;
 }
 
-bool modal_draw_reset_pin_panel(const char* notice)
+bool modal_draw_action_pin_panel(const char* notice)
 {
     const TickType_t now = xTaskGetTickCount();
-    const signing::LocalResetSnapshot reset =
-        signing::local_reset_snapshot(now);
+    const signing::StorageMaintenanceSnapshot maintenance =
+        signing::storage_maintenance_snapshot(now);
+    if ((maintenance.stage != signing::StorageMaintenanceStage::pin_entry &&
+         maintenance.stage != signing::StorageMaintenanceStage::pin_verifying &&
+         maintenance.stage != signing::StorageMaintenanceStage::committing) ||
+        (maintenance.operation != signing::StorageMaintenanceOperation::settings_reset &&
+         maintenance.operation != signing::StorageMaintenanceOperation::wallet_erase)) {
+        return false;
+    }
     avatar_overlay_clear();
 
     LvglLockGuard lock;
     request_display_power_wake();
     drawing_surface_clear_panel_locked();
 
-    lv_obj_t* panel = drawing_surface_create_panel_locked(UiPanelKind::reset_pin_entry);
+    lv_obj_t* panel = drawing_surface_create_panel_locked(UiPanelKind::action_pin_entry);
     if (panel == nullptr) {
         return false;
     }
@@ -2098,17 +2124,29 @@ bool modal_draw_reset_pin_panel(const char* notice)
     lv_obj_set_style_pad_all(panel, 0, 0);
 
     const bool processing_stage =
-        reset.stage == signing::LocalResetStage::pin_verifying ||
-        reset.stage == signing::LocalResetStage::wiping;
-    const bool locked_stage = reset.lockout_active;
+        maintenance.stage == signing::StorageMaintenanceStage::pin_verifying ||
+        maintenance.stage == signing::StorageMaintenanceStage::committing;
+    const bool locked_stage = maintenance.lockout_active;
     const bool buttons_enabled = !processing_stage && !locked_stage;
+    const bool settings_repair =
+        maintenance.operation == signing::StorageMaintenanceOperation::settings_reset;
+    const bool wallet_erase =
+        maintenance.operation == signing::StorageMaintenanceOperation::wallet_erase;
 
     lv_obj_t* title = lv_label_create(panel);
     if (title == nullptr) {
         drawing_surface_clear_panel_locked();
         return false;
     }
-    lv_label_set_text(title, processing_stage ? "Processing reset" : "Enter reset PIN");
+    lv_label_set_text(
+        title,
+        processing_stage
+            ? (wallet_erase
+                ? "Resetting device"
+                : "Repairing settings")
+            : (wallet_erase
+                ? "Enter Device reset PIN"
+                : "Enter repair PIN"));
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnSurface), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, kModalTitleY);
@@ -2122,7 +2160,11 @@ bool modal_draw_reset_pin_panel(const char* notice)
         message,
         notice != nullptr && notice[0] != '\0'
             ? notice
-            : (processing_stage ? "Processing. Please wait." : "Confirm reset with local PIN."));
+            : (processing_stage
+                ? "Processing. Please wait."
+                : (wallet_erase
+                    ? "Deletes wallet data."
+                    : "Keeps key. Resets settings.")));
     lv_label_set_long_mode(message, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(message, kScreenWidth - 44);
     lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, 0);
@@ -2132,7 +2174,7 @@ bool modal_draw_reset_pin_panel(const char* notice)
 
     char pin_mask[signing::kLocalPinDigits + 1] = {};
     for (size_t index = 0; index < signing::kLocalPinDigits; ++index) {
-        pin_mask[index] = index < reset.pin_entry_length ? '*' : '_';
+        pin_mask[index] = index < maintenance.pin_entry_length ? '*' : '_';
     }
     char pin_text[16] = {};
     snprintf(pin_text, sizeof(pin_text), "PIN: %s", pin_mask);
@@ -2160,12 +2202,12 @@ bool modal_draw_reset_pin_panel(const char* notice)
             kBackupPhraseButtonHeight,
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kSecondary),
-            g_callbacks.on_reset_cancel_clicked,
+            g_callbacks.on_storage_action_cancel_clicked,
             nullptr,
             !processing_stage) ||
         !make_setup_button(
             panel,
-            "Reset",
+            settings_repair ? "Repair" : "Device reset",
             kPanelActionButtonRightX,
             kSetupActionButtonY,
             kPanelActionButtonWidth,
@@ -2185,7 +2227,7 @@ bool modal_draw_reset_pin_panel(const char* notice)
     }
 
     if (!processing_stage &&
-        !make_screen_bottom_timeout_timer_bar(panel, reset.input_window, now)) {
+        !make_screen_bottom_timeout_timer_bar(panel, maintenance.input_window, now)) {
         drawing_surface_clear_panel_locked();
         return false;
     }
