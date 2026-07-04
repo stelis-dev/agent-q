@@ -3,7 +3,15 @@
 #include <firmware_common/protocol/request_id.h>
 #include <stdint.h>
 
+#include "state_projection.h"
+
 namespace stopwatch_target {
+
+struct UsbRuntimeState {
+    LocalAuthProjectionStatus auth_status;
+    bool locally_unlocked;
+    bool ui_busy;
+};
 
 struct UsbStatus {
     bool ready;
@@ -20,5 +28,6 @@ struct UsbStatus {
 bool usb_transport_init();
 void usb_transport_poll();
 UsbStatus usb_transport_status();
+void usb_transport_set_runtime_state(UsbRuntimeState state);
 
 }  // namespace stopwatch_target

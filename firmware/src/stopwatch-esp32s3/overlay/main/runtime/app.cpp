@@ -1,6 +1,7 @@
 #include "app.h"
 
-#include <stdio.h>
+#include <math.h>
+#include <string.h>
 
 #include <hal/hal.h>
 #include <mooncake_log.h>
@@ -11,41 +12,22 @@ namespace {
 
 constexpr const char* kAppName = "Device";
 constexpr uint32_t kUiRefreshMs = 250;
+constexpr uint32_t kDialReturnFrameMs = 24;
+constexpr float kDialReturnBaseStepDegrees = 30.0F;
+constexpr float kDialReturnDistanceFactor = 0.13F;
+constexpr float kDialReturnMaxStepDegrees = 42.0F;
+constexpr uint16_t kDialReturnTickMs = 8;
+constexpr uint8_t kDialReturnTickStrength = 25;
+constexpr uint16_t kDialCaptureMs = 16;
+constexpr uint8_t kDialCaptureStrength = 45;
+constexpr int kDefaultBacklightBrightness = 50;
+constexpr int kInputSlotCount = static_cast<int>(kLocalAuthMaxDigits);
 
 void set_label_text(lv_obj_t* label, const char* text)
 {
     if (label != nullptr) {
         lv_label_set_text(label, text != nullptr ? text : "");
     }
-}
-
-lv_obj_t* make_label(lv_obj_t* parent, const lv_font_t* font, lv_color_t color, lv_align_t align, int x, int y)
-{
-    lv_obj_t* label = lv_label_create(parent);
-    lv_obj_set_style_text_font(label, font, LV_PART_MAIN);
-    lv_obj_set_style_text_color(label, color, LV_PART_MAIN);
-    lv_obj_set_width(label, 360);
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
-    lv_obj_align(label, align, x, y);
-    return label;
-}
-
-lv_obj_t* make_action_button(lv_obj_t* parent, const char* text, lv_align_t align, int x, int y)
-{
-    lv_obj_t* button = lv_button_create(parent);
-    lv_obj_set_size(button, 128, 58);
-    lv_obj_align(button, align, x, y);
-    lv_obj_set_style_radius(button, 28, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(button, lv_color_hex(0x24415F), LV_PART_MAIN);
-    lv_obj_set_style_border_width(button, 0, LV_PART_MAIN);
-
-    lv_obj_t* label = lv_label_create(button);
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_18, LV_PART_MAIN);
-    lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_label_set_text(label, text);
-    lv_obj_center(label);
-    return button;
 }
 
 }  // namespace
@@ -65,16 +47,28 @@ void RuntimeApp::onOpen()
 {
     mclog::tagInfo(kAppName, "on open");
     key_manager_ = std::make_unique<input::KeyManager>();
+    local_auth_init(GetHAL().millis());
     usb_transport_init();
     display_on_ = true;
+    locally_unlocked_ = false;
     button_feedback_suppressed_ = false;
     saved_button_config_ = GetHAL().getButtonConfig();
-    display_restore_brightness_ = GetHAL().getBackLightBrightness(false);
-    if (display_restore_brightness_ <= 0) {
-        display_restore_brightness_ = 80;
-    }
+    display_restore_brightness_ = kDefaultBacklightBrightness;
     GetHAL().setBackLightBrightness(display_restore_brightness_, false);
     sync_power_button_policy(GetHAL().isExternalPowerPresent());
+    previous_usb_connected_ = usb_transport_status().connected;
+
+    const LocalAuthSnapshot snapshot = local_auth_snapshot(GetHAL().millis());
+    if (snapshot.status == LocalAuthStoreStatus::missing) {
+        screen_mode_ = ScreenMode::setup_enter;
+    } else if (snapshot.status == LocalAuthStoreStatus::active && snapshot.locked) {
+        screen_mode_ = ScreenMode::lockout;
+    } else if (snapshot.status == LocalAuthStoreStatus::active) {
+        screen_mode_ = ScreenMode::unlock;
+    } else {
+        screen_mode_ = ScreenMode::error;
+    }
+    sync_usb_runtime_state();
 
     LvglLockGuard lock;
     create_ui();
@@ -83,23 +77,50 @@ void RuntimeApp::onOpen()
 
 void RuntimeApp::onRunning()
 {
-    usb_transport_poll();
+    sync_usb_runtime_state();
+
+    const UsbStatus status = usb_transport_status();
+    if (previous_usb_connected_ != status.connected) {
+        relock();
+        if (!display_on_) {
+            set_display_on(true, false, false);
+        }
+    }
+    previous_usb_connected_ = status.connected;
+
+    const uint32_t now = GetHAL().millis();
 
     if (key_manager_) {
         const input::KeyEvent key_event = key_manager_->update();
         const bool external_power_present = GetHAL().isExternalPowerPresent();
         sync_power_button_policy(external_power_present);
         handle_power_button(external_power_present);
-        handle_key_event(key_event);
+        handle_key_event(key_event, now);
     }
 
-    const UsbStatus status = usb_transport_status();
-    if (status.rejected_connects != last_seen_rejected_connects_) {
-        last_seen_rejected_connects_ = status.rejected_connects;
-        record_input("USB connect rejected", 45, 80, false);
+    handle_touch_poll(now);
+    animate_dial_return(now);
+
+    sync_usb_runtime_state();
+    usb_transport_poll();
+    refresh_auth_mode();
+
+    const uint32_t timeout_check_ms = GetHAL().millis();
+    if (input_timed_out(timeout_check_ms)) {
+        if (screen_mode_ == ScreenMode::setup_confirm) {
+            setup_state_.clear();
+            enter_mode(ScreenMode::setup_enter);
+        }
+        clear_entry();
     }
 
-    const uint32_t now = GetHAL().millis();
+    const UsbStatus updated_status = usb_transport_status();
+    if (updated_status.rejected_connects != last_seen_rejected_connects_) {
+        last_seen_rejected_connects_ = updated_status.rejected_connects;
+        record_feedback(45, 80, false);
+    }
+
+    sync_usb_runtime_state();
     if (display_on_ && now - last_update_ms_ >= kUiRefreshMs) {
         LvglLockGuard lock;
         update_ui(false);
@@ -109,6 +130,7 @@ void RuntimeApp::onRunning()
 void RuntimeApp::onClose()
 {
     mclog::tagInfo(kAppName, "on close");
+    relock();
     set_button_feedback_suppressed(false);
     key_manager_.reset();
 
@@ -127,29 +149,43 @@ void RuntimeApp::create_ui()
     root_ = lv_obj_create(screen);
     lv_obj_set_size(root_, 466, 466);
     lv_obj_align(root_, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(root_, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(root_, lv_color_hex(0x050607), LV_PART_MAIN);
     lv_obj_set_style_border_width(root_, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(root_, 233, LV_PART_MAIN);
     lv_obj_set_style_pad_all(root_, 0, LV_PART_MAIN);
     lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
 
-    title_label_ = make_label(root_, &lv_font_montserrat_28, lv_color_hex(0xFFFFFF), LV_ALIGN_TOP_MID, 0, 38);
-    set_label_text(title_label_, "Agent-Q");
+    rotary_dial_.create(root_);
 
-    state_label_ = make_label(root_, &lv_font_montserrat_18, lv_color_hex(0x9CF1B6), LV_ALIGN_TOP_MID, 0, 82);
-    set_label_text(state_label_, "StopWatch ESP32-S3");
+    constexpr int kSlotWidth = 32;
+    constexpr int kSlotGap = 2;
+    constexpr int kPromptY = -26;
+    constexpr int kSlotY = 10;
+    prompt_label_ = lv_label_create(root_);
+    lv_obj_set_style_text_font(prompt_label_, &lv_font_montserrat_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(prompt_label_, lv_color_hex(0xC9D2D8), LV_PART_MAIN);
+    lv_obj_set_style_text_opa(prompt_label_, LV_OPA_80, LV_PART_MAIN);
+    lv_obj_set_width(prompt_label_, 160);
+    lv_obj_set_style_text_align(prompt_label_, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_label_set_long_mode(prompt_label_, LV_LABEL_LONG_CLIP);
+    lv_obj_align(prompt_label_, LV_ALIGN_CENTER, 0, kPromptY);
 
-    instruction_label_ = make_label(root_, &lv_font_montserrat_16, lv_color_hex(0xC8D3DA), LV_ALIGN_TOP_MID, 0, 132);
-    set_label_text(instruction_label_, "Unprovisioned. Connect requests fail closed.");
-
-    usb_label_ = make_label(root_, &lv_font_montserrat_16, lv_color_hex(0xD8F2FF), LV_ALIGN_TOP_MID, 0, 202);
-    input_label_ = make_label(root_, &lv_font_montserrat_16, lv_color_hex(0xB3CDFF), LV_ALIGN_TOP_MID, 0, 252);
-    power_label_ = make_label(root_, &lv_font_montserrat_14, lv_color_hex(0x96A3AB), LV_ALIGN_TOP_MID, 0, 302);
-
-    left_button_ = make_action_button(root_, "Touch A", LV_ALIGN_BOTTOM_LEFT, 58, -50);
-    right_button_ = make_action_button(root_, "Touch B", LV_ALIGN_BOTTOM_RIGHT, -58, -50);
-    lv_obj_add_event_cb(left_button_, handle_touch_event, LV_EVENT_PRESSED, this);
-    lv_obj_add_event_cb(right_button_, handle_touch_event, LV_EVENT_PRESSED, this);
+    const int slot_total_width = kInputSlotCount * kSlotWidth + (kInputSlotCount - 1) * kSlotGap;
+    for (int index = 0; index < kInputSlotCount; ++index) {
+        input_slot_labels_[index] = lv_label_create(root_);
+        lv_obj_set_style_text_font(input_slot_labels_[index], &lv_font_montserrat_28, LV_PART_MAIN);
+        lv_obj_set_style_text_color(input_slot_labels_[index], lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+        lv_obj_set_style_text_opa(input_slot_labels_[index], LV_OPA_90, LV_PART_MAIN);
+        lv_obj_set_width(input_slot_labels_[index], kSlotWidth);
+        lv_obj_set_style_text_align(input_slot_labels_[index], LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_label_set_long_mode(input_slot_labels_[index], LV_LABEL_LONG_CLIP);
+        lv_obj_align(
+            input_slot_labels_[index],
+            LV_ALIGN_CENTER,
+            -slot_total_width / 2 + index * (kSlotWidth + kSlotGap) + kSlotWidth / 2,
+            kSlotY);
+    }
+    refresh_input_slot_layer();
 }
 
 void RuntimeApp::destroy_ui()
@@ -158,14 +194,13 @@ void RuntimeApp::destroy_ui()
         lv_obj_delete(root_);
     }
     root_ = nullptr;
-    title_label_ = nullptr;
-    state_label_ = nullptr;
-    instruction_label_ = nullptr;
-    usb_label_ = nullptr;
-    input_label_ = nullptr;
-    power_label_ = nullptr;
-    left_button_ = nullptr;
-    right_button_ = nullptr;
+    for (lv_obj_t*& slot : input_slot_labels_) {
+        slot = nullptr;
+    }
+    prompt_label_ = nullptr;
+    rotary_dial_.destroy();
+    dial_return_active_ = false;
+    dial_return_last_ms_ = 0;
 }
 
 void RuntimeApp::update_ui(bool force)
@@ -180,53 +215,114 @@ void RuntimeApp::update_ui(bool force)
     }
     last_update_ms_ = now;
 
-    const UsbStatus status = usb_transport_status();
-    char usb_text[160];
-    snprintf(
-        usb_text,
-        sizeof(usb_text),
-        "USB %s  lines:%lu  status:%lu  connect rejects:%lu",
-        status.connected ? "connected" : "waiting",
-        static_cast<unsigned long>(status.received_lines),
-        static_cast<unsigned long>(status.status_responses),
-        static_cast<unsigned long>(status.rejected_connects));
-    set_label_text(usb_label_, usb_text);
-
-    char input_text[160];
-    snprintf(
-        input_text,
-        sizeof(input_text),
-        "Last input: %s  last error: %s",
-        last_input_.c_str(),
-        status.last_error[0] != '\0' ? status.last_error : "none");
-    set_label_text(input_label_, input_text);
-
-    const bool external_power_present = GetHAL().isExternalPowerPresent();
-    const bool battery_charging       = GetHAL().isBatteryCharging();
-    char power_text[128];
-    snprintf(
-        power_text,
-        sizeof(power_text),
-        "Battery %u%%  %s",
-        static_cast<unsigned>(GetHAL().getBatteryLevel()),
-        external_power_present ? (battery_charging ? "USB charging" : "USB power") : "battery");
-    set_label_text(power_label_, power_text);
+    update_input_slots();
+    update_prompt_label();
+    rotary_dial_.set_visible(auth_entry_mode());
 }
 
-void RuntimeApp::handle_key_event(input::KeyEvent event)
+void RuntimeApp::handle_key_event(input::KeyEvent event, uint32_t now_ms)
 {
     switch (event) {
         case input::KeyEvent::GoPrevious:
-            record_input("KEYA", 35, 70, false);
+            if (!display_on_) {
+                set_display_on(true, false, false);
+                return;
+            }
+            if (auth_entry_mode()) {
+                delete_digit(now_ms);
+                return;
+            }
+            record_feedback(35, 70, false);
             break;
         case input::KeyEvent::GoNext:
-            record_input("KEYB", 35, 70, false);
+            if (!display_on_) {
+                set_display_on(true, false, false);
+                return;
+            }
+            submit_entry(now_ms);
             break;
         case input::KeyEvent::GoHome:
-            record_input("KEYA+KEYB", 60, 90, false);
+            if (!display_on_) {
+                set_display_on(true, false, false);
+                return;
+            }
+            record_feedback(60, 90, false);
             break;
         case input::KeyEvent::None:
             break;
+    }
+}
+
+void RuntimeApp::handle_touch_poll(uint32_t now_ms)
+{
+    const Hal::TouchPoint point = GetHAL().getTouchPoint();
+    const bool down = point.num > 0 && point.x >= 0 && point.y >= 0;
+    if (!display_on_) {
+        if (down) {
+            set_display_on(true, false, false);
+        }
+        touch_down_ = down;
+        touch_digit_ = -1;
+        dial_return_active_ = false;
+        return;
+    }
+
+    if (!auth_entry_mode()) {
+        touch_down_ = down;
+        touch_digit_ = -1;
+        if (rotary_dial_.rotation_degrees() != 0.0F) {
+            LvglLockGuard lock;
+            rotary_dial_.reset();
+        }
+        return;
+    }
+
+    if (down && !touch_down_) {
+        dial_return_active_ = false;
+        if (rotary_dial_.rotation_degrees() != 0.0F) {
+            LvglLockGuard lock;
+            rotary_dial_.reset();
+        }
+        touch_down_ = true;
+        touch_last_x_ = point.x;
+        touch_last_y_ = point.y;
+        touch_digit_ = -1;
+        capture_touch_digit(point.x, point.y);
+        {
+            LvglLockGuard lock;
+            update_input_slots();
+        }
+        return;
+    }
+    if (down && touch_down_) {
+        if (touch_digit_ < 0) {
+            capture_touch_digit(point.x, point.y);
+            touch_last_x_ = point.x;
+            touch_last_y_ = point.y;
+            return;
+        }
+        if (touch_digit_ >= 0) {
+            LvglLockGuard lock;
+            rotary_dial_.advance_clockwise_from_touch(
+                touch_last_x_,
+                touch_last_y_,
+                point.x,
+                point.y,
+                static_cast<char>(touch_digit_));
+            refresh_input_slot_layer();
+        }
+        touch_last_x_ = point.x;
+        touch_last_y_ = point.y;
+        return;
+    }
+    if (!down && touch_down_) {
+        handle_touch_release(now_ms);
+        touch_down_ = false;
+        touch_digit_ = -1;
+        {
+            LvglLockGuard lock;
+            update_input_slots();
+        }
     }
 }
 
@@ -263,26 +359,35 @@ void RuntimeApp::set_display_on(bool display_on, bool feedback, bool lvgl_locked
     if (display_on) {
         display_on_ = true;
         set_button_feedback_suppressed(false);
-        const int brightness = display_restore_brightness_ > 0 ? display_restore_brightness_ : 80;
+        const int brightness = display_restore_brightness_ > 0 ? display_restore_brightness_ : kDefaultBacklightBrightness;
         GetHAL().setBackLightBrightness(brightness, false);
-        last_input_ = "power screen on";
+        refresh_auth_mode();
         if (feedback) {
             GetHAL().vibrate(35, 70);
         }
         if (lvgl_locked) {
+            rotary_dial_.reset();
             update_ui(true);
         } else {
             LvglLockGuard lock;
+            rotary_dial_.reset();
             update_ui(true);
         }
         return;
     }
 
+    relock();
+    dial_return_active_ = false;
+    if (lvgl_locked) {
+        rotary_dial_.reset();
+    } else {
+        LvglLockGuard lock;
+        rotary_dial_.reset();
+    }
     const int current_brightness = GetHAL().getBackLightBrightness(false);
     if (current_brightness > 0) {
         display_restore_brightness_ = current_brightness;
     }
-    last_input_ = "power screen off";
     if (feedback) {
         GetHAL().vibrate(35, 70);
     }
@@ -311,8 +416,7 @@ void RuntimeApp::set_button_feedback_suppressed(bool suppressed)
     button_feedback_suppressed_ = false;
 }
 
-void RuntimeApp::record_input(
-    const char* input_name,
+void RuntimeApp::record_feedback(
     uint16_t vibration_ms,
     uint8_t strength,
     bool lvgl_locked)
@@ -321,7 +425,6 @@ void RuntimeApp::record_input(
         set_display_on(true, false, lvgl_locked);
     }
 
-    last_input_ = input_name != nullptr ? input_name : "unknown";
     GetHAL().vibrate(vibration_ms, strength);
     if (lvgl_locked) {
         update_ui(true);
@@ -331,17 +434,385 @@ void RuntimeApp::record_input(
     }
 }
 
-void RuntimeApp::handle_touch_event(lv_event_t* event)
+void RuntimeApp::enter_mode(ScreenMode mode)
 {
-    auto* app = static_cast<RuntimeApp*>(lv_event_get_user_data(event));
-    if (app == nullptr) {
+    if (screen_mode_ == mode) {
         return;
     }
-    const lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_current_target(event));
-    if (target == app->left_button_) {
-        app->record_input("touch A", 35, 70, true);
-    } else if (target == app->right_button_) {
-        app->record_input("touch B", 35, 70, true);
+    if (screen_mode_ == ScreenMode::setup_confirm && mode != ScreenMode::setup_confirm) {
+        setup_state_.clear();
+    }
+    screen_mode_ = mode;
+    last_update_ms_ = 0;
+}
+
+void RuntimeApp::refresh_auth_mode()
+{
+    const LocalAuthSnapshot snapshot = local_auth_snapshot(GetHAL().millis());
+    if (snapshot.status == LocalAuthStoreStatus::missing) {
+        locally_unlocked_ = false;
+        if (screen_mode_ != ScreenMode::setup_enter && screen_mode_ != ScreenMode::setup_confirm) {
+            enter_mode(ScreenMode::setup_enter);
+        }
+        return;
+    }
+    if (snapshot.status == LocalAuthStoreStatus::invalid ||
+        snapshot.status == LocalAuthStoreStatus::storage_error) {
+        locally_unlocked_ = false;
+        enter_mode(ScreenMode::error);
+        return;
+    }
+    if (snapshot.locked) {
+        locally_unlocked_ = false;
+        clear_entry();
+        enter_mode(ScreenMode::lockout);
+        return;
+    }
+    if (!locally_unlocked_) {
+        if (screen_mode_ != ScreenMode::setup_enter && screen_mode_ != ScreenMode::setup_confirm) {
+            enter_mode(ScreenMode::unlock);
+        }
+        return;
+    }
+    if (screen_mode_ == ScreenMode::unlock ||
+        screen_mode_ == ScreenMode::lockout) {
+        enter_mode(ScreenMode::idle);
+    }
+}
+
+void RuntimeApp::sync_usb_runtime_state()
+{
+    const LocalAuthSnapshot snapshot = local_auth_snapshot(GetHAL().millis());
+    LocalAuthProjectionStatus auth_status = LocalAuthProjectionStatus::missing;
+    switch (snapshot.status) {
+        case LocalAuthStoreStatus::active:
+            auth_status = snapshot.locked ? LocalAuthProjectionStatus::locked : LocalAuthProjectionStatus::active;
+            break;
+        case LocalAuthStoreStatus::missing:
+            auth_status = LocalAuthProjectionStatus::missing;
+            break;
+        case LocalAuthStoreStatus::invalid:
+            auth_status = LocalAuthProjectionStatus::invalid;
+            break;
+        case LocalAuthStoreStatus::storage_error:
+            auth_status = LocalAuthProjectionStatus::storage_error;
+            break;
+    }
+    if (auth_status != LocalAuthProjectionStatus::active) {
+        locally_unlocked_ = false;
+    }
+    usb_transport_set_runtime_state(UsbRuntimeState{
+        auth_status,
+        locally_unlocked_,
+        false,
+    });
+}
+
+void RuntimeApp::relock()
+{
+    locally_unlocked_ = false;
+    clear_auth_scratch();
+    const LocalAuthSnapshot snapshot = local_auth_snapshot(GetHAL().millis());
+    if (snapshot.status == LocalAuthStoreStatus::missing) {
+        enter_mode(ScreenMode::setup_enter);
+    } else if (snapshot.status == LocalAuthStoreStatus::active && snapshot.locked) {
+        enter_mode(ScreenMode::lockout);
+    } else if (snapshot.status == LocalAuthStoreStatus::active) {
+        enter_mode(ScreenMode::unlock);
+    } else {
+        enter_mode(ScreenMode::error);
+    }
+}
+
+void RuntimeApp::clear_entry()
+{
+    auth_entry_.clear();
+}
+
+void RuntimeApp::clear_auth_scratch()
+{
+    auth_entry_.clear();
+    setup_state_.clear();
+}
+
+void RuntimeApp::append_digit(char digit, uint32_t now_ms)
+{
+    if (!auth_entry_mode()) {
+        return;
+    }
+    if (auth_entry_.append(digit, now_ms)) {
+        record_feedback(18, 45, false);
+    }
+}
+
+void RuntimeApp::delete_digit(uint32_t now_ms)
+{
+    if (!auth_entry_mode()) {
+        return;
+    }
+    if (auth_entry_.delete_last(now_ms)) {
+        record_feedback(20, 45, false);
+        return;
+    }
+    if (screen_mode_ == ScreenMode::setup_confirm) {
+        setup_state_.clear();
+        enter_mode(ScreenMode::setup_enter);
+        record_feedback(25, 45, false);
+    }
+}
+
+void RuntimeApp::submit_entry(uint32_t now_ms)
+{
+    if (screen_mode_ == ScreenMode::idle) {
+        record_feedback(18, 35, false);
+        return;
+    }
+    if (screen_mode_ == ScreenMode::lockout) {
+        record_feedback(25, 45, false);
+        return;
+    }
+    if (screen_mode_ == ScreenMode::error) {
+        if (local_auth_clear()) {
+            relock();
+            enter_mode(ScreenMode::setup_enter);
+            record_feedback(45, 75, false);
+        } else {
+            record_feedback(80, 100, false);
+        }
+        return;
+    }
+    if (!auth_entry_mode() ||
+        auth_entry_.length() < kLocalAuthMinDigits ||
+        auth_entry_.length() > kLocalAuthMaxDigits) {
+        record_feedback(45, 90, false);
+        return;
+    }
+
+    if (screen_mode_ == ScreenMode::setup_enter) {
+        if (!setup_state_.set_first_entry(auth_entry_.code(), auth_entry_.length())) {
+            clear_entry();
+            enter_mode(ScreenMode::error);
+            record_feedback(80, 100, false);
+            return;
+        }
+        clear_entry();
+        enter_mode(ScreenMode::setup_confirm);
+        record_feedback(25, 55, false);
+        return;
+    }
+
+    if (screen_mode_ == ScreenMode::setup_confirm) {
+        const bool matches = setup_state_.matches(auth_entry_.code(), auth_entry_.length());
+        setup_state_.clear();
+        if (matches && local_auth_store_new_code(auth_entry_.code(), auth_entry_.length())) {
+            clear_entry();
+            locally_unlocked_ = true;
+            enter_mode(ScreenMode::idle);
+            record_feedback(45, 75, false);
+            return;
+        }
+        clear_entry();
+        enter_mode(matches ? ScreenMode::error : ScreenMode::setup_enter);
+        record_feedback(65, 95, false);
+        return;
+    }
+
+    if (screen_mode_ == ScreenMode::unlock) {
+        const LocalAuthVerifyResult result = local_auth_verify_code(auth_entry_.code(), auth_entry_.length(), now_ms);
+        clear_entry();
+        switch (result) {
+            case LocalAuthVerifyResult::verified:
+                locally_unlocked_ = true;
+                enter_mode(ScreenMode::idle);
+                record_feedback(45, 75, false);
+                return;
+            case LocalAuthVerifyResult::rejected:
+                locally_unlocked_ = false;
+                enter_mode(ScreenMode::unlock);
+                record_feedback(65, 95, false);
+                return;
+            case LocalAuthVerifyResult::locked:
+                locally_unlocked_ = false;
+                enter_mode(ScreenMode::lockout);
+                record_feedback(80, 100, false);
+                return;
+            case LocalAuthVerifyResult::missing:
+                locally_unlocked_ = false;
+                enter_mode(ScreenMode::setup_enter);
+                record_feedback(45, 75, false);
+                return;
+            case LocalAuthVerifyResult::invalid:
+            case LocalAuthVerifyResult::storage_error:
+                locally_unlocked_ = false;
+                enter_mode(ScreenMode::error);
+                record_feedback(80, 100, false);
+                return;
+        }
+    }
+}
+
+bool RuntimeApp::auth_entry_mode() const
+{
+    return screen_mode_ == ScreenMode::setup_enter ||
+           screen_mode_ == ScreenMode::setup_confirm ||
+           screen_mode_ == ScreenMode::unlock;
+}
+
+bool RuntimeApp::input_timed_out(uint32_t now) const
+{
+    return auth_entry_mode() && auth_entry_.timed_out(now);
+}
+
+bool RuntimeApp::capture_touch_digit(int x, int y)
+{
+    if (touch_digit_ >= 0) {
+        return false;
+    }
+    const int digit = rotary_dial_.digit_at_point(x, y);
+    if (digit < 0) {
+        return false;
+    }
+    touch_digit_ = digit;
+    GetHAL().vibrate(kDialCaptureMs, kDialCaptureStrength);
+    return true;
+}
+
+void RuntimeApp::refresh_input_slot_layer()
+{
+    if (prompt_label_ != nullptr) {
+        lv_obj_move_foreground(prompt_label_);
+        lv_obj_invalidate(prompt_label_);
+    }
+    for (lv_obj_t* slot : input_slot_labels_) {
+        if (slot == nullptr) {
+            continue;
+        }
+        lv_obj_move_foreground(slot);
+        lv_obj_invalidate(slot);
+    }
+}
+
+void RuntimeApp::update_input_slots()
+{
+    const uint32_t now = GetHAL().millis();
+    for (int index = 0; index < kInputSlotCount; ++index) {
+        if (input_slot_labels_[index] == nullptr) {
+            continue;
+        }
+        if (!auth_entry_mode()) {
+            set_label_text(input_slot_labels_[index], "");
+            lv_obj_add_flag(input_slot_labels_[index], LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+        lv_obj_remove_flag(input_slot_labels_[index], LV_OBJ_FLAG_HIDDEN);
+        char text[2] = "_";
+        lv_color_t color = lv_color_hex(0x7D8A95);
+        lv_opa_t opacity = LV_OPA_50;
+        if (static_cast<size_t>(index) < auth_entry_.length()) {
+            color = lv_color_hex(0xFFFFFF);
+            opacity = LV_OPA_90;
+            const char digit = auth_entry_.digit_at(index);
+            if (digit >= '0' && digit <= '9' && auth_entry_.digit_visible(index, now)) {
+                text[0] = digit;
+                color = lv_color_hex(0xB8E3FF);
+            } else {
+                text[0] = '*';
+            }
+        } else if (static_cast<size_t>(index) == auth_entry_.length() &&
+                   auth_entry_.length() < kLocalAuthMaxDigits) {
+            color = lv_color_hex(0xFFFFFF);
+            opacity = LV_OPA_90;
+        }
+        lv_obj_set_style_text_color(input_slot_labels_[index], color, LV_PART_MAIN);
+        lv_obj_set_style_text_opa(input_slot_labels_[index], opacity, LV_PART_MAIN);
+        set_label_text(input_slot_labels_[index], text);
+    }
+    refresh_input_slot_layer();
+}
+
+void RuntimeApp::update_prompt_label()
+{
+    if (prompt_label_ == nullptr) {
+        return;
+    }
+
+    const char* text = "";
+    lv_color_t color = lv_color_hex(0xC9D2D8);
+    switch (screen_mode_) {
+        case ScreenMode::setup_enter:
+            text = "SET";
+            break;
+        case ScreenMode::setup_confirm:
+            text = "AGAIN";
+            break;
+        case ScreenMode::unlock:
+            text = "UNLOCK";
+            break;
+        case ScreenMode::idle:
+            text = "";
+            break;
+        case ScreenMode::lockout:
+            text = "WAIT";
+            color = lv_color_hex(0xFFCA7A);
+            break;
+        case ScreenMode::error:
+            text = "ERR";
+            color = lv_color_hex(0xFF8A8A);
+            break;
+    }
+    lv_obj_set_style_text_color(prompt_label_, color, LV_PART_MAIN);
+    set_label_text(prompt_label_, text);
+    lv_obj_move_foreground(prompt_label_);
+    lv_obj_invalidate(prompt_label_);
+}
+
+void RuntimeApp::handle_touch_release(uint32_t now_ms)
+{
+    if (touch_digit_ >= 0) {
+        const char digit = static_cast<char>(touch_digit_);
+        if (rotary_dial_.digit_reached_stop(digit)) {
+            append_digit(digit, now_ms);
+        } else {
+            record_feedback(18, 35, false);
+        }
+        start_dial_return();
+        return;
+    }
+}
+
+void RuntimeApp::start_dial_return()
+{
+    dial_return_active_ = rotary_dial_.rotation_degrees() > 0.5F || rotary_dial_.rotation_degrees() < -0.5F;
+    dial_return_last_ms_ = 0;
+}
+
+void RuntimeApp::animate_dial_return(uint32_t now)
+{
+    if (!dial_return_active_ || !display_on_) {
+        return;
+    }
+    if (dial_return_last_ms_ != 0 && now - dial_return_last_ms_ < kDialReturnFrameMs) {
+        return;
+    }
+    dial_return_last_ms_ = now;
+
+    const float current = rotary_dial_.rotation_degrees();
+    const float computed_step = kDialReturnBaseStepDegrees + fabsf(current) * kDialReturnDistanceFactor;
+    const float step = computed_step < kDialReturnMaxStepDegrees ? computed_step : kDialReturnMaxStepDegrees;
+    float next = 0.0F;
+    if (current > step) {
+        next = current - step;
+    } else if (current < -step) {
+        next = current + step;
+    } else {
+        dial_return_active_ = false;
+    }
+
+    LvglLockGuard lock;
+    rotary_dial_.set_rotation_degrees(next, next == 0.0F);
+    update_input_slots();
+    if (next != 0.0F) {
+        GetHAL().vibrate(kDialReturnTickMs, kDialReturnTickStrength);
     }
 }
 

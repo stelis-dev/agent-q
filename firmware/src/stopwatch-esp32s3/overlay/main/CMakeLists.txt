@@ -6,6 +6,11 @@ idf_component_register(
     SRCS
         "main.cpp"
         "runtime/app.cpp"
+        "runtime/local_auth.cpp"
+        "runtime/local_auth_entry_state.cpp"
+        "runtime/local_auth_setup_state.cpp"
+        "runtime/rotary_dial_scene.cpp"
+        "runtime/state_projection.cpp"
         "runtime/usb_transport.cpp"
         "firmware_common/protocol/device_contract.cpp"
         "firmware_common/protocol/device_response.cpp"
@@ -32,4 +37,6 @@ idf_component_register(
         "firmware_common"
     EMBED_FILES
         "assets/sfx/boot_sfx.bin"
+        "assets/dial/1_baseplate.rgb565a8.bin"
+        "assets/dial/2_dial_frames.idx8.deflate.bin"
 )

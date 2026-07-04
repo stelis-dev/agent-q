@@ -3,23 +3,28 @@
 This directory contains the StopWatch ESP32-S3 hardware-specific Firmware
 source overlay.
 
-Current status: the target implements an unprovisioned first slice only:
+Current status: the target implements the local-authentication base slice:
 
 - USB Serial/JTAG newline-delimited JSON transport;
-- `get_status` with `provisioning.state = "unprovisioned"` and
-  `device.state = "idle"`;
-- `connect` fail-closed with the current protocol `invalid_state` error while
-  unprovisioned;
-- local display, touch, physical button, battery display, and vibration
-  feedback used by this slice;
+- `get_status` with shared status projection for first-run setup,
+  local-authentication lock, blank idle, and local-authentication error states;
+- rotary telephone-style touch passcode setup and unlock with the current
+  four-slot layout and a visible rotating digit ring on the round display;
+- persistent local-authentication verifier with persistent failed-attempt count
+  and time lock;
+- blank idle after successful local authentication;
+- shared failure responses for methods that are unavailable in this base slice;
+- local display, touch, physical button, and vibration feedback used by this
+  slice;
 - target-local power-button behavior: while USB power is present, short press
   toggles display backlight off/on; while USB power is absent, short press
   remains the StopWatch PMIC power-on/reset behavior; hardware double-click
   power-off remains PMIC-owned.
 
-The target does not implement provisioning, approved connect, session creation,
-disconnect session cleanup, signing, policy, accounts, zkLogin, approval
-history, retained responses, or persistent signing material.
+The target does not implement USB connect approval, protocol sessions,
+`disconnect` session cleanup, `get_capabilities`, `get_accounts`, zkLogin proof
+storage, proof proposal review, signing, policy, approval history, retained
+responses, payload transfer, or persistent signing material.
 
 Target-specific behavior and capability status live in `SPEC.md`.
 

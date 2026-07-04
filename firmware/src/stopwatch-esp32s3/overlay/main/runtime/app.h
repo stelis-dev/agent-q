@@ -5,8 +5,11 @@
 #include <lvgl.h>
 #include <mooncake.h>
 #include <memory>
-#include <string>
 
+#include "local_auth.h"
+#include "local_auth_entry_state.h"
+#include "local_auth_setup_state.h"
+#include "rotary_dial_scene.h"
 #include "usb_transport.h"
 
 namespace stopwatch_target {
@@ -21,20 +24,34 @@ public:
     void onClose() override;
 
 private:
+    enum class ScreenMode {
+        setup_enter,
+        setup_confirm,
+        unlock,
+        idle,
+        lockout,
+        error,
+    };
+
     std::unique_ptr<input::KeyManager> key_manager_;
     lv_obj_t* root_ = nullptr;
-    lv_obj_t* title_label_ = nullptr;
-    lv_obj_t* state_label_ = nullptr;
-    lv_obj_t* instruction_label_ = nullptr;
-    lv_obj_t* usb_label_ = nullptr;
-    lv_obj_t* input_label_ = nullptr;
-    lv_obj_t* power_label_ = nullptr;
-    lv_obj_t* left_button_ = nullptr;
-    lv_obj_t* right_button_ = nullptr;
+    lv_obj_t* input_slot_labels_[kLocalAuthMaxDigits] = {};
+    lv_obj_t* prompt_label_ = nullptr;
+    RotaryDialScene rotary_dial_;
     uint32_t last_update_ms_ = 0;
     uint32_t last_seen_rejected_connects_ = 0;
-    std::string last_input_ = "none";
-    int display_restore_brightness_ = 80;
+    ScreenMode screen_mode_ = ScreenMode::setup_enter;
+    bool locally_unlocked_ = false;
+    bool previous_usb_connected_ = false;
+    LocalAuthEntryState auth_entry_;
+    LocalAuthSetupState setup_state_;
+    bool touch_down_ = false;
+    int touch_last_x_ = 0;
+    int touch_last_y_ = 0;
+    int touch_digit_ = -1;
+    bool dial_return_active_ = false;
+    uint32_t dial_return_last_ms_ = 0;
+    int display_restore_brightness_ = 50;
     bool display_on_ = true;
     bool button_feedback_suppressed_ = false;
     bool power_policy_synced_ = false;
@@ -44,13 +61,31 @@ private:
     void create_ui();
     void destroy_ui();
     void update_ui(bool force);
-    void handle_key_event(input::KeyEvent event);
+    void handle_key_event(input::KeyEvent event, uint32_t now_ms);
+    void handle_touch_poll(uint32_t now_ms);
     void handle_power_button(bool external_power_present);
     void sync_power_button_policy(bool external_power_present);
     void set_display_on(bool display_on, bool feedback = true, bool lvgl_locked = false);
     void set_button_feedback_suppressed(bool suppressed);
-    void record_input(const char* input_name, uint16_t vibration_ms, uint8_t strength, bool lvgl_locked);
-    static void handle_touch_event(lv_event_t* event);
+    void record_feedback(uint16_t vibration_ms, uint8_t strength, bool lvgl_locked);
+    void enter_mode(ScreenMode mode);
+    void refresh_auth_mode();
+    void sync_usb_runtime_state();
+    void relock();
+    void clear_entry();
+    void clear_auth_scratch();
+    void append_digit(char digit, uint32_t now_ms);
+    void delete_digit(uint32_t now_ms);
+    void submit_entry(uint32_t now_ms);
+    bool auth_entry_mode() const;
+    bool input_timed_out(uint32_t now) const;
+    bool capture_touch_digit(int x, int y);
+    void refresh_input_slot_layer();
+    void update_input_slots();
+    void update_prompt_label();
+    void handle_touch_release(uint32_t now_ms);
+    void start_dial_return();
+    void animate_dial_return(uint32_t now);
 };
 
 }  // namespace stopwatch_target

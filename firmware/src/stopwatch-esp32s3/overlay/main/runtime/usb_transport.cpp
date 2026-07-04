@@ -12,7 +12,6 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "protocol/device_contract.h"
 #include "protocol/device_response.h"
 #include "protocol/json_input.h"
@@ -31,8 +30,6 @@ constexpr uint32_t kWriteTimeoutMs = 100;
 constexpr const char* kFirmwareName = "Agent-Q Firmware";
 constexpr const char* kHardwareId = "stopwatch-esp32s3";
 constexpr const char* kFirmwareVersion = "0.0.0";
-constexpr const char* kDeviceState = "idle";
-constexpr const char* kProvisioningState = "unprovisioned";
 constexpr const char* kFallbackDeviceId = "stopwatch-esp32s3-unavailable";
 
 char g_line_buffer[kLineBufferBytes];
@@ -40,6 +37,7 @@ size_t g_line_size = 0;
 bool g_discarding_line = false;
 UsbStatus g_status = {};
 char g_device_id[40] = {};
+UsbRuntimeState g_runtime_state{LocalAuthProjectionStatus::missing, false, false};
 
 void copy_status_text(char* output, size_t output_size, const char* value)
 {
@@ -77,6 +75,20 @@ void format_device_id()
         static_cast<unsigned>(mac[3]),
         static_cast<unsigned>(mac[4]),
         static_cast<unsigned>(mac[5]));
+}
+
+const char* device_state()
+{
+    return stopwatch_device_state(StateProjectionInput{
+        g_runtime_state.auth_status,
+        g_runtime_state.locally_unlocked,
+        g_runtime_state.ui_busy,
+    });
+}
+
+const char* provisioning_state()
+{
+    return stopwatch_provisioning_state(g_runtime_state.auth_status);
 }
 
 bool write_usb_bytes(const char* data, size_t length)
@@ -134,14 +146,14 @@ bool write_status_response(const char* id)
 
     const signing::DeviceResponseDeviceFields info{
         g_device_id,
-        kDeviceState,
+        device_state(),
         kFirmwareName,
         kHardwareId,
         kFirmwareVersion,
     };
     JsonDocument result;
     signing::device_response_write_device_fields(result["device"].to<JsonObject>(), info);
-    result["provisioning"]["state"] = kProvisioningState;
+    result["provisioning"]["state"] = provisioning_state();
 
     JsonDocument response;
     if (!signing::device_response_prepare_success_result(
@@ -171,6 +183,9 @@ void record_error(const char* id, const char* method, const char* code)
 bool reject_line(const char* id, const char* method, const char* code)
 {
     record_error(id, method, code);
+    if (method != nullptr && strcmp(method, "connect") == 0) {
+        ++g_status.rejected_connects;
+    }
     if (!write_error_response(id, method, code)) {
         record_error(id, method, "internal_output_error");
         return false;
@@ -239,16 +254,7 @@ void handle_request_line(const char* line)
         return;
     }
 
-    if (strcmp(method, "connect") != 0) {
-        reject_line(id, method, "unsupported_method");
-        return;
-    }
-
-    // This target has no provisioning flow yet. Per the protocol state gate,
-    // connect fails closed before provisioned-only payload details matter.
-    if (reject_line(id, method, "invalid_state")) {
-        ++g_status.rejected_connects;
-    }
+    reject_line(id, method, "invalid_state");
 }
 
 void feed_byte(char value)
@@ -299,6 +305,9 @@ void usb_transport_poll()
         return;
     }
     g_status.connected = usb_serial_jtag_is_connected();
+    if (!g_status.connected) {
+        return;
+    }
 
     uint8_t buffer[kReadChunkBytes];
     const int read_count = usb_serial_jtag_read_bytes(buffer, sizeof(buffer), 0);
@@ -314,6 +323,11 @@ UsbStatus usb_transport_status()
 {
     g_status.connected = g_status.ready && usb_serial_jtag_is_connected();
     return g_status;
+}
+
+void usb_transport_set_runtime_state(UsbRuntimeState state)
+{
+    g_runtime_state = state;
 }
 
 }  // namespace stopwatch_target

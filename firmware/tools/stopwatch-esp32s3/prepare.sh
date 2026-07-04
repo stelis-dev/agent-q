@@ -56,6 +56,19 @@ done
 git -C "${CHECKOUT_DIR}" clean -fd -- main >/dev/null
 cp "${OVERLAY_MAIN}/main.cpp" "${CHECKOUT_DIR}/main/main.cpp"
 cp "${OVERLAY_MAIN}/CMakeLists.txt" "${CHECKOUT_DIR}/main/CMakeLists.txt"
+rm -rf "${CHECKOUT_DIR}/main/assets/dial"
+mkdir -p "${CHECKOUT_DIR}/main/assets/dial"
+for required_dial_asset in \
+  dial_assets_generated.h \
+  1_baseplate.rgb565a8.bin \
+  2_dial_frames.idx8.deflate.bin; do
+  if [[ ! -f "${OVERLAY_MAIN}/assets/dial/${required_dial_asset}" ]]; then
+    echo "Missing generated StopWatch dial asset: ${OVERLAY_MAIN}/assets/dial/${required_dial_asset}" >&2
+    echo "Run firmware/tools/stopwatch-esp32s3/generate_dial_assets.mjs after updating dial PNG sources." >&2
+    exit 1
+  fi
+  cp "${OVERLAY_MAIN}/assets/dial/${required_dial_asset}" "${CHECKOUT_DIR}/main/assets/dial/${required_dial_asset}"
+done
 rm -rf "${CHECKOUT_DIR}/main/runtime"
 mkdir -p "${CHECKOUT_DIR}/main/runtime"
 cp -R "${OVERLAY_MAIN}/runtime/." "${CHECKOUT_DIR}/main/runtime/"
