@@ -62,9 +62,9 @@
 #include "sui_zklogin_proof_store.h"
 #include "sui_zklogin_proposal_flow.h"
 #include "sui_zklogin_review_ui_flow.h"
-#include "timeout_window.h"
+#include "transport/timeout_window.h"
 #include "transient_ui_flow.h"
-#include "usb_link_state.h"
+#include "transport/usb_link_state.h"
 #include "usb_approval_history_handler.h"
 #include "usb_connect_handler.h"
 #include "usb_device_handlers.h"
@@ -92,7 +92,7 @@
 #include "signing_retry_response.h"
 #include "signing_preflight.h"
 #include "signing_response_store.h"
-#include "usb_session_grace.h"
+#include "transport/usb_session_grace.h"
 #include "usb_session_loss.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
@@ -132,9 +132,6 @@ constexpr const char* kNvsNamespace = signing::kDeviceIdentityNvsNamespace;
 constexpr const char* kDeviceIdKey = "device_id";
 constexpr uint32_t kIdentifyDisplayDefaultMs = 30000;
 constexpr uint32_t kConnectApprovalDefaultMs = 30000;
-constexpr uint32_t kPayloadTransferBaseWindowMs = 30000;
-constexpr uint32_t kPayloadTransferPerChunkWindowMs = 1000;
-constexpr uint32_t kPayloadTransferMaxWindowMs = 180000;
 constexpr uint32_t kProvisioningApprovalMaxMs = 30000;
 constexpr uint32_t kLocalPinInputWindowMs = 30000;
 constexpr uint32_t kBackupPhraseDisplayMs = kProvisioningApprovalMaxMs;
@@ -3048,20 +3045,14 @@ void clear_sui_zklogin_proposal_terminal_state()
     signing::protocol_pin_approval_clear();
 }
 
-bool sui_zklogin_proposal_terminal_ends_session(
-    signing::SuiZkLoginProposalTerminalResult result)
-{
-    return result == signing::SuiZkLoginProposalTerminalResult::activated ||
-           result == signing::SuiZkLoginProposalTerminalResult::consistency_error;
-}
-
 void finish_sui_zklogin_proposal_outcome_terminal(
     const char* request_id,
     signing::SuiZkLoginProposalTerminalResult result,
     const char* display_message,
     MessageKind display_kind)
 {
-    const bool session_ended = sui_zklogin_proposal_terminal_ends_session(result);
+    const bool session_ended =
+        signing::sui_zklogin_proposal_terminal_ends_session(result);
     if (!signing::usb_sui_zklogin_credential_proposal_outcome_write(
             request_id,
             result,
@@ -4126,15 +4117,7 @@ const signing::UsbSessionReadHandlerOps& session_read_handler_ops()
 
 signing::TimeoutWindow payload_transfer_timeout_window_for_size(size_t size_bytes)
 {
-    const size_t chunk_count =
-        (size_bytes + signing::kPayloadDeliveryDefaultChunkMaxBytes - 1) /
-        signing::kPayloadDeliveryDefaultChunkMaxBytes;
-    uint64_t window_ms =
-        static_cast<uint64_t>(kPayloadTransferBaseWindowMs) +
-        static_cast<uint64_t>(chunk_count) * static_cast<uint64_t>(kPayloadTransferPerChunkWindowMs);
-    if (window_ms > kPayloadTransferMaxWindowMs) {
-        window_ms = kPayloadTransferMaxWindowMs;
-    }
+    const uint32_t window_ms = signing::payload_delivery_timeout_window_ms_for_size(size_bytes);
     const TickType_t now = xTaskGetTickCount();
     return signing::timeout_window_from_deadline(
         now,

@@ -6,7 +6,7 @@
 #include "persistent_material.h"
 #include "local_auth_worker.h"
 #include "pin_attempt.h"
-#include "timeout_window.h"
+#include "transport/timeout_window.h"
 #include "freertos/FreeRTOS.h"
 
 namespace signing {

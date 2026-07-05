@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 #include "local_auth_worker.h"
-#include "timeout_window.h"
+#include "transport/timeout_window.h"
 #include "freertos/FreeRTOS.h"
 
 namespace signing {

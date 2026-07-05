@@ -40,7 +40,7 @@ void handle_usb_get_status_request(
             request.as<JsonVariantConst>(),
             allowed_request_fields,
             3)) {
-        writer.write_error(id, "invalid_params");
+        writer.write_error(id, "invalid_request");
         return;
     }
     if (ops.write_payload_delivery_safe_read_admission_error != nullptr &&
@@ -77,7 +77,7 @@ void handle_usb_identify_device_request(
             request.as<JsonVariantConst>(),
             allowed_request_fields,
             4)) {
-        writer.write_error(id, "invalid_params");
+        writer.write_error(id, "invalid_request");
         return;
     }
     const char* const allowed_identify_params[] = {"code"};

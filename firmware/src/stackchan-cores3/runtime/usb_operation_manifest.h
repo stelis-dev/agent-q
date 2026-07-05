@@ -1,6 +1,6 @@
 #pragma once
 
-#include "payload_delivery_operation_kind.h"
+#include "transport/payload_delivery_operation_kind.h"
 #include "usb_operation_type.h"
 
 namespace signing {

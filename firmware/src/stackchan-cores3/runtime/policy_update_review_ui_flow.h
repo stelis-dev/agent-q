@@ -6,7 +6,7 @@
 #include "local_pin_auth.h"
 #include "modal_drawing.h"
 #include "policy_update_flow.h"
-#include "timeout_window.h"
+#include "transport/timeout_window.h"
 #include "freertos/FreeRTOS.h"
 
 namespace signing {

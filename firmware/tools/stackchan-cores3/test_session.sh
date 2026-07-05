@@ -20,6 +20,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 CXX_BIN="${CXX:-c++}"
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-session.XXXXXX")"
@@ -96,13 +97,21 @@ int main()
            "format helper rejects empty suffix");
     expect(!signing::session_id_format_valid(
                "session_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-           "format helper rejects overlong ids");
+           "format helper rejects ids beyond the current session buffer");
+    expect(!signing::session_id_format_valid(
+               "session_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+           "format helper rejects previously proposed 128-hex ids");
+    expect(!signing::session_id_format_valid(
+               "session_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+           "format helper rejects ids beyond the public maximum");
     expect(signing::session_validate(id) == Result::ok,
            "matching session validates");
     expect(signing::session_validate("not-a-session") == Result::invalid_format,
            "invalid session format is rejected distinctly");
     expect(signing::session_validate("session_aaaaaaaaaaaaaaaa") == Result::mismatch,
            "mismatched session is rejected without clearing active session");
+    expect(signing::session_validate("session_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == Result::invalid_format,
+           "overlong mismatched sessions are rejected before active-session comparison");
     expect(signing::session_active(), "mismatch does not clear session");
     signing::session_clear();
     expect(!signing::session_active(), "explicit clear ends session");
@@ -133,6 +142,7 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${RUNTIME_DIR}" \
+  -I"${COMMON_ROOT}" \
   "${TMP_DIR}/session_test.cpp" \
   "${RUNTIME_DIR}/session.cpp" \
   -o "${TMP_DIR}/session_test"

@@ -4,8 +4,9 @@
 
 #include "protocol/request_id.h"
 #include "session.h"
+#include "sui/zklogin_credential_outcome.h"
 #include "sui_zklogin_proof_store.h"
-#include "timeout_window.h"
+#include "transport/timeout_window.h"
 #include "freertos/FreeRTOS.h"
 
 namespace signing {
@@ -15,17 +16,6 @@ enum class SuiZkLoginProposalBeginResult {
     invalid_argument,
     invalid_proof,
     encode_error,
-};
-
-enum class SuiZkLoginProposalTerminalResult {
-    activated,
-    rejected,
-    timed_out,
-    invalid_proof,
-    ui_error,
-    storage_error,
-    consistency_error,
-    invalid_state,
 };
 
 enum class SuiZkLoginProposalStage {
@@ -81,9 +71,5 @@ SuiZkLoginProposalTerminalResult sui_zklogin_proposal_flow_commit();
 
 const char* sui_zklogin_proposal_begin_result_reason(
     SuiZkLoginProposalBeginResult result);
-const char* sui_zklogin_proposal_terminal_status(
-    SuiZkLoginProposalTerminalResult result);
-const char* sui_zklogin_proposal_terminal_reason(
-    SuiZkLoginProposalTerminalResult result);
 
 }  // namespace signing

@@ -667,7 +667,7 @@ CPP
   -I"${MICROSUI_CORE}" \
   "${TMP_DIR}/test.cpp" \
   "${RUNTIME_DIR}/sui_signing_preparation.cpp" \
-  "${RUNTIME_DIR}/base64.cpp" \
+  "${COMMON_ROOT}/protocol/base64.cpp" \
   "${COMMON_SUI_DIR}/sign_transaction_adapter.cpp" \
   "${COMMON_SUI_DIR}/offline_policy_facts.cpp" \
   "${COMMON_SUI_DIR}/transaction_facts.cpp" \

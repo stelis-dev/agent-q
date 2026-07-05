@@ -121,8 +121,8 @@ bool write_capabilities_response(
         personal_message_entry["method"] = signing_route_wire_method(
             Route::sui_sign_personal_message);
     }
+    JsonArray credentials = result["credentials"].to<JsonArray>();
     if (sui_zklogin_credential_available) {
-        JsonArray credentials = result["credentials"].to<JsonArray>();
         JsonObject credential = credentials.add<JsonObject>();
         credential["chain"] = "sui";
         credential["credential"] = "zklogin";

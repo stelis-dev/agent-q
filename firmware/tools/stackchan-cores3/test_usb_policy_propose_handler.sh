@@ -41,10 +41,14 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${RUNTIME_DIR}/payload_delivery_admission.cpp" \
   "${RUNTIME_DIR}/payload_delivery_admission.h" \
-  "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
-  "${RUNTIME_DIR}/payload_delivery_primitives.h" \
+  "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
+  "${COMMON_ROOT}/transport/payload_delivery_admission.h" \
+  "${COMMON_ROOT}/transport/payload_delivery_operation_kind.h" \
+  "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
+  "${COMMON_ROOT}/transport/payload_delivery_primitives.h" \
   "${RUNTIME_DIR}/payload_delivery_store.cpp" \
   "${RUNTIME_DIR}/payload_delivery_store.h" \
+  "${RUNTIME_DIR}/approval_history.h" \
   "${RUNTIME_DIR}/session.cpp" \
   "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
   "${RUNTIME_DIR}/usb_active_session_request_guard.h" \
@@ -55,7 +59,7 @@ for required in \
   "${RUNTIME_DIR}/usb_operation_response_writer.h" \
   "${RUNTIME_DIR}/usb_response_writer.h" \
   "${RUNTIME_DIR}/policy_update_flow.h" \
-  "${RUNTIME_DIR}/timeout_window.h" \
+  "${COMMON_ROOT}/transport/timeout_window.h" \
   "${COMMON_POLICY_DIR}/document.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -88,6 +92,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
+#include "approval_history.h"
 #include "payload_delivery_admission.h"
 #include "payload_delivery_store.h"
 #include "usb_policy_propose_handler.h"
@@ -539,7 +544,7 @@ int main()
         signing::handle_usb_policy_propose_request("req", request, make_writer(), make_ops());
         assert(g_require_session_calls == 1);
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "invalid_params") == 0);
+        assert(strcmp(g_last_error_code, "invalid_request") == 0);
         assert(g_begin_calls == 0);
     }
 
@@ -676,7 +681,16 @@ CPP
   -I"${MBEDTLS_INCLUDE_DIR}" \
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
-  -c "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
+  -c "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
+  -o "${TMP_DIR}/payload_delivery_admission_core.o"
+
+"${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
+  -I"${TMP_DIR}" \
+  -I"${ARDUINOJSON_ROOT}" \
+  -I"${MBEDTLS_INCLUDE_DIR}" \
+  -I"${RUNTIME_DIR}" \
+  -I"${COMMON_ROOT}" \
+  -c "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
   -o "${TMP_DIR}/payload_delivery_primitives.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
@@ -714,6 +728,7 @@ CPP
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
+  "${TMP_DIR}/payload_delivery_admission_core.o" \
   "${TMP_DIR}/payload_delivery_admission.o" \
   "${TMP_DIR}/payload_delivery_primitives.o" \
   "${TMP_DIR}/payload_delivery_store.o" \

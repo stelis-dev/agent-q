@@ -26,7 +26,7 @@ void handle_usb_disconnect_request(
             request.as<JsonVariantConst>(),
             allowed_request_fields,
             4)) {
-        writer.write_error(id, "invalid_params");
+        writer.write_error(id, "invalid_request");
         return;
     }
     if (ops.disconnect_pending_policy_update_for_session != nullptr &&

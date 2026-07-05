@@ -295,12 +295,14 @@ method handlers never receive the action object.
 | `begin` | `id`, `version`, `type: "payload_transfer"`, `action: "begin"`, `sessionId`, `totalBytes`, `payloadDigest` | `{ transferId, receivedBytes, chunkMaxBytes }` |
 | `chunk` | `id`, `version`, `type: "payload_transfer"`, `action: "chunk"`, `sessionId`, `transferId`, `offsetBytes`, `chunk` | `{ receivedBytes }` |
 | `finish` | `id`, `version`, `type: "payload_transfer"`, `action: "finish"`, `sessionId`, `transferId` | `{ payloadRef }` |
-| `abort` | `id`, `version`, `type: "payload_transfer"`, `action: "abort"`, `sessionId`, `transferId` | `{}` |
+| `abort` | `id`, `version`, `type: "payload_transfer"`, `action: "abort"`, `sessionId`, and exactly one of `transferId` or `payloadRef` | `{}` |
 
 `payloadDigest` is the SHA-256 digest of the raw payload bytes received by the
 payload store. It is transport metadata only. The method request that consumes a
 finalized payload carries only the internal `payloadRef` until Firmware resolves
-it to the method payload bytes before method validation.
+it to the method payload bytes before method validation. Abort with `transferId`
+cleans up a receiving transfer. Abort with `payloadRef` cleans up a finalized
+payload that has not been consumed by a method request.
 
 ## External Surface Mapping
 

@@ -146,6 +146,51 @@ int main()
         "req_transfer",
         Type::payload_transfer_begin);
     expect_status(
+        "{\"id\":\"req_transfer_type_bad\",\"version\":1,\"type\":\"other\",\"action\":\"begin\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"totalBytes\":\"1\",\"payloadDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
+        Status::unsupported_method,
+        "req_transfer_type_bad",
+        Type::unsupported);
+    expect_status(
+        "{\"id\":\"req_transfer_type_non_string\",\"version\":1,\"type\":7,\"action\":\"begin\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"totalBytes\":\"1\",\"payloadDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
+        Status::invalid_request,
+        "req_transfer_type_non_string",
+        Type::unsupported);
+    expect_status(
+        "{\"id\":\"req_transfer_extra\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"begin\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"totalBytes\":\"1\",\"payloadDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"extra\":\"not-allowed\"}",
+        Status::invalid_request,
+        "req_transfer_extra",
+        Type::unsupported);
+    expect_status(
+        "{\"id\":\"req_transfer_chunk_extra\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"chunk\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"transfer_0000000000000001\",\"offsetBytes\":\"0\",\"chunk\":\"AA==\",\"extra\":\"not-allowed\"}",
+        Status::invalid_request,
+        "req_transfer_chunk_extra",
+        Type::unsupported);
+    expect_status(
+        "{\"id\":\"req_transfer_finish_extra\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"finish\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"transfer_0000000000000001\",\"extra\":\"not-allowed\"}",
+        Status::invalid_request,
+        "req_transfer_finish_extra",
+        Type::unsupported);
+    expect_status(
+        "{\"id\":\"req_transfer_abort_extra\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"abort\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"transfer_0000000000000001\",\"extra\":\"not-allowed\"}",
+        Status::invalid_request,
+        "req_transfer_abort_extra",
+        Type::unsupported);
+    expect_status(
+        "{\"id\":\"req_transfer_abort_payload\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"abort\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payloadRef\":\"payload_0000000000000001\"}",
+        Status::ok,
+        "req_transfer_abort_payload",
+        Type::payload_transfer_abort);
+    expect_status(
+        "{\"id\":\"req_transfer_abort_missing_target\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"abort\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\"}",
+        Status::invalid_request,
+        "req_transfer_abort_missing_target",
+        Type::unsupported);
+    expect_status(
+        "{\"id\":\"req_transfer_abort_both\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"abort\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"transfer_0000000000000001\",\"payloadRef\":\"payload_0000000000000001\"}",
+        Status::invalid_request,
+        "req_transfer_abort_both",
+        Type::unsupported);
+    expect_status(
         "{\"id\":\"req_missing_method\",\"version\":1}",
         Status::invalid_request,
         "req_missing_method",

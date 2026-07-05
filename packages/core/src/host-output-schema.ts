@@ -292,7 +292,7 @@ const capabilityAccountShape = z.discriminatedUnion("keyScheme", [
 ]);
 const capabilityChainShape = z.object({
   id: z.literal("sui"),
-  accounts: z.array(capabilityAccountShape).length(MAX_CAPABILITY_ACCOUNTS_PER_CHAIN),
+  accounts: z.array(capabilityAccountShape).max(MAX_CAPABILITY_ACCOUNTS_PER_CHAIN),
   methods: z.array(z.never()).length(0),
 }).strict();
 const signingCapabilityEntryShape = z.object({
@@ -327,7 +327,7 @@ const credentialCapabilityShape = z.object({
     z.literal(CREDENTIAL_PROPOSE_OPERATION),
   ]),
 }).strict();
-const credentialCapabilitiesShape = z.array(credentialCapabilityShape).length(MAX_CREDENTIAL_CAPABILITIES);
+const credentialCapabilitiesShape = z.array(credentialCapabilityShape).max(MAX_CREDENTIAL_CAPABILITIES);
 const liveCapabilitiesOutputShape = z.object({
   source: z.literal("live"),
   deviceId: safeDeviceIdShape,
@@ -434,7 +434,7 @@ const accountShape = z.discriminatedUnion("keyScheme", [
 const liveAccountsOutputShape = z.object({
   source: z.literal("live"),
   deviceId: safeDeviceIdShape,
-  accounts: z.array(accountShape).length(MAX_ACCOUNTS_PER_RESPONSE),
+  accounts: z.array(accountShape).max(MAX_ACCOUNTS_PER_RESPONSE),
 }).strict();
 const notConnectedAccountsOutputShape = z.object({
   source: z.literal("not_connected"),

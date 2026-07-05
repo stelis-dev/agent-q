@@ -47,8 +47,11 @@ if [[ ! -f "${MBEDTLS_INCLUDE_DIR}/mbedtls/sha256.h" || ! -f "${MBEDTLS_LIBRARY_
 fi
 
 for required in \
-  "${TARGET_ROOT}/runtime/payload_delivery_primitives.cpp" \
-  "${TARGET_ROOT}/runtime/payload_delivery_primitives.h" \
+  "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
+  "${COMMON_ROOT}/transport/payload_delivery_admission.h" \
+  "${COMMON_ROOT}/transport/payload_delivery_operation_kind.h" \
+  "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
+  "${COMMON_ROOT}/transport/payload_delivery_primitives.h" \
   "${TARGET_ROOT}/runtime/payload_delivery_store.cpp" \
   "${TARGET_ROOT}/runtime/payload_delivery_store.h" \
   "${TARGET_ROOT}/runtime/payload_delivery_admission.cpp" \
@@ -378,7 +381,7 @@ bool approval_history_digest_payload(
     size_t output_size)
 {
     if (payload == nullptr || payload_size == 0 || output == nullptr ||
-        output_size != kApprovalHistoryDigestSize) {
+        output_size != kPayloadDeliveryDigestSize) {
         return false;
     }
     uint8_t digest[32] = {};
@@ -494,7 +497,7 @@ std::vector<uint8_t> bytes(size_t size)
 
 std::string digest_for(const std::vector<uint8_t>& value)
 {
-    char digest[signing::kApprovalHistoryDigestSize] = {};
+    char digest[signing::kPayloadDeliveryDigestSize] = {};
     expect(signing::approval_history_digest_payload(
                value.data(),
                value.size(),
@@ -1313,7 +1316,7 @@ c++ -std=c++17 -Wall -Wextra -Werror \
   -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${TARGET_ROOT}/runtime/payload_delivery_primitives.cpp" \
+  -c "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
   -o "${TMP_DIR}/payload_delivery_primitives.o"
 
 c++ -std=c++17 -Wall -Wextra -Werror \
@@ -1331,6 +1334,14 @@ c++ -std=c++17 -Wall -Wextra -Werror \
   -I"${MBEDTLS_INCLUDE_DIR}" \
   -c "${TARGET_ROOT}/runtime/payload_delivery_admission.cpp" \
   -o "${TMP_DIR}/payload_delivery_admission.o"
+
+c++ -std=c++17 -Wall -Wextra -Werror \
+  -I"${TARGET_ROOT}/runtime" \
+  -I"${COMMON_ROOT}" \
+  -I"${TMP_DIR}" \
+  -I"${MBEDTLS_INCLUDE_DIR}" \
+  -c "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
+  -o "${TMP_DIR}/payload_delivery_admission_core.o"
 
 c++ -std=c++17 -Wall -Wextra -Werror \
   -I"${TARGET_ROOT}/runtime" \
@@ -1358,6 +1369,7 @@ c++ -std=c++17 -Wall -Wextra -Werror \
   "${TMP_DIR}/payload_delivery_store_test.cpp" \
   "${TMP_DIR}/payload_delivery_primitives.o" \
   "${TMP_DIR}/payload_delivery_store.o" \
+  "${TMP_DIR}/payload_delivery_admission_core.o" \
   "${TMP_DIR}/payload_delivery_admission.o" \
   "${TMP_DIR}/session.o" \
   "${TMP_DIR}/sha256.o" \

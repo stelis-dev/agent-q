@@ -87,9 +87,9 @@ UsbRequestEnvelopeParseStatus parse_payload_transfer_envelope(
 {
     const char* const action_fields[] = {
         "id", "version", "type", "action", "sessionId",
-        "totalBytes", "payloadDigest", "transferId", "offsetBytes", "chunk",
+        "totalBytes", "payloadDigest", "transferId", "payloadRef", "offsetBytes", "chunk",
     };
-    if (!json_object_fields_supported(object, action_fields, 10)) {
+    if (!json_object_fields_supported(object, action_fields, 11)) {
         return UsbRequestEnvelopeParseStatus::invalid_request;
     }
     const char* action = nullptr;
@@ -113,6 +113,9 @@ UsbRequestEnvelopeParseStatus parse_payload_transfer_envelope(
     const char* const abort_fields[] = {
         "id", "version", "type", "action", "sessionId", "transferId",
     };
+    const char* const abort_finalized_fields[] = {
+        "id", "version", "type", "action", "sessionId", "payloadRef",
+    };
     switch (operation) {
         case UsbOperationType::payload_transfer_begin:
             if (!json_object_fields_supported(object, begin_fields, 7)) {
@@ -129,11 +132,21 @@ UsbRequestEnvelopeParseStatus parse_payload_transfer_envelope(
                 return UsbRequestEnvelopeParseStatus::invalid_request;
             }
             break;
-        case UsbOperationType::payload_transfer_abort:
-            if (!json_object_fields_supported(object, abort_fields, 6)) {
+        case UsbOperationType::payload_transfer_abort: {
+            const bool has_transfer_id = object_has_key(object, "transferId");
+            const bool has_payload_ref = object_has_key(object, "payloadRef");
+            if (has_transfer_id == has_payload_ref) {
+                return UsbRequestEnvelopeParseStatus::invalid_request;
+            }
+            if (has_transfer_id) {
+                if (!json_object_fields_supported(object, abort_fields, 6)) {
+                    return UsbRequestEnvelopeParseStatus::invalid_request;
+                }
+            } else if (!json_object_fields_supported(object, abort_finalized_fields, 6)) {
                 return UsbRequestEnvelopeParseStatus::invalid_request;
             }
             break;
+        }
         default:
             return UsbRequestEnvelopeParseStatus::unsupported_method;
     }

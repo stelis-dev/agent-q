@@ -3,7 +3,7 @@
 #include <ArduinoJson.h>
 
 #include "policy_update_flow.h"
-#include "timeout_window.h"
+#include "transport/timeout_window.h"
 #include "usb_operation_response_writer.h"
 
 namespace signing {

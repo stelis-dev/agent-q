@@ -3,8 +3,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "bip39.h"
-
 namespace signing {
 namespace {
 
@@ -18,35 +16,6 @@ struct SessionState {
 };
 
 SessionState g_session;
-
-bool format_session_id(
-    SessionRandomFn random_fn,
-    void* random_context,
-    char* output,
-    size_t output_size)
-{
-    if (random_fn == nullptr || output == nullptr || output_size < kSessionIdSize) {
-        return false;
-    }
-
-    uint8_t bytes[8] = {};
-    if (!random_fn(bytes, sizeof(bytes), random_context)) {
-        return false;
-    }
-    snprintf(output,
-             output_size,
-             "session_%02x%02x%02x%02x%02x%02x%02x%02x",
-             bytes[0],
-             bytes[1],
-             bytes[2],
-             bytes[3],
-             bytes[4],
-             bytes[5],
-             bytes[6],
-             bytes[7]);
-    wipe_sensitive_buffer(bytes, sizeof(bytes));
-    return true;
-}
 
 }  // namespace
 
@@ -75,37 +44,11 @@ SessionStartResult session_replace(
     void* random_context)
 {
     char next_id[kSessionIdSize] = {};
-    if (!format_session_id(random_fn, random_context, next_id, sizeof(next_id))) {
+    if (!session_id_format_from_random(random_fn, random_context, next_id, sizeof(next_id))) {
         return SessionStartResult::rng_error;
     }
     snprintf(g_session.id, sizeof(g_session.id), "%s", next_id);
     return SessionStartResult::ok;
-}
-
-bool session_id_format_valid(const char* value)
-{
-    if (value == nullptr) {
-        return false;
-    }
-    constexpr const char* kExpectedPrefix = "session_";
-    constexpr size_t kPrefixLength = 8;
-    for (size_t index = 0; index < kPrefixLength; ++index) {
-        if (value[index] != kExpectedPrefix[index]) {
-            return false;
-        }
-    }
-    size_t length = kPrefixLength;
-    for (const char* cursor = value + kPrefixLength; *cursor != '\0'; ++cursor) {
-        if (++length >= kSessionIdSize) {
-            return false;
-        }
-        const char c = *cursor;
-        const bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
-        if (!ok) {
-            return false;
-        }
-    }
-    return length > kPrefixLength;
 }
 
 SessionValidationResult session_validate(const char* requested_session_id)

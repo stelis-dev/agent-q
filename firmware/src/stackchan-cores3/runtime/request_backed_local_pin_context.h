@@ -3,7 +3,7 @@
 #include <stddef.h>
 
 #include "local_pin_auth.h"
-#include "timeout_window.h"
+#include "transport/timeout_window.h"
 #include "freertos/FreeRTOS.h"
 
 namespace signing {

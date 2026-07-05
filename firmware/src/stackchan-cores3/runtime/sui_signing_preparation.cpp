@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "base64.h"
+#include "protocol/base64.h"
 #include "bip39.h"
 #include "sui_account_settings.h"
 #include "sui_signing_authority.h"

@@ -754,7 +754,7 @@ test("connectDevice can restore a lost runtime session mirror from Firmware conn
       defaultDriver({
         async connectDevice() {
           connectCalls += 1;
-          return connectResult({ sessionId: "session_approved" });
+          return connectResult({ sessionId: "session_0a0b0c0d0e0f1011" });
         },
       }),
     );
@@ -767,7 +767,7 @@ test("connectDevice can restore a lost runtime session mirror from Firmware conn
       defaultDriver({
         async connectDevice() {
           connectCalls += 1;
-          return connectResult({ sessionId: "session_approved" });
+          return connectResult({ sessionId: "session_0a0b0c0d0e0f1011" });
         },
       }),
     );

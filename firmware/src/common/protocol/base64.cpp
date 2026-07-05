@@ -1,4 +1,4 @@
-#include "base64.h"
+#include "protocol/base64.h"
 
 #include <string.h>
 
@@ -57,16 +57,16 @@ bool validate_canonical_base64_syntax(
     if (!bounded_c_string_length(value, max_base64_size, &length)) {
         return false;
     }
-    if (length == 0 || length > max_base64_size || (length % 4) != 0) {
+    if (length == 0 || length > max_base64_size || (length % 4U) != 0) {
         return false;
     }
 
     size_t padding = 0;
     if (value[length - 1] == '=') {
-        padding++;
+        ++padding;
     }
     if (length >= 2 && value[length - 2] == '=') {
-        padding++;
+        ++padding;
     }
 
     for (size_t index = 0; index < length; ++index) {
@@ -97,7 +97,7 @@ bool validate_canonical_base64_syntax(
         return false;
     }
 
-    const size_t output_size = ((length / 4) * 3) - padding;
+    const size_t output_size = ((length / 4U) * 3U) - padding;
     if (output_size == 0) {
         return false;
     }

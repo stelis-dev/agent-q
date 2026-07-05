@@ -137,6 +137,7 @@ char g_last_payload_inline_max[24] = {};
 char g_last_payload_chunk_max[24] = {};
 char g_last_payload_max[24] = {};
 size_t g_last_json_signing_method_count = 0;
+bool g_last_json_credentials_array_present = false;
 size_t g_last_json_credential_count = 0;
 size_t g_last_json_credential_operation_count = 0;
 size_t g_last_json_policy_count = 0;
@@ -193,6 +194,7 @@ void reset_state()
     g_last_payload_chunk_max[0] = '\0';
     g_last_payload_max[0] = '\0';
     g_last_json_signing_method_count = 0;
+    g_last_json_credentials_array_present = false;
     g_last_json_credential_count = 0;
     g_last_json_credential_operation_count = 0;
     g_last_json_policy_count = 0;
@@ -253,6 +255,7 @@ bool usb_response_write_json(JsonDocument& response)
     snprintf(g_last_payload_chunk_max, sizeof(g_last_payload_chunk_max), "%s", payload["chunkMaxBytes"] | "");
     snprintf(g_last_payload_max, sizeof(g_last_payload_max), "%s", payload["payloadMaxBytes"] | "");
     JsonArrayConst credentials = result["credentials"].as<JsonArrayConst>();
+    g_last_json_credentials_array_present = !credentials.isNull();
     g_last_json_credential_count = credentials.size();
     if (g_last_json_credential_count > 0) {
         JsonArrayConst operations = credentials[0]["operations"].as<JsonArrayConst>();
@@ -573,7 +576,7 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_capabilities\",\"sessionId\":\"session\",\"extra\":1}");
         signing::handle_usb_get_capabilities_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "invalid_params") == 0);
+        assert(strcmp(g_last_error_code, "invalid_request") == 0);
         assert(g_read_mode_calls == 0);
     }
 
@@ -609,6 +612,7 @@ int main()
         assert(strcmp(g_last_payload_inline_max, "") == 0);
         assert(strcmp(g_last_payload_chunk_max, "") == 0);
         assert(strcmp(g_last_payload_max, "") == 0);
+        assert(g_last_json_credentials_array_present);
         assert(g_last_json_credential_count == 1);
         assert(g_last_json_credential_operation_count == 2);
     }
@@ -625,6 +629,7 @@ int main()
         assert(g_write_json_calls == 1);
         assert(strcmp(g_last_json_capability_key_scheme, "zklogin") == 0);
         assert(strcmp(g_last_json_capability_derivation_path, "") == 0);
+        assert(g_last_json_credentials_array_present);
         assert(g_last_json_credential_count == 0);
     }
 
@@ -733,7 +738,7 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_accounts\",\"sessionId\":\"session\",\"extra\":1}");
         signing::handle_usb_get_accounts_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "invalid_params") == 0);
+        assert(strcmp(g_last_error_code, "invalid_request") == 0);
         assert(g_resolve_active_identity_calls == 0);
     }
 
@@ -841,7 +846,7 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_get\",\"sessionId\":\"session\",\"extra\":1}");
         signing::handle_usb_policy_get_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "invalid_params") == 0);
+        assert(strcmp(g_last_error_code, "invalid_request") == 0);
         assert(g_read_policy_calls == 0);
     }
 

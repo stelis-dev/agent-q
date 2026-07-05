@@ -32,7 +32,9 @@ for required in \
   "${RUNTIME_DIR}/sui_zklogin_proof_store.cpp" \
   "${RUNTIME_DIR}/sui_zklogin_proof_store.h" \
   "${COMMON_ROOT}/numeric/u64_decimal.h" \
-  "${COMMON_ROOT}/sui/network.h"; do
+  "${COMMON_ROOT}/sui/network.h" \
+  "${COMMON_ROOT}/sui/zklogin_proof_record.cpp" \
+  "${COMMON_ROOT}/sui/zklogin_proof_record.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first, or set SIGNING_CRYPTO_ROOT." >&2
@@ -535,11 +537,14 @@ CPP
 "${CXX_BIN}" -std=c++17 -I"${TMP_DIR}" -I"${MICROSUI_CORE}" -I"${RUNTIME_DIR}" -I"${COMMON_ROOT}" \
   -c "${RUNTIME_DIR}/sui_zklogin_proof_store.cpp" -o "${TMP_DIR}/sui_zklogin_proof_store.o"
 "${CXX_BIN}" -std=c++17 -I"${TMP_DIR}" -I"${MICROSUI_CORE}" -I"${RUNTIME_DIR}" -I"${COMMON_ROOT}" \
+  -c "${COMMON_ROOT}/sui/zklogin_proof_record.cpp" -o "${TMP_DIR}/zklogin_proof_record.o"
+"${CXX_BIN}" -std=c++17 -I"${TMP_DIR}" -I"${MICROSUI_CORE}" -I"${RUNTIME_DIR}" -I"${COMMON_ROOT}" \
   -c "${TMP_DIR}/sui_zklogin_proof_store_test.cpp" -o "${TMP_DIR}/sui_zklogin_proof_store_test.o"
 
 "${CXX_BIN}" \
   "${TMP_DIR}/monocypher.o" \
   "${TMP_DIR}/byte_conversions.o" \
+  "${TMP_DIR}/zklogin_proof_record.o" \
   "${TMP_DIR}/sui_zklogin_proof_store.o" \
   "${TMP_DIR}/sui_zklogin_proof_store_test.o" \
   -o "${TMP_DIR}/sui_zklogin_proof_store_test"

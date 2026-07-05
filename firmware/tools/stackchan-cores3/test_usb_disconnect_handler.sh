@@ -273,7 +273,7 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"disconnect\",\"sessionId\":\"session\",\"extra\":1}");
         signing::handle_usb_disconnect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "invalid_params") == 0);
+        assert(strcmp(g_last_error_code, "invalid_request") == 0);
         assert(g_policy_cleanup_calls == 0);
         assert(g_clear_session_calls == 0);
     }

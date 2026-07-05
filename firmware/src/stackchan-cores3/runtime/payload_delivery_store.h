@@ -3,42 +3,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "approval_history.h"
-#include "payload_delivery_primitives.h"
 #include "session.h"
-#include "timeout_window.h"
+#include "transport/timeout_window.h"
+#include "transport/payload_delivery_primitives.h"
 #include "user_signing_limits.h"
 
 namespace signing {
-
-constexpr size_t kPayloadDeliveryDefaultMaxBytes = 128 * 1024;
-// Decoded chunk cap. The JSON request line cap is larger because policy
-// proposals are inline JSON; chunk admission remains bounded here.
-constexpr size_t kPayloadDeliveryDefaultChunkMaxBytes = 2700;
 
 enum class PayloadDeliveryState {
     idle,
     receiving,
     finalized,
-};
-
-enum class PayloadDeliveryResult {
-    ok,
-    invalid_argument,
-    invalid_state,
-    invalid_session,
-    payload_too_large,
-    invalid_payload_digest,
-    invalid_transfer_id,
-    invalid_payload_ref,
-    allocation_failed,
-    chunk_too_large,
-    offset_mismatch,
-    payload_overflow,
-    size_mismatch,
-    digest_mismatch,
-    digest_error,
-    not_found,
 };
 
 struct PayloadDeliveryLimits {
@@ -83,7 +58,7 @@ struct PayloadDeliveryDescriptor {
     char session_id[kSessionIdSize];
     char payload_ref[kPayloadDeliveryPayloadRefSize];
     size_t size_bytes;
-    char payload_digest[kApprovalHistoryDigestSize];
+    char payload_digest[kPayloadDeliveryDigestSize];
 };
 
 struct PayloadDeliveryFinishOutput {
@@ -152,7 +127,5 @@ PayloadDeliveryResult payload_delivery_take_finalized(
 bool payload_delivery_clear_for_session(const char* session_id);
 bool payload_delivery_clear_expired(uint64_t now_tick);
 void payload_delivery_clear_all();
-
-const char* payload_delivery_result_name(PayloadDeliveryResult result);
 
 }  // namespace signing

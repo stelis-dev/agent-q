@@ -27,10 +27,10 @@ ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${RUNTIME_DIR}/base64.cpp" \
-  "${RUNTIME_DIR}/base64.h" \
-  "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
-  "${RUNTIME_DIR}/payload_delivery_primitives.h" \
+  "${COMMON_ROOT}/protocol/base64.cpp" \
+  "${COMMON_ROOT}/protocol/base64.h" \
+  "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
+  "${COMMON_ROOT}/transport/payload_delivery_primitives.h" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${COMMON_ROOT}/protocol/request_id.h" \
   "${RUNTIME_DIR}/session.cpp" \
@@ -59,8 +59,8 @@ cat >"${TMP_DIR}/sign_transaction_user_validation_test.cpp" <<'CPP'
 
 #include <string>
 
-#include "base64.h"
-#include "payload_delivery_primitives.h"
+#include "protocol/base64.h"
+#include "transport/payload_delivery_primitives.h"
 #include "sign_transaction_user_validation.h"
 
 namespace {
@@ -368,9 +368,10 @@ int main()
         Result::invalid_session);
     expect_session(
         "overlong session",
-        "{\"id\":\"req_sign_1\",\"version\":1,\"method\":\"sign_transaction\","
-        "\"sessionId\":\"session_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\","
-        "\"payload\":{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}}",
+        std::string("{\"id\":\"req_sign_1\",\"version\":1,\"method\":\"sign_transaction\","
+                    "\"sessionId\":\"session_") +
+            std::string(signing::kSessionIdMaxHexSize + 1, 'a') +
+            "\",\"payload\":{\"network\":\"devnet\",\"txBytes\":\"AAAA\"}}",
         Result::invalid_session);
     expect_params(
         "params missing",
@@ -536,8 +537,8 @@ CPP
   -I"${REPO_ROOT}/firmware/src/common" \
   -I"${REPO_ROOT}/firmware/src/common" \
   "${TMP_DIR}/sign_transaction_user_validation_test.cpp" \
-  "${RUNTIME_DIR}/base64.cpp" \
-  "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
+  "${COMMON_ROOT}/protocol/base64.cpp" \
+  "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${RUNTIME_DIR}/session.cpp" \
   "${RUNTIME_DIR}/sign_transaction_user_validation.cpp" \

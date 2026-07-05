@@ -48,7 +48,7 @@ void handle_usb_connect_request(
             request.as<JsonVariantConst>(),
             allowed_request_fields,
             4)) {
-        writer.write_error(id, "invalid_params");
+        writer.write_error(id, "invalid_request");
         return;
     }
 

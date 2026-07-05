@@ -29,7 +29,7 @@ for required in \
   "${RUNTIME_DIR}/usb_connect_handler.h" \
   "${RUNTIME_DIR}/usb_operation_response_writer.h" \
   "${RUNTIME_DIR}/connect_approval.h" \
-  "${RUNTIME_DIR}/timeout_window.h" \
+  "${COMMON_ROOT}/transport/timeout_window.h" \
   "${COMMON_ROOT}/protocol/request_id.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -289,7 +289,7 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":{\"clientName\":\"Agent-Q\"},\"sessionId\":\"bad\"}");
         signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "invalid_params") == 0);
+        assert(strcmp(g_last_error_code, "invalid_request") == 0);
         assert(g_begin_calls == 0);
     }
 

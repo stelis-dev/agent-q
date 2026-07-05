@@ -1,4 +1,4 @@
-#include "usb_link_state.h"
+#include "transport/usb_link_state.h"
 
 #include <stdint.h>
 

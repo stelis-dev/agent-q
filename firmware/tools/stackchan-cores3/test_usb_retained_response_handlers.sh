@@ -300,7 +300,7 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"},\"extra\":1}");
         signing::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "invalid_params") == 0);
+        assert(strcmp(g_last_error_code, "invalid_request") == 0);
         assert(g_write_json_calls == 0);
     }
 
@@ -342,7 +342,7 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"ack_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"},\"extra\":1}");
         signing::handle_usb_ack_result_request("req", request, make_writer_for("ack_result"), make_ops());
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "invalid_params") == 0);
+        assert(strcmp(g_last_error_code, "invalid_request") == 0);
         assert(g_payload_admission_calls == 1);
         assert(g_ack_result_calls == 0);
     }

@@ -45,6 +45,7 @@ export async function withTransferredPayload<TResult>(
 
   const payloadDigest = await options.digestPayload(payloadBytes);
   let transferId: string | null = null;
+  let payloadRef: string | null = null;
   try {
     const beginRequest = makePayloadTransferBeginRequest(options.sessionId, {
       totalBytes: String(payloadBytes.length),
@@ -100,9 +101,11 @@ export async function withTransferredPayload<TResult>(
         options.makeError,
       ),
     );
+    payloadRef = finish.payloadRef;
+    transferId = null;
     return await options.consumeFinalizedPayload(finish.payloadRef);
   } catch (error) {
-    const abort = await abortPayloadTransferBestEffort(options, transferId);
+    const abort = await abortPayloadTransferBestEffort(options, payloadRef ?? transferId);
     if (abort === "invalid_session") {
       options.onAbortInvalidSession?.(error);
     }
@@ -117,13 +120,13 @@ async function abortPayloadTransferBestEffort(
     WithTransferredPayloadOptions<unknown>,
     "sessionId" | "executeTransferRequest" | "makeError" | "errorCode"
   >,
-  transferId: string | null,
+  target: string | null,
 ): Promise<PayloadAbortOutcome> {
-  if (transferId === null) {
+  if (target === null) {
     return "none";
   }
   try {
-    const abortRequest = makePayloadTransferAbortRequest(options.sessionId, transferId);
+    const abortRequest = makePayloadTransferAbortRequest(options.sessionId, target);
     await options.executeTransferRequest(
       abortRequest,
       (response) => assertPayloadTransferSuccess(

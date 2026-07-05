@@ -59,11 +59,21 @@ export interface PayloadTransferAbortRequest {
   transferId: string;
 }
 
+export interface PayloadTransferAbortFinalizedRequest {
+  id: string;
+  version: typeof PROTOCOL_VERSION;
+  type: "payload_transfer";
+  action: "abort";
+  sessionId: string;
+  payloadRef: string;
+}
+
 export type PayloadTransferRequest =
   | PayloadTransferBeginRequest
   | PayloadTransferChunkRequest
   | PayloadTransferFinishRequest
-  | PayloadTransferAbortRequest;
+  | PayloadTransferAbortRequest
+  | PayloadTransferAbortFinalizedRequest;
 
 export interface PayloadTransferBeginResult {
   transferId: string;
@@ -167,18 +177,30 @@ export function makePayloadTransferFinishRequest(
 
 export function makePayloadTransferAbortRequest(
   sessionId: string,
-  transferId: string,
+  target: string,
   id = createRequestId(),
-): PayloadTransferAbortRequest {
+): PayloadTransferAbortRequest | PayloadTransferAbortFinalizedRequest {
   validateRequestId(id);
   validateSessionId(sessionId);
-  const request: PayloadTransferAbortRequest = {
+  if (PAYLOAD_TRANSFER_ID_PATTERN.test(target)) {
+    const request: PayloadTransferAbortRequest = {
+      id,
+      version: PROTOCOL_VERSION,
+      type: "payload_transfer",
+      action: "abort",
+      sessionId,
+      transferId: validateTransferId(target),
+    };
+    validateRawRequestSize(request, "payload_transfer abort");
+    return request;
+  }
+  const request: PayloadTransferAbortFinalizedRequest = {
     id,
     version: PROTOCOL_VERSION,
     type: "payload_transfer",
     action: "abort",
     sessionId,
-    transferId: validateTransferId(transferId),
+    payloadRef: validatePayloadRef(target),
   };
   validateRawRequestSize(request, "payload_transfer abort");
   return request;
@@ -186,8 +208,17 @@ export function makePayloadTransferAbortRequest(
 
 export function normalizePayloadTransferRequest(request: unknown): PayloadTransferRequest {
   const value = asRecord(request, "payload_transfer request");
-  if (value.version !== PROTOCOL_VERSION || value.type !== "payload_transfer") {
+  if (typeof value.version !== "number" || !Number.isInteger(value.version)) {
+    throw new ProtocolError("invalid_request", "payload_transfer request version is invalid.");
+  }
+  if (value.version !== PROTOCOL_VERSION) {
     throw new ProtocolError("unsupported_version", "Unsupported payload_transfer request version.");
+  }
+  if (typeof value.type !== "string") {
+    throw new ProtocolError("invalid_request", "payload_transfer request type is invalid.");
+  }
+  if (value.type !== "payload_transfer") {
+    throw new ProtocolError("unsupported_method", "payload_transfer type is unsupported.");
   }
   switch (value.action) {
     case "begin":
@@ -232,15 +263,48 @@ export function normalizePayloadTransferRequest(request: unknown): PayloadTransf
         value.id as string,
       );
     case "abort":
+      const hasTransferId = Object.prototype.hasOwnProperty.call(value, "transferId");
+      const hasPayloadRef = Object.prototype.hasOwnProperty.call(value, "payloadRef");
+      if (hasTransferId && hasPayloadRef) {
+        requireOnlyKeys(
+          value,
+          ["id", "version", "type", "action", "sessionId", "transferId", "payloadRef"],
+          "payload_transfer abort request",
+          "invalid_request",
+        );
+        throw new ProtocolError("invalid_request", "payload_transfer abort request must identify exactly one target.");
+      }
+      if (hasTransferId) {
+        requireOnlyKeys(
+          value,
+          ["id", "version", "type", "action", "sessionId", "transferId"],
+          "payload_transfer abort request",
+          "invalid_request",
+        );
+        return makePayloadTransferAbortRequest(
+          value.sessionId as string,
+          value.transferId as string,
+          value.id as string,
+        );
+      }
+      if (!hasPayloadRef) {
+        requireOnlyKeys(
+          value,
+          ["id", "version", "type", "action", "sessionId"],
+          "payload_transfer abort request",
+          "invalid_request",
+        );
+        throw new ProtocolError("invalid_request", "payload_transfer abort request must identify a transferId or payloadRef.");
+      }
       requireOnlyKeys(
         value,
-        ["id", "version", "type", "action", "sessionId", "transferId"],
+        ["id", "version", "type", "action", "sessionId", "payloadRef"],
         "payload_transfer abort request",
         "invalid_request",
       );
       return makePayloadTransferAbortRequest(
         value.sessionId as string,
-        value.transferId as string,
+        value.payloadRef as string,
         value.id as string,
       );
     default:

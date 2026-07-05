@@ -8,7 +8,7 @@
 #include "policy_update_marker.h"
 #include "protocol/request_id.h"
 #include "session.h"
-#include "timeout_window.h"
+#include "transport/timeout_window.h"
 #include "freertos/FreeRTOS.h"
 
 namespace signing {

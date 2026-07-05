@@ -6,7 +6,7 @@
 #include "protocol_input_copy.h"
 
 #include "approval_history.h"
-#include "base64.h"
+#include "protocol/base64.h"
 #include "protocol/json_input.h"
 #include "protocol/protocol_constants.h"
 #include "protocol/request_id.h"

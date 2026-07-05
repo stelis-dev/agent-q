@@ -4,7 +4,7 @@
 #include "local_pin_auth.h"
 #include "modal_drawing.h"
 #include "sui_zklogin_proposal_flow.h"
-#include "timeout_window.h"
+#include "transport/timeout_window.h"
 #include "freertos/FreeRTOS.h"
 
 namespace signing {

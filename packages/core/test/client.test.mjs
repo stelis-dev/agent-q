@@ -299,6 +299,42 @@ test("signing success output schemas reject unknown top-level fields", () => {
   }
 });
 
+test("success output schemas accept current empty account and credential projections", () => {
+  assert.equal(hostSuccessOutputSchemas.getCapabilities.safeParse({
+    source: "live",
+    deviceId: DEVICE_ID,
+    capabilities: [
+      {
+        id: "sui",
+        accounts: [],
+        methods: [],
+      },
+    ],
+    credentials: [validCredentialCapability()],
+  }).success, true);
+  assert.equal(hostSuccessOutputSchemas.getCapabilities.safeParse({
+    source: "live",
+    deviceId: DEVICE_ID,
+    capabilities: [
+      {
+        id: "sui",
+        accounts: [
+          {
+            keyScheme: "zklogin",
+          },
+        ],
+        methods: [],
+      },
+    ],
+    credentials: [],
+  }).success, true);
+  assert.equal(hostSuccessOutputSchemas.getAccounts.safeParse({
+    source: "live",
+    deviceId: DEVICE_ID,
+    accounts: [],
+  }).success, true);
+});
+
 test("signing success output schemas reject unknown nested fields", () => {
   const samples = validSigningSuccessOutputSamples();
   assert.throws(() => hostSuccessOutputSchemas.connectDevice.parse({

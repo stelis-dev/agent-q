@@ -3,8 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "approval_history.h"
 #include "bip39.h"
-#include "timeout_window.h"
+#include "transport/timeout_window.h"
 
 namespace signing {
 namespace {
@@ -19,7 +20,7 @@ struct PayloadDeliveryStore {
     size_t chunk_max_bytes = 0;
     size_t payload_max_bytes = 0;
     TimeoutWindow timeout_window = kTimeoutWindowNone;
-    char expected_payload_digest[kApprovalHistoryDigestSize] = {};
+    char expected_payload_digest[kPayloadDeliveryDigestSize] = {};
     uint8_t* buffer = nullptr;
 };
 
@@ -341,7 +342,7 @@ PayloadDeliveryResult payload_delivery_finish(
         return PayloadDeliveryResult::size_mismatch;
     }
 
-    char actual_digest[kApprovalHistoryDigestSize] = {};
+    char actual_digest[kPayloadDeliveryDigestSize] = {};
     if (!approval_history_digest_payload(
             g_store.buffer,
             g_store.declared_size_bytes,
@@ -476,45 +477,6 @@ bool payload_delivery_clear_expired(uint64_t now_tick)
 void payload_delivery_clear_all()
 {
     clear_store();
-}
-
-const char* payload_delivery_result_name(PayloadDeliveryResult result)
-{
-    switch (result) {
-        case PayloadDeliveryResult::ok:
-            return "ok";
-        case PayloadDeliveryResult::invalid_argument:
-            return "invalid_argument";
-        case PayloadDeliveryResult::invalid_state:
-            return "invalid_state";
-        case PayloadDeliveryResult::invalid_session:
-            return "invalid_session";
-        case PayloadDeliveryResult::payload_too_large:
-            return "payload_too_large";
-        case PayloadDeliveryResult::invalid_payload_digest:
-            return "invalid_payload_digest";
-        case PayloadDeliveryResult::invalid_transfer_id:
-            return "invalid_transfer_id";
-        case PayloadDeliveryResult::invalid_payload_ref:
-            return "invalid_payload_ref";
-        case PayloadDeliveryResult::allocation_failed:
-            return "allocation_failed";
-        case PayloadDeliveryResult::chunk_too_large:
-            return "chunk_too_large";
-        case PayloadDeliveryResult::offset_mismatch:
-            return "offset_mismatch";
-        case PayloadDeliveryResult::payload_overflow:
-            return "payload_overflow";
-        case PayloadDeliveryResult::size_mismatch:
-            return "size_mismatch";
-        case PayloadDeliveryResult::digest_mismatch:
-            return "digest_mismatch";
-        case PayloadDeliveryResult::digest_error:
-            return "digest_error";
-        case PayloadDeliveryResult::not_found:
-            return "not_found";
-    }
-    return "unknown";
 }
 
 }  // namespace signing

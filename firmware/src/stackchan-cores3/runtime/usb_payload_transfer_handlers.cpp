@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "base64.h"
+#include "protocol/base64.h"
 #include "bip39.h"
 #include "protocol/json_input.h"
 #include "payload_delivery_admission.h"
@@ -23,7 +23,6 @@ namespace signing {
 namespace {
 
 uint8_t g_chunk_decode_buffer[kPayloadDeliveryDefaultChunkMaxBytes];
-constexpr const char* kPayloadTransferMethod = "payload_transfer";
 
 bool parse_size_string(const char* value, size_t* output)
 {
@@ -48,6 +47,19 @@ bool request_fields_supported(JsonDocument& request, const char* const* fields, 
         request.as<JsonVariantConst>(),
         fields,
         field_count);
+}
+
+bool request_has_key(JsonDocument& request, const char* key)
+{
+    if (key == nullptr) {
+        return false;
+    }
+    for (JsonPairConst pair : request.as<JsonObjectConst>()) {
+        if (json_string_equals(pair.key(), key)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool guard_payload_transfer_request(
@@ -90,38 +102,8 @@ bool write_unsupported_fields_error(
     if (request_fields_supported(request, fields, field_count)) {
         return false;
     }
-    writer.write_error(id, "invalid_params");
+    writer.write_error(id, "invalid_request");
     return true;
-}
-
-const char* payload_transfer_error_code(PayloadDeliveryResult result)
-{
-    switch (result) {
-        case PayloadDeliveryResult::invalid_session:
-            return "invalid_session";
-        case PayloadDeliveryResult::invalid_state:
-            return "busy";
-        case PayloadDeliveryResult::payload_too_large:
-            return "payload_too_large";
-        case PayloadDeliveryResult::allocation_failed:
-        case PayloadDeliveryResult::digest_error:
-            return "internal_output_error";
-        case PayloadDeliveryResult::not_found:
-            return "unknown_request";
-        case PayloadDeliveryResult::ok:
-            return "internal_output_error";
-        case PayloadDeliveryResult::invalid_argument:
-        case PayloadDeliveryResult::invalid_payload_digest:
-        case PayloadDeliveryResult::invalid_transfer_id:
-        case PayloadDeliveryResult::invalid_payload_ref:
-        case PayloadDeliveryResult::chunk_too_large:
-        case PayloadDeliveryResult::offset_mismatch:
-        case PayloadDeliveryResult::payload_overflow:
-        case PayloadDeliveryResult::size_mismatch:
-        case PayloadDeliveryResult::digest_mismatch:
-        default:
-            return "invalid_params";
-    }
 }
 
 void write_store_error(
@@ -131,7 +113,7 @@ void write_store_error(
 {
     writer.write_error(
         id,
-        payload_transfer_error_code(result));
+        payload_delivery_transfer_error_code(result));
 }
 
 TimeoutTick handler_current_tick(const UsbPayloadTransferHandlerOps& ops)
@@ -185,7 +167,14 @@ void write_payload_transfer_success(
     const char* log_label,
     const UsbOperationResponseWriter& writer)
 {
-    if (!usb_response_write_success_result(id, kPayloadTransferMethod, result)) {
+    JsonDocument response;
+    if (id != nullptr && id[0] != '\0') {
+        response["id"] = id;
+    }
+    response["version"] = kProtocolVersion;
+    response["success"] = true;
+    response["result"].set(result);
+    if (!usb_response_write_json(response)) {
         writer.log_write_failure(log_label, id);
     }
 }
@@ -249,6 +238,9 @@ void handle_usb_payload_transfer_begin_request(
     const char* const fields[] = {
         "id", "version", "type", "action", "sessionId", "totalBytes", "payloadDigest",
     };
+    if (write_unsupported_fields_error(id, request, writer, fields, 7)) {
+        return;
+    }
     const char* session_id = nullptr;
     if (!guard_payload_transfer_request(
             id,
@@ -265,9 +257,6 @@ void handle_usb_payload_transfer_begin_request(
             writer,
             now_tick,
             PayloadDeliveryOperationKind::payload_transfer_begin)) {
-        return;
-    }
-    if (write_unsupported_fields_error(id, request, writer, fields, 7)) {
         return;
     }
 
@@ -313,6 +302,9 @@ void handle_usb_payload_transfer_chunk_request(
     const char* const fields[] = {
         "id", "version", "type", "action", "sessionId", "transferId", "offsetBytes", "chunk",
     };
+    if (write_unsupported_fields_error(id, request, writer, fields, 8)) {
+        return;
+    }
     const char* session_id = nullptr;
     if (!guard_payload_transfer_request(
             id,
@@ -329,9 +321,6 @@ void handle_usb_payload_transfer_chunk_request(
             writer,
             now_tick,
             PayloadDeliveryOperationKind::payload_transfer_chunk)) {
-        return;
-    }
-    if (write_unsupported_fields_error(id, request, writer, fields, 8)) {
         return;
     }
 
@@ -394,6 +383,9 @@ void handle_usb_payload_transfer_finish_request(
     const UsbPayloadTransferHandlerOps& ops)
 {
     const char* const fields[] = {"id", "version", "type", "action", "sessionId", "transferId"};
+    if (write_unsupported_fields_error(id, request, writer, fields, 6)) {
+        return;
+    }
     const char* session_id = nullptr;
     if (!guard_payload_transfer_request(
             id,
@@ -410,9 +402,6 @@ void handle_usb_payload_transfer_finish_request(
             writer,
             now_tick,
             PayloadDeliveryOperationKind::payload_transfer_finish)) {
-        return;
-    }
-    if (write_unsupported_fields_error(id, request, writer, fields, 6)) {
         return;
     }
 
@@ -440,7 +429,16 @@ void handle_usb_payload_transfer_abort_request(
     const UsbOperationResponseWriter& writer,
     const UsbPayloadTransferHandlerOps& ops)
 {
-    const char* const fields[] = {"id", "version", "type", "action", "sessionId", "transferId"};
+    const char* const fields[] = {"id", "version", "type", "action", "sessionId", "transferId", "payloadRef"};
+    if (write_unsupported_fields_error(id, request, writer, fields, 7)) {
+        return;
+    }
+    const bool has_transfer_id = request_has_key(request, "transferId");
+    const bool has_payload_ref = request_has_key(request, "payloadRef");
+    if (has_transfer_id && has_payload_ref) {
+        writer.write_error(id, "invalid_request");
+        return;
+    }
     const char* session_id = nullptr;
     if (!guard_payload_transfer_request(
             id,
@@ -459,12 +457,20 @@ void handle_usb_payload_transfer_abort_request(
             PayloadDeliveryOperationKind::payload_transfer_abort)) {
         return;
     }
-    if (write_unsupported_fields_error(id, request, writer, fields, 6)) {
-        return;
-    }
 
     const char* transfer_id = nullptr;
-    if (!json_value_c_string(request["transferId"], &transfer_id)) {
+    const char* payload_ref = nullptr;
+    if (has_transfer_id) {
+        if (!json_value_c_string(request["transferId"], &transfer_id)) {
+            writer.write_error(id, "invalid_params");
+            return;
+        }
+    } else if (has_payload_ref) {
+        if (!json_value_c_string(request["payloadRef"], &payload_ref)) {
+            writer.write_error(id, "invalid_params");
+            return;
+        }
+    } else {
         writer.write_error(id, "invalid_params");
         return;
     }
@@ -474,7 +480,7 @@ void handle_usb_payload_transfer_abort_request(
         PayloadDeliveryAbortInput{
             session_id,
             transfer_id,
-            nullptr,
+            payload_ref,
         });
     if (result != PayloadDeliveryResult::ok) {
         write_store_error(id, writer, result);

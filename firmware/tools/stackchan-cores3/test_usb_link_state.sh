@@ -19,7 +19,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 CXX_BIN="${CXX:-c++}"
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-usb-link-state.XXXXXX")"
@@ -35,7 +35,7 @@ H
 cat >"${TMP_DIR}/usb_link_state_test.cpp" <<'CPP'
 #include <stdio.h>
 
-#include "usb_link_state.h"
+#include "transport/usb_link_state.h"
 
 namespace {
 
@@ -110,9 +110,9 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
-  -I"${RUNTIME_DIR}" \
+  -I"${COMMON_ROOT}" \
   "${TMP_DIR}/usb_link_state_test.cpp" \
-  "${RUNTIME_DIR}/usb_link_state.cpp" \
+  "${COMMON_ROOT}/transport/usb_link_state.cpp" \
   -o "${TMP_DIR}/usb_link_state_test"
 
 "${TMP_DIR}/usb_link_state_test"

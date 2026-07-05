@@ -49,14 +49,17 @@ fi
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${MICROSUI_CORE}/byte_conversions.c" \
-  "${RUNTIME_DIR}/base64.cpp" \
+  "${COMMON_ROOT}/protocol/base64.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.h" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${RUNTIME_DIR}/session.cpp" \
   "${RUNTIME_DIR}/sign_request_identity.cpp" \
   "${RUNTIME_DIR}/payload_delivery_admission.cpp" \
-  "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
+  "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
+  "${COMMON_ROOT}/transport/payload_delivery_admission.h" \
+  "${COMMON_ROOT}/transport/payload_delivery_operation_kind.h" \
+  "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
   "${RUNTIME_DIR}/payload_delivery_store.cpp" \
   "${RUNTIME_DIR}/usb_signing_outcome_writer.cpp" \
   "${RUNTIME_DIR}/signing_preflight.cpp" \
@@ -964,13 +967,14 @@ CPP
   -I"${MICROSUI_CORE}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${RUNTIME_DIR}/base64.cpp" \
+  "${COMMON_ROOT}/protocol/base64.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${RUNTIME_DIR}/session.cpp" \
   "${RUNTIME_DIR}/sign_request_identity.cpp" \
   "${RUNTIME_DIR}/payload_delivery_admission.cpp" \
-  "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
+  "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
+  "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
   "${RUNTIME_DIR}/payload_delivery_store.cpp" \
   "${RUNTIME_DIR}/usb_signing_outcome_writer.cpp" \
   "${RUNTIME_DIR}/signing_preflight.cpp" \

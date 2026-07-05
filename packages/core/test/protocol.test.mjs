@@ -282,14 +282,64 @@ test("builds and exact-normalizes payload transfer requests", () => {
 
   const abortTransfer = makePayloadTransferAbortRequest(sessionId, VALID_TRANSFER_ID, "req_upload_abort");
   assert.deepEqual(normalizePayloadTransferRequest(abortTransfer), abortTransfer);
+  assert.deepEqual(abortTransfer, {
+    id: "req_upload_abort",
+    version: 1,
+    type: "payload_transfer",
+    action: "abort",
+    sessionId,
+    transferId: VALID_TRANSFER_ID,
+  });
+
+  const abortFinalized = makePayloadTransferAbortRequest(sessionId, VALID_PAYLOAD_REF, "req_payload_abort");
+  assert.deepEqual(normalizePayloadTransferRequest(abortFinalized), abortFinalized);
+  assert.deepEqual(abortFinalized, {
+    id: "req_payload_abort",
+    version: 1,
+    type: "payload_transfer",
+    action: "abort",
+    sessionId,
+    payloadRef: VALID_PAYLOAD_REF,
+  });
 
   assert.throws(
     () => normalizePayloadTransferRequest({ ...begin, extra: true }),
     { code: "invalid_request" },
   );
   assert.throws(
+    () => normalizePayloadTransferRequest({ ...begin, version: "1" }),
+    { code: "invalid_request" },
+  );
+  assert.throws(
+    () => normalizePayloadTransferRequest({ ...begin, version: 2 }),
+    { code: "unsupported_version" },
+  );
+  assert.throws(
+    () => normalizePayloadTransferRequest({ ...begin, type: 7 }),
+    { code: "invalid_request" },
+  );
+  assert.throws(
+    () => normalizePayloadTransferRequest({ ...begin, type: "other" }),
+    { code: "unsupported_method" },
+  );
+  assert.throws(
     () => normalizePayloadTransferRequest({ ...begin, action: "replace" }),
     { code: "unsupported_method" },
+  );
+  assert.throws(
+    () => normalizePayloadTransferRequest({ ...abortTransfer, payloadRef: VALID_PAYLOAD_REF }),
+    { code: "invalid_request" },
+  );
+  assert.throws(
+    () =>
+      normalizePayloadTransferRequest({
+        id: "req_abort_missing_target",
+        version: 1,
+        type: "payload_transfer",
+        action: "abort",
+        sessionId,
+      }),
+    { code: "invalid_request" },
   );
   assert.throws(
     () => makePayloadTransferBeginRequest(sessionId, {
@@ -325,7 +375,7 @@ test("builds and exact-normalizes payload transfer requests", () => {
 
 test("payload transfer chunk frame budget fits the transport chunk size", () => {
   const maxRequestId = "r".repeat(79);
-  const maxSessionId = `session_${"a".repeat(128)}`;
+  const maxSessionId = `session_${"a".repeat(17)}`;
   const maxTransferId = `transfer_${"b".repeat(72)}`;
   const maxUint64Offset = "18446744073709551615";
   const advertisedChunk = Buffer.alloc(2700, 7).toString("base64");
@@ -564,7 +614,7 @@ test("Core method assertions accept DeviceResponse success envelopes", () => {
     {
       method: "credential_propose",
       assertResponse: assertCredentialProposalOutcomeResponse,
-      result: { status: "activated", reasonCode: "device_confirmed", sessionEnded: false },
+      result: { status: "activated", reasonCode: "device_confirmed", sessionEnded: true },
     },
     {
       method: "sign_transaction",
@@ -1011,6 +1061,9 @@ const policyProposeResultPolicy = (overrides = {}) => ({
 
 test("isSessionId and isClientName accept and reject expected inputs", () => {
   assert.equal(isSessionId("session_abcdef01"), true);
+  assert.equal(isSessionId("session_00010203040506070"), true);
+  assert.equal(isSessionId("session_000102030405060700"), false);
+  assert.equal(isSessionId("session_" + "a".repeat(128)), false);
   assert.equal(isSessionId("session_ABCDEF"), false);
   assert.equal(isSessionId("notsession_aa"), false);
   assert.equal(isSessionId(""), false);

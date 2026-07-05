@@ -7,7 +7,7 @@
 #include "local_auth_worker.h"
 #include "signing_mode.h"
 #include "sui_account_settings.h"
-#include "timeout_window.h"
+#include "transport/timeout_window.h"
 #include "freertos/FreeRTOS.h"
 
 namespace signing {

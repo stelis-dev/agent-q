@@ -26,8 +26,8 @@ CXX_BIN="${CXX:-c++}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${RUNTIME_DIR}/base64.cpp" \
-  "${RUNTIME_DIR}/base64.h" \
+  "${COMMON_ROOT}/protocol/base64.cpp" \
+  "${COMMON_ROOT}/protocol/base64.h" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${COMMON_ROOT}/protocol/request_id.h" \
   "${RUNTIME_DIR}/session.cpp" \
@@ -274,7 +274,7 @@ CPP
   "${TMP_DIR}/sign_personal_message_user_ingress_test.cpp" \
   "${RUNTIME_DIR}/sign_personal_message_user_ingress.cpp" \
   "${RUNTIME_DIR}/sign_personal_message_user_validation.cpp" \
-  "${RUNTIME_DIR}/base64.cpp" \
+  "${COMMON_ROOT}/protocol/base64.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${RUNTIME_DIR}/session.cpp" \
   -o "${TMP_DIR}/sign_personal_message_user_ingress_test"

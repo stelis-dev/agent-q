@@ -2,7 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUNTIME_DIR="${SCRIPT_DIR}/../../src/stackchan-cores3/runtime"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 CXX_BIN="${CXX:-c++}"
@@ -19,7 +20,7 @@ cat >"${TMP_DIR}/usb_session_grace_test.cpp" <<'CPP'
 #include <assert.h>
 #include <stdio.h>
 
-#include "usb_session_grace.h"
+#include "transport/usb_session_grace.h"
 
 using namespace signing;
 
@@ -73,9 +74,9 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
-  -I"${RUNTIME_DIR}" \
+  -I"${COMMON_ROOT}" \
   "${TMP_DIR}/usb_session_grace_test.cpp" \
-  "${RUNTIME_DIR}/usb_session_grace.cpp" \
+  "${COMMON_ROOT}/transport/usb_session_grace.cpp" \
   -o "${TMP_DIR}/usb_session_grace_test"
 
 "${TMP_DIR}/usb_session_grace_test"

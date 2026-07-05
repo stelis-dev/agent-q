@@ -507,7 +507,8 @@ Allowed in `receiving`:
 
 - same-session `payload_transfer` with action `chunk`;
 - same-session `payload_transfer` with action `finish`;
-- same-session `payload_transfer` with action `abort`;
+- same-session `payload_transfer` with action `abort` and the active
+  `transferId`;
 - read-only session requests that do not mutate, dismiss, or leak upload state:
   `get_status`, `get_capabilities`, `get_accounts`, `policy_get`,
   `get_approval_history`, `get_result`, and `ack_result`.
@@ -526,7 +527,8 @@ Allowed in `finalized`:
 - same-session `sign_transaction` whose shallow payload source matches the
   finalized `payloadRef`; the payload store must validate the reference,
   session, and finalized state before Firmware consumes bytes;
-- same-session `payload_transfer` with action `abort`;
+- same-session `payload_transfer` with action `abort` and the finalized
+  `payloadRef`;
 - read-only session requests that do not mutate, dismiss, or leak the payload.
 
 Rejected in `finalized`:

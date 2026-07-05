@@ -28,10 +28,10 @@ ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${RUNTIME_DIR}/base64.cpp" \
-  "${RUNTIME_DIR}/base64.h" \
-  "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
-  "${RUNTIME_DIR}/payload_delivery_primitives.h" \
+  "${COMMON_ROOT}/protocol/base64.cpp" \
+  "${COMMON_ROOT}/protocol/base64.h" \
+  "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
+  "${COMMON_ROOT}/transport/payload_delivery_primitives.h" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${COMMON_ROOT}/protocol/request_id.h" \
   "${RUNTIME_DIR}/session.cpp" \
@@ -451,8 +451,8 @@ CPP
   -I"${RUNTIME_DIR}" \
   -I"${RUNTIME_DIR}/../../common" \
   "${TMP_DIR}/sign_transaction_user_ingress_test.cpp" \
-  "${RUNTIME_DIR}/base64.cpp" \
-  "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
+  "${COMMON_ROOT}/protocol/base64.cpp" \
+  "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${RUNTIME_DIR}/session.cpp" \
   "${RUNTIME_DIR}/sign_transaction_user_ingress.cpp" \

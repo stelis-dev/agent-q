@@ -53,6 +53,9 @@ test("isSafeRequestId enforces the bounded request-id charset", () => {
 
 test("isSessionId requires the lowercase-hex session format", () => {
   assert.equal(isSessionId("session_abcdef01"), true);
+  assert.equal(isSessionId("session_00010203040506070"), true);
+  assert.equal(isSessionId("session_000102030405060700"), false);
+  assert.equal(isSessionId("session_" + "a".repeat(128)), false);
   assert.equal(isSessionId("session_ABCDEF"), false);
   assert.equal(isSessionId("notsession_aa"), false);
   assert.equal(isSessionId("session_"), false);

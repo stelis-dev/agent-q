@@ -284,7 +284,7 @@ int main()
         assert(g_write_error_calls == 1);
         assert(g_payload_admission_calls == 0);
         assert(g_refresh_calls == 0);
-        assert(strcmp(g_last_error_code, "invalid_params") == 0);
+        assert(strcmp(g_last_error_code, "invalid_request") == 0);
     }
 
     {
@@ -316,7 +316,7 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"method\":\"identify_device\",\"payload\":{\"code\":\"1234\"},\"extra\":1}");
         signing::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "invalid_params") == 0);
+        assert(strcmp(g_last_error_code, "invalid_request") == 0);
     }
 
     {

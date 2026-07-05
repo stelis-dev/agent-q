@@ -44,11 +44,14 @@ for required in \
   "${RUNTIME_DIR}/usb_payload_transfer_handlers.h" \
   "${RUNTIME_DIR}/payload_delivery_admission.cpp" \
   "${RUNTIME_DIR}/payload_delivery_admission.h" \
-  "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
-  "${RUNTIME_DIR}/payload_delivery_primitives.h" \
+  "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
+  "${COMMON_ROOT}/transport/payload_delivery_admission.h" \
+  "${COMMON_ROOT}/transport/payload_delivery_operation_kind.h" \
+  "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
+  "${COMMON_ROOT}/transport/payload_delivery_primitives.h" \
   "${RUNTIME_DIR}/payload_delivery_store.cpp" \
   "${RUNTIME_DIR}/payload_delivery_store.h" \
-  "${RUNTIME_DIR}/base64.cpp" \
+  "${COMMON_ROOT}/protocol/base64.cpp" \
   "${RUNTIME_DIR}/session.cpp" \
   "${COMMON_ROOT}/protocol/sign_route.h"; do
   if [[ ! -f "${required}" ]]; then
@@ -241,6 +244,12 @@ bool g_session_valid = true;
 const char* g_last_error_code = nullptr;
 const char* g_last_session = nullptr;
 
+void assert_payload_transfer_response_has_no_method()
+{
+    assert(strcmp(response_method(), "") == 0);
+    assert(strstr(response_json(), "\"method\"") == nullptr);
+}
+
 constexpr const char* kDigest =
     "sha256:c1280277d943fff9680e04557dacee6b39f6b22e5b381430576269feb22b679e";
 constexpr const char* kPayloadChunk =
@@ -371,7 +380,7 @@ void begin_transfer()
     JsonDocument doc = parse(request);
     signing::handle_usb_payload_transfer_begin_request("req_begin", doc, make_writer(), make_ops());
     assert(g_error_calls == 0);
-    assert(strcmp(response_method(), "payload_transfer") == 0);
+    assert_payload_transfer_response_has_no_method();
     assert(strncmp(response_transfer_id(), "transfer_", 7) == 0);
     assert(strcmp(response_received_bytes(), "0") == 0);
     assert(strcmp(response_chunk_max_bytes(), "2700") == 0);
@@ -398,7 +407,7 @@ void begin_max_payload_transfer()
         make_writer(),
         make_ops());
     assert(g_error_calls == 0);
-    assert(strcmp(response_method(), "payload_transfer") == 0);
+    assert_payload_transfer_response_has_no_method();
     assert(strncmp(response_transfer_id(), "transfer_", 7) == 0);
     assert(strcmp(response_received_bytes(), "0") == 0);
     assert(strcmp(response_chunk_max_bytes(), "2700") == 0);
@@ -442,7 +451,7 @@ void append_chunk()
     JsonDocument doc = parse(request);
     signing::handle_usb_payload_transfer_chunk_request("req_chunk", doc, make_writer(), make_ops());
     assert(g_error_calls == 0);
-    assert(strcmp(response_method(), "payload_transfer") == 0);
+    assert_payload_transfer_response_has_no_method();
     assert(strcmp(response_received_bytes(), kPayloadSize) == 0);
     assert(strstr(response_json(), "\"receivedBytes\":\"37\"") != nullptr);
 }
@@ -503,7 +512,7 @@ void finish_transfer()
     JsonDocument doc = parse(request);
     signing::handle_usb_payload_transfer_finish_request("req_finish", doc, make_writer(), make_ops());
     assert(g_error_calls == 0);
-    assert(strcmp(response_method(), "payload_transfer") == 0);
+    assert_payload_transfer_response_has_no_method();
     assert(strncmp(response_payload_ref(), "payload_", 8) == 0);
     assert(strstr(response_json(), "\"payloadRef\":\"payload_") != nullptr);
 }
@@ -528,6 +537,25 @@ int main()
         begin_transfer();
         append_chunk();
         finish_transfer();
+        char payload_ref[96] = {};
+        snprintf(payload_ref, sizeof(payload_ref), "%s", response_payload_ref());
+        char request[256] = {};
+        snprintf(
+            request,
+            sizeof(request),
+            "{\"id\":\"req_abort_finalized\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"abort\","
+            "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payloadRef\":\"%s\"}",
+            payload_ref);
+        JsonDocument doc = parse(request);
+        signing::handle_usb_payload_transfer_abort_request(
+            "req_abort_finalized",
+            doc,
+            make_writer(),
+            make_ops());
+        assert(g_error_calls == 0);
+        assert_payload_transfer_response_has_no_method();
+        assert(strcmp(response_status(), "") == 0);
+        assert(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle);
     }
 
     {
@@ -545,8 +573,19 @@ int main()
         JsonDocument doc = parse(request);
         signing::handle_usb_payload_transfer_abort_request("req_abort", doc, make_writer(), make_ops());
         assert(g_error_calls == 0);
-        assert(strcmp(response_method(), "payload_transfer") == 0);
+        assert_payload_transfer_response_has_no_method();
         assert(strcmp(response_status(), "") == 0);
+    }
+
+    {
+        reset_state();
+        JsonDocument doc = parse(
+            "{\"id\":\"req_abort_both\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"abort\","
+            "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"transfer_0000000000000001\","
+            "\"payloadRef\":\"payload_0000000000000001\"}");
+        signing::handle_usb_payload_transfer_abort_request("req_abort_both", doc, make_writer(), make_ops());
+        assert(g_error_calls == 1);
+        assert(strcmp(g_last_error_code, "invalid_request") == 0);
     }
 
     {
@@ -605,9 +644,8 @@ int main()
         JsonDocument doc = parse(
             "{\"id\":\"req_chunk\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"chunk\","
             "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"transfer_0000000000000001\","
-            "\"offsetBytes\":\"0\",\"chunk\":\"E1yl7jeAyRJbpO02f8gRWqPsNX7HEFmi6zR9xg9YoeozfMUOVw==\","
-            "\"extra\":\"ignored-by-state\"}");
-        signing::handle_usb_payload_transfer_chunk_request("req_chunk_extra", doc, make_writer(), make_ops());
+            "\"offsetBytes\":\"0\",\"chunk\":\"E1yl7jeAyRJbpO02f8gRWqPsNX7HEFmi6zR9xg9YoeozfMUOVw==\"}");
+        signing::handle_usb_payload_transfer_chunk_request("req_chunk_missing_transfer", doc, make_writer(), make_ops());
         assert(g_error_calls == 1);
         assert(strcmp(g_last_error_code, "unknown_request") == 0);
         assert(g_busy_calls == 1);
@@ -657,9 +695,8 @@ int main()
         reset_state();
         JsonDocument doc = parse(
             "{\"id\":\"req_finish\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"finish\","
-            "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"transfer_0000000000000001\","
-            "\"extra\":\"ignored-by-state\"}");
-        signing::handle_usb_payload_transfer_finish_request("req_finish_extra", doc, make_writer(), make_ops());
+            "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"transfer_0000000000000001\"}");
+        signing::handle_usb_payload_transfer_finish_request("req_finish_missing_transfer", doc, make_writer(), make_ops());
         assert(g_error_calls == 1);
         assert(strcmp(g_last_error_code, "unknown_request") == 0);
         assert(g_busy_calls == 1);
@@ -748,12 +785,11 @@ int main()
             sizeof(request),
             "{\"id\":\"req_begin_2\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"begin\","
             "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\","
-            "\"totalBytes\":\"%s\",\"payloadDigest\":\"%s\","
-            "\"extra\":\"ignored-by-state\"}",
+            "\"totalBytes\":\"%s\",\"payloadDigest\":\"%s\"}",
             kPayloadSize,
             kDigest);
         JsonDocument doc = parse(request);
-        signing::handle_usb_payload_transfer_begin_request("req_begin_2_extra", doc, make_writer(), make_ops());
+        signing::handle_usb_payload_transfer_begin_request("req_begin_2_busy", doc, make_writer(), make_ops());
         assert(g_error_calls == 1);
         assert(strcmp(g_last_error_code, "busy") == 0);
         assert(signing::payload_delivery_advance_and_snapshot(0).state ==
@@ -774,13 +810,47 @@ int main()
     {
         reset_state();
         JsonDocument doc = parse(
-            "{\"id\":\"req_begin\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"begin\","
+            "{\"id\":\"req_begin_extra\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"begin\","
             "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\","
             "\"totalBytes\":\"37\",\"payloadDigest\":\"sha256:c1280277d943fff9680e04557dacee6b39f6b22e5b381430576269feb22b679e\","
             "\"extra\":\"not-allowed\"}");
-        signing::handle_usb_payload_transfer_begin_request("req_begin", doc, make_writer(), make_ops());
+        signing::handle_usb_payload_transfer_begin_request("req_begin_extra", doc, make_writer(), make_ops());
         assert(g_error_calls == 1);
-        assert(strcmp(g_last_error_code, "invalid_params") == 0);
+        assert(strcmp(g_last_error_code, "invalid_request") == 0);
+    }
+
+    {
+        reset_state();
+        JsonDocument doc = parse(
+            "{\"id\":\"req_chunk_extra\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"chunk\","
+            "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"transfer_0000000000000001\","
+            "\"offsetBytes\":\"0\",\"chunk\":\"E1yl7jeAyRJbpO02f8gRWqPsNX7HEFmi6zR9xg9YoeozfMUOVw==\","
+            "\"extra\":\"not-allowed\"}");
+        signing::handle_usb_payload_transfer_chunk_request("req_chunk_extra", doc, make_writer(), make_ops());
+        assert(g_error_calls == 1);
+        assert(strcmp(g_last_error_code, "invalid_request") == 0);
+    }
+
+    {
+        reset_state();
+        JsonDocument doc = parse(
+            "{\"id\":\"req_finish_extra\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"finish\","
+            "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"transfer_0000000000000001\","
+            "\"extra\":\"not-allowed\"}");
+        signing::handle_usb_payload_transfer_finish_request("req_finish_extra", doc, make_writer(), make_ops());
+        assert(g_error_calls == 1);
+        assert(strcmp(g_last_error_code, "invalid_request") == 0);
+    }
+
+    {
+        reset_state();
+        JsonDocument doc = parse(
+            "{\"id\":\"req_abort_extra\",\"version\":1,\"type\":\"payload_transfer\",\"action\":\"abort\","
+            "\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"transferId\":\"transfer_0000000000000001\","
+            "\"extra\":\"not-allowed\"}");
+        signing::handle_usb_payload_transfer_abort_request("req_abort_extra", doc, make_writer(), make_ops());
+        assert(g_error_calls == 1);
+        assert(strcmp(g_last_error_code, "invalid_request") == 0);
     }
 
     {
@@ -832,7 +902,7 @@ CPP
   -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${RUNTIME_DIR}/payload_delivery_primitives.cpp" \
+  -c "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
   -o "${TMP_DIR}/payload_delivery_primitives.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
@@ -856,12 +926,21 @@ CPP
   -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
+  -c "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
+  -o "${TMP_DIR}/payload_delivery_admission_core.o"
+
+"${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
+  -I"${RUNTIME_DIR}" \
+  -I"${COMMON_ROOT}" \
+  -I"${TMP_DIR}" \
+  -I"${MBEDTLS_INCLUDE_DIR}" \
   -c "${RUNTIME_DIR}/session.cpp" \
   -o "${TMP_DIR}/session.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${RUNTIME_DIR}" \
-  -c "${RUNTIME_DIR}/base64.cpp" \
+  -I"${COMMON_ROOT}" \
+  -c "${COMMON_ROOT}/protocol/base64.cpp" \
   -o "${TMP_DIR}/base64.o"
 
 cc -std=c99 -Wall -Wextra -Werror \
@@ -886,6 +965,7 @@ cc -std=c99 -Wall -Wextra -Werror \
   "${TMP_DIR}/usb_payload_transfer_handlers.o" \
   "${TMP_DIR}/payload_delivery_primitives.o" \
   "${TMP_DIR}/payload_delivery_store.o" \
+  "${TMP_DIR}/payload_delivery_admission_core.o" \
   "${TMP_DIR}/payload_delivery_admission.o" \
   "${TMP_DIR}/session.o" \
   "${TMP_DIR}/base64.o" \

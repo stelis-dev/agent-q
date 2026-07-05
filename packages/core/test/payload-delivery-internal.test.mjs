@@ -124,6 +124,7 @@ test("payload transfer helper aborts a finalized payload after consumer failure 
   const payload = makePayload(8);
   const original = new TestPayloadDeliveryError("consumer_failed", "consumer failed");
   const seen = [];
+  let abortSucceeded = false;
   await assert.rejects(
     () =>
       runTransfer(payload, {
@@ -140,6 +141,7 @@ test("payload transfer helper aborts a finalized payload after consumer failure 
           }
           if (request.type === "payload_transfer" && request.action === "abort") {
             assert.equal(request.payloadRef, "payload_consumer_failure");
+            abortSucceeded = true;
             return assertResponse(abortResponse(request));
           }
           throw new Error(`unexpected ${request.type}:${request.action}`);
@@ -151,6 +153,7 @@ test("payload transfer helper aborts a finalized payload after consumer failure 
     (error) => error === original,
   );
   assert.equal(seen.at(-1).action, "abort");
+  assert.equal(abortSucceeded, true);
 });
 
 test("payload transfer helper reports abort invalid_session on the original error", async () => {

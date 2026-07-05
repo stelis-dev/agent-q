@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "protocol/json_input.h"
+#include "sui/zklogin_credential_payload.h"
 #include "usb_active_session_request_guard.h"
 #include "usb_sui_zklogin_credential_outcome_writer.h"
 
@@ -15,34 +16,10 @@ bool parse_supported_credential_params(
     const UsbOperationResponseWriter& writer,
     bool prepare_only)
 {
-    if (!params.is<JsonObjectConst>()) {
-        writer.write_error(id, "invalid_params");
-        return false;
-    }
-    JsonObjectConst object = params.as<JsonObjectConst>();
-    const char* const prepare_keys[] = {"chain", "credential"};
-    const char* const propose_keys[] = {
-        "chain",
-        "credential",
-        "network",
-        "address",
-        "publicKey",
-        "maxEpoch",
-        "inputs",
-    };
-    if (!json_object_fields_supported(
-            params,
-            prepare_only ? prepare_keys : propose_keys,
-            prepare_only ? 2 : 7)) {
-        writer.write_error(id, "invalid_params");
-        return false;
-    }
-    const char* chain = nullptr;
-    const char* credential = nullptr;
-    if (!json_value_c_string(object["chain"], &chain) ||
-        !json_value_c_string(object["credential"], &credential) ||
-        strcmp(chain, "sui") != 0 ||
-        strcmp(credential, "zklogin") != 0) {
+    const bool valid = prepare_only
+        ? sui_zklogin_credential_prepare_payload_shape_valid(params)
+        : sui_zklogin_credential_propose_payload_shape_valid(params);
+    if (!valid) {
         writer.write_error(id, "invalid_params");
         return false;
     }

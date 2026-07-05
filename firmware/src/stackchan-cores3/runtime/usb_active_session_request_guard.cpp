@@ -79,7 +79,7 @@ bool guard_usb_active_session_request(
         return false;
     }
     if (!request_fields_supported(request, allowed_request_fields, allowed_request_field_count)) {
-        writer.write_error(id, "invalid_params");
+        writer.write_error(id, "invalid_request");
         return false;
     }
     return true;

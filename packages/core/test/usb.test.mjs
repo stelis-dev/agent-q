@@ -950,7 +950,7 @@ test("node USB aborts a transferred payload when the method request fails", asyn
       (error) => error instanceof DeviceRequestError && error.code === "invalid_session",
     );
     assert.equal(seen.at(-1), "payload_transfer:abort");
-    assert.equal(abortRequest.transferId, "transfer_method_failure");
+    assert.equal(abortRequest.payloadRef, "payload_method_failure");
   } finally {
     setSerialPortFactoryForTest(null);
   }
@@ -959,6 +959,7 @@ test("node USB aborts a transferred payload when the method request fails", asyn
 test("node USB preserves transfer failure and marks session invalidated when abort reports invalid_session", async () => {
   const payload = Buffer.alloc(8 * 1024, 0x45);
   let receivedBytes = 0;
+  let abortRequest = null;
   setSerialPortFactoryForTest(() => new FakeSerialPort({
     write: (request) => {
       if (wireKind(request) === "payload_transfer:begin") {
@@ -1016,6 +1017,7 @@ test("node USB preserves transfer failure and marks session invalidated when abo
         };
       }
       if (wireKind(request) === "payload_transfer:abort") {
+        abortRequest = request;
         return {
           response: {
             id: request.id,
@@ -1050,6 +1052,7 @@ test("node USB preserves transfer failure and marks session invalidated when abo
     assert.equal(thrown.code, "invalid_response");
     assert.equal(consumeFirmwareSessionInvalidated(thrown), true);
     assert.equal(consumeFirmwareSessionInvalidated(thrown), false);
+    assert.equal(abortRequest.payloadRef, "payload_abort_invalid_session");
   } finally {
     setSerialPortFactoryForTest(null);
   }

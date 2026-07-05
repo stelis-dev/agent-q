@@ -385,7 +385,7 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"extra\":1}");
         signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "invalid_params") == 0);
+        assert(strcmp(g_last_error_code, "invalid_request") == 0);
         assert(g_read_history_calls == 0);
         assert(g_json_write_calls == 0);
     }

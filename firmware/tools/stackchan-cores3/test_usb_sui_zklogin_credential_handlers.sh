@@ -25,6 +25,10 @@ ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
+  "${COMMON_ROOT}/sui/zklogin_credential_outcome.cpp" \
+  "${COMMON_ROOT}/sui/zklogin_credential_outcome.h" \
+  "${COMMON_ROOT}/sui/zklogin_credential_payload.cpp" \
+  "${COMMON_ROOT}/sui/zklogin_credential_payload.h" \
   "${COMMON_ROOT}/protocol/json_input.h" \
   "${COMMON_ROOT}/protocol/request_id.h" \
   "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
@@ -82,6 +86,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
+#include "protocol/session_id.h"
 #include "usb_sui_zklogin_credential_handlers.h"
 
 namespace {
@@ -230,8 +235,9 @@ bool require_session(
     g_require_session_calls += 1;
     g_last_id = id;
     g_last_session = session_id;
-    if (!g_session_valid) {
+    if (!signing::session_id_format_valid(session_id) || !g_session_valid) {
         writer.write_error(id, "invalid_session");
+        return false;
     }
     return g_session_valid;
 }
@@ -264,7 +270,7 @@ signing::SuiZkLoginProposalBeginResult begin_proposal(
     (void)params;
     g_begin_proposal_calls += 1;
     assert(strcmp(request_id, "req") == 0);
-    assert(strcmp(session_id, "session") == 0);
+    assert(strcmp(session_id, "session_0001020304050607") == 0);
     assert(now == 10);
     assert(request_window.deadline == 110);
     return g_begin_result;
@@ -347,32 +353,6 @@ bool usb_response_write_success_result(const char* id, const char* method, JsonO
     return usb_response_write_json(response);
 }
 
-const char* sui_zklogin_proposal_terminal_status(
-    SuiZkLoginProposalTerminalResult result)
-{
-    switch (result) {
-        case SuiZkLoginProposalTerminalResult::invalid_proof:
-            return "invalid_proof";
-        case SuiZkLoginProposalTerminalResult::activated:
-            return "activated";
-        default:
-            return "";
-    }
-}
-
-const char* sui_zklogin_proposal_terminal_reason(
-    SuiZkLoginProposalTerminalResult result)
-{
-    switch (result) {
-        case SuiZkLoginProposalTerminalResult::invalid_proof:
-            return "invalid_proof";
-        case SuiZkLoginProposalTerminalResult::activated:
-            return "device_confirmed";
-        default:
-            return "invalid_state";
-    }
-}
-
 }  // namespace signing
 
 int main()
@@ -380,7 +360,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request(
-            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_prepare\",\"sessionId\":\"session\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
+            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_prepare\",\"sessionId\":\"session_0001020304050607\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
         signing::handle_usb_credential_prepare_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_prepare_admission_calls == 1);
@@ -399,7 +379,7 @@ int main()
         reset_state();
         g_identity.kind = signing::SuiActiveIdentityKind::zklogin;
         JsonDocument request = parse_request(
-            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_prepare\",\"sessionId\":\"session\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
+            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_prepare\",\"sessionId\":\"session_0001020304050607\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
         signing::handle_usb_credential_prepare_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
@@ -409,7 +389,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request(
-            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_prepare\",\"sessionId\":\"session\",\"payload\":{\"chain\":\"sui\",\"credential\":\"passkey\"}}");
+            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_prepare\",\"sessionId\":\"session_0001020304050607\",\"payload\":{\"chain\":\"sui\",\"credential\":\"passkey\"}}");
         signing::handle_usb_credential_prepare_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
@@ -419,7 +399,41 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request(
-            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_propose\",\"sessionId\":\"session\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
+            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_prepare\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
+        signing::handle_usb_credential_prepare_request("req", request, make_writer(), make_ops());
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "invalid_session") == 0);
+        assert(g_resolve_identity_calls == 0);
+    }
+
+    {
+        reset_state();
+        JsonDocument request = parse_request(
+            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_prepare\",\"sessionId\":\"session_badg\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
+        signing::handle_usb_credential_prepare_request("req", request, make_writer(), make_ops());
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "invalid_session") == 0);
+        assert(g_resolve_identity_calls == 0);
+    }
+
+    {
+        reset_state();
+        JsonDocument request = parse_request(
+            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_propose\",\"sessionId\":\"session_0001020304050607\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
+        signing::handle_usb_credential_propose_request("req", request, make_writer(), make_ops());
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "invalid_params") == 0);
+        assert(g_propose_admission_calls == 1);
+        assert(g_require_session_calls == 1);
+        assert(g_begin_proposal_calls == 0);
+        assert(g_show_review_calls == 0);
+        assert(g_write_json_calls == 0);
+    }
+
+    {
+        reset_state();
+        JsonDocument request = parse_request(
+            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_propose\",\"sessionId\":\"session_0001020304050607\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\",\"network\":\"testnet\",\"address\":\"0x1\",\"publicKey\":\"bad\",\"maxEpoch\":\"1\",\"inputs\":{}}}");
         signing::handle_usb_credential_propose_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_propose_admission_calls == 1);
@@ -436,7 +450,7 @@ int main()
         reset_state();
         g_begin_result = signing::SuiZkLoginProposalBeginResult::invalid_proof;
         JsonDocument request = parse_request(
-            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_propose\",\"sessionId\":\"session\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
+            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_propose\",\"sessionId\":\"session_0001020304050607\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\",\"network\":\"testnet\",\"address\":\"0x1\",\"publicKey\":\"bad\",\"maxEpoch\":\"1\",\"inputs\":{}}}");
         signing::handle_usb_credential_propose_request("req", request, make_writer(), make_ops());
         assert(g_begin_proposal_calls == 1);
         assert(g_show_review_calls == 0);
@@ -451,10 +465,32 @@ int main()
         reset_state();
         g_identity.kind = signing::SuiActiveIdentityKind::zklogin;
         JsonDocument request = parse_request(
-            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_propose\",\"sessionId\":\"session\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
+            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_propose\",\"sessionId\":\"session_0001020304050607\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\",\"network\":\"testnet\",\"address\":\"0x1\",\"publicKey\":\"bad\",\"maxEpoch\":\"1\",\"inputs\":{}}}");
         signing::handle_usb_credential_propose_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
+        assert(g_begin_proposal_calls == 0);
+        assert(g_show_review_calls == 0);
+    }
+
+    {
+        reset_state();
+        JsonDocument request = parse_request(
+            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_propose\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
+        signing::handle_usb_credential_propose_request("req", request, make_writer(), make_ops());
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "invalid_session") == 0);
+        assert(g_begin_proposal_calls == 0);
+        assert(g_show_review_calls == 0);
+    }
+
+    {
+        reset_state();
+        JsonDocument request = parse_request(
+            "{\"id\":\"req\",\"version\":1,\"method\":\"credential_propose\",\"sessionId\":\"session_badg\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
+        signing::handle_usb_credential_propose_request("req", request, make_writer(), make_ops());
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "invalid_session") == 0);
         assert(g_begin_proposal_calls == 0);
         assert(g_show_review_calls == 0);
     }
@@ -474,6 +510,8 @@ CPP
   "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
   "${RUNTIME_DIR}/usb_sui_zklogin_credential_handlers.cpp" \
   "${RUNTIME_DIR}/usb_sui_zklogin_credential_outcome_writer.cpp" \
+  "${COMMON_ROOT}/sui/zklogin_credential_outcome.cpp" \
+  "${COMMON_ROOT}/sui/zklogin_credential_payload.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

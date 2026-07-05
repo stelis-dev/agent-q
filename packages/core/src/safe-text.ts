@@ -29,7 +29,7 @@ export type ProvisioningState = (typeof PROVISIONING_STATES)[number];
 // in length bound, so each boundary states its own limit explicitly.
 export const DEVICE_ID_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/;
 export const REQUEST_ID_PATTERN = /^[A-Za-z0-9_.-]{1,79}$/;
-export const SESSION_ID_PATTERN = /^session_[0-9a-f]{1,128}$/;
+export const SESSION_ID_PATTERN = /^session_[0-9a-f]{1,17}$/;
 export const PURPOSE_PATTERN = /^[A-Za-z0-9_.-]{1,32}$/;
 // Printable ASCII only: space (0x20) through tilde (0x7E).
 export const CLIENT_NAME_PATTERN = /^[\x20-\x7E]{1,64}$/;
