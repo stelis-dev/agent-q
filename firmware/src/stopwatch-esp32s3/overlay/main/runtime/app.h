@@ -29,6 +29,11 @@ private:
         setup_confirm,
         unlock,
         idle,
+        connect_review,
+        proof_review,
+        proof_auth,
+        proof_clear_review,
+        proof_clear_auth,
         lockout,
         error,
     };
@@ -37,6 +42,7 @@ private:
     lv_obj_t* root_ = nullptr;
     lv_obj_t* input_slot_labels_[kLocalAuthMaxDigits] = {};
     lv_obj_t* prompt_label_ = nullptr;
+    lv_obj_t* detail_label_ = nullptr;
     RotaryDialScene rotary_dial_;
     uint32_t last_update_ms_ = 0;
     uint32_t last_seen_rejected_connects_ = 0;
@@ -77,12 +83,15 @@ private:
     void append_digit(char digit, uint32_t now_ms);
     void delete_digit(uint32_t now_ms);
     void submit_entry(uint32_t now_ms);
+    bool active_proof_clear_available() const;
+    bool complete_active_proof_clear();
     bool auth_entry_mode() const;
     bool input_timed_out(uint32_t now) const;
     bool capture_touch_digit(int x, int y);
     void refresh_input_slot_layer();
     void update_input_slots();
     void update_prompt_label();
+    void update_detail_label();
     void handle_touch_release(uint32_t now_ms);
     void start_dial_return();
     void animate_dial_return(uint32_t now);

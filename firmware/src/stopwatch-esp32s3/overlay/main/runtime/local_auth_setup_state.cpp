@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "sensitive_memory.h"
+
 namespace stopwatch_target {
 
 LocalAuthSetupState::~LocalAuthSetupState()

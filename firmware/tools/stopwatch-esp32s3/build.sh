@@ -20,11 +20,15 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+COMMON_SOURCE_ENV="${REPO_ROOT}/firmware/source.env"
 TARGET_SOURCE_ENV="${REPO_ROOT}/firmware/src/stopwatch-esp32s3/source.env"
 DEFAULT_CHECKOUT_DIR="${REPO_ROOT}/.firmware-cache/stopwatch-esp32s3/M5StopWatch-UserDemo"
+DEFAULT_SIGNING_CRYPTO_DIR="${REPO_ROOT}/.firmware-cache/signing-crypto/microsui-lib"
 INPUT_PATH="${1:-${DEFAULT_CHECKOUT_DIR}}"
 BUILD_DIR="${2:-build-stopwatch-esp32s3}"
 
+# shellcheck source=/dev/null
+source "${COMMON_SOURCE_ENV}"
 # shellcheck source=/dev/null
 source "${TARGET_SOURCE_ENV}"
 
@@ -57,6 +61,40 @@ if [[ -z "${BUILD_NAME}" || "${BUILD_NAME}" == "." || "${BUILD_NAME}" == ".." ||
   exit 1
 fi
 rm -rf "${BUILD_DIR}"
+
+fetch_pinned_repo() {
+  local repo_url="$1"
+  local commit="$2"
+  local checkout_dir="$3"
+
+  if [[ -e "${checkout_dir}" && ! -d "${checkout_dir}/.git" ]]; then
+    echo "Destination exists but is not a git checkout: ${checkout_dir}" >&2
+    exit 1
+  fi
+
+  if [[ ! -d "${checkout_dir}/.git" ]]; then
+    mkdir -p "$(dirname "${checkout_dir}")"
+    git clone "${repo_url}" "${checkout_dir}"
+  fi
+
+  if ! git -C "${checkout_dir}" cat-file -e "${commit}^{commit}" 2>/dev/null; then
+    git -C "${checkout_dir}" fetch --tags origin
+  fi
+  git -C "${checkout_dir}" checkout --force "${commit}"
+  git -C "${checkout_dir}" clean -fdx >/dev/null
+}
+
+if [[ -z "${SIGNING_CRYPTO_ROOT:-}" ]]; then
+  fetch_pinned_repo "${SIGNING_CRYPTO_REPOSITORY}" "${SIGNING_CRYPTO_COMMIT}" "${DEFAULT_SIGNING_CRYPTO_DIR}"
+  export SIGNING_CRYPTO_ROOT="${DEFAULT_SIGNING_CRYPTO_DIR}"
+else
+  export SIGNING_CRYPTO_ROOT
+fi
+
+if [[ ! -f "${SIGNING_CRYPTO_ROOT}/src/microsui_core/key_management.c" ]]; then
+  echo "SIGNING_CRYPTO_ROOT does not point to the pinned signing key-derivation source: ${SIGNING_CRYPTO_ROOT}" >&2
+  exit 1
+fi
 
 "${SCRIPT_DIR}/prepare.sh" "${CHECKOUT_DIR}"
 

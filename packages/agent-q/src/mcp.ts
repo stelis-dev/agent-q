@@ -202,7 +202,7 @@ export const hostToolDefinitions = {
     name: "get_accounts",
     title: "Get accounts",
     description:
-      "List the public accounts (chain, address, public key) held by a provisioned Agent-Q Firmware device over an approved session. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Agent-Q runtime session. Read-only: no signing, no private material, and no session id is ever returned.",
+      "List the public accounts (chain, address, public key) reported by Agent-Q Firmware over an approved session. Some setup-capable devices may return an empty list before account material is active. Resolves the target device by deviceId, by purpose, or by the default active device. Requires a prior connect_device approval; returns 'not_connected' without contacting Firmware when there is no Agent-Q runtime session. Read-only: no signing, no private material, and no session id is ever returned.",
     inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),

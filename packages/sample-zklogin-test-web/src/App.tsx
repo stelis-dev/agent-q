@@ -61,6 +61,15 @@ type PendingEnokiLogin = {
   nonce: string;
   maxEpoch: string;
   randomness: string;
+  oauthState?: string;
+  oauthCallbackOrigin?: string;
+};
+type OAuthCallbackMessage = {
+  type: typeof OAUTH_CALLBACK_MESSAGE_TYPE;
+  state: string | null;
+  idToken?: string;
+  error?: string;
+  errorDescription?: string;
 };
 
 const TEST_NETWORK: Exclude<SuiSignTransactionNetwork, "localnet"> = "testnet";
@@ -75,6 +84,9 @@ const CLIENT_NAME = "Agent-Q zkLogin test web";
 const PROVIDER_PURPOSE = "sample-zklogin-test-web";
 const ENOKI_LOGIN_STORAGE_KEY = "sui-device:sample-zklogin-test-web:enoki-login";
 const OAUTH_CALLBACK_MESSAGE_TYPE = "sui-device:sample-zklogin-test-web:oauth-token";
+const CREDENTIAL_PREPARE_OPERATION = "credential_prepare";
+const CREDENTIAL_PROPOSE_OPERATION = "credential_propose";
+const SIGN_TRANSACTION_OPERATION = "sign_transaction";
 
 function App() {
   const [provider] = useState(() => createSuiBrowserDeviceProvider({ clientName: CLIENT_NAME }));
@@ -90,12 +102,13 @@ function App() {
   const [oauthScope, setOauthScope] = useState("openid email profile");
   const [amountMist, setAmountMist] = useState(DEFAULT_TRANSFER_AMOUNT_MIST);
   const [gasBudgetMist, setGasBudgetMist] = useState(DEFAULT_GAS_BUDGET_MIST);
+  const [lastPreparation, setLastPreparation] = useState<CredentialPreparation | null>(() => readPendingEnokiLogin()?.preparation ?? null);
   const [lastTxBytes, setLastTxBytes] = useState("");
   const [lastSignature, setLastSignature] = useState<SuiDeviceWalletSignResult | null>(null);
   const [notice, setNotice] = useState<Notice>({
     tone: "neutral",
     title: "Idle",
-    lines: ["Ready to set up zkLogin with Enoki."],
+    lines: ["Ready to create a zkLogin ephemeral key with Enoki."],
   });
 
   const providerAvailable = isSuiBrowserDeviceProviderAvailable();
@@ -103,29 +116,65 @@ function App() {
   const credentialCapability = useMemo(() => {
     return findCredentialCapability(capabilities);
   }, [capabilities]);
-  const setupBlockedReason = getSetupBlockedReason(session, activeAccount, credentialCapability);
-  const visibleSetupBlockedReason = session === null ? null : setupBlockedReason;
+  const signingAvailable = useMemo(() => {
+    return signTransactionAvailable(capabilities);
+  }, [capabilities]);
+  const preparationBlockedReason = getCredentialPreparationBlockedReason(session, activeAccount, credentialCapability);
+  const visiblePreparationBlockedReason = session === null ? null : preparationBlockedReason;
   const canUseConnectedDevice = providerAvailable && session !== null && busy === null;
-  const canStartZkLoginSetup = providerAvailable && busy === null && setupBlockedReason === null;
+  const canPrepareZkLoginCredential = providerAvailable && busy === null && preparationBlockedReason === null;
   const activeZkLoginAccount = activeAccount?.keyScheme === "zklogin" ? activeAccount : null;
   const activeZkLoginAddress = activeZkLoginAccount?.address ?? "";
-  const canSignZkLoginTest = canUseConnectedDevice && activeZkLoginAccount !== null;
-  const activeAccountStatus = activeAccount === null
-    ? "No active Sui account"
-    : `${activeAccount.keyScheme} ${short(activeAccount.address)}`;
+  const canSignZkLoginTest = canUseConnectedDevice && activeZkLoginAccount !== null && signingAvailable;
+  const credentialPreparationReady = credentialPreparationAvailable(credentialCapability);
+  const preparationStatus = credentialPreparationStatusLabel(activeZkLoginAccount, lastPreparation, credentialPreparationReady);
+  const preparationStepStatus = credentialPreparationStepStatusLabel(activeZkLoginAccount, lastPreparation);
+  const signBlockedReason = getSignBlockedReason(session, activeZkLoginAccount, signingAvailable);
+  const credentialPrepared = lastPreparation !== null && activeZkLoginAccount === null;
 
   useEffect(() => {
     const onMessage = (event: MessageEvent<unknown>) => {
-      if (event.origin !== globalThis.location.origin || !isRecord(event.data)) {
+      const message = parseOAuthCallbackMessage(event.data);
+      if (message === null) {
         return;
       }
-      if (event.data.type !== OAUTH_CALLBACK_MESSAGE_TYPE || typeof event.data.idToken !== "string") {
+      const pending = readPendingEnokiLogin();
+      if (pending === null || pending.oauthState === undefined || pending.oauthState !== message.state) {
+        setNotice({
+          tone: "error",
+          title: "OAuth callback",
+          lines: ["Google callback did not match the pending ephemeral key. Create a new ephemeral key and try again."],
+        });
         return;
       }
-      void finishEnokiLogin(event.data.idToken);
+      if (pending.oauthCallbackOrigin !== undefined && event.origin !== pending.oauthCallbackOrigin) {
+        setNotice({
+          tone: "error",
+          title: "OAuth callback",
+          lines: [`Unexpected callback origin: ${event.origin}`],
+        });
+        return;
+      }
+      if (message.error !== undefined) {
+        setNotice({
+          tone: "error",
+          title: "Google login failed",
+          lines: [message.errorDescription ?? message.error],
+        });
+        return;
+      }
+      if (typeof message.idToken !== "string" || message.idToken.trim().length === 0) {
+        setNotice({
+          tone: "error",
+          title: "OAuth callback",
+          lines: ["Google callback did not contain an id_token."],
+        });
+        return;
+      }
+      void finishEnokiLogin(message.idToken, message.state);
     };
     globalThis.addEventListener("message", onMessage);
-    consumeOAuthRedirect((token) => void finishEnokiLogin(token), setNotice);
+    consumeOAuthRedirect((token, state) => void finishEnokiLogin(token, state), setNotice);
     return () => {
       globalThis.removeEventListener("message", onMessage);
       provider.dispose();
@@ -168,13 +217,11 @@ function App() {
       setLastSignature(null);
     }
     if (showNotice) {
+      const nextActiveZkLoginAccount = nextActiveAccount?.keyScheme === "zklogin" ? nextActiveAccount : null;
       setNotice({
         tone: "success",
         title: "Device refreshed",
-        lines: [
-          nextActiveAccount === null ? "No active Sui account." : `${nextActiveAccount.keyScheme} ${short(nextActiveAccount.address)}`,
-          `Credential setup: ${nextCredentialCapability === null ? "not advertised" : "advertised"}.`,
-        ],
+        lines: credentialPreparationNoticeLines(nextActiveZkLoginAccount, lastPreparation, nextCredentialCapability),
       });
     }
     return {
@@ -199,12 +246,11 @@ function App() {
   async function connect(): Promise<void> {
     await run("Connect", async () => {
       const live = await ensureConnected();
+      const liveZkLoginAccount = live.activeAccount?.keyScheme === "zklogin" ? live.activeAccount : null;
       setNotice({
         tone: "success",
         title: "Connected",
-        lines: [
-          live.activeAccount === null ? "No active Sui account." : `${live.activeAccount.keyScheme} ${short(live.activeAccount.address)}`,
-        ],
+        lines: credentialPreparationNoticeLines(liveZkLoginAccount, lastPreparation, live.credentialCapability),
       });
     });
   }
@@ -220,6 +266,7 @@ function App() {
       await provider.disconnectDevice({ purpose: PROVIDER_PURPOSE });
       clearDeviceMirror();
       removePendingEnokiLogin();
+      setLastPreparation(null);
       setNotice({
         tone: "neutral",
         title: "Disconnected",
@@ -263,16 +310,15 @@ function App() {
     };
   }
 
-  async function loginWithEnoki(): Promise<void> {
-    await run("Set up zkLogin", async () => {
-      setBusy("Prepare Enoki login");
+  async function prepareZkLoginCredential(): Promise<void> {
+    await run("Create ephemeral key", async () => {
+      setBusy("Create ephemeral key");
       const enokiConfig = requireEnokiConfig();
       const live = await ensureConnected();
-      const blockedReason = getSetupBlockedReason(live.session, live.activeAccount, live.credentialCapability);
+      const blockedReason = getCredentialPreparationBlockedReason(live.session, live.activeAccount, live.credentialCapability);
       if (blockedReason !== null) {
         throw new Error(blockedReason);
       }
-      const oauth = await resolveEnokiOAuth(enokiConfig);
       const response = await provider.credentialPrepare({
         chain: "sui",
         credential: "zklogin",
@@ -282,6 +328,7 @@ function App() {
         clearDeviceMirror();
         throw new Error(`Credential preparation did not return live data: ${resultSummary(response)}.`);
       }
+      setLastPreparation(response.preparation);
       const nextNonce = await createEnokiNonce(enokiConfig, {
         network: toEnokiNetwork(TEST_NETWORK),
         ephemeralPublicKey: response.preparation.publicKey,
@@ -292,35 +339,68 @@ function App() {
         createdAt: Date.now(),
         enokiConfig,
         network: TEST_NETWORK,
-        provider: oauth.provider,
+        provider: GOOGLE_PROVIDER,
         preparation: response.preparation,
         nonce: nextNonce.nonce,
         maxEpoch: String(nextNonce.maxEpoch),
         randomness: nextNonce.randomness,
       };
       writePendingEnokiLogin(pending);
-      openEnokiOAuth({
-        pending,
-        clientId: oauth.clientId,
-        redirectUri: oauthRedirectUri,
-        scope: oauthScope,
-      });
       setNotice({
         tone: "neutral",
-        title: "Google login opened",
+        title: "Ephemeral key ready",
         lines: [
-          "Google login is waiting in the popup.",
+          `Ephemeral address: ${short(response.preparation.address)}`,
+          `Ephemeral public key: ${short(response.preparation.publicKey)}`,
+          "Continue with Google to create the zkLogin proof.",
           `Expires: ${formatTimestamp(nextNonce.estimatedExpiration)}`,
         ],
       });
     });
   }
 
-  async function finishEnokiLogin(idToken: string): Promise<void> {
+  async function continueWithGoogle(): Promise<void> {
+    await run("Continue with Google", async () => {
+      const pending = readPendingEnokiLogin();
+      if (pending === null) {
+        setLastPreparation(null);
+        throw new Error("No ephemeral key was found. Create an ephemeral key first.");
+      }
+      const oauth = await resolveEnokiOAuth(pending.enokiConfig);
+      const oauthState = createOAuthState();
+      const pendingWithOAuth: PendingEnokiLogin = {
+        ...pending,
+        oauthState,
+        oauthCallbackOrigin: callbackOriginFromRedirectUri(oauthRedirectUri),
+      };
+      writePendingEnokiLogin(pendingWithOAuth);
+      openEnokiOAuth({
+        pending: pendingWithOAuth,
+        clientId: oauth.clientId,
+        redirectUri: oauthRedirectUri,
+        scope: oauthScope,
+        state: oauthState,
+      });
+      setNotice({
+        tone: "neutral",
+        title: "Google login opened",
+        lines: [
+          `Ephemeral address: ${short(pending.preparation.address)}`,
+          `Ephemeral public key: ${short(pending.preparation.publicKey)}`,
+          "Google login is waiting in the popup.",
+        ],
+      });
+    });
+  }
+
+  async function finishEnokiLogin(idToken: string, oauthState: string | null): Promise<void> {
     await run("Finish Enoki login", async () => {
       const pending = readPendingEnokiLogin();
       if (pending === null) {
         throw new Error("No pending Enoki login was found. Start login again.");
+      }
+      if (pending.oauthState === undefined || pending.oauthState !== oauthState) {
+        throw new Error("OAuth callback did not match the pending ephemeral key.");
       }
       removePendingEnokiLogin();
       const trimmedJwt = idToken.trim();
@@ -347,7 +427,7 @@ function App() {
 
       setBusy("Propose zkLogin proof");
       const live = await ensureConnected();
-      const blockedReason = getSetupBlockedReason(live.session, live.activeAccount, live.credentialCapability);
+      const blockedReason = getCredentialPreparationBlockedReason(live.session, live.activeAccount, live.credentialCapability);
       if (blockedReason !== null) {
         throw new Error(blockedReason);
       }
@@ -474,7 +554,7 @@ function App() {
             <span>1</span>
             <div>
               <h2>Connect device</h2>
-              <p>{activeAccountStatus}</p>
+              <p>{preparationStatus}</p>
             </div>
           </div>
           <div className="button-row">
@@ -496,13 +576,21 @@ function App() {
                 <dd>{session === null ? "disconnected" : session.device.state}</dd>
               </div>
               <div>
-                <dt>Credential ops</dt>
-                <dd>{credentialCapability === null ? "not advertised" : credentialCapability.operations.join(", ")}</dd>
+                <dt>Credential preparation</dt>
+                <dd>{credentialPreparationReady ? "available" : "not available"}</dd>
+              </div>
+              <div>
+                <dt>Signing</dt>
+                <dd>{signingAvailable ? "available" : "not available"}</dd>
+              </div>
+              <div>
+                <dt>Ephemeral address</dt>
+                <dd>{lastPreparation === null ? credentialPreparationReady ? "created by credential_prepare" : "not available" : short(lastPreparation.address)}</dd>
               </div>
             </dl>
           </details>
-          {visibleSetupBlockedReason !== null && (
-            <p className="inline-warning">{visibleSetupBlockedReason}</p>
+          {visiblePreparationBlockedReason !== null && (
+            <p className="inline-warning">{visiblePreparationBlockedReason}</p>
           )}
         </section>
 
@@ -549,13 +637,33 @@ function App() {
           <div className="flow-step-head">
             <span>3</span>
             <div>
-              <h2>Set up zkLogin</h2>
-              <p>{activeZkLoginAddress.length === 0 ? "not activated" : short(activeZkLoginAddress)}</p>
+              <h2>Create zkLogin ephemeral key</h2>
+              <p>{preparationStepStatus}</p>
             </div>
           </div>
-          <button type="button" className="primary login-button" onClick={loginWithEnoki} disabled={!canStartZkLoginSetup}>
-            Set up zkLogin with Google
+          <button
+            type="button"
+            className="primary login-button"
+            onClick={credentialPrepared ? continueWithGoogle : prepareZkLoginCredential}
+            disabled={busy !== null || (!credentialPrepared && !canPrepareZkLoginCredential)}
+          >
+            {credentialPrepared ? "Continue with Google" : "Create ephemeral key"}
           </button>
+          {lastPreparation !== null && activeZkLoginAccount === null && (
+            <details className="settings-slide">
+              <summary>Ephemeral key</summary>
+              <dl className="facts compact">
+                <div>
+                  <dt>Address</dt>
+                  <dd><code>{lastPreparation.address}</code></dd>
+                </div>
+                <div>
+                  <dt>Public key</dt>
+                  <dd><code>{lastPreparation.publicKey}</code></dd>
+                </div>
+              </dl>
+            </details>
+          )}
         </section>
 
         <section className="flow-step">
@@ -569,6 +677,9 @@ function App() {
           <button type="button" className="primary" onClick={buildAndSignTransaction} disabled={!canSignZkLoginTest}>
             Sign test transfer
           </button>
+          {signBlockedReason !== null && (
+            <p className="inline-warning">{signBlockedReason}</p>
+          )}
           <details className="settings-slide">
             <summary>Transaction details</summary>
             <div className="form-grid two">
@@ -606,25 +717,102 @@ function App() {
   );
 }
 
-function getSetupBlockedReason(
+function getCredentialPreparationBlockedReason(
   session: ConnectDeviceResult | null,
   account: SuiDeviceWalletAccount | null,
   credentialCapability: CredentialCapabilityView | null,
 ): string | null {
   if (session === null) {
-    return "Connect and read the active account first.";
+    return "Connect and read device credential capability first.";
   }
-  if (account === null) {
-    return "No active Sui account is available.";
-  }
-  if (account.keyScheme === "zklogin") {
-    return "zkLogin account metadata is active. Clear it locally in Settings > Accounts > Sui before preparing new proof material.";
-  }
-  if (account.keyScheme !== "ed25519") {
-    return "Active account metadata is not a native Ed25519 account.";
+  if (account !== null) {
+    if (account.keyScheme === "zklogin") {
+      return "zkLogin account metadata is active. Clear it on the device before preparing new proof material.";
+    }
+    if (account.keyScheme !== "ed25519") {
+      return "Active account metadata is not a native Ed25519 account.";
+    }
   }
   if (credentialCapability === null) {
-    return "Connected device does not advertise zkLogin credential setup.";
+    return "Connected device does not advertise zkLogin credential preparation.";
+  }
+  if (!credentialCapability.operations.includes(CREDENTIAL_PREPARE_OPERATION) ||
+    !credentialCapability.operations.includes(CREDENTIAL_PROPOSE_OPERATION)) {
+    return "Connected device does not advertise the complete zkLogin credential flow.";
+  }
+  return null;
+}
+
+function credentialPreparationAvailable(credentialCapability: CredentialCapabilityView | null): boolean {
+  return credentialCapability !== null &&
+    credentialCapability.operations.includes(CREDENTIAL_PREPARE_OPERATION) &&
+    credentialCapability.operations.includes(CREDENTIAL_PROPOSE_OPERATION);
+}
+
+function credentialPreparationStatusLabel(
+  activeZkLoginAccount: SuiDeviceWalletAccount | null,
+  preparation: CredentialPreparation | null,
+  credentialPreparationReady: boolean,
+): string {
+  if (activeZkLoginAccount !== null) {
+    return `zkLogin ${short(activeZkLoginAccount.address)}`;
+  }
+  if (preparation !== null) {
+    return `Ephemeral address ${short(preparation.address)}`;
+  }
+  return credentialPreparationReady ? "Create ephemeral key" : "Ephemeral key unavailable";
+}
+
+function credentialPreparationStepStatusLabel(
+  activeZkLoginAccount: SuiDeviceWalletAccount | null,
+  preparation: CredentialPreparation | null,
+): string {
+  if (activeZkLoginAccount !== null) {
+    return short(activeZkLoginAccount.address);
+  }
+  if (preparation !== null) {
+    return `ephemeral ${short(preparation.address)}`;
+  }
+  return "not activated";
+}
+
+function credentialPreparationNoticeLines(
+  activeZkLoginAccount: SuiDeviceWalletAccount | null,
+  preparation: CredentialPreparation | null,
+  credentialCapability: CredentialCapabilityView | null,
+): string[] {
+  const accountLine = activeZkLoginAccount !== null
+    ? `zkLogin account: ${short(activeZkLoginAccount.address)}`
+    : preparation !== null
+      ? `Ephemeral address: ${short(preparation.address)}`
+      : credentialPreparationAvailable(credentialCapability)
+        ? "Create an ephemeral key to display the ephemeral address."
+        : "Ephemeral key creation is not available.";
+  return [accountLine, credentialPreparationCapabilityLine(credentialCapability)];
+}
+
+function credentialPreparationCapabilityLine(credentialCapability: CredentialCapabilityView | null): string {
+  if (credentialCapability === null) {
+    return "Credential preparation: not advertised.";
+  }
+  return credentialPreparationAvailable(credentialCapability)
+    ? "Credential preparation: credential_prepare and credential_propose available."
+    : "Credential preparation: incomplete operation set.";
+}
+
+function getSignBlockedReason(
+  session: ConnectDeviceResult | null,
+  activeZkLoginAccount: SuiDeviceWalletAccount | null,
+  signingAvailable: boolean,
+): string | null {
+  if (session === null) {
+    return "Connect and activate zkLogin before signing.";
+  }
+  if (activeZkLoginAccount === null) {
+    return "Sign test is available after zkLogin is activated and the device reports a zkLogin account.";
+  }
+  if (!signingAvailable) {
+    return "Connected device does not advertise sign_transaction.";
   }
   return null;
 }
@@ -663,11 +851,27 @@ function findCredentialCapability(
   return null;
 }
 
+function signTransactionAvailable(
+  capabilities: SuiDeviceWalletGetCapabilitiesResult | null,
+): boolean {
+  if (capabilities === null || capabilities.source !== "live" || !isRecord(capabilities.signing)) {
+    return false;
+  }
+  const methods = capabilities.signing.methods;
+  if (!Array.isArray(methods)) {
+    return false;
+  }
+  return methods.some((entry) => {
+    return isRecord(entry) && entry.chain === "sui" && entry.method === SIGN_TRANSACTION_OPERATION;
+  });
+}
+
 function openEnokiOAuth(input: {
   pending: PendingEnokiLogin;
   clientId: string;
   redirectUri: string;
   scope: string;
+  state: string;
 }): void {
   const redirectUri = input.redirectUri.trim();
   if (redirectUri.length === 0) {
@@ -679,6 +883,7 @@ function openEnokiOAuth(input: {
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("scope", input.scope.trim());
   url.searchParams.set("nonce", input.pending.nonce);
+  url.searchParams.set("state", input.state);
   const popup = globalThis.open(
     url.toString(),
     "signing-zklogin-oauth",
@@ -692,11 +897,36 @@ function openEnokiOAuth(input: {
 }
 
 function consumeOAuthRedirect(
-  complete: (idToken: string) => void,
+  complete: (idToken: string, state: string | null) => void,
   setNotice: (notice: Notice) => void,
 ): void {
   const token = redirectTokenFromParams(globalThis.location.hash) ??
     redirectTokenFromParams(globalThis.location.search);
+  const state = redirectStateFromParams(globalThis.location.hash) ??
+    redirectStateFromParams(globalThis.location.search);
+  const oauthError = redirectErrorFromParams(globalThis.location.hash) ??
+    redirectErrorFromParams(globalThis.location.search);
+  const oauthErrorDescription = redirectErrorDescriptionFromParams(globalThis.location.hash) ??
+    redirectErrorDescriptionFromParams(globalThis.location.search);
+  if (oauthError !== null) {
+    globalThis.history.replaceState(null, "", scrubRedirectTokenUrl());
+    if (globalThis.opener !== null && globalThis.opener !== globalThis) {
+      globalThis.opener.postMessage({
+        type: OAUTH_CALLBACK_MESSAGE_TYPE,
+        state,
+        error: oauthError,
+        errorDescription: oauthErrorDescription ?? undefined,
+      }, oauthStateTargetOrigin(state));
+      globalThis.setTimeout(() => globalThis.close(), 0);
+      return;
+    }
+    setNotice({
+      tone: "error",
+      title: "Google login failed",
+      lines: [oauthErrorDescription ?? oauthError],
+    });
+    return;
+  }
   if (token === null || token.length === 0) {
     if (redirectHasTokenParam(globalThis.location.hash) ||
       redirectHasTokenParam(globalThis.location.search)) {
@@ -713,8 +943,9 @@ function consumeOAuthRedirect(
   if (globalThis.opener !== null && globalThis.opener !== globalThis) {
     globalThis.opener.postMessage({
       type: OAUTH_CALLBACK_MESSAGE_TYPE,
+      state,
       idToken: token,
-    }, globalThis.location.origin);
+    }, oauthStateTargetOrigin(state));
     setNotice({
       tone: "success",
       title: "OAuth complete",
@@ -723,7 +954,7 @@ function consumeOAuthRedirect(
     globalThis.setTimeout(() => globalThis.close(), 0);
     return;
   }
-  complete(token);
+  complete(token, state);
 }
 
 function redirectTokenFromParams(value: string): string | null {
@@ -731,15 +962,33 @@ function redirectTokenFromParams(value: string): string | null {
   return params.get("id_token");
 }
 
+function redirectStateFromParams(value: string): string | null {
+  const params = new URLSearchParams(stripUrlParamPrefix(value));
+  return params.get("state");
+}
+
+function redirectErrorFromParams(value: string): string | null {
+  const params = new URLSearchParams(stripUrlParamPrefix(value));
+  return params.get("error");
+}
+
+function redirectErrorDescriptionFromParams(value: string): string | null {
+  const params = new URLSearchParams(stripUrlParamPrefix(value));
+  return params.get("error_description");
+}
+
 function redirectHasTokenParam(value: string): boolean {
   const params = new URLSearchParams(stripUrlParamPrefix(value));
-  return params.has("id_token") || params.has("jwt");
+  return params.has("id_token") || params.has("jwt") || params.has("error");
 }
 
 function scrubRedirectTokenUrl(): string {
   const searchParams = new URLSearchParams(globalThis.location.search);
   searchParams.delete("id_token");
   searchParams.delete("jwt");
+  searchParams.delete("error");
+  searchParams.delete("error_description");
+  searchParams.delete("state");
 
   let nextUrl = callbackReturnPath(globalThis.location.pathname);
   const search = searchParams.toString();
@@ -752,11 +1001,14 @@ function scrubRedirectTokenUrl(): string {
     return nextUrl;
   }
   const hashParams = new URLSearchParams(hash);
-  if (!hashParams.has("id_token") && !hashParams.has("jwt")) {
+  if (!hashParams.has("id_token") && !hashParams.has("jwt") && !hashParams.has("error")) {
     return `${nextUrl}${globalThis.location.hash}`;
   }
   hashParams.delete("id_token");
   hashParams.delete("jwt");
+  hashParams.delete("error");
+  hashParams.delete("error_description");
+  hashParams.delete("state");
   const cleanHash = hashParams.toString();
   return cleanHash.length === 0 ? nextUrl : `${nextUrl}#${cleanHash}`;
 }
@@ -781,6 +1033,61 @@ function callbackReturnPath(pathname: string): string {
     return pathname.slice(0, -"/callback".length) || "/";
   }
   return pathname;
+}
+
+function createOAuthState(): string {
+  const payload = JSON.stringify({
+    v: 1,
+    targetOrigin: globalThis.location.origin,
+    token: randomHex(16),
+  });
+  return base64UrlEncode(payload);
+}
+
+function oauthStateTargetOrigin(state: string | null): string {
+  if (state === null) {
+    return globalThis.location.origin;
+  }
+  const parsed = parseOAuthState(state);
+  return parsed?.targetOrigin ?? globalThis.location.origin;
+}
+
+function parseOAuthState(state: string): { targetOrigin: string } | null {
+  try {
+    const parsed: unknown = JSON.parse(base64UrlDecode(state));
+    if (!isRecord(parsed) || parsed.v !== 1 || typeof parsed.targetOrigin !== "string") {
+      return null;
+    }
+    return { targetOrigin: new URL(parsed.targetOrigin).origin };
+  } catch {
+    return null;
+  }
+}
+
+function callbackOriginFromRedirectUri(redirectUri: string): string {
+  const trimmed = redirectUri.trim();
+  if (trimmed.length === 0) {
+    throw new Error("Callback URL is required.");
+  }
+  return new URL(trimmed, globalThis.location.href).origin;
+}
+
+function randomHex(byteLength: number): string {
+  const bytes = new Uint8Array(byteLength);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function base64UrlEncode(value: string): string {
+  return globalThis.btoa(value)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function base64UrlDecode(value: string): string {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+  return globalThis.atob(padded);
 }
 
 function writePendingEnokiLogin(value: PendingEnokiLogin): void {
@@ -825,6 +1132,25 @@ function isPendingEnokiLogin(value: unknown): value is PendingEnokiLogin {
     typeof value.nonce === "string" &&
     typeof value.maxEpoch === "string" &&
     typeof value.randomness === "string";
+}
+
+function parseOAuthCallbackMessage(value: unknown): OAuthCallbackMessage | null {
+  if (!isRecord(value) || value.type !== OAUTH_CALLBACK_MESSAGE_TYPE) {
+    return null;
+  }
+  const state = typeof value.state === "string" ? value.state : null;
+  if (typeof value.idToken === "string") {
+    return { type: OAUTH_CALLBACK_MESSAGE_TYPE, state, idToken: value.idToken };
+  }
+  if (typeof value.error === "string") {
+    return {
+      type: OAUTH_CALLBACK_MESSAGE_TYPE,
+      state,
+      error: value.error,
+      ...(typeof value.errorDescription === "string" ? { errorDescription: value.errorDescription } : {}),
+    };
+  }
+  return { type: OAUTH_CALLBACK_MESSAGE_TYPE, state };
 }
 
 function deriveZkLoginPublicKey(address: string, inputs: ZkLoginSignatureInputsDto): string {

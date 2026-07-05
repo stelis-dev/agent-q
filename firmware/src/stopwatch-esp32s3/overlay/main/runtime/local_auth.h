@@ -41,7 +41,6 @@ bool local_auth_store_new_code(const char* code, size_t length);
 LocalAuthVerifyResult local_auth_verify_code(const char* code, size_t length, uint64_t now_ms);
 LocalAuthSnapshot local_auth_snapshot(uint64_t now_ms);
 bool local_auth_clear();
-void wipe_sensitive_buffer(void* data, size_t size);
 
 #ifdef STOPWATCH_LOCAL_AUTH_HOST_TEST
 void local_auth_test_reset_store();

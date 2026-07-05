@@ -23,7 +23,9 @@ for required in \
   "${RUNTIME_DIR}/local_auth.cpp" \
   "${RUNTIME_DIR}/local_auth.h" \
   "${RUNTIME_DIR}/local_auth_setup_state.cpp" \
-  "${RUNTIME_DIR}/local_auth_setup_state.h"; do
+  "${RUNTIME_DIR}/local_auth_setup_state.h" \
+  "${RUNTIME_DIR}/sensitive_memory.cpp" \
+  "${RUNTIME_DIR}/sensitive_memory.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
@@ -88,6 +90,7 @@ CPP
   "${TMP_DIR}/test.cpp" \
   "${RUNTIME_DIR}/local_auth.cpp" \
   "${RUNTIME_DIR}/local_auth_setup_state.cpp" \
+  "${RUNTIME_DIR}/sensitive_memory.cpp" \
   -o "${TMP_DIR}/test_local_auth_setup_state"
 
 "${TMP_DIR}/test_local_auth_setup_state"

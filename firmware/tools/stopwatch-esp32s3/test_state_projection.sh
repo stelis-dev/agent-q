@@ -63,35 +63,102 @@ int main()
     using namespace stopwatch_target;
 
     expect_text(
-        stopwatch_device_state(StateProjectionInput{LocalAuthProjectionStatus::missing, false, false}),
+        stopwatch_device_state(StateProjectionInput{
+            LocalAuthProjectionStatus::missing,
+            CredentialProjectionStatus::missing,
+            false,
+            false,
+        }),
         "idle",
         "first-run setup waits as idle");
     expect_text(
-        stopwatch_provisioning_state(LocalAuthProjectionStatus::missing),
+        stopwatch_provisioning_state(StateProjectionInput{
+            LocalAuthProjectionStatus::missing,
+            CredentialProjectionStatus::missing,
+            false,
+            false,
+        }),
         "unprovisioned",
         "missing local auth is externally unprovisioned");
     expect_text(
-        stopwatch_device_state(StateProjectionInput{LocalAuthProjectionStatus::active, false, false}),
+        stopwatch_device_state(StateProjectionInput{
+            LocalAuthProjectionStatus::active,
+            CredentialProjectionStatus::missing,
+            false,
+            false,
+        }),
         "locked",
         "configured auth without volatile unlock is locked");
     expect_text(
-        stopwatch_device_state(StateProjectionInput{LocalAuthProjectionStatus::active, true, false}),
+        stopwatch_device_state(StateProjectionInput{
+            LocalAuthProjectionStatus::active,
+            CredentialProjectionStatus::missing,
+            true,
+            false,
+        }),
         "idle",
         "configured auth with volatile unlock and no pending work is idle");
     expect_text(
-        stopwatch_device_state(StateProjectionInput{LocalAuthProjectionStatus::locked, true, true}),
+        stopwatch_device_state(StateProjectionInput{
+            LocalAuthProjectionStatus::locked,
+            CredentialProjectionStatus::active,
+            true,
+            true,
+        }),
         "locked",
         "time lock has priority over busy UI");
     expect_text(
-        stopwatch_device_state(StateProjectionInput{LocalAuthProjectionStatus::active, true, true}),
+        stopwatch_provisioning_state(StateProjectionInput{
+            LocalAuthProjectionStatus::locked,
+            CredentialProjectionStatus::active,
+            false,
+            false,
+        }),
+        "provisioned",
+        "active proof remains externally provisioned while locked");
+    expect_text(
+        stopwatch_device_state(StateProjectionInput{
+            LocalAuthProjectionStatus::active,
+            CredentialProjectionStatus::missing,
+            true,
+            true,
+        }),
         "busy",
         "explicit processing projects busy");
     expect_text(
-        stopwatch_device_state(StateProjectionInput{LocalAuthProjectionStatus::invalid, true, true}),
+        stopwatch_device_state(StateProjectionInput{
+            LocalAuthProjectionStatus::active,
+            CredentialProjectionStatus::storage_error,
+            true,
+            false,
+        }),
+        "error",
+        "credential storage error projects device error");
+    expect_text(
+        stopwatch_provisioning_state(StateProjectionInput{
+            LocalAuthProjectionStatus::active,
+            CredentialProjectionStatus::invalid,
+            true,
+            false,
+        }),
+        "error",
+        "credential invalid record projects provisioning error");
+    expect_text(
+        stopwatch_device_state(StateProjectionInput{
+            LocalAuthProjectionStatus::invalid,
+            CredentialProjectionStatus::missing,
+            true,
+            true,
+        }),
         "error",
         "invalid local auth record projects error");
     expect_text(
-        stopwatch_provisioning_state(LocalAuthProjectionStatus::storage_error),
+        stopwatch_provisioning_state(StateProjectionInput{
+            LocalAuthProjectionStatus::storage_error,
+            CredentialProjectionStatus::missing,
+            true,
+            false,
+        }),
         "error",
         "storage error projects provisioning error");
     if (failures != 0) {

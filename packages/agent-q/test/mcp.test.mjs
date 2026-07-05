@@ -1448,20 +1448,18 @@ test("sign_transaction malformed authorization/status pair cannot leak out as a 
   }, malformedCore);
 });
 
-test("get_accounts unreachable shape (live with no accounts) cannot leak out as a success", async () => {
-  const malformedCore = {
+test("get_accounts accepts live bootstrap sessions with no active accounts", async () => {
+  const setupCore = {
     ...noOpCore,
     async getAccounts() {
-      // The current target has exactly one Sui account; an empty live result is
-      // as unreachable as a missing accounts field.
       return { source: "live", deviceId: "device-1", accounts: [] };
     },
   };
   await withConnectedClient(async (client) => {
     const result = await client.callTool({ name: "get_accounts", arguments: {} });
-    assert.equal(result.isError, true);
-    assert.equal(result.structuredContent.error.code, "internal_output_error");
-  }, malformedCore);
+    assert.equal(result.isError, false);
+    assert.deepEqual(result.structuredContent.accounts, []);
+  }, setupCore);
 });
 
 test("get_accounts rejects a public key that does not match the Sui address", async () => {

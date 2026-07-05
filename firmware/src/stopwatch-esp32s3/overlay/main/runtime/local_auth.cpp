@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "sensitive_memory.h"
+
 #ifdef STOPWATCH_LOCAL_AUTH_HOST_TEST
 #include <vector>
 #else
@@ -427,15 +429,6 @@ bool reanchor_persistent_lock(uint64_t now_ms)
 }
 
 }  // namespace
-
-void wipe_sensitive_buffer(void* data, size_t size)
-{
-    volatile uint8_t* cursor = static_cast<volatile uint8_t*>(data);
-    while (cursor != nullptr && size > 0) {
-        *cursor++ = 0;
-        --size;
-    }
-}
 
 void local_auth_init(uint64_t now_ms)
 {

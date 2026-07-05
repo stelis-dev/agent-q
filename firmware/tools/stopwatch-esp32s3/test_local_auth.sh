@@ -22,7 +22,9 @@ RUNTIME_DIR="${REPO_ROOT}/firmware/src/stopwatch-esp32s3/overlay/main/runtime"
 
 for required in \
   "${RUNTIME_DIR}/local_auth.cpp" \
-  "${RUNTIME_DIR}/local_auth.h"; do
+  "${RUNTIME_DIR}/local_auth.h" \
+  "${RUNTIME_DIR}/sensitive_memory.cpp" \
+  "${RUNTIME_DIR}/sensitive_memory.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
@@ -175,6 +177,7 @@ CPP
   -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
   "${RUNTIME_DIR}/local_auth.cpp" \
+  "${RUNTIME_DIR}/sensitive_memory.cpp" \
   -o "${TMP_DIR}/test_local_auth"
 
 "${TMP_DIR}/test_local_auth"

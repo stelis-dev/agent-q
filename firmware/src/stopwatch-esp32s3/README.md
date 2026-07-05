@@ -3,17 +3,27 @@
 This directory contains the StopWatch ESP32-S3 hardware-specific Firmware
 source overlay.
 
-Current status: the target implements the local-authentication base slice:
+Current status: the target implements the local-authentication base slice and
+the Sui zkLogin proof-bootstrap slice:
 
 - USB Serial/JTAG newline-delimited JSON transport;
 - `get_status` with shared status projection for first-run setup,
-  local-authentication lock, blank idle, and local-authentication error states;
+  local-authentication lock, neutral idle, active zkLogin proof, and error
+  states;
 - rotary telephone-style touch passcode setup and unlock with the current
   four-slot layout and a visible rotating digit ring on the round display;
 - persistent local-authentication verifier with persistent failed-attempt count
   and time lock;
-- blank idle after successful local authentication;
-- shared failure responses for methods that are unavailable in this base slice;
+- neutral idle with a centered `IDLE` label after successful local
+  authentication;
+- USB `connect` approval, Firmware sessions, same-link session recovery,
+  `disconnect`, `get_capabilities`, and `get_accounts`;
+- `credential_prepare`, `payload_transfer`, and `credential_propose` for
+  installing a Sui zkLogin proof after device-local review and local
+  authentication;
+- device-local active proof clear from the idle screen;
+- shared failure responses for methods that are unavailable in this target
+  state or slice;
 - local display, touch, physical button, and vibration feedback used by this
   slice;
 - target-local power-button behavior: while USB power is present, short press
@@ -21,10 +31,10 @@ Current status: the target implements the local-authentication base slice:
   remains the StopWatch PMIC power-on/reset behavior; hardware double-click
   power-off remains PMIC-owned.
 
-The target does not implement USB connect approval, protocol sessions,
-`disconnect` session cleanup, `get_capabilities`, `get_accounts`, zkLogin proof
-storage, proof proposal review, signing, policy, approval history, retained
-responses, payload transfer, or persistent signing material.
+The target does not implement transaction signing, personal-message signing,
+policy storage or policy update review, approval history, retained responses,
+Bluetooth, QR, camera, pairing, host-triggered proof clear, or a mnemonic/native
+root-material wallet path.
 
 Target-specific behavior and capability status live in `SPEC.md`.
 
@@ -92,9 +102,13 @@ app-owned product state transition.
 ## Boundary
 
 This target keeps display, touch, buttons, vibration, power behavior, USB
-transport, and hardware glue target-local. Protocol method and error rows are
-shared through `firmware/src/common/protocol/device_contract.{h,cpp}`.
-Protocol version, request-id validation, JSON input helpers, and USB request
-line framing are also shared through `firmware/src/common/protocol/`. Further
-common extraction is allowed only after two completed target slices prove the
-same source contract and owner boundary.
+transport, credential storage, proposal state, and hardware glue target-local.
+Protocol method and error rows are shared through
+`firmware/src/common/protocol/device_contract.{h,cpp}`. Protocol version,
+request-id validation, JSON input helpers, USB request line framing, session id
+grammar, payload-transfer protocol primitives, and Sui zkLogin credential DTO
+validation are shared through `firmware/src/common/` because they are product
+protocol invariants, not StopWatch-specific hardware behavior. Further common
+extraction is allowed only when it preserves a tested current product invariant
+or after completed target slices prove the same source contract and owner
+boundary.
