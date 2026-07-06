@@ -3,8 +3,8 @@
 #include <stddef.h>
 
 #include "protocol/request_id.h"
-#include "sign_request_identity.h"
-#include "session.h"
+#include "protocol/session_id.h"
+#include "protocol/sign_request_identity.h"
 
 namespace signing {
 

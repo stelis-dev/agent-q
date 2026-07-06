@@ -1,13 +1,29 @@
-#include "signing_response_store.h"
+#include "protocol/signing_response_store.h"
 
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 
-#include "protocol_input_copy.h"
-
 namespace signing {
 namespace {
+
+bool copy_nonempty_c_string(const char* input, char* output, size_t output_size)
+{
+    if (input == nullptr || input[0] == '\0' || output == nullptr || output_size == 0) {
+        return false;
+    }
+    size_t index = 0;
+    while (input[index] != '\0' && index + 1 < output_size) {
+        output[index] = input[index];
+        ++index;
+    }
+    if (input[index] != '\0') {
+        output[0] = '\0';
+        return false;
+    }
+    output[index] = '\0';
+    return true;
+}
 
 struct ResponseEntry {
     bool active = false;

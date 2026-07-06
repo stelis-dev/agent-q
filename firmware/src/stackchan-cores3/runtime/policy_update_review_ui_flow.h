@@ -5,7 +5,7 @@
 #include "drawing_surface.h"
 #include "local_pin_auth.h"
 #include "modal_drawing.h"
-#include "policy_update_flow.h"
+#include "policy/policy_update_flow.h"
 #include "transport/timeout_window.h"
 #include "freertos/FreeRTOS.h"
 

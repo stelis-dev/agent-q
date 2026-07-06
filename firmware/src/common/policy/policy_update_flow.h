@@ -5,9 +5,9 @@
 
 #include <ArduinoJson.h>
 
-#include "policy_update_marker.h"
+#include "policy/policy_update_marker.h"
 #include "protocol/request_id.h"
-#include "session.h"
+#include "protocol/session_id.h"
 #include "transport/timeout_window.h"
 #include "freertos/FreeRTOS.h"
 

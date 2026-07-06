@@ -46,9 +46,9 @@ for required in \
   "${COMMON_ROOT}/transport/payload_delivery_operation_kind.h" \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.h" \
-  "${RUNTIME_DIR}/payload_delivery_store.cpp" \
-  "${RUNTIME_DIR}/payload_delivery_store.h" \
-  "${RUNTIME_DIR}/approval_history.h" \
+  "${COMMON_ROOT}/transport/payload_delivery_store.cpp" \
+  "${COMMON_ROOT}/transport/payload_delivery_store.h" \
+  "${REPO_ROOT}/firmware/src/common/protocol/approval_history.h" \
   "${RUNTIME_DIR}/session.cpp" \
   "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
   "${RUNTIME_DIR}/usb_active_session_request_guard.h" \
@@ -58,7 +58,7 @@ for required in \
   "${RUNTIME_DIR}/usb_policy_propose_outcome_writer.h" \
   "${RUNTIME_DIR}/usb_operation_response_writer.h" \
   "${RUNTIME_DIR}/usb_response_writer.h" \
-  "${RUNTIME_DIR}/policy_update_flow.h" \
+  "${REPO_ROOT}/firmware/src/common/policy/policy_update_flow.h" \
   "${COMMON_ROOT}/transport/timeout_window.h" \
   "${COMMON_POLICY_DIR}/document.h"; do
   if [[ ! -f "${required}" ]]; then
@@ -92,9 +92,9 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "approval_history.h"
+#include "protocol/approval_history.h"
 #include "payload_delivery_admission.h"
-#include "payload_delivery_store.h"
+#include "transport/payload_delivery_store.h"
 #include "usb_policy_propose_handler.h"
 #include "usb_policy_propose_outcome_writer.h"
 #include "mbedtls/sha256.h"
@@ -380,6 +380,7 @@ void stage_finalized_payload()
         signing::PayloadDeliveryFinishInput{
             "session_abcdef",
             begin.transfer_id,
+            signing::approval_history_digest_payload,
         },
         &finish) == signing::PayloadDeliveryResult::ok);
 }
@@ -699,7 +700,7 @@ CPP
   -I"${MBEDTLS_INCLUDE_DIR}" \
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
-  -c "${RUNTIME_DIR}/payload_delivery_store.cpp" \
+  -c "${COMMON_ROOT}/transport/payload_delivery_store.cpp" \
   -o "${TMP_DIR}/payload_delivery_store.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \

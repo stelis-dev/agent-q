@@ -1,4 +1,4 @@
-#include "sign_request_identity.h"
+#include "protocol/sign_request_identity.h"
 
 #include <string.h>
 

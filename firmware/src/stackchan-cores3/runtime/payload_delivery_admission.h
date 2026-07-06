@@ -1,6 +1,6 @@
 #pragma once
 
-#include "payload_delivery_store.h"
+#include "transport/payload_delivery_store.h"
 #include "transport/payload_delivery_admission.h"
 
 namespace signing {

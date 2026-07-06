@@ -4,10 +4,11 @@
 
 #include "bip39.h"
 #include "root_material.h"
-#include "sign_personal_message_limits.h"
+#include "sui/signing_limits.h"
 #include "sui_key_derivation.h"
 #include "sui_zklogin_proof_store.h"
-#include "sui_zklogin_signature.h"
+#include "sui/personal_message_intent.h"
+#include "sui/zklogin_signature.h"
 
 extern "C" {
 #include "lib/monocypher/monocypher.h"
@@ -37,26 +38,6 @@ struct PersonalMessageSigningContext {
     uint8_t* signature_out;
     bool attempted;
 };
-
-size_t encode_uleb128_size(size_t value, uint8_t* output, size_t output_size)
-{
-    if (output == nullptr || output_size == 0) {
-        return 0;
-    }
-    size_t written = 0;
-    do {
-        if (written >= output_size) {
-            return 0;
-        }
-        uint8_t byte = static_cast<uint8_t>(value & 0x7fU);
-        value >>= 7U;
-        if (value != 0) {
-            byte |= 0x80U;
-        }
-        output[written++] = byte;
-    } while (value != 0);
-    return written;
-}
 
 bool sign_transaction_with_seed(
     const uint8_t private_seed[kSuiEd25519PrivateSeedBytes],
@@ -195,39 +176,6 @@ SuiSigningStatus build_zklogin_signature_for_active_identity(
 }
 
 }  // namespace
-
-bool build_sui_personal_message_intent_digest(
-    const uint8_t* message,
-    size_t message_size,
-    uint8_t digest_out[32])
-{
-    if (digest_out != nullptr) {
-        memset(digest_out, 0, 32);
-    }
-    if (message == nullptr || message_size == 0 ||
-        message_size > kSuiSignPersonalMessageMaxBytes ||
-        digest_out == nullptr) {
-        return false;
-    }
-
-    uint8_t length_prefix[4] = {};
-    const size_t length_prefix_size =
-        encode_uleb128_size(message_size, length_prefix, sizeof(length_prefix));
-    if (length_prefix_size == 0) {
-        return false;
-    }
-
-    crypto_blake2b_ctx ctx;
-    crypto_blake2b_init(&ctx, 32);
-    const uint8_t personal_message_intent[3] = {0x03, 0x00, 0x00};
-    crypto_blake2b_update(&ctx, personal_message_intent, sizeof(personal_message_intent));
-    crypto_blake2b_update(&ctx, length_prefix, length_prefix_size);
-    crypto_blake2b_update(&ctx, message, message_size);
-    crypto_blake2b_final(&ctx, digest_out);
-    wipe_sensitive_buffer(length_prefix, sizeof(length_prefix));
-    wipe_sensitive_buffer(&ctx, sizeof(ctx));
-    return true;
-}
 
 SuiSigningStatus sign_sui_ed25519_transaction_from_stored_root(
     const uint8_t* tx_bytes,

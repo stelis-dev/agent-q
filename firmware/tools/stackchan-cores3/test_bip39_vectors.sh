@@ -205,6 +205,7 @@ CXX_BIN="${CXX:-c++}"
 
 "${CXX_BIN}" -std=c++17 \
   -I"${TARGET_ROOT}/runtime" \
+  -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
   "${TMP_DIR}/bip39_vector_test.cpp" \

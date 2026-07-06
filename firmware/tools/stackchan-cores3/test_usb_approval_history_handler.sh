@@ -32,7 +32,8 @@ for required in \
   "${RUNTIME_DIR}/usb_operation_response_writer.h" \
   "${RUNTIME_DIR}/usb_response_writer.h" \
   "${COMMON_ROOT}/numeric/u64_decimal.h" \
-  "${RUNTIME_DIR}/approval_history.h"; do
+  "${REPO_ROOT}/firmware/src/common/protocol/approval_history_json_writer.cpp" \
+  "${REPO_ROOT}/firmware/src/common/protocol/approval_history.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -477,6 +478,7 @@ CPP
   "${TMP_DIR}/test.cpp" \
   "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
   "${RUNTIME_DIR}/usb_approval_history_handler.cpp" \
+  "${REPO_ROOT}/firmware/src/common/protocol/approval_history_json_writer.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

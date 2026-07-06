@@ -3,15 +3,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-namespace signing {
+#include "sui/personal_message_intent.h"
+#include "sui/zklogin_signature.h"
 
-constexpr size_t kSuiEd25519SignatureBytes = 97;
-constexpr size_t kSuiEd25519SignatureBase64Chars = 132;
-constexpr size_t kSuiZkLoginSignatureBcsMaxBytes = 2048;
-constexpr size_t kSuiZkLoginSignatureMaxBytes = 1 + kSuiZkLoginSignatureBcsMaxBytes;
-constexpr size_t kSuiSignatureEnvelopeMaxBytes = kSuiZkLoginSignatureMaxBytes;
-constexpr size_t kSuiSignatureEnvelopeBase64MaxChars =
-    ((kSuiSignatureEnvelopeMaxBytes + 2) / 3) * 4;
+namespace signing {
 
 enum class SuiSigningStatus {
     ok,
@@ -45,11 +40,6 @@ SuiSigningStatus sign_sui_personal_message_from_active_identity(
     size_t message_size,
     uint8_t signature_out[kSuiSignatureEnvelopeMaxBytes],
     size_t* signature_size_out);
-
-bool build_sui_personal_message_intent_digest(
-    const uint8_t* message,
-    size_t message_size,
-    uint8_t digest_out[32]);
 
 const char* sui_signing_status_to_string(SuiSigningStatus result);
 

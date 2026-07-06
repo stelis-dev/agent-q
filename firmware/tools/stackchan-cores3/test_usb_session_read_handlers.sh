@@ -28,6 +28,8 @@ for required in \
   "${COMMON_ROOT}/protocol/sign_route.h" \
   "${COMMON_ROOT}/policy/document.cpp" \
   "${COMMON_ROOT}/policy/document.h" \
+  "${COMMON_ROOT}/policy/policy_json_writer.cpp" \
+  "${COMMON_ROOT}/policy/policy_json_writer.h" \
   "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
   "${RUNTIME_DIR}/usb_active_session_request_guard.h" \
   "${RUNTIME_DIR}/usb_session_read_handlers.cpp" \
@@ -865,6 +867,7 @@ CPP
   "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
   "${RUNTIME_DIR}/usb_session_read_handlers.cpp" \
   "${COMMON_ROOT}/policy/document.cpp" \
+  "${COMMON_ROOT}/policy/policy_json_writer.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

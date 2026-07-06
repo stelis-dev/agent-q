@@ -32,14 +32,17 @@ fi
 MBEDTLS_ROOT="${IDF_PATH}/components/mbedtls/mbedtls"
 MBEDTLS_INCLUDE_DIR="${MBEDTLS_ROOT}/include"
 MBEDTLS_LIBRARY_DIR="${MBEDTLS_ROOT}/library"
+DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
+ARDUINOJSON_ROOT="${ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 if [[ ! -f "${MBEDTLS_INCLUDE_DIR}/mbedtls/sha256.h" || ! -f "${MBEDTLS_LIBRARY_DIR}/sha256.c" || ! -f "${MBEDTLS_LIBRARY_DIR}/platform_util.c" ]]; then
   echo "IDF_PATH does not expose the expected ESP-IDF mbedTLS sources: ${IDF_PATH}" >&2
   exit 1
 fi
 
 for required in \
-  "${TARGET_ROOT}/runtime/approval_history.cpp" \
-  "${TARGET_ROOT}/runtime/approval_history.h" \
+  "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
+  "${REPO_ROOT}/firmware/src/common/protocol/approval_history.cpp" \
+  "${REPO_ROOT}/firmware/src/common/protocol/approval_history.h" \
   "${COMMON_ROOT}/policy/document.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -107,7 +110,7 @@ cat >"${TMP_DIR}/approval_history_test.cpp" <<'CPP'
 
 #include <vector>
 
-#include "approval_history.h"
+#include "protocol/approval_history.h"
 #include "esp_err.h"
 #include "nvs.h"
 
@@ -667,11 +670,13 @@ CXX_BIN="${CXX:-c++}"
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
   -I"${TMP_DIR}" \
+  -I"${ARDUINOJSON_ROOT}" \
   -I"${TARGET_ROOT}/runtime" \
+  -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}/firmware_common" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
   "${TMP_DIR}/approval_history_test.cpp" \
-  "${TARGET_ROOT}/runtime/approval_history.cpp" \
+  "${REPO_ROOT}/firmware/src/common/protocol/approval_history.cpp" \
   "${TMP_DIR}/sha256.o" \
   "${TMP_DIR}/platform_util.o" \
   -o "${TMP_DIR}/approval_history_test"

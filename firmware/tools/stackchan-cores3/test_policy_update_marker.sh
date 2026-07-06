@@ -81,7 +81,7 @@ cat >"${TMP_DIR}/policy_update_marker_test.cpp" <<'CPP'
 
 #include <vector>
 
-#include "policy_update_marker.h"
+#include "policy/policy_update_marker.h"
 #include "esp_err.h"
 #include "nvs.h"
 
@@ -282,9 +282,10 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
   -I"${TMP_DIR}" \
-  -I"${TARGET_ROOT}/runtime" -I"${TMP_DIR}/firmware_common" \
+  -I"${TARGET_ROOT}/runtime" \
+  -I"${COMMON_ROOT}" -I"${TMP_DIR}/firmware_common" \
   "${TMP_DIR}/policy_update_marker_test.cpp" \
-  "${TARGET_ROOT}/runtime/policy_update_marker.cpp" \
+  "${REPO_ROOT}/firmware/src/common/policy/policy_update_marker.cpp" \
   -o "${TMP_DIR}/policy_update_marker_test"
 
 "${TMP_DIR}/policy_update_marker_test"

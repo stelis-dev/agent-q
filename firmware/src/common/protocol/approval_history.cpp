@@ -1,4 +1,4 @@
-#include "approval_history.h"
+#include "protocol/approval_history.h"
 
 #include <string.h>
 
@@ -6,7 +6,7 @@
 #include "esp_log.h"
 #include "mbedtls/sha256.h"
 #include "nvs.h"
-#include "persistent_storage_names.h"
+#include "protocol/persistent_storage_names.h"
 
 namespace signing {
 namespace {

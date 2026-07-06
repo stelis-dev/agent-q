@@ -20,12 +20,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
+COMMON_SUI_DIR="${COMMON_ROOT}/sui"
 CXX_BIN="${CXX:-c++}"
 
 for required in \
-  "${RUNTIME_DIR}/sui_zklogin_signature.cpp" \
-  "${RUNTIME_DIR}/sui_zklogin_signature.h" \
-  "${RUNTIME_DIR}/sui_zklogin_proof_store.h" \
+  "${COMMON_SUI_DIR}/zklogin_signature.cpp" \
+  "${COMMON_SUI_DIR}/zklogin_signature.h" \
+  "${COMMON_SUI_DIR}/zklogin_proof_record.h" \
+  "${COMMON_SUI_DIR}/signature_scheme.h" \
   "${COMMON_ROOT}/numeric/u64_decimal.h" \
   "${REPO_ROOT}/node_modules/@mysten/sui/src/zklogin/signature.ts"; do
   if [[ ! -f "${required}" ]]; then
@@ -73,7 +75,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "sui_zklogin_signature.h"
+#include "sui/zklogin_signature.h"
 
 namespace {
 
@@ -284,7 +286,7 @@ CPP
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
-  "${RUNTIME_DIR}/sui_zklogin_signature.cpp" \
+  "${COMMON_SUI_DIR}/zklogin_signature.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test" "${TMP_DIR}/expected.hex"

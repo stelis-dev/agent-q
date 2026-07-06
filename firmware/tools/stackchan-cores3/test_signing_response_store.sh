@@ -2,7 +2,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${SCRIPT_DIR}/../../src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 CXX_BIN="${CXX:-c++}"
@@ -12,7 +14,7 @@ cat >"${TMP_DIR}/signing_response_store_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "signing_response_store.h"
+#include "protocol/signing_response_store.h"
 #include "signing_retry_delivery.h"
 
 using namespace signing;
@@ -209,9 +211,9 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${RUNTIME_DIR}" \
-  -I"${RUNTIME_DIR}/../../common" \
+  -I"${COMMON_ROOT}" \
   "${TMP_DIR}/signing_response_store_test.cpp" \
-  "${RUNTIME_DIR}/signing_response_store.cpp" \
+  "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
   "${RUNTIME_DIR}/signing_retry_delivery.cpp" \
   -o "${TMP_DIR}/signing_response_store_test"
 

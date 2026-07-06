@@ -1,4 +1,4 @@
-#include "policy_store.h"
+#include "policy/policy_store.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -7,9 +7,10 @@
 #include "esp_log.h"
 #include "mbedtls/sha256.h"
 #include "nvs.h"
-#include "persistent_storage_names.h"
+#include "protocol/persistent_storage_names.h"
 
 #include "policy/document.h"
+#include "policy/policy_json_writer.h"
 
 namespace signing {
 namespace {
@@ -991,6 +992,20 @@ bool read_active_policy_document(StoredPolicyDocument* out)
     out->condition_count = g_policy_document->total_condition_count;
     out->document = &g_policy_runtime_view->document;
     return true;
+}
+
+bool policy_store_write_policy_json(JsonObject policy_json, const StoredPolicyDocument& policy)
+{
+    return write_current_policy_json(
+        policy_json,
+        policy.schema,
+        policy.policy_id,
+        policy.default_action,
+        policy.blockchain_count,
+        policy.network_count,
+        policy.policy_count,
+        policy.condition_count,
+        policy.document);
 }
 
 }  // namespace signing

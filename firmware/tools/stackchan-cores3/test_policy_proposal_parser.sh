@@ -29,8 +29,8 @@ ARDUINOJSON_ROOT="${ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${COMMON_ROOT}/numeric/u64_decimal.h" \
-  "${TARGET_ROOT}/runtime/policy_proposal_parser.cpp" \
-  "${TARGET_ROOT}/runtime/policy_proposal_parser.h" \
+  "${REPO_ROOT}/firmware/src/common/policy/policy_proposal_parser.cpp" \
+  "${REPO_ROOT}/firmware/src/common/policy/policy_proposal_parser.h" \
   "${COMMON_POLICY_DIR}/document.cpp" \
   "${COMMON_POLICY_DIR}/document.h" \
   "${COMMON_POLICY_DIR}/u64.h"; do
@@ -52,7 +52,7 @@ cat >"${TMP_DIR}/policy_proposal_parser_test.cpp" <<'CPP'
 
 #include <ArduinoJson.h>
 
-#include "policy_proposal_parser.h"
+#include "policy/policy_proposal_parser.h"
 #include "firmware_common/policy/document.h"
 
 namespace {
@@ -326,7 +326,7 @@ CPP
   -I"${COMMON_ROOT}" \
   -I"${ARDUINOJSON_ROOT}" \
   "${TMP_DIR}/policy_proposal_parser_test.cpp" \
-  "${TARGET_ROOT}/runtime/policy_proposal_parser.cpp" \
+  "${REPO_ROOT}/firmware/src/common/policy/policy_proposal_parser.cpp" \
   "${COMMON_POLICY_DIR}/document.cpp" \
   -o "${TMP_DIR}/policy_proposal_parser_test"
 

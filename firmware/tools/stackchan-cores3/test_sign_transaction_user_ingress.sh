@@ -34,6 +34,8 @@ for required in \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.h" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${COMMON_ROOT}/protocol/request_id.h" \
+  "${COMMON_ROOT}/sui/signing_payload.cpp" \
+  "${COMMON_ROOT}/sui/signing_payload.h" \
   "${RUNTIME_DIR}/session.cpp" \
   "${RUNTIME_DIR}/session.h" \
   "${RUNTIME_DIR}/sign_transaction_user_ingress.cpp" \
@@ -452,6 +454,7 @@ CPP
   -I"${RUNTIME_DIR}/../../common" \
   "${TMP_DIR}/sign_transaction_user_ingress_test.cpp" \
   "${COMMON_ROOT}/protocol/base64.cpp" \
+  "${COMMON_ROOT}/sui/signing_payload.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${RUNTIME_DIR}/session.cpp" \

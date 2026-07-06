@@ -1,8 +1,8 @@
 #pragma once
 
-#include "approval_history.h"
+#include "protocol/approval_history.h"
 #include "protocol/sign_route.h"
-#include "sign_transaction_limits.h"
+#include "sui/signing_limits.h"
 #include "sui_signing_preparation.h"
 #include "user_signing_limits.h"
 

@@ -1,8 +1,11 @@
 #pragma once
 
+#include <stddef.h>
 #include <string.h>
 
 namespace signing {
+
+constexpr size_t kSuiNetworkBufferSize = 9;  // "localnet" + NUL.
 
 inline bool sui_network_supported(const char* network)
 {

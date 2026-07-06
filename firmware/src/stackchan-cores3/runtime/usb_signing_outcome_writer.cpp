@@ -6,9 +6,9 @@
 #include <ArduinoJson.h>
 
 #include "protocol/protocol_constants.h"
-#include "sign_personal_message_limits.h"
-#include "signing_mode.h"
-#include "signing_response_store.h"
+#include "sui/signing_limits.h"
+#include "protocol/signing_mode.h"
+#include "protocol/signing_response_store.h"
 #include "sui_signing_service.h"
 #include "sui_zklogin_proof_store.h"
 #include "usb_response_writer.h"

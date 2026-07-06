@@ -3,10 +3,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "sui_signing_service.h"
-#include "sui_zklogin_proof_store.h"
+#include "sui/zklogin_proof_record.h"
 
 namespace signing {
+
+constexpr size_t kSuiEd25519SignatureBytes = 97;
+constexpr size_t kSuiEd25519SignatureBase64Chars = 132;
+constexpr size_t kSuiZkLoginSignatureBcsMaxBytes = 2048;
+constexpr size_t kSuiZkLoginSignatureMaxBytes = 1 + kSuiZkLoginSignatureBcsMaxBytes;
+constexpr size_t kSuiSignatureEnvelopeMaxBytes = kSuiZkLoginSignatureMaxBytes;
+constexpr size_t kSuiSignatureEnvelopeBase64MaxChars =
+    ((kSuiSignatureEnvelopeMaxBytes + 2) / 3) * 4;
 
 enum class SuiZkLoginSignatureBuildResult {
     ok,

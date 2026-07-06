@@ -5,7 +5,7 @@
 
 #include <ArduinoJson.h>
 
-#include "approval_history.h"
+#include "protocol/approval_history.h"
 #include "usb_operation_type.h"
 #include "usb_operation_response_writer.h"
 

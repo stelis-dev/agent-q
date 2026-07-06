@@ -24,6 +24,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 CXX_BIN="${CXX:-c++}"
+DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 require_pattern() {
   local file="$1"
@@ -49,21 +51,32 @@ require_pattern \
   "${RUNTIME_DIR}/usb_request_server.cpp" \
   "kNvsNamespace = signing::kDeviceIdentityNvsNamespace" \
   "protocol device id must use the stable device-identity namespace"
+if [[ ! -f "${ARDUINOJSON_ROOT}/ArduinoJson.h" ]]; then
+  echo "Missing required ArduinoJson source: ${ARDUINOJSON_ROOT}/ArduinoJson.h" >&2
+  echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
+  exit 1
+fi
 
 for mutable_file in \
   provisioning_state_store.cpp \
-  policy_store.cpp \
-  policy_update_marker.cpp \
-  signing_mode.cpp \
   human_approval_settings.cpp \
   sui_account_settings.cpp \
   sui_zklogin_proof_store.cpp \
-  approval_history.cpp \
   storage_maintenance.cpp; do
   require_pattern \
     "${RUNTIME_DIR}/${mutable_file}" \
     "kNvsNamespace = kMutableSettingsNvsNamespace" \
     "${mutable_file} must use the mutable settings namespace"
+done
+for common_mutable_file in \
+  policy/policy_store.cpp \
+  policy/policy_update_marker.cpp \
+  protocol/approval_history.cpp \
+  protocol/signing_mode.cpp; do
+  require_pattern \
+    "${COMMON_ROOT}/${common_mutable_file}" \
+    "kNvsNamespace = kMutableSettingsNvsNamespace" \
+    "${common_mutable_file} must use the mutable settings namespace"
 done
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-persistent-material.XXXXXX")"
@@ -1073,6 +1086,8 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
   -I"${TMP_DIR}" \
+  -I"${ARDUINOJSON_ROOT}" \
+  -I"${COMMON_ROOT}" \
   -I"${RUNTIME_DIR}" -I"${TMP_DIR}/firmware_common" \
   "${TMP_DIR}/persistent_material_test.cpp" \
   "${RUNTIME_DIR}/persistent_material.cpp" \

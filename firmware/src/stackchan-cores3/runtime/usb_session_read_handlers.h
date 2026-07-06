@@ -3,7 +3,7 @@
 #include <ArduinoJson.h>
 
 #include "policy/document.h"
-#include "signing_mode.h"
+#include "protocol/signing_mode.h"
 #include "sui_account_settings.h"
 #include "sui_zklogin_proof_store.h"
 #include "usb_operation_type.h"

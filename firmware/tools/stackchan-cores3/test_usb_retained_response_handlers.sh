@@ -30,8 +30,8 @@ for required in \
   "${RUNTIME_DIR}/usb_retained_response_handlers.h" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${COMMON_ROOT}/protocol/request_id.h" \
-  "${RUNTIME_DIR}/signing_response_store.cpp" \
-  "${RUNTIME_DIR}/signing_response_store.h" \
+  "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
+  "${COMMON_ROOT}/protocol/signing_response_store.h" \
   "${RUNTIME_DIR}/usb_operation_response_writer.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -51,7 +51,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "signing_response_store.h"
+#include "protocol/signing_response_store.h"
 #include "usb_retained_response_handlers.h"
 
 namespace {
@@ -400,7 +400,7 @@ CPP
   "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
   "${RUNTIME_DIR}/usb_retained_response_handlers.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
-  "${RUNTIME_DIR}/signing_response_store.cpp" \
+  "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

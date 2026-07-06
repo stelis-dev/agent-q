@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "policy_update_flow.h"
+#include "policy/policy_update_flow.h"
 #include "protocol_pin_approval.h"
 #include "sui_zklogin_proposal_flow.h"
 #include "user_signing_confirmation.h"

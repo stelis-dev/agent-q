@@ -3,10 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "approval_history.h"
-#include "sign_personal_message_limits.h"
+#include "protocol/approval_history.h"
+#include "sui/signing_limits.h"
 #include "protocol/sign_route.h"
-#include "sign_transaction_limits.h"
 #include "user_signing_limits.h"
 #include "sui_account.h"
 #include "sui/offline_policy_facts.h"

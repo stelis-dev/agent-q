@@ -8,7 +8,7 @@
 #include <memory>
 #include "protocol/sign_route.h"
 #include "avatar_overlay_drawing.h"
-#include "approval_history.h"
+#include "protocol/approval_history.h"
 #include "bip39.h"
 #include "bip39_wordlist.h"
 #include "connect_approval.h"
@@ -27,13 +27,14 @@
 #include "local_settings_touch_entry.h"
 #include "storage_maintenance.h"
 #include "modal_drawing.h"
-#include "persistent_storage_names.h"
+#include "protocol/persistent_storage_names.h"
 #include "persistent_material.h"
 #include "payload_delivery_admission.h"
-#include "payload_delivery_store.h"
-#include "policy_proposal_parser.h"
-#include "policy_store.h"
-#include "policy_update_flow.h"
+#include "transport/payload_delivery_resolution.h"
+#include "transport/payload_delivery_store.h"
+#include "policy/policy_proposal_parser.h"
+#include "policy/policy_store.h"
+#include "policy/policy_update_flow.h"
 #include "policy_update_review_ui_flow.h"
 #include "protocol/protocol_constants.h"
 #include "protocol_pin_approval.h"
@@ -53,7 +54,7 @@
 #include "user_signing_review_ui_flow.h"
 #include "user_signing_critical_section.h"
 #include "signing_route.h"
-#include "signing_mode.h"
+#include "protocol/signing_mode.h"
 #include "sui_account.h"
 #include "sui_account_settings.h"
 #include "sui_account_store.h"
@@ -91,7 +92,7 @@
 #include "signing_retry_delivery.h"
 #include "signing_retry_response.h"
 #include "signing_preflight.h"
-#include "signing_response_store.h"
+#include "protocol/signing_response_store.h"
 #include "transport/usb_session_grace.h"
 #include "usb_session_loss.h"
 #include "driver/usb_serial_jtag.h"
@@ -377,58 +378,6 @@ signing::TimeoutTick current_timeout_tick()
     return static_cast<signing::TimeoutTick>(xTaskGetTickCount());
 }
 
-bool payload_ref_wrapper(JsonDocument& request, const char** payload_ref)
-{
-    if (payload_ref != nullptr) {
-        *payload_ref = nullptr;
-    }
-    JsonObjectConst payload = request["payload"].as<JsonObjectConst>();
-    if (payload.isNull()) {
-        return false;
-    }
-    const char* const payload_ref_fields[] = {"payloadRef"};
-    if (!signing::json_object_fields_supported(payload, payload_ref_fields, 1)) {
-        return false;
-    }
-    const char* ref = nullptr;
-    if (!signing::json_value_c_string(payload["payloadRef"], &ref)) {
-        return false;
-    }
-    if (payload_ref != nullptr) {
-        *payload_ref = ref;
-    }
-    return true;
-}
-
-const char* payload_resolver_error_code(signing::PayloadDeliveryResult result)
-{
-    switch (result) {
-        case signing::PayloadDeliveryResult::invalid_session:
-            return "invalid_session";
-        case signing::PayloadDeliveryResult::payload_too_large:
-            return "payload_too_large";
-        case signing::PayloadDeliveryResult::allocation_failed:
-        case signing::PayloadDeliveryResult::digest_error:
-            return "internal_output_error";
-        case signing::PayloadDeliveryResult::invalid_argument:
-            return "invalid_params";
-        case signing::PayloadDeliveryResult::invalid_payload_ref:
-        case signing::PayloadDeliveryResult::invalid_state:
-        case signing::PayloadDeliveryResult::not_found:
-            return "payload_unavailable";
-        case signing::PayloadDeliveryResult::ok:
-        case signing::PayloadDeliveryResult::invalid_payload_digest:
-        case signing::PayloadDeliveryResult::invalid_transfer_id:
-        case signing::PayloadDeliveryResult::chunk_too_large:
-        case signing::PayloadDeliveryResult::offset_mismatch:
-        case signing::PayloadDeliveryResult::payload_overflow:
-        case signing::PayloadDeliveryResult::size_mismatch:
-        case signing::PayloadDeliveryResult::digest_mismatch:
-        default:
-            return "invalid_params";
-    }
-}
-
 void wipe_and_free_owned_payload(signing::PayloadDeliveryOwnedPayload& payload)
 {
     if (payload.bytes != nullptr) {
@@ -447,7 +396,7 @@ bool resolve_request_payload_ref(
     const signing::UsbOperationResponseWriter& writer)
 {
     const char* payload_ref = nullptr;
-    if (!payload_ref_wrapper(request, &payload_ref)) {
+    if (!signing::payload_delivery_payload_ref_wrapper(request, &payload_ref)) {
         return true;
     }
 
@@ -465,7 +414,7 @@ bool resolve_request_payload_ref(
             payload_ref,
             &owned_payload);
     if (take_result != signing::PayloadDeliveryResult::ok) {
-        writer.write_error(envelope.id, payload_resolver_error_code(take_result));
+        writer.write_error(envelope.id, signing::payload_delivery_resolve_error_code(take_result));
         return false;
     }
 

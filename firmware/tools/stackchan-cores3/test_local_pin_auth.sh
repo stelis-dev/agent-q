@@ -69,7 +69,7 @@ cat >"${TMP_DIR}/stubs.cpp" <<'CPP'
 #include "human_approval_settings.h"
 #include "local_auth_test.h"
 #include "local_auth_worker.h"
-#include "signing_mode.h"
+#include "protocol/signing_mode.h"
 #include "sui_account_settings.h"
 #include "freertos/FreeRTOS.h"
 

@@ -4,14 +4,14 @@
 #include <stdint.h>
 
 #include "sui/transaction_facts.h"
+#include "sui/signature_scheme.h"
+#include "sui/network.h"
 
 namespace signing {
 
-constexpr uint8_t kSuiSignatureSchemeFlagZkLogin = 0x05;
 constexpr size_t kSuiZkLoginPublicKeyMinBytes = 34;
 constexpr size_t kSuiZkLoginPublicKeyMaxBytes = 288;
 constexpr size_t kSuiZkLoginAddressBufferSize = kSuiAddressStringBufferSize;
-constexpr size_t kSuiNetworkBufferSize = 9;           // "localnet" + NUL.
 constexpr size_t kSuiZkLoginIssuerBufferSize = 513;   // 512 + NUL.
 constexpr size_t kSuiZkLoginAddressSeedBufferSize = 79;  // uint256 decimal + NUL.
 constexpr size_t kSuiZkLoginMaxEpochBufferSize = 21;     // uint64 decimal + NUL.

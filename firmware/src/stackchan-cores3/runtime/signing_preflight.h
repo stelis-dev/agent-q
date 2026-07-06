@@ -3,9 +3,9 @@
 #include <ArduinoJson.h>
 
 #include "sign_personal_message_user_ingress.h"
-#include "sign_request_identity.h"
+#include "protocol/sign_request_identity.h"
 #include "sign_transaction_user_ingress.h"
-#include "signing_mode.h"
+#include "protocol/signing_mode.h"
 #include "signing_retry_delivery.h"
 #include "sui_signing_preparation.h"
 #include "transport/timeout_window.h"

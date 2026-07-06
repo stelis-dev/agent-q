@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <ArduinoJson.h>
+
 #include "policy/document.h"
 
 namespace signing {
@@ -124,6 +126,7 @@ ApprovalHistoryReadResult approval_history_read_page(
     ApprovalHistoryPage* output);
 ApprovalHistoryStorageStatus approval_history_status();
 bool approval_history_wipe();
+bool approval_history_write_page_json(JsonObject result, const ApprovalHistoryPage& page);
 
 const char* approval_history_confirmation_kind_to_string(ApprovalHistoryConfirmationKind value);
 const char* approval_history_signing_record_kind_to_string(

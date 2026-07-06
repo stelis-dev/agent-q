@@ -2,10 +2,10 @@
 
 #include <string.h>
 
-#include "approval_history.h"
+#include "protocol/approval_history.h"
 #include "human_approval_settings.h"
-#include "policy_update_marker.h"
-#include "signing_mode.h"
+#include "policy/policy_update_marker.h"
+#include "protocol/signing_mode.h"
 #include "sui_account_settings.h"
 #include "sui_zklogin_proof_store.h"
 

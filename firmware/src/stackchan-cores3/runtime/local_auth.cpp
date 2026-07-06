@@ -7,7 +7,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "nvs.h"
-#include "persistent_storage_names.h"
+#include "protocol/persistent_storage_names.h"
 
 extern "C" {
 #include "lib/monocypher/monocypher.h"

@@ -3,10 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "approval_history.h"
-#include "sign_personal_message_limits.h"
-#include "sign_request_identity.h"
-#include "sign_transaction_limits.h"
+#include "protocol/approval_history.h"
+#include "sui/signing_limits.h"
+#include "protocol/sign_request_identity.h"
 #include "signing_route.h"
 #include "session.h"
 #include "transport/timeout_window.h"

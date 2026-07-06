@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <ArduinoJson.h>
+
 #include "policy/document.h"
 
 namespace signing {
@@ -54,5 +56,6 @@ PolicyStoreStatus active_policy_status();
 
 bool read_active_policy_summary(StoredPolicySummary* out);
 bool read_active_policy_document(StoredPolicyDocument* out);
+bool policy_store_write_policy_json(JsonObject policy_json, const StoredPolicyDocument& policy);
 
 }  // namespace signing

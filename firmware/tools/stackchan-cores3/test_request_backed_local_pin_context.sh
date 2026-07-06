@@ -49,7 +49,7 @@ cat >"${TMP_DIR}/request_backed_local_pin_context_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "policy_update_flow.h"
+#include "policy/policy_update_flow.h"
 #include "protocol_pin_approval.h"
 #include "request_backed_local_pin_context.h"
 #include "sui_zklogin_proposal_flow.h"

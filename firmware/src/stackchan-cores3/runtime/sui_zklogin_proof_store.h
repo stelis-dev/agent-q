@@ -8,7 +8,6 @@
 
 namespace signing {
 
-constexpr uint8_t kSuiSignatureSchemeFlagEd25519 = 0x00;
 constexpr size_t kSuiSchemePrefixedEd25519PublicKeyBytes =
     1 + kSuiEd25519PublicKeyBytes;
 

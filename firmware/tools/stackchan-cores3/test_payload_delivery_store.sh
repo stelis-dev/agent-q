@@ -52,8 +52,8 @@ for required in \
   "${COMMON_ROOT}/transport/payload_delivery_operation_kind.h" \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.h" \
-  "${TARGET_ROOT}/runtime/payload_delivery_store.cpp" \
-  "${TARGET_ROOT}/runtime/payload_delivery_store.h" \
+  "${COMMON_ROOT}/transport/payload_delivery_store.cpp" \
+  "${COMMON_ROOT}/transport/payload_delivery_store.h" \
   "${TARGET_ROOT}/runtime/payload_delivery_admission.cpp" \
   "${TARGET_ROOT}/runtime/payload_delivery_admission.h" \
   "${TARGET_ROOT}/runtime/usb_operation_manifest.cpp" \
@@ -65,7 +65,7 @@ for required in \
   "${USB_DISCONNECT_HANDLER_SOURCE}" \
   "${USB_REQUEST_SERVER_SOURCE}" \
   "${TARGET_ROOT}/runtime/session.cpp" \
-  "${TARGET_ROOT}/runtime/approval_history.h" \
+  "${REPO_ROOT}/firmware/src/common/protocol/approval_history.h" \
   "${USB_SUI_ZKLOGIN_CREDENTIAL_HANDLER_HEADER}" \
   "${COMMON_ROOT}/protocol/sign_route.h"; do
   if [[ ! -f "${required}" ]]; then
@@ -358,7 +358,7 @@ cat >"${TMP_DIR}/payload_delivery_store_test.cpp" <<'CPP'
 #include <vector>
 
 #include "payload_delivery_admission.h"
-#include "payload_delivery_store.h"
+#include "transport/payload_delivery_store.h"
 #include "mbedtls/sha256.h"
 
 namespace signing {
@@ -568,7 +568,7 @@ void test_successful_finalize_and_resolve()
 
     signing::PayloadDeliveryFinishOutput finish = {};
     expect(signing::payload_delivery_finish(0,
-               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id, signing::approval_history_digest_payload},
                &finish) == signing::PayloadDeliveryResult::ok,
            "finish succeeds");
     expect(finish.descriptor.size_bytes == payload.size(), "descriptor stores payload size");
@@ -608,7 +608,7 @@ void test_default_max_payload_round_trip()
 
     signing::PayloadDeliveryFinishOutput finish = {};
     expect(signing::payload_delivery_finish(0,
-               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id, signing::approval_history_digest_payload},
                &finish) == signing::PayloadDeliveryResult::ok,
            "default max payload finish succeeds");
     expect(finish.descriptor.size_bytes == payload.size(),
@@ -640,7 +640,7 @@ void test_take_finalized_transfers_ownership_and_clears_store()
 
     signing::PayloadDeliveryFinishOutput finish = {};
     expect(signing::payload_delivery_finish(0,
-               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id, signing::approval_history_digest_payload},
                &finish) == signing::PayloadDeliveryResult::ok,
            "finish before take succeeds");
 
@@ -796,7 +796,7 @@ void test_admission_matrix()
     append_all("session_abcdef", begin.transfer_id, payload, 5);
     signing::PayloadDeliveryFinishOutput finish = {};
     expect(signing::payload_delivery_finish(0,
-               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id, signing::approval_history_digest_payload},
                &finish) == signing::PayloadDeliveryResult::ok,
            "finish for admission test succeeds");
     expect(signing::payload_delivery_admit_operation(
@@ -877,6 +877,7 @@ void test_guards_and_cleanup()
                signing::PayloadDeliveryFinishInput{
                    "session_abcdef",
                    "transfer_0000000000000001",
+                   signing::approval_history_digest_payload,
                },
                &idle_finish) == signing::PayloadDeliveryResult::not_found,
            "finish without active transfer is not found");
@@ -1056,7 +1057,7 @@ void test_timeout_operation_boundaries()
     signing::PayloadDeliveryFinishOutput finish = {};
     expect(signing::payload_delivery_finish(
                50,
-               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id, signing::approval_history_digest_payload},
                &finish) == signing::PayloadDeliveryResult::not_found,
            "expired finish clears store before finalizing");
     expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
@@ -1068,7 +1069,7 @@ void test_timeout_operation_boundaries()
     append_all("session_abcdef", begin.transfer_id, payload, 8);
     expect(signing::payload_delivery_finish(
                0,
-               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id, signing::approval_history_digest_payload},
                &finish) == signing::PayloadDeliveryResult::ok,
            "finish before deadline succeeds");
     const std::string payload_ref = finish.descriptor.payload_ref;
@@ -1088,7 +1089,7 @@ void test_timeout_operation_boundaries()
     append_all("session_abcdef", begin.transfer_id, payload, 8);
     expect(signing::payload_delivery_finish(
                0,
-               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id, signing::approval_history_digest_payload},
                &finish) == signing::PayloadDeliveryResult::ok,
            "finish before expired take succeeds");
     const std::string take_payload_ref = finish.descriptor.payload_ref;
@@ -1109,7 +1110,7 @@ void test_timeout_operation_boundaries()
     append_all("session_abcdef", begin.transfer_id, payload, 8);
     expect(signing::payload_delivery_finish(
                0,
-               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id, signing::approval_history_digest_payload},
                &finish) == signing::PayloadDeliveryResult::ok,
            "finish before expired admission succeeds");
     const signing::PayloadDeliveryAdmissionDecision expired_admission =
@@ -1148,7 +1149,7 @@ void test_oversize_and_digest_mismatch()
     append_all("session_abcdef", begin.transfer_id, valid, 4);
     signing::PayloadDeliveryFinishOutput finish = {};
     expect(signing::payload_delivery_finish(0,
-               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id, signing::approval_history_digest_payload},
                &finish) == signing::PayloadDeliveryResult::digest_mismatch,
            "digest mismatch rejected at finish");
     expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
@@ -1179,7 +1180,7 @@ void test_size_mismatch_and_payload_overflow()
 
     signing::PayloadDeliveryFinishOutput finish = {};
     expect(signing::payload_delivery_finish(0,
-               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id, signing::approval_history_digest_payload},
                &finish) == signing::PayloadDeliveryResult::size_mismatch,
            "early finish returns size mismatch");
     expect(signing::payload_delivery_advance_and_snapshot(0).state == signing::PayloadDeliveryState::idle,
@@ -1248,7 +1249,7 @@ void test_abort_active_and_finalized()
     append_all("session_abcdef", begin.transfer_id, payload, 5);
     signing::PayloadDeliveryFinishOutput finish = {};
     expect(signing::payload_delivery_finish(0,
-               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id},
+               signing::PayloadDeliveryFinishInput{"session_abcdef", begin.transfer_id, signing::approval_history_digest_payload},
                &finish) == signing::PayloadDeliveryResult::ok,
            "finish for abort succeeds");
     expect(signing::payload_delivery_abort(0,
@@ -1324,7 +1325,7 @@ c++ -std=c++17 -Wall -Wextra -Werror \
   -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${TARGET_ROOT}/runtime/payload_delivery_store.cpp" \
+  -c "${COMMON_ROOT}/transport/payload_delivery_store.cpp" \
   -o "${TMP_DIR}/payload_delivery_store.o"
 
 c++ -std=c++17 -Wall -Wextra -Werror \

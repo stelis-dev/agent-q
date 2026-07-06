@@ -4,11 +4,10 @@
 
 #include "protocol_input_copy.h"
 
-#include "protocol/base64.h"
 #include "protocol/json_input.h"
 #include "protocol/protocol_constants.h"
 #include "protocol/request_id.h"
-#include "sui_network.h"
+#include "sui/signing_payload.h"
 
 namespace signing {
 namespace {
@@ -27,16 +26,26 @@ bool request_top_level_fields_supported(JsonObjectConst request)
     return true;
 }
 
-bool request_params_fields_supported(JsonObjectConst params)
+SignPersonalMessageUserValidationResult map_signing_payload_result(
+    SuiSigningPayloadParseResult result)
 {
-    for (JsonPairConst pair : params) {
-        if (!json_string_equals(pair.key(), "network") &&
-            !json_string_equals(pair.key(), "chain") &&
-            !json_string_equals(pair.key(), "message")) {
-            return false;
-        }
+    switch (result) {
+        case SuiSigningPayloadParseResult::ok:
+            return SignPersonalMessageUserValidationResult::ok;
+        case SuiSigningPayloadParseResult::unsupported_field:
+            return SignPersonalMessageUserValidationResult::unsupported_field;
+        case SuiSigningPayloadParseResult::unsupported_method:
+            return SignPersonalMessageUserValidationResult::unsupported_method;
+        case SuiSigningPayloadParseResult::invalid_network:
+            return SignPersonalMessageUserValidationResult::invalid_network;
+        case SuiSigningPayloadParseResult::payload_too_large:
+            return SignPersonalMessageUserValidationResult::message_too_large;
+        case SuiSigningPayloadParseResult::invalid_payload:
+            return SignPersonalMessageUserValidationResult::invalid_message;
+        case SuiSigningPayloadParseResult::invalid_argument:
+        default:
+            return SignPersonalMessageUserValidationResult::invalid_params_shape;
     }
-    return true;
 }
 
 }  // namespace
@@ -127,58 +136,19 @@ validate_sign_personal_message_user_params(
         return SignPersonalMessageUserValidationResult::invalid_params_shape;
     }
 
-    JsonObjectConst request_object = request.as<JsonObjectConst>();
-    if (request_object.isNull()) {
-        return SignPersonalMessageUserValidationResult::invalid_params_shape;
-    }
-
-    JsonVariantConst params_value = request_object["payload"];
-    JsonObjectConst params = params_value.as<JsonObjectConst>();
-    if (params.isNull()) {
+    SuiSigningPayload parsed = {};
+    const SuiSigningPayloadParseResult parse_result =
+        parse_sui_signing_payload(request, route, &parsed);
+    if (parse_result != SuiSigningPayloadParseResult::ok) {
         memset(output, 0, sizeof(*output));
-        return SignPersonalMessageUserValidationResult::invalid_params_shape;
+        return map_signing_payload_result(parse_result);
     }
-    if (!request_params_fields_supported(params)) {
-        memset(output, 0, sizeof(*output));
-        return SignPersonalMessageUserValidationResult::unsupported_field;
-    }
-
-    // Helper boundary assertion: USB preflight classifies the route first, but
-    // direct callers must still fail closed before method-parameter decoding.
-    if (route != SupportedSignRoute::sui_sign_personal_message) {
-        memset(output, 0, sizeof(*output));
-        return SignPersonalMessageUserValidationResult::unsupported_method;
-    }
-
-    const char* network = nullptr;
-    if (!json_value_c_string(params["network"], &network) ||
-        !copy_nonempty_c_string(network, output->network, sizeof(output->network)) ||
-        !sui_network_supported(output->network)) {
+    if (!copy_nonempty_c_string(parsed.network, output->network, sizeof(output->network))) {
         memset(output, 0, sizeof(*output));
         return SignPersonalMessageUserValidationResult::invalid_network;
     }
-
-    const char* message_base64 = nullptr;
-    if (!json_value_c_string(params["message"], &message_base64)) {
-        memset(output, 0, sizeof(*output));
-        return SignPersonalMessageUserValidationResult::invalid_message;
-    }
-    if (strlen(message_base64) > kSuiSignPersonalMessageMaxBase64Size) {
-        memset(output, 0, sizeof(*output));
-        return SignPersonalMessageUserValidationResult::message_too_large;
-    }
-    if (!validate_canonical_base64_syntax(
-            message_base64,
-            kSuiSignPersonalMessageMaxBase64Size,
-            &output->message_decoded_size)) {
-        memset(output, 0, sizeof(*output));
-        return SignPersonalMessageUserValidationResult::invalid_message;
-    }
-    if (output->message_decoded_size > kSuiSignPersonalMessageMaxBytes) {
-        memset(output, 0, sizeof(*output));
-        return SignPersonalMessageUserValidationResult::message_too_large;
-    }
-    output->message_base64 = message_base64;
+    output->message_base64 = parsed.payload_base64;
+    output->message_decoded_size = parsed.decoded_size;
 
     return SignPersonalMessageUserValidationResult::ok;
 }

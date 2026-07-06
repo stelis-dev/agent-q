@@ -29,8 +29,7 @@ for required in \
   "${RUNTIME_DIR}/usb_signing_handlers.h" \
   "${RUNTIME_DIR}/usb_operation_response_writer.h" \
   "${RUNTIME_DIR}/signing_preflight.h" \
-  "${RUNTIME_DIR}/sign_personal_message_limits.h" \
-  "${RUNTIME_DIR}/signing_response_store.h" \
+    "${COMMON_ROOT}/protocol/signing_response_store.h" \
   "${RUNTIME_DIR}/sui_signing_service.h" \
   "${RUNTIME_DIR}/policy_signing_execution.h" \
   "${COMMON_ROOT}/sui/transaction_facts.h"; do
@@ -67,8 +66,8 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 
 #include <string>
 
-#include "sign_personal_message_limits.h"
-#include "signing_response_store.h"
+#include "sui/signing_limits.h"
+#include "protocol/signing_response_store.h"
 #include "sui_signing_service.h"
 #include "usb_signing_handlers.h"
 

@@ -1,13 +1,13 @@
-#include "policy_update_flow.h"
+#include "policy/policy_update_flow.h"
 
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
-#include "approval_history.h"
-#include "policy_proposal_parser.h"
-#include "policy_store.h"
+#include "protocol/approval_history.h"
+#include "policy/policy_proposal_parser.h"
+#include "policy/policy_store.h"
 #include "policy/document.h"
 
 namespace signing {

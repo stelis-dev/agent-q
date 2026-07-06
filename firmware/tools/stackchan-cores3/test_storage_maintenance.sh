@@ -101,7 +101,7 @@ cat >"${TMP_DIR}/storage_maintenance_test.cpp" <<'CPP'
 #include "local_auth_test.h"
 #include "local_pin_auth.h"
 #include "storage_maintenance.h"
-#include "policy_store.h"
+#include "policy/policy_store.h"
 #include "esp_err.h"
 #include "nvs.h"
 

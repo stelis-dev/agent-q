@@ -3,8 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "approval_history.h"
-#include "bip39.h"
 #include "transport/timeout_window.h"
 
 namespace signing {
@@ -27,6 +25,15 @@ struct PayloadDeliveryStore {
 PayloadDeliveryStore g_store;
 uint64_t g_next_transfer_id = 1;
 uint64_t g_next_payload_ref = 1;
+
+void wipe_bytes(void* data, size_t size)
+{
+    volatile uint8_t* cursor = static_cast<volatile uint8_t*>(data);
+    while (cursor != nullptr && size > 0) {
+        *cursor++ = 0;
+        --size;
+    }
+}
 
 bool string_equal(const char* left, const char* right)
 {
@@ -53,7 +60,7 @@ bool copy_nonempty_string(const char* input, char* output, size_t output_size)
 void wipe_and_free_buffer()
 {
     if (g_store.buffer != nullptr) {
-        wipe_sensitive_buffer(g_store.buffer, g_store.declared_size_bytes);
+        wipe_bytes(g_store.buffer, g_store.declared_size_bytes);
         free(g_store.buffer);
         g_store.buffer = nullptr;
     }
@@ -343,7 +350,11 @@ PayloadDeliveryResult payload_delivery_finish(
     }
 
     char actual_digest[kPayloadDeliveryDigestSize] = {};
-    if (!approval_history_digest_payload(
+    if (input.digest_payload == nullptr) {
+        clear_store();
+        return PayloadDeliveryResult::invalid_argument;
+    }
+    if (!input.digest_payload(
             g_store.buffer,
             g_store.declared_size_bytes,
             actual_digest,

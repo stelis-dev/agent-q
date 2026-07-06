@@ -25,7 +25,7 @@ COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 for required in \
   "${RUNTIME_DIR}/sign_transaction_policy_runtime.cpp" \
   "${RUNTIME_DIR}/sign_transaction_policy_runtime.h" \
-  "${RUNTIME_DIR}/policy_store.h" \
+  "${REPO_ROOT}/firmware/src/common/policy/policy_store.h" \
   "${COMMON_ROOT}/protocol/sign_route.h" \
   "${COMMON_ROOT}/policy/document.h" \
   "${COMMON_ROOT}/policy/evaluator.h" \
@@ -62,7 +62,7 @@ cat >"${TMP_DIR}/sign_transaction_policy_runtime_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "policy_store.h"
+#include "policy/policy_store.h"
 #include "sign_transaction_policy_runtime.h"
 #include "firmware_common/policy/evaluator.h"
 #include "firmware_common/sui/offline_policy_facts.h"

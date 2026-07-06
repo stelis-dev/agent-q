@@ -24,6 +24,7 @@ DEFAULT_RUNTIME_DIR="${REPO_ROOT}/.firmware-cache/signing-crypto/microsui-lib"
 CRYPTO_ROOT="${SIGNING_CRYPTO_ROOT:-${DEFAULT_RUNTIME_DIR}}"
 MICROSUI_CORE="${CRYPTO_ROOT}/src/microsui_core"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 FIXTURE_DIR="${REPO_ROOT}/firmware/src/common/sui/testdata/sui_transaction_facts"
 
 for required in \
@@ -32,6 +33,7 @@ for required in \
   "${MICROSUI_CORE}/key_management.c" \
   "${MICROSUI_CORE}/sign.c" \
   "${FIXTURE_DIR}/valid_sui_transfer_tx.bcs.hex" \
+  "${COMMON_ROOT}/sui/personal_message_intent.cpp" \
   "${RUNTIME_DIR}/sui_key_derivation.cpp" \
   "${RUNTIME_DIR}/sui_signing_service.cpp"; do
   if [[ ! -f "${required}" ]]; then
@@ -57,7 +59,7 @@ cat >"${TMP_DIR}/sui_signing_service_test.cpp" <<'CPP'
 #include "root_material.h"
 #include "sui_signing_service.h"
 #include "sui_zklogin_proof_store.h"
-#include "sui_zklogin_signature.h"
+#include "sui/zklogin_signature.h"
 
 extern "C" {
 #include "byte_conversions.h"
@@ -390,11 +392,14 @@ CPP
   -c "${RUNTIME_DIR}/sui_key_derivation.cpp" -o "${TMP_DIR}/sui_key_derivation.o"
 "${CXX_BIN}" -std=c++17 \
   -I"${REPO_ROOT}/firmware/src/stackchan-cores3/components/signing_crypto" \
-  -I"${MICROSUI_CORE}" -I"${RUNTIME_DIR}" \
+  -I"${MICROSUI_CORE}" -I"${RUNTIME_DIR}" -I"${REPO_ROOT}/firmware/src/common" \
   -c "${RUNTIME_DIR}/sui_signing_service.cpp" -o "${TMP_DIR}/sui_signing_service.o"
 "${CXX_BIN}" -std=c++17 \
+  -I"${MICROSUI_CORE}" -I"${COMMON_ROOT}" \
+  -c "${COMMON_ROOT}/sui/personal_message_intent.cpp" -o "${TMP_DIR}/personal_message_intent.o"
+"${CXX_BIN}" -std=c++17 \
   -I"${REPO_ROOT}/firmware/src/stackchan-cores3/components/signing_crypto" \
-  -I"${MICROSUI_CORE}" -I"${RUNTIME_DIR}" \
+  -I"${MICROSUI_CORE}" -I"${RUNTIME_DIR}" -I"${REPO_ROOT}/firmware/src/common" \
   -c "${TMP_DIR}/sui_signing_service_test.cpp" -o "${TMP_DIR}/sui_signing_service_test.o"
 
 "${CXX_BIN}" \
@@ -402,6 +407,7 @@ CPP
   "${TMP_DIR}/byte_conversions.o" \
   "${TMP_DIR}/key_management.o" \
   "${TMP_DIR}/sign.o" \
+  "${TMP_DIR}/personal_message_intent.o" \
   "${TMP_DIR}/sui_key_derivation.o" \
   "${TMP_DIR}/sui_signing_service.o" \
   "${TMP_DIR}/sui_signing_service_test.o" \

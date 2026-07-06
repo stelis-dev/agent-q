@@ -5,10 +5,11 @@
 #include <string.h>
 
 #include "protocol/base64.h"
+#include "protocol/approval_history.h"
 #include "bip39.h"
 #include "protocol/json_input.h"
 #include "payload_delivery_admission.h"
-#include "payload_delivery_store.h"
+#include "transport/payload_delivery_store.h"
 #include "protocol/protocol_constants.h"
 #include "numeric/u64_decimal.h"
 #include "usb_active_session_request_guard.h"
@@ -414,7 +415,7 @@ void handle_usb_payload_transfer_finish_request(
     PayloadDeliveryFinishOutput output = {};
     const PayloadDeliveryResult result = payload_delivery_finish(
         now_tick,
-        PayloadDeliveryFinishInput{session_id, transfer_id},
+        PayloadDeliveryFinishInput{session_id, transfer_id, approval_history_digest_payload},
         &output);
     if (result != PayloadDeliveryResult::ok) {
         write_store_error(id, writer, result);

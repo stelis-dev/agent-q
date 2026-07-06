@@ -37,8 +37,8 @@ fi
 
 for required in \
   "${VECTOR_FILE}" \
-  "${RUNTIME_DIR}/sign_request_identity.cpp" \
-  "${RUNTIME_DIR}/sign_request_identity.h" \
+  "${COMMON_ROOT}/protocol/sign_request_identity.cpp" \
+  "${COMMON_ROOT}/protocol/sign_request_identity.h" \
   "${COMMON_ROOT}/protocol/sign_route.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -62,7 +62,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <string>
 #include <vector>
 
-#include "sign_request_identity.h"
+#include "protocol/sign_request_identity.h"
 #include "protocol/sign_route.h"
 
 namespace {
@@ -243,7 +243,7 @@ CPP
   -I"${COMMON_ROOT}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${RUNTIME_DIR}/sign_request_identity.cpp" \
+  "${COMMON_ROOT}/protocol/sign_request_identity.cpp" \
   "${TMP_DIR}/sha256.o" \
   "${TMP_DIR}/platform_util.o" \
   -o "${TMP_DIR}/test"

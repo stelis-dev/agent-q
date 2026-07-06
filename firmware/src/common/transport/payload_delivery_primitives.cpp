@@ -1,5 +1,6 @@
 #include "transport/payload_delivery_primitives.h"
 
+#include <stdio.h>
 #include <string.h>
 
 namespace signing {

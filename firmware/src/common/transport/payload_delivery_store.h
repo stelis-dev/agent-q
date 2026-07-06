@@ -3,10 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "session.h"
+#include "protocol/session_id.h"
 #include "transport/timeout_window.h"
 #include "transport/payload_delivery_primitives.h"
-#include "user_signing_limits.h"
 
 namespace signing {
 
@@ -20,6 +19,9 @@ struct PayloadDeliveryLimits {
     size_t chunk_max_bytes;
     size_t payload_max_bytes;
 };
+
+using PayloadDeliveryDigestFn =
+    bool (*)(const uint8_t* payload, size_t payload_size, char* output, size_t output_size);
 
 struct PayloadDeliveryBeginInput {
     const char* session_id;
@@ -46,6 +48,7 @@ struct PayloadDeliveryChunkInput {
 struct PayloadDeliveryFinishInput {
     const char* session_id;
     const char* transfer_id;
+    PayloadDeliveryDigestFn digest_payload;
 };
 
 struct PayloadDeliveryAbortInput {

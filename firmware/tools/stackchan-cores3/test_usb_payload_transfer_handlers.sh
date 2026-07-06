@@ -49,8 +49,8 @@ for required in \
   "${COMMON_ROOT}/transport/payload_delivery_operation_kind.h" \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.h" \
-  "${RUNTIME_DIR}/payload_delivery_store.cpp" \
-  "${RUNTIME_DIR}/payload_delivery_store.h" \
+  "${COMMON_ROOT}/transport/payload_delivery_store.cpp" \
+  "${COMMON_ROOT}/transport/payload_delivery_store.h" \
   "${COMMON_ROOT}/protocol/base64.cpp" \
   "${RUNTIME_DIR}/session.cpp" \
   "${COMMON_ROOT}/protocol/sign_route.h"; do
@@ -81,7 +81,7 @@ cat >"${TMP_DIR}/stubs.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "approval_history.h"
+#include "protocol/approval_history.h"
 #include "protocol/protocol_constants.h"
 
 namespace {
@@ -216,7 +216,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <string.h>
 #include <string>
 
-#include "payload_delivery_store.h"
+#include "transport/payload_delivery_store.h"
 #include "usb_payload_transfer_handlers.h"
 
 extern const char* response_transfer_id();
@@ -910,7 +910,7 @@ CPP
   -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${RUNTIME_DIR}/payload_delivery_store.cpp" \
+  -c "${COMMON_ROOT}/transport/payload_delivery_store.cpp" \
   -o "${TMP_DIR}/payload_delivery_store.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \

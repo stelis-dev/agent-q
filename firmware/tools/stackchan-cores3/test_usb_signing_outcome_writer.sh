@@ -15,8 +15,8 @@ for required in \
   "${COMMON_ROOT}/protocol/device_response.h" \
   "${RUNTIME_DIR}/usb_signing_outcome_writer.cpp" \
   "${RUNTIME_DIR}/usb_signing_outcome_writer.h" \
-  "${RUNTIME_DIR}/signing_response_store.cpp" \
-  "${RUNTIME_DIR}/signing_response_store.h" \
+  "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
+  "${COMMON_ROOT}/protocol/signing_response_store.h" \
   "${COMMON_ROOT}/protocol/sign_route.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -91,7 +91,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include "usb_signing_outcome_writer.h"
 #include "protocol/device_contract.h"
 #include "protocol/protocol_constants.h"
-#include "signing_response_store.h"
+#include "protocol/signing_response_store.h"
 #include "sui_zklogin_proof_store.h"
 
 namespace {
@@ -532,7 +532,7 @@ CPP
   "${TMP_DIR}/test.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${RUNTIME_DIR}/usb_signing_outcome_writer.cpp" \
-  "${RUNTIME_DIR}/signing_response_store.cpp" \
+  "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
   -o "${TMP_DIR}/test_usb_signing_outcome_writer"
 
 "${TMP_DIR}/test_usb_signing_outcome_writer"

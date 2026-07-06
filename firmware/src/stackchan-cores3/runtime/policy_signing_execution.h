@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "approval_history.h"
+#include "protocol/approval_history.h"
 #include "persistent_material.h"
 #include "sign_transaction_policy_runtime.h"
 #include "signing_route.h"

@@ -1,8 +1,7 @@
-#include "sui_zklogin_signature.h"
+#include "sui/zklogin_signature.h"
 
 #include <string.h>
 
-#include "bip39.h"
 #include "numeric/u64_decimal.h"
 
 namespace signing {
@@ -17,7 +16,11 @@ struct BcsWriter {
 void clear_output(uint8_t* output, size_t output_size, size_t* written)
 {
     if (output != nullptr && output_size > 0) {
-        wipe_sensitive_buffer(output, output_size);
+        volatile uint8_t* cursor = output;
+        while (output_size > 0) {
+            *cursor++ = 0;
+            --output_size;
+        }
     }
     if (written != nullptr) {
         *written = 0;

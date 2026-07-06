@@ -1,7 +1,7 @@
 #pragma once
 
 #include "protocol/sign_route.h"
-#include "signing_mode.h"
+#include "protocol/signing_mode.h"
 
 namespace signing {
 

@@ -54,13 +54,13 @@ for required in \
   "${COMMON_ROOT}/protocol/device_contract.h" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${RUNTIME_DIR}/session.cpp" \
-  "${RUNTIME_DIR}/sign_request_identity.cpp" \
+  "${COMMON_ROOT}/protocol/sign_request_identity.cpp" \
   "${RUNTIME_DIR}/payload_delivery_admission.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_admission.h" \
   "${COMMON_ROOT}/transport/payload_delivery_operation_kind.h" \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
-  "${RUNTIME_DIR}/payload_delivery_store.cpp" \
+  "${COMMON_ROOT}/transport/payload_delivery_store.cpp" \
   "${RUNTIME_DIR}/usb_signing_outcome_writer.cpp" \
   "${RUNTIME_DIR}/signing_preflight.cpp" \
   "${RUNTIME_DIR}/signing_retry_response.cpp" \
@@ -69,8 +69,9 @@ for required in \
   "${RUNTIME_DIR}/signing_retry_delivery.cpp" \
   "${RUNTIME_DIR}/sign_transaction_user_ingress.cpp" \
   "${RUNTIME_DIR}/sign_transaction_user_validation.cpp" \
-  "${RUNTIME_DIR}/signing_response_store.cpp" \
+  "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
   "${RUNTIME_DIR}/sui_signing_preparation.cpp" \
+  "${COMMON_SUI_DIR}/signing_payload.cpp" \
   "${COMMON_SUI_DIR}/offline_policy_facts.cpp" \
   "${COMMON_SUI_DIR}/sign_transaction_adapter.cpp" \
   "${COMMON_SUI_DIR}/transaction_facts.cpp" \
@@ -119,9 +120,9 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include "protocol/sign_route.h"
 #include "sign_transaction_user_ingress.h"
 #include "signing_preflight.h"
-#include "sign_request_identity.h"
+#include "protocol/sign_request_identity.h"
 #include "signing_retry_response.h"
-#include "signing_response_store.h"
+#include "protocol/signing_response_store.h"
 #include "protocol/device_contract.h"
 #include "protocol/protocol_constants.h"
 #include "usb_signing_outcome_writer.h"
@@ -971,11 +972,11 @@ CPP
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${RUNTIME_DIR}/session.cpp" \
-  "${RUNTIME_DIR}/sign_request_identity.cpp" \
+  "${COMMON_ROOT}/protocol/sign_request_identity.cpp" \
   "${RUNTIME_DIR}/payload_delivery_admission.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
-  "${RUNTIME_DIR}/payload_delivery_store.cpp" \
+  "${COMMON_ROOT}/transport/payload_delivery_store.cpp" \
   "${RUNTIME_DIR}/usb_signing_outcome_writer.cpp" \
   "${RUNTIME_DIR}/signing_preflight.cpp" \
   "${RUNTIME_DIR}/signing_retry_response.cpp" \
@@ -984,8 +985,9 @@ CPP
   "${RUNTIME_DIR}/signing_retry_delivery.cpp" \
   "${RUNTIME_DIR}/sign_transaction_user_ingress.cpp" \
   "${RUNTIME_DIR}/sign_transaction_user_validation.cpp" \
-  "${RUNTIME_DIR}/signing_response_store.cpp" \
+  "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
   "${RUNTIME_DIR}/sui_signing_preparation.cpp" \
+  "${COMMON_SUI_DIR}/signing_payload.cpp" \
   "${COMMON_SUI_DIR}/offline_policy_facts.cpp" \
   "${COMMON_SUI_DIR}/sign_transaction_adapter.cpp" \
   "${COMMON_SUI_DIR}/transaction_facts.cpp" \

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "storage_maintenance.h"
-#include "policy_update_flow.h"
+#include "policy/policy_update_flow.h"
 #include "sui_zklogin_proposal_flow.h"
 #include "user_signing_flow.h"
 

@@ -30,10 +30,10 @@ ARDUINOJSON_ROOT="${ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${COMMON_ROOT}/numeric/u64_decimal.h" \
-  "${TARGET_ROOT}/runtime/policy_update_flow.cpp" \
-  "${TARGET_ROOT}/runtime/policy_update_flow.h" \
-  "${TARGET_ROOT}/runtime/policy_proposal_parser.cpp" \
-  "${TARGET_ROOT}/runtime/policy_proposal_parser.h" \
+  "${REPO_ROOT}/firmware/src/common/policy/policy_update_flow.cpp" \
+  "${REPO_ROOT}/firmware/src/common/policy/policy_update_flow.h" \
+  "${REPO_ROOT}/firmware/src/common/policy/policy_proposal_parser.cpp" \
+  "${REPO_ROOT}/firmware/src/common/policy/policy_proposal_parser.h" \
   "${COMMON_POLICY_DIR}/document.cpp" \
   "${COMMON_POLICY_DIR}/document.h"; do
   if [[ ! -f "${required}" ]]; then
@@ -66,10 +66,10 @@ cat >"${TMP_DIR}/policy_update_flow_test.cpp" <<'CPP'
 
 #include <ArduinoJson.h>
 
-#include "approval_history.h"
-#include "policy_store.h"
-#include "policy_update_flow.h"
-#include "policy_update_marker.h"
+#include "protocol/approval_history.h"
+#include "policy/policy_store.h"
+#include "policy/policy_update_flow.h"
+#include "policy/policy_update_marker.h"
 
 namespace {
 
@@ -618,8 +618,8 @@ CPP
   -I"${COMMON_POLICY_DIR}" \
   -I"${COMMON_SUI_DIR}" \
   "${TMP_DIR}/policy_update_flow_test.cpp" \
-  "${TARGET_ROOT}/runtime/policy_update_flow.cpp" \
-  "${TARGET_ROOT}/runtime/policy_proposal_parser.cpp" \
+  "${REPO_ROOT}/firmware/src/common/policy/policy_update_flow.cpp" \
+  "${REPO_ROOT}/firmware/src/common/policy/policy_proposal_parser.cpp" \
   "${COMMON_POLICY_DIR}/document.cpp" \
   -o "${TMP_DIR}/policy_update_flow_test"
 

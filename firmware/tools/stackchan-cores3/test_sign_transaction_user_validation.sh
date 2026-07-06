@@ -29,6 +29,8 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${COMMON_ROOT}/protocol/base64.cpp" \
   "${COMMON_ROOT}/protocol/base64.h" \
+  "${COMMON_ROOT}/sui/signing_payload.cpp" \
+  "${COMMON_ROOT}/sui/signing_payload.h" \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.h" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
@@ -538,6 +540,7 @@ CPP
   -I"${REPO_ROOT}/firmware/src/common" \
   "${TMP_DIR}/sign_transaction_user_validation_test.cpp" \
   "${COMMON_ROOT}/protocol/base64.cpp" \
+  "${COMMON_ROOT}/sui/signing_payload.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${RUNTIME_DIR}/session.cpp" \

@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "signing_response_store.h"
+#include "protocol/signing_response_store.h"
 
 namespace signing {
 

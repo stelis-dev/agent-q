@@ -7,7 +7,7 @@
 #include "local_auth.h"
 #include "local_pin_auth_signature_internal.h"
 #include "pin_attempt.h"
-#include "signing_mode.h"
+#include "protocol/signing_mode.h"
 #include "sui_account_settings.h"
 #include "freertos/task.h"
 

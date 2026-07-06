@@ -2,7 +2,7 @@
 
 #include <ArduinoJson.h>
 
-#include "policy_update_flow.h"
+#include "policy/policy_update_flow.h"
 #include "transport/timeout_window.h"
 #include "usb_operation_response_writer.h"
 

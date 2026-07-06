@@ -5,7 +5,7 @@
 #include "esp_log.h"
 #include "freertos/task.h"
 #include "nvs.h"
-#include "persistent_storage_names.h"
+#include "protocol/persistent_storage_names.h"
 
 namespace signing {
 namespace {

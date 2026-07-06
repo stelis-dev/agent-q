@@ -3,7 +3,7 @@
 #include <string.h>
 
 #include "bip39.h"
-#include "policy_store.h"
+#include "policy/policy_store.h"
 #include "protocol/sign_route.h"
 #include "policy/evaluator.h"
 
