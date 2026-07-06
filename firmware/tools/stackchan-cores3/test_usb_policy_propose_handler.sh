@@ -39,8 +39,6 @@ fi
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${RUNTIME_DIR}/payload_delivery_admission.cpp" \
-  "${RUNTIME_DIR}/payload_delivery_admission.h" \
   "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_admission.h" \
   "${COMMON_ROOT}/transport/payload_delivery_operation_kind.h" \
@@ -49,7 +47,7 @@ for required in \
   "${COMMON_ROOT}/transport/payload_delivery_store.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_store.h" \
   "${REPO_ROOT}/firmware/src/common/protocol/approval_history.h" \
-  "${RUNTIME_DIR}/session.cpp" \
+  "${COMMON_ROOT}/protocol/session_state.cpp" \
   "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
   "${RUNTIME_DIR}/usb_active_session_request_guard.h" \
   "${RUNTIME_DIR}/usb_policy_propose_handler.cpp" \
@@ -93,7 +91,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <string.h>
 
 #include "protocol/approval_history.h"
-#include "payload_delivery_admission.h"
+#include "transport/payload_delivery_admission.h"
 #include "transport/payload_delivery_store.h"
 #include "usb_policy_propose_handler.h"
 #include "usb_policy_propose_outcome_writer.h"
@@ -214,7 +212,6 @@ bool write_busy_from_payload_delivery(
     if (signing::payload_delivery_admit_operation(
             signing::PayloadDeliveryOperationAdmissionInput{0,
                 signing::PayloadDeliveryOperationKind::policy_propose,
-                nullptr,
             }) !=
         signing::PayloadDeliveryAdmissionResult::busy) {
         return false;
@@ -673,17 +670,8 @@ CPP
   -I"${MBEDTLS_INCLUDE_DIR}" \
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
-  -c "${RUNTIME_DIR}/payload_delivery_admission.cpp" \
-  -o "${TMP_DIR}/payload_delivery_admission.o"
-
-"${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
-  -I"${TMP_DIR}" \
-  -I"${ARDUINOJSON_ROOT}" \
-  -I"${MBEDTLS_INCLUDE_DIR}" \
-  -I"${RUNTIME_DIR}" \
-  -I"${COMMON_ROOT}" \
   -c "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
-  -o "${TMP_DIR}/payload_delivery_admission_core.o"
+  -o "${TMP_DIR}/payload_delivery_admission.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
@@ -709,7 +697,7 @@ CPP
   -I"${MBEDTLS_INCLUDE_DIR}" \
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
-  -c "${RUNTIME_DIR}/session.cpp" \
+  -c "${COMMON_ROOT}/protocol/session_state.cpp" \
   -o "${TMP_DIR}/session.o"
 
 "${CC_BIN}" -std=c99 -Wall -Wextra -Werror \
@@ -729,7 +717,6 @@ CPP
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
-  "${TMP_DIR}/payload_delivery_admission_core.o" \
   "${TMP_DIR}/payload_delivery_admission.o" \
   "${TMP_DIR}/payload_delivery_primitives.o" \
   "${TMP_DIR}/payload_delivery_store.o" \

@@ -22,6 +22,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
+DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 CXX_BIN="${CXX:-c++}"
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-signature-request-signing.XXXXXX")"
@@ -30,6 +32,13 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 mkdir -p "${TMP_DIR}/firmware_common" "${TMP_DIR}/freertos"
 ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/firmware_common/sui"
 ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
+
+if [[ ! -f "${ARDUINOJSON_ROOT}/ArduinoJson.h" ]]; then
+  echo "Missing required ArduinoJson source: ${ARDUINOJSON_ROOT}/ArduinoJson.h" >&2
+  echo "Run firmware/tools/stackchan-cores3/build.sh first, or set FIRMWARE_ARDUINOJSON_ROOT." >&2
+  exit 1
+fi
+
 cat >"${TMP_DIR}/freertos/FreeRTOS.h" <<'H'
 #pragma once
 #include <stdint.h>
@@ -48,12 +57,18 @@ cat >"${TMP_DIR}/user_signing_test.cpp" <<'CPP'
 #include <string>
 #include <vector>
 
-#include "user_signing_flow.h"
-#include "user_signing_critical_section.h"
+#include "signing/user_signing_flow.h"
+#include "protocol/session_state.h"
+#include "signing/user_signing_critical_section.h"
 #include "sui_account_store.h"
 #include "sui_zklogin_proof_store.h"
 
 namespace {
+
+signing::SessionValidationResult validate_flow_session(const char* session_id, void*)
+{
+    return signing::session_validate(session_id);
+}
 
 int failures = 0;
 int g_digest_calls = 0;
@@ -269,6 +284,7 @@ bool write_confirmation_history(
 void reset_state()
 {
     signing::user_signing_flow_clear();
+    signing::user_signing_flow_set_session_validator(validate_flow_session, nullptr);
     signing::session_clear();
     g_digest_calls = 0;
     g_signing_calls = 0;
@@ -483,29 +499,16 @@ SuiActiveIdentity resolve_active_sui_identity()
     return identity;
 }
 
-SuiSigningStatus sign_sui_ed25519_transaction_from_stored_root(
-    const uint8_t* tx_bytes,
-    size_t tx_bytes_size,
-    uint8_t signature_out[kSuiEd25519SignatureBytes])
-{
-    ++g_signing_calls;
-    g_last_signed_payload.assign(tx_bytes, tx_bytes + tx_bytes_size);
-    if (signature_out != nullptr) {
-        memset(signature_out, 0xA5, kSuiEd25519SignatureBytes);
-        signature_out[0] = kSuiSignatureSchemeFlagEd25519;
-    }
-    return g_signing_status_ok ? SuiSigningStatus::ok
-                               : SuiSigningStatus::signing_error;
-}
-
-SuiSigningStatus sign_sui_transaction_from_active_identity(
-    const uint8_t* tx_bytes,
-    size_t tx_bytes_size,
+UserSigningSignStatus sign_user_signing_payload(
+    Route,
+    const uint8_t* payload,
+    size_t payload_size,
     uint8_t signature_out[kSuiSignatureEnvelopeMaxBytes],
-    size_t* signature_size_out)
+    size_t* signature_size_out,
+    void*)
 {
     ++g_signing_calls;
-    g_last_signed_payload.assign(tx_bytes, tx_bytes + tx_bytes_size);
+    g_last_signed_payload.assign(payload, payload + payload_size);
     if (signature_size_out != nullptr) {
         *signature_size_out = 0;
     }
@@ -513,7 +516,7 @@ SuiSigningStatus sign_sui_transaction_from_active_identity(
         memset(signature_out, 0, kSuiSignatureEnvelopeMaxBytes);
     }
     if (!g_signing_status_ok) {
-        return SuiSigningStatus::signing_error;
+        return UserSigningSignStatus::signing_error;
     }
     if (signature_out != nullptr && signature_size_out != nullptr) {
         memset(signature_out, 0xA5, kSuiEd25519SignatureBytes);
@@ -523,68 +526,7 @@ SuiSigningStatus sign_sui_transaction_from_active_identity(
             *signature_size_out = g_signature_size_override;
         }
     }
-    return SuiSigningStatus::ok;
-}
-
-SuiSigningStatus sign_sui_ed25519_personal_message_from_stored_root(
-    const uint8_t* message,
-    size_t message_size,
-    uint8_t signature_out[kSuiEd25519SignatureBytes])
-{
-    (void)message;
-    (void)message_size;
-    (void)signature_out;
-    return SuiSigningStatus::signing_error;
-}
-
-SuiSigningStatus sign_sui_personal_message_from_active_identity(
-    const uint8_t* message,
-    size_t message_size,
-    uint8_t signature_out[kSuiSignatureEnvelopeMaxBytes],
-    size_t* signature_size_out)
-{
-    ++g_signing_calls;
-    g_last_signed_payload.assign(message, message + message_size);
-    if (signature_size_out != nullptr) {
-        *signature_size_out = 0;
-    }
-    if (!g_signing_status_ok) {
-        return SuiSigningStatus::signing_error;
-    }
-    if (signature_out != nullptr) {
-        memset(signature_out, 0xA5, kSuiEd25519SignatureBytes);
-        signature_out[0] = kSuiSignatureSchemeFlagEd25519;
-    }
-    if (signature_size_out != nullptr) {
-        *signature_size_out = kSuiEd25519SignatureBytes;
-        if (g_signature_size_override != 0) {
-            *signature_size_out = g_signature_size_override;
-        }
-    }
-    return SuiSigningStatus::ok;
-}
-
-const char* sui_signing_status_to_string(SuiSigningStatus result)
-{
-    switch (result) {
-        case SuiSigningStatus::ok:
-            return "ok";
-        case SuiSigningStatus::invalid_input:
-            return "invalid_input";
-        case SuiSigningStatus::root_material_unavailable:
-            return "root_material_unavailable";
-        case SuiSigningStatus::mnemonic_error:
-            return "mnemonic_error";
-        case SuiSigningStatus::signing_error:
-            return "signing_error";
-        case SuiSigningStatus::active_identity_unavailable:
-            return "active_identity_unavailable";
-        case SuiSigningStatus::signature_output_too_small:
-            return "signature_output_too_small";
-        case SuiSigningStatus::zklogin_envelope_error:
-            return "zklogin_envelope_error";
-    }
-    return "unknown";
+    return UserSigningSignStatus::ok;
 }
 
 }  // namespace signing
@@ -592,12 +534,16 @@ const char* sui_signing_status_to_string(SuiSigningStatus result)
 int main()
 {
     namespace aq = signing;
+    const aq::UserSigningCriticalSectionOps critical_ops{
+        aq::sign_user_signing_payload,
+        nullptr,
+    };
     aq::UserSigningOutput output = {};
 
     reset_state();
     poison_output(output);
     aq::UserSigningHandoffReport report =
-        aq::user_signing_execute_critical_section(&output, response_ready, nullptr);
+        aq::user_signing_execute_critical_section(&output, response_ready, nullptr, critical_ops);
     expect(report.result == aq::UserSigningHandoffResult::inactive,
            "inactive flow cannot sign");
     expect(g_signing_calls == 0, "inactive flow does not call signing service");
@@ -605,7 +551,7 @@ int main()
 
     reset_state();
     enter_critical_section("req_null_output");
-    report = aq::user_signing_execute_critical_section(nullptr, response_ready, nullptr);
+    report = aq::user_signing_execute_critical_section(nullptr, response_ready, nullptr, critical_ops);
     expect(report.result == aq::UserSigningHandoffResult::invalid_output,
            "null output is rejected");
     expect(g_signing_calls == 0, "null output does not call signing service");
@@ -623,7 +569,7 @@ int main()
     reset_state();
     begin_reviewing_request("req_wrong_stage");
     poison_output(output);
-    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr);
+    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr, critical_ops);
     expect(report.result == aq::UserSigningHandoffResult::wrong_stage,
            "reviewing flow cannot sign");
     expect(g_signing_calls == 0, "wrong stage does not call signing service");
@@ -636,12 +582,12 @@ int main()
     enter_critical_section("req_success");
     const std::vector<uint8_t> expected_payload = valid_payload();
     poison_output(output);
-    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr);
+    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr, critical_ops);
     expect(report.result == aq::UserSigningHandoffResult::ok,
            "critical section signs successfully");
     expect(report.flow_result == aq::UserSigningTransitionResult::ok,
            "successful handoff completes flow");
-    expect(report.signing_status == aq::SuiSigningStatus::ok,
+    expect(report.signing_status == aq::UserSigningSignStatus::ok,
            "signing service result is reported");
     expect(g_signing_calls == 1, "signing service called once");
     expect(g_response_ready_calls == 1, "response readiness checked before signed terminal");
@@ -668,12 +614,12 @@ int main()
     enter_personal_message_critical_section("req_personal_success");
     const std::vector<uint8_t> expected_message = valid_message();
     poison_output(output);
-    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr);
+    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr, critical_ops);
     expect(report.result == aq::UserSigningHandoffResult::ok,
            "personal-message critical section signs successfully");
     expect(report.flow_result == aq::UserSigningTransitionResult::ok,
            "personal-message handoff completes flow");
-    expect(report.signing_status == aq::SuiSigningStatus::ok,
+    expect(report.signing_status == aq::UserSigningSignStatus::ok,
            "personal-message signing service result is reported");
     expect(g_signing_calls == 1, "personal-message signing service called once");
     expect(g_response_ready_calls == 1,
@@ -697,12 +643,12 @@ int main()
     enter_critical_section("req_response_unavailable");
     g_response_ready = false;
     poison_output(output);
-    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr);
+    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr, critical_ops);
     expect(report.result == aq::UserSigningHandoffResult::response_unavailable,
            "response readiness failure is reported");
     expect(report.flow_result == aq::UserSigningTransitionResult::ok,
            "response readiness failure terminalizes flow as failed");
-    expect(report.signing_status == aq::SuiSigningStatus::ok,
+    expect(report.signing_status == aq::UserSigningSignStatus::ok,
            "response readiness failure preserves signing service result");
     expect(g_signing_calls == 1, "response readiness failure signs once");
     expect(g_response_ready_calls == 1,
@@ -717,12 +663,12 @@ int main()
     enter_critical_section("req_failure");
     g_signing_status_ok = false;
     poison_output(output);
-    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr);
+    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr, critical_ops);
     expect(report.result == aq::UserSigningHandoffResult::signing_failed,
            "signing service failure is reported");
     expect(report.flow_result == aq::UserSigningTransitionResult::ok,
            "signing failure terminalizes flow");
-    expect(report.signing_status == aq::SuiSigningStatus::signing_error,
+    expect(report.signing_status == aq::UserSigningSignStatus::signing_error,
            "signing failure cause is reported");
     expect(g_signing_calls == 1, "failing signing service called once");
     snapshot = aq::user_signing_flow_snapshot();
@@ -735,12 +681,12 @@ int main()
     enter_critical_section("req_signature_too_large");
     g_signature_size_override = aq::kSuiSignatureEnvelopeMaxBytes + 1;
     poison_output(output);
-    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr);
+    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr, critical_ops);
     expect(report.result == aq::UserSigningHandoffResult::signing_failed,
            "oversized signature output is reported");
     expect(report.flow_result == aq::UserSigningTransitionResult::ok,
            "oversized signature output terminalizes as failure");
-    expect(report.signing_status == aq::SuiSigningStatus::signature_output_too_small,
+    expect(report.signing_status == aq::UserSigningSignStatus::signature_output_too_small,
            "oversized signature cause is reported");
     expect(g_signing_calls == 1, "oversized signature path calls signing service once");
     snapshot = aq::user_signing_flow_snapshot();
@@ -759,7 +705,7 @@ int main()
                &consumed_size) == aq::UserSigningTransitionResult::ok,
            "test setup consumes payload");
     poison_output(output);
-    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr);
+    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr, critical_ops);
     expect(report.result == aq::UserSigningHandoffResult::payload_unavailable,
            "missing critical payload is reported");
     expect(g_signing_calls == 0, "missing payload does not call signing service");
@@ -773,7 +719,7 @@ int main()
     enter_critical_section("req_session_loss");
     aq::session_clear();
     poison_output(output);
-    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr);
+    report = aq::user_signing_execute_critical_section(&output, response_ready, nullptr, critical_ops);
     expect(report.result == aq::UserSigningHandoffResult::ok,
            "critical signing is not downgraded by session loss");
     expect(output_matches_stub_signature(output),
@@ -813,11 +759,13 @@ CPP
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   -I"${COMMON_ROOT}/sui" \
+  -I"${ARDUINOJSON_ROOT}" \
   "${TMP_DIR}/user_signing_test.cpp" \
-  "${RUNTIME_DIR}/user_signing_critical_section.cpp" \
-  "${RUNTIME_DIR}/user_signing_flow.cpp" \
+  "${COMMON_ROOT}/signing/user_signing_critical_section.cpp" \
+  "${COMMON_ROOT}/signing/user_signing_flow.cpp" \
   "${RUNTIME_DIR}/sui_signing_authority.cpp" \
-  "${RUNTIME_DIR}/session.cpp" \
+  "${COMMON_ROOT}/protocol/session_state.cpp" \
+  "${COMMON_ROOT}/sui/account_binding.cpp" \
   "${COMMON_ROOT}/sui/sign_transaction_adapter.cpp" \
   "${COMMON_ROOT}/sui/transaction_facts.cpp" \
   "${COMMON_ROOT}/sui/bcs_reader.cpp" \

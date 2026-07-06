@@ -3,8 +3,8 @@
 #include "protocol/approval_history.h"
 #include "protocol/sign_route.h"
 #include "sui/signing_limits.h"
-#include "sui_signing_preparation.h"
-#include "user_signing_limits.h"
+#include "sui/signing_preparation_types.h"
+#include "signing/user_signing_limits.h"
 
 namespace signing {
 

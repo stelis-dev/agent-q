@@ -6,7 +6,7 @@
 #include "protocol/json_input.h"
 #include "protocol/protocol_constants.h"
 #include "protocol/request_id.h"
-#include "session.h"
+#include "protocol/session_state.h"
 
 namespace signing {
 namespace {

@@ -5,9 +5,9 @@
 
 #include <ArduinoJson.h>
 
-#include "session.h"
+#include "protocol/session_state.h"
 #include "protocol/sign_route.h"
-#include "user_signing_limits.h"
+#include "signing/user_signing_limits.h"
 
 namespace signing {
 

@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "protocol_input_copy.h"
+#include "protocol/protocol_input_copy.h"
 
 #include "protocol/approval_history.h"
 #include "protocol/json_input.h"

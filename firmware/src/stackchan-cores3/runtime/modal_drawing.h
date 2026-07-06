@@ -6,7 +6,7 @@
 #include "human_approval_settings.h"
 #include "transport/timeout_window.h"
 #include "user_signing_review_view_model.h"
-#include "user_signing_review_timer_state.h"
+#include "signing/user_signing_review_timer_state.h"
 #include "lvgl.h"
 
 namespace signing {

@@ -8,6 +8,8 @@ COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 COMMON_SUI_DIR="${COMMON_ROOT}/sui"
 FIXTURE_DIR="${COMMON_SUI_DIR}/testdata/sui_transaction_facts"
 COVERAGE_MATRIX="${COMMON_SUI_DIR}/testdata/sui_transaction_authorization_coverage.tsv"
+DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 DEFAULT_RUNTIME_DIR="${REPO_ROOT}/.firmware-cache/signing-crypto/microsui-lib"
 CRYPTO_ROOT="${SIGNING_CRYPTO_ROOT:-${DEFAULT_RUNTIME_DIR}}"
 MICROSUI_CORE="${CRYPTO_ROOT}/src/microsui_core"
@@ -18,6 +20,12 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 mkdir -p "${TMP_DIR}/firmware_common"
 ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
 ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/firmware_common/sui"
+
+if [[ ! -f "${ARDUINOJSON_ROOT}/ArduinoJson.h" ]]; then
+  echo "Missing required ArduinoJson source: ${ARDUINOJSON_ROOT}/ArduinoJson.h" >&2
+  echo "Run firmware/tools/stackchan-cores3/build.sh first, or set FIRMWARE_ARDUINOJSON_ROOT." >&2
+  exit 1
+fi
 
 cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <assert.h>
@@ -664,10 +672,13 @@ CPP
   -I"${TMP_DIR}" \
   -I"${COMMON_ROOT}" \
   -I"${COMMON_SUI_DIR}" \
+  -I"${ARDUINOJSON_ROOT}" \
   -I"${MICROSUI_CORE}" \
   "${TMP_DIR}/test.cpp" \
   "${RUNTIME_DIR}/sui_signing_preparation.cpp" \
+  "${COMMON_SUI_DIR}/account_binding.cpp" \
   "${COMMON_ROOT}/protocol/base64.cpp" \
+  "${COMMON_SUI_DIR}/signing_preparation.cpp" \
   "${COMMON_SUI_DIR}/sign_transaction_adapter.cpp" \
   "${COMMON_SUI_DIR}/offline_policy_facts.cpp" \
   "${COMMON_SUI_DIR}/transaction_facts.cpp" \

@@ -1,6 +1,4 @@
-#include "user_signing_critical_section.h"
-
-#include "bip39.h"
+#include "signing/user_signing_critical_section.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -11,7 +9,7 @@ namespace {
 UserSigningHandoffReport make_report(
     UserSigningHandoffResult result,
     UserSigningTransitionResult flow_result,
-    SuiSigningStatus signing_status)
+    UserSigningSignStatus signing_status)
 {
     return UserSigningHandoffReport{
         result,
@@ -55,32 +53,12 @@ bool should_terminalize_signing_failure(
            consume_result == UserSigningTransitionResult::output_too_small;
 }
 
-SuiSigningStatus sign_payload_for_route(
-    Route route,
-    const uint8_t* payload,
-    size_t payload_size,
-    uint8_t* signature,
-    size_t* signature_size)
+void wipe_user_signing_critical_buffer(void* data, size_t size)
 {
-    if (signature_size != nullptr) {
-        *signature_size = 0;
-    }
-    switch (route) {
-        case Route::sui_sign_transaction:
-            return sign_sui_transaction_from_active_identity(
-                payload,
-                payload_size,
-                signature,
-                signature_size);
-        case Route::sui_sign_personal_message:
-            return sign_sui_personal_message_from_active_identity(
-                payload,
-                payload_size,
-                signature,
-                signature_size);
-        case Route::unsupported:
-        default:
-            return SuiSigningStatus::invalid_input;
+    volatile uint8_t* cursor = static_cast<volatile uint8_t*>(data);
+    while (cursor != nullptr && size > 0) {
+        *cursor++ = 0;
+        --size;
     }
 }
 
@@ -93,9 +71,9 @@ void user_signing_output_wipe(
         return;
     }
     output->signing_route = Route::unsupported;
-    wipe_sensitive_buffer(output->signature, sizeof(output->signature));
+    wipe_user_signing_critical_buffer(output->signature, sizeof(output->signature));
     output->signature_size = 0;
-    wipe_sensitive_buffer(output->message_bytes, sizeof(output->message_bytes));
+    wipe_user_signing_critical_buffer(output->message_bytes, sizeof(output->message_bytes));
     output->message_bytes_size = 0;
 }
 
@@ -103,13 +81,14 @@ UserSigningHandoffReport
 user_signing_execute_critical_section(
     UserSigningOutput* output,
     UserSigningOutputReadyFn output_ready,
-    void* context)
+    void* context,
+    const UserSigningCriticalSectionOps& ops)
 {
-    if (output == nullptr || output_ready == nullptr) {
+    if (output == nullptr || output_ready == nullptr || ops.sign_payload == nullptr) {
         return make_report(
             UserSigningHandoffResult::invalid_output,
             UserSigningTransitionResult::invalid_argument,
-            SuiSigningStatus::invalid_input);
+            UserSigningSignStatus::invalid_input);
     }
     user_signing_output_wipe(output);
 
@@ -126,39 +105,45 @@ user_signing_execute_critical_section(
         if (should_terminalize_signing_failure(consume_result)) {
             const UserSigningTransitionResult terminal_result =
                 user_signing_flow_record_signing_failed();
-            wipe_sensitive_buffer(signature, sizeof(signature));
+            wipe_user_signing_critical_buffer(signature, sizeof(signature));
             return make_report(
                 map_consume_failure(consume_result),
                 terminal_result,
-                SuiSigningStatus::invalid_input);
+                UserSigningSignStatus::invalid_input);
         }
-        wipe_sensitive_buffer(signature, sizeof(signature));
+        wipe_user_signing_critical_buffer(signature, sizeof(signature));
         return make_report(
             map_consume_failure(consume_result),
             consume_result,
-            SuiSigningStatus::invalid_input);
+            UserSigningSignStatus::invalid_input);
     }
 
     const Route route = snapshot.signing_route;
     if (route == Route::unsupported) {
-        wipe_sensitive_buffer(payload, payload_size);
+        wipe_user_signing_critical_buffer(payload, payload_size);
         free(payload);
-        wipe_sensitive_buffer(signature, sizeof(signature));
+        wipe_user_signing_critical_buffer(signature, sizeof(signature));
         const UserSigningTransitionResult terminal_result =
             user_signing_flow_record_signing_failed();
         return make_report(
             UserSigningHandoffResult::signing_failed,
             terminal_result,
-            SuiSigningStatus::invalid_input);
+            UserSigningSignStatus::invalid_input);
     }
 
-    const SuiSigningStatus signing_status =
-        sign_payload_for_route(route, payload, payload_size, signature, &signature_size);
+    const UserSigningSignStatus signing_status =
+        ops.sign_payload(
+            route,
+            payload,
+            payload_size,
+            signature,
+            &signature_size,
+            ops.sign_payload_context);
 
-    if (signing_status != SuiSigningStatus::ok) {
-        wipe_sensitive_buffer(payload, payload_size);
+    if (signing_status != UserSigningSignStatus::ok) {
+        wipe_user_signing_critical_buffer(payload, payload_size);
         free(payload);
-        wipe_sensitive_buffer(signature, sizeof(signature));
+        wipe_user_signing_critical_buffer(signature, sizeof(signature));
         const UserSigningTransitionResult terminal_result =
             user_signing_flow_record_signing_failed();
         return make_report(
@@ -168,15 +153,15 @@ user_signing_execute_critical_section(
     }
 
     if (signature_size == 0 || signature_size > sizeof(output->signature)) {
-        wipe_sensitive_buffer(payload, payload_size);
+        wipe_user_signing_critical_buffer(payload, payload_size);
         free(payload);
-        wipe_sensitive_buffer(signature, sizeof(signature));
+        wipe_user_signing_critical_buffer(signature, sizeof(signature));
         const UserSigningTransitionResult failed_terminal_result =
             user_signing_flow_record_signing_failed();
         return make_report(
             UserSigningHandoffResult::signing_failed,
             failed_terminal_result,
-            SuiSigningStatus::signature_output_too_small);
+            UserSigningSignStatus::signature_output_too_small);
     }
 
     memcpy(output->signature, signature, signature_size);
@@ -189,9 +174,9 @@ user_signing_execute_critical_section(
 
     if (!output_ready(snapshot, *output, context)) {
         user_signing_output_wipe(output);
-        wipe_sensitive_buffer(payload, payload_size);
+        wipe_user_signing_critical_buffer(payload, payload_size);
         free(payload);
-        wipe_sensitive_buffer(signature, sizeof(signature));
+        wipe_user_signing_critical_buffer(signature, sizeof(signature));
         const UserSigningTransitionResult failed_terminal_result =
             user_signing_flow_record_signing_failed();
         return make_report(
@@ -204,16 +189,16 @@ user_signing_execute_critical_section(
         user_signing_flow_complete_signed();
     if (terminal_result != UserSigningTransitionResult::ok) {
         user_signing_output_wipe(output);
-        wipe_sensitive_buffer(payload, payload_size);
+        wipe_user_signing_critical_buffer(payload, payload_size);
         free(payload);
-        wipe_sensitive_buffer(signature, sizeof(signature));
+        wipe_user_signing_critical_buffer(signature, sizeof(signature));
         return make_report(
             UserSigningHandoffResult::terminal_error,
             terminal_result,
             signing_status);
     }
-    wipe_sensitive_buffer(signature, sizeof(signature));
-    wipe_sensitive_buffer(payload, payload_size);
+    wipe_user_signing_critical_buffer(signature, sizeof(signature));
+    wipe_user_signing_critical_buffer(payload, payload_size);
     free(payload);
     return make_report(
         UserSigningHandoffResult::ok,
@@ -243,6 +228,26 @@ const char* user_signing_handoff_result_name(
             return "signing_failed";
         case UserSigningHandoffResult::terminal_error:
             return "terminal_error";
+    }
+    return "unknown";
+}
+
+const char* user_signing_sign_status_name(
+    UserSigningSignStatus status)
+{
+    switch (status) {
+        case UserSigningSignStatus::ok:
+            return "ok";
+        case UserSigningSignStatus::invalid_input:
+            return "invalid_input";
+        case UserSigningSignStatus::account_unavailable:
+            return "account_unavailable";
+        case UserSigningSignStatus::signing_error:
+            return "signing_error";
+        case UserSigningSignStatus::signature_output_too_small:
+            return "signature_output_too_small";
+        case UserSigningSignStatus::signature_envelope_error:
+            return "signature_envelope_error";
     }
     return "unknown";
 }

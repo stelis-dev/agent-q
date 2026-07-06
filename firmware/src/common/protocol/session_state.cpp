@@ -1,4 +1,4 @@
-#include "session.h"
+#include "protocol/session_state.h"
 
 #include <stdio.h>
 #include <string.h>

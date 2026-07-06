@@ -331,6 +331,12 @@ cmake = insert_after_once(
 cmake = insert_after_once(
     cmake,
     '    "firmware_common/protocol/*.cpp"\n',
+    '    "firmware_common/signing/*.c"\n    "firmware_common/signing/*.cc"\n    "firmware_common/signing/*.cpp"\n',
+    "main/CMakeLists.txt common signing sources",
+)
+cmake = insert_after_once(
+    cmake,
+    '    "firmware_common/signing/*.cpp"\n',
     '    "firmware_common/transport/*.c"\n    "firmware_common/transport/*.cc"\n    "firmware_common/transport/*.cpp"\n',
     "main/CMakeLists.txt common transport sources",
 )

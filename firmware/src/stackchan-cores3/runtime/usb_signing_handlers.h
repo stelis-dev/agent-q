@@ -3,12 +3,12 @@
 #include <ArduinoJson.h>
 
 #include "policy_signing_execution.h"
-#include "payload_delivery_admission.h"
+#include "transport/payload_delivery_admission.h"
 #include "sign_transaction_policy_runtime.h"
 #include "signing_preflight.h"
 #include "transport/timeout_window.h"
 #include "usb_operation_response_writer.h"
-#include "user_signing_flow.h"
+#include "signing/user_signing_flow.h"
 
 namespace signing {
 

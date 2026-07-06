@@ -7,7 +7,7 @@
 #include "protocol_pin_approval.h"
 #include "sui_zklogin_proposal_flow.h"
 #include "user_signing_confirmation.h"
-#include "user_signing_flow.h"
+#include "signing/user_signing_flow.h"
 
 namespace signing {
 

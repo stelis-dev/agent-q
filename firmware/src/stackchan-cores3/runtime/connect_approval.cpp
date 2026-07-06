@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "protocol_input_copy.h"
+#include "protocol/protocol_input_copy.h"
 
 namespace signing {
 namespace {

@@ -1,5 +1,6 @@
 #include "usb_approval_history_handler.h"
 
+#include "protocol/approval_history_json_writer.h"
 #include "protocol/json_input.h"
 #include "protocol/protocol_constants.h"
 #include "usb_active_session_request_guard.h"

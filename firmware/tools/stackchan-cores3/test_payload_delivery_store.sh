@@ -54,8 +54,6 @@ for required in \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.h" \
   "${COMMON_ROOT}/transport/payload_delivery_store.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_store.h" \
-  "${TARGET_ROOT}/runtime/payload_delivery_admission.cpp" \
-  "${TARGET_ROOT}/runtime/payload_delivery_admission.h" \
   "${TARGET_ROOT}/runtime/usb_operation_manifest.cpp" \
   "${TARGET_ROOT}/runtime/usb_operation_manifest.h" \
   "${USB_DEVICE_HANDLER_SOURCE}" \
@@ -64,7 +62,7 @@ for required in \
   "${USB_RETAINED_RESPONSE_HANDLER_SOURCE}" \
   "${USB_DISCONNECT_HANDLER_SOURCE}" \
   "${USB_REQUEST_SERVER_SOURCE}" \
-  "${TARGET_ROOT}/runtime/session.cpp" \
+  "${COMMON_ROOT}/protocol/session_state.cpp" \
   "${REPO_ROOT}/firmware/src/common/protocol/approval_history.h" \
   "${USB_SUI_ZKLOGIN_CREDENTIAL_HANDLER_HEADER}" \
   "${COMMON_ROOT}/protocol/sign_route.h"; do
@@ -357,7 +355,7 @@ cat >"${TMP_DIR}/payload_delivery_store_test.cpp" <<'CPP'
 
 #include <vector>
 
-#include "payload_delivery_admission.h"
+#include "transport/payload_delivery_admission.h"
 #include "transport/payload_delivery_store.h"
 #include "mbedtls/sha256.h"
 
@@ -422,7 +420,6 @@ void expect_admission(
     expect(signing::payload_delivery_admit_operation(
                signing::PayloadDeliveryOperationAdmissionInput{0,
                    operation,
-                   "session_abcdef",
                }) == expected,
            label);
 }
@@ -437,7 +434,6 @@ void expect_admission_decision(
         signing::payload_delivery_admit_operation(
             signing::PayloadDeliveryOperationAdmissionInput{0,
                 operation,
-                "session_abcdef",
             });
     expect(decision.result == expected_result, label);
     if (decision.reason != expected_reason) {
@@ -677,13 +673,11 @@ void test_admission_matrix()
     expect(signing::payload_delivery_admit_operation(
                signing::PayloadDeliveryOperationAdmissionInput{0,
                    signing::PayloadDeliveryOperationKind::payload_transfer_begin,
-                   "session_abcdef",
                }) == signing::PayloadDeliveryAdmissionResult::ok,
            "idle allows transfer begin");
     expect(signing::payload_delivery_admit_operation(
                signing::PayloadDeliveryOperationAdmissionInput{0,
                    signing::PayloadDeliveryOperationKind::sign_transaction,
-                   "session_abcdef",
                }) == signing::PayloadDeliveryAdmissionResult::ok,
            "idle allows inline sign transaction");
     expect_admission_decision(
@@ -714,7 +708,6 @@ void test_admission_matrix()
     expect(signing::payload_delivery_admit_operation(
                signing::PayloadDeliveryOperationAdmissionInput{0,
                    signing::PayloadDeliveryOperationKind::safe_read,
-                   "session_abcdef",
                }) == signing::PayloadDeliveryAdmissionResult::ok,
            "receiving allows safe reads");
     expect_admission_decision(
@@ -726,57 +719,48 @@ void test_admission_matrix()
                signing::payload_delivery_admit_operation(
                    signing::PayloadDeliveryOperationAdmissionInput{0,
                        signing::PayloadDeliveryOperationKind::safe_read,
-                       "session_abcdef",
                    })),
            "receiving safe read is exposed through contract predicate");
     expect(signing::payload_delivery_admit_operation(
                signing::PayloadDeliveryOperationAdmissionInput{0,
                    signing::PayloadDeliveryOperationKind::retained_response_read_cleanup,
-                   "session_abcdef",
                }) == signing::PayloadDeliveryAdmissionResult::ok,
            "receiving allows retained response read/cleanup");
     expect(signing::payload_delivery_admission_allows_retained_response_cleanup(
                signing::payload_delivery_admit_operation(
                    signing::PayloadDeliveryOperationAdmissionInput{0,
                        signing::PayloadDeliveryOperationKind::retained_response_read_cleanup,
-                       "session_abcdef",
                    })),
            "receiving retained-response cleanup is exposed through contract predicate");
     expect(signing::payload_delivery_admit_operation(
                signing::PayloadDeliveryOperationAdmissionInput{0,
                    signing::PayloadDeliveryOperationKind::disconnect,
-                   "session_abcdef",
                }) == signing::PayloadDeliveryAdmissionResult::ok,
            "receiving allows disconnect cleanup");
     expect(signing::payload_delivery_admission_allows_disconnect_cleanup(
                signing::payload_delivery_admit_operation(
                    signing::PayloadDeliveryOperationAdmissionInput{0,
                        signing::PayloadDeliveryOperationKind::disconnect,
-                       "session_abcdef",
                    })),
            "receiving disconnect cleanup is exposed through contract predicate");
     expect(signing::payload_delivery_admit_operation(
                signing::PayloadDeliveryOperationAdmissionInput{0,
                    signing::PayloadDeliveryOperationKind::payload_transfer_begin,
-                   "session_abcdef",
                }) == signing::PayloadDeliveryAdmissionResult::busy,
            "receiving blocks nested transfer begin");
     expect(signing::payload_delivery_admit_operation(
                signing::PayloadDeliveryOperationAdmissionInput{0,
                    signing::PayloadDeliveryOperationKind::payload_transfer_chunk,
-                   "session_abcdef",
                }) == signing::PayloadDeliveryAdmissionResult::ok,
            "receiving allows transfer chunk");
     expect(signing::payload_delivery_admit_operation(
                signing::PayloadDeliveryOperationAdmissionInput{0,
                    signing::PayloadDeliveryOperationKind::payload_transfer_finish,
-                   "session_abcdef",
                }) == signing::PayloadDeliveryAdmissionResult::ok,
            "receiving allows transfer finish");
     expect(signing::payload_delivery_admit_operation(
                signing::PayloadDeliveryOperationAdmissionInput{0,
                    signing::PayloadDeliveryOperationKind::payload_transfer_abort,
-                   "session_abcdef",
                }) == signing::PayloadDeliveryAdmissionResult::ok,
            "receiving allows transfer abort");
     expect_sensitive_operations_blocked("receiving");
@@ -789,7 +773,6 @@ void test_admission_matrix()
                signing::payload_delivery_admit_operation(
                    signing::PayloadDeliveryOperationAdmissionInput{0,
                        signing::PayloadDeliveryOperationKind::sign_transaction,
-                       "session_abcdef",
                    })),
            "receiving signing block is exposed through sensitive-flow predicate");
 
@@ -802,7 +785,6 @@ void test_admission_matrix()
     expect(signing::payload_delivery_admit_operation(
                signing::PayloadDeliveryOperationAdmissionInput{0,
                    signing::PayloadDeliveryOperationKind::safe_read,
-                   "session_abcdef",
                }) == signing::PayloadDeliveryAdmissionResult::ok,
            "finalized allows safe reads");
     expect_admission_decision(
@@ -814,43 +796,36 @@ void test_admission_matrix()
                signing::payload_delivery_admit_operation(
                    signing::PayloadDeliveryOperationAdmissionInput{0,
                        signing::PayloadDeliveryOperationKind::sign_transaction,
-                       "session_abcdef",
                    })),
            "finalized inline signing block is exposed through sensitive-flow predicate");
     expect(signing::payload_delivery_admit_operation(
                signing::PayloadDeliveryOperationAdmissionInput{0,
                    signing::PayloadDeliveryOperationKind::retained_response_read_cleanup,
-                   "session_abcdef",
                }) == signing::PayloadDeliveryAdmissionResult::ok,
            "finalized allows retained response read/cleanup");
     expect(signing::payload_delivery_admit_operation(
                signing::PayloadDeliveryOperationAdmissionInput{0,
                    signing::PayloadDeliveryOperationKind::disconnect,
-                   "session_abcdef",
                }) == signing::PayloadDeliveryAdmissionResult::ok,
            "finalized allows disconnect cleanup");
     expect(signing::payload_delivery_admit_operation(
                signing::PayloadDeliveryOperationAdmissionInput{0,
                    signing::PayloadDeliveryOperationKind::payload_transfer_begin,
-                   "session_abcdef",
                }) == signing::PayloadDeliveryAdmissionResult::busy,
            "finalized blocks nested transfer begin");
     expect(signing::payload_delivery_admit_operation(
                signing::PayloadDeliveryOperationAdmissionInput{0,
                    signing::PayloadDeliveryOperationKind::payload_transfer_chunk,
-                   "session_abcdef",
                }) == signing::PayloadDeliveryAdmissionResult::busy,
            "finalized blocks transfer chunk");
     expect(signing::payload_delivery_admit_operation(
                signing::PayloadDeliveryOperationAdmissionInput{0,
                    signing::PayloadDeliveryOperationKind::payload_transfer_finish,
-                   "session_abcdef",
                }) == signing::PayloadDeliveryAdmissionResult::busy,
            "finalized blocks transfer finish");
     expect(signing::payload_delivery_admit_operation(
                signing::PayloadDeliveryOperationAdmissionInput{0,
                    signing::PayloadDeliveryOperationKind::payload_transfer_abort,
-                   "session_abcdef",
                }) == signing::PayloadDeliveryAdmissionResult::ok,
            "finalized allows transfer abort");
     expect_sensitive_operations_blocked("finalized");
@@ -1118,7 +1093,6 @@ void test_timeout_operation_boundaries()
             signing::PayloadDeliveryOperationAdmissionInput{
                 50,
                 signing::PayloadDeliveryOperationKind::sign_transaction,
-                "session_abcdef",
             });
     expect(expired_admission.result == signing::PayloadDeliveryAdmissionResult::ok,
            "expired finalized payload is cleared before sign transaction admission");
@@ -1333,7 +1307,7 @@ c++ -std=c++17 -Wall -Wextra -Werror \
   -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${TARGET_ROOT}/runtime/payload_delivery_admission.cpp" \
+  -c "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
   -o "${TMP_DIR}/payload_delivery_admission.o"
 
 c++ -std=c++17 -Wall -Wextra -Werror \
@@ -1341,15 +1315,7 @@ c++ -std=c++17 -Wall -Wextra -Werror \
   -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
-  -o "${TMP_DIR}/payload_delivery_admission_core.o"
-
-c++ -std=c++17 -Wall -Wextra -Werror \
-  -I"${TARGET_ROOT}/runtime" \
-  -I"${COMMON_ROOT}" \
-  -I"${TMP_DIR}" \
-  -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${TARGET_ROOT}/runtime/session.cpp" \
+  -c "${COMMON_ROOT}/protocol/session_state.cpp" \
   -o "${TMP_DIR}/session.o"
 
 cc -std=c99 -Wall -Wextra -Werror \
@@ -1370,7 +1336,6 @@ c++ -std=c++17 -Wall -Wextra -Werror \
   "${TMP_DIR}/payload_delivery_store_test.cpp" \
   "${TMP_DIR}/payload_delivery_primitives.o" \
   "${TMP_DIR}/payload_delivery_store.o" \
-  "${TMP_DIR}/payload_delivery_admission_core.o" \
   "${TMP_DIR}/payload_delivery_admission.o" \
   "${TMP_DIR}/session.o" \
   "${TMP_DIR}/sha256.o" \

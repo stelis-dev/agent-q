@@ -3,13 +3,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <ArduinoJson.h>
-
 #include "policy/document.h"
 
 namespace signing {
 
-constexpr size_t kApprovalHistoryCapacity = 32;
+#ifndef AGENT_Q_APPROVAL_HISTORY_CAPACITY
+#define AGENT_Q_APPROVAL_HISTORY_CAPACITY 32
+#endif
+
+static_assert(AGENT_Q_APPROVAL_HISTORY_CAPACITY > 0,
+              "Approval history capacity must be positive");
+constexpr size_t kApprovalHistoryCapacity = AGENT_Q_APPROVAL_HISTORY_CAPACITY;
 constexpr size_t kApprovalHistoryPageMax = 4;
 constexpr size_t kApprovalHistoryChainSize = 12;
 constexpr size_t kApprovalHistoryMethodSize = 32;
@@ -126,7 +130,6 @@ ApprovalHistoryReadResult approval_history_read_page(
     ApprovalHistoryPage* output);
 ApprovalHistoryStorageStatus approval_history_status();
 bool approval_history_wipe();
-bool approval_history_write_page_json(JsonObject result, const ApprovalHistoryPage& page);
 
 const char* approval_history_confirmation_kind_to_string(ApprovalHistoryConfirmationKind value);
 const char* approval_history_signing_record_kind_to_string(

@@ -21,8 +21,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
+DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
+ARDUINOJSON_ROOT="${ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
+  "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${RUNTIME_DIR}/sign_transaction_policy_runtime.cpp" \
   "${RUNTIME_DIR}/sign_transaction_policy_runtime.h" \
   "${REPO_ROOT}/firmware/src/common/policy/policy_store.h" \
@@ -716,6 +719,7 @@ CPP
   -I"${COMMON_ROOT}" \
   -I"${COMMON_ROOT}/policy" \
   -I"${COMMON_ROOT}/sui" \
+  -I"${ARDUINOJSON_ROOT}" \
   "${TMP_DIR}/sign_transaction_policy_runtime_test.cpp" \
   "${RUNTIME_DIR}/sign_transaction_policy_runtime.cpp" \
   "${COMMON_ROOT}/policy/document.cpp" \

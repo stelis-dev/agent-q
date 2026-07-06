@@ -2,7 +2,7 @@
 
 #include <ArduinoJson.h>
 
-#include "session.h"
+#include "protocol/session_state.h"
 #include "sign_personal_message_user_validation.h"
 
 namespace signing {

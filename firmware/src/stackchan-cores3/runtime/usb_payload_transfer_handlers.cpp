@@ -8,7 +8,7 @@
 #include "protocol/approval_history.h"
 #include "bip39.h"
 #include "protocol/json_input.h"
-#include "payload_delivery_admission.h"
+#include "transport/payload_delivery_admission.h"
 #include "transport/payload_delivery_store.h"
 #include "protocol/protocol_constants.h"
 #include "numeric/u64_decimal.h"
@@ -133,7 +133,6 @@ bool write_operation_admission_error(
             PayloadDeliveryOperationAdmissionInput{
                 now_tick,
                 operation,
-                nullptr,
             });
     if (payload_delivery_admission_allowed(admission)) {
         return false;

@@ -3,7 +3,7 @@
 #include <string.h>
 
 #include "protocol/json_input.h"
-#include "payload_delivery_admission.h"
+#include "transport/payload_delivery_admission.h"
 #include "sui_signing_authority.h"
 
 namespace signing {
@@ -142,8 +142,7 @@ SignTransactionUserIngressResult map_payload_delivery_admission_result(
 }
 
 SignTransactionUserIngressResult admit_transaction_payload_after_network_guard(
-    const SignTransactionUserIngressState& state,
-    const SignTransactionUserIngressOutput& ingress)
+    const SignTransactionUserIngressState& state)
 {
     if (state.admit_payload_delivery == nullptr) {
         return SignTransactionUserIngressResult::ok;
@@ -153,7 +152,6 @@ SignTransactionUserIngressResult admit_transaction_payload_after_network_guard(
             PayloadDeliveryOperationAdmissionInput{
                 state.now_tick,
                 PayloadDeliveryOperationKind::sign_transaction,
-                ingress.session.session_id,
             });
     return map_payload_delivery_admission_result(admission);
 }
@@ -242,7 +240,7 @@ PreflightResult evaluate_sign_transaction_preflight(
     }
 
     output->ingress_result =
-        admit_transaction_payload_after_network_guard(state, output->ingress);
+        admit_transaction_payload_after_network_guard(state);
     if (output->ingress_result != SignTransactionUserIngressResult::ok) {
         return PreflightResult::transaction_ingress_error;
     }

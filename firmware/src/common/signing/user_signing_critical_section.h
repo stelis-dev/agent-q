@@ -1,7 +1,7 @@
 #pragma once
 
-#include "user_signing_flow.h"
-#include "sui_signing_service.h"
+#include "signing/user_signing_flow.h"
+#include "sui/zklogin_signature.h"
 
 namespace signing {
 
@@ -17,6 +17,15 @@ enum class UserSigningHandoffResult {
     terminal_error,
 };
 
+enum class UserSigningSignStatus {
+    ok,
+    invalid_input,
+    account_unavailable,
+    signing_error,
+    signature_output_too_small,
+    signature_envelope_error,
+};
+
 struct UserSigningOutput {
     Route signing_route;
     uint8_t signature[kSuiSignatureEnvelopeMaxBytes];
@@ -28,7 +37,21 @@ struct UserSigningOutput {
 struct UserSigningHandoffReport {
     UserSigningHandoffResult result;
     UserSigningTransitionResult flow_result;
-    SuiSigningStatus signing_status;
+    UserSigningSignStatus signing_status;
+};
+
+using UserSigningSignPayloadFn =
+    UserSigningSignStatus (*)(
+        Route route,
+        const uint8_t* payload,
+        size_t payload_size,
+        uint8_t signature_out[kSuiSignatureEnvelopeMaxBytes],
+        size_t* signature_size_out,
+        void* context);
+
+struct UserSigningCriticalSectionOps {
+    UserSigningSignPayloadFn sign_payload;
+    void* sign_payload_context;
 };
 
 using UserSigningOutputReadyFn =
@@ -44,9 +67,13 @@ UserSigningHandoffReport
 user_signing_execute_critical_section(
     UserSigningOutput* output,
     UserSigningOutputReadyFn output_ready,
-    void* context);
+    void* context,
+    const UserSigningCriticalSectionOps& ops);
 
 const char* user_signing_handoff_result_name(
     UserSigningHandoffResult result);
+
+const char* user_signing_sign_status_name(
+    UserSigningSignStatus status);
 
 }  // namespace signing

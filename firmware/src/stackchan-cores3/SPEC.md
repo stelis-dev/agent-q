@@ -316,7 +316,7 @@ cannot be proven.
 | `signing_state` | `human_approval` | Human approval input mode setting; setup initializes it to `pin`, missing or invalid read fails closed to `pin`, and internal settings repair or Device reset returns it to the missing-key default |
 | `signing_state` | `sui_acct_set` | Sui account setting flags, including whether the active account accepts gas sponsors |
 | `signing_state` | `sui_zkl_proof` | Bounded Sui zkLogin proof record used only for active account projection and final zkLogin signature-envelope construction; local proof clear, internal settings repair, Device reset, and error-state Device reset wipe it |
-| `signing_state` | `approval_hist` | Fixed-size 32-record binary ring buffer of Firmware-authored signing and policy-update metadata; internal settings repair, Device reset, and error-state Device reset wipe it |
+| `signing_state` | `approval_hist` | Fixed-size 8-record binary ring buffer of Firmware-authored signing and policy-update metadata; internal settings repair, Device reset, and error-state Device reset wipe it |
 | `signing_state` | `storage_action` | Internal Firmware-owned marker used to resume an interrupted settings repair or Device reset commit at boot; not a protocol state or host API |
 
 The StackChan build preparation step patches the generated firmware
@@ -346,8 +346,9 @@ Invalid parameter, malformed transaction/message, and unsupported-method errors
 are not persisted as approval history.
 
 The history is a fixed-size binary NVS ring buffer under `approval_hist`, capped
-at 32 records so it fits in the Agent-Q-patched 64 KiB StackChan CoreS3 NVS
-partition alongside the other Agent-Q material records. Unsupported current
+at 8 records so the common history store fits alongside the other Agent-Q
+material records on currently supported Firmware targets, including smaller
+mutable-settings NVS partitions. Unsupported current
 approval-history blobs are not accepted as product state; internal settings
 repair, Device reset, or error-state Device reset is the supported
 recovery path.

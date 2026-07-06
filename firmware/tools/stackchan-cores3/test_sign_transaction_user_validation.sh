@@ -35,8 +35,8 @@ for required in \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.h" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${COMMON_ROOT}/protocol/request_id.h" \
-  "${RUNTIME_DIR}/session.cpp" \
-  "${RUNTIME_DIR}/session.h" \
+  "${COMMON_ROOT}/protocol/session_state.cpp" \
+  "${COMMON_ROOT}/protocol/session_state.h" \
   "${RUNTIME_DIR}/sign_transaction_user_validation.cpp" \
   "${RUNTIME_DIR}/sign_transaction_user_validation.h"; do
   if [[ ! -f "${required}" ]]; then
@@ -543,7 +543,7 @@ CPP
   "${COMMON_ROOT}/sui/signing_payload.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
-  "${RUNTIME_DIR}/session.cpp" \
+  "${COMMON_ROOT}/protocol/session_state.cpp" \
   "${RUNTIME_DIR}/sign_transaction_user_validation.cpp" \
   -o "${TMP_DIR}/sign_transaction_user_validation_test"
 

@@ -4,8 +4,8 @@
 #include <stdint.h>
 
 #include "policy_signing_execution.h"
-#include "user_signing_critical_section.h"
-#include "user_signing_flow.h"
+#include "signing/user_signing_critical_section.h"
+#include "signing/user_signing_flow.h"
 
 namespace signing {
 

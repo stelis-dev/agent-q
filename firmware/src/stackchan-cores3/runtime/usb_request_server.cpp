@@ -29,7 +29,7 @@
 #include "modal_drawing.h"
 #include "protocol/persistent_storage_names.h"
 #include "persistent_material.h"
-#include "payload_delivery_admission.h"
+#include "transport/payload_delivery_admission.h"
 #include "transport/payload_delivery_resolution.h"
 #include "transport/payload_delivery_store.h"
 #include "policy/policy_proposal_parser.h"
@@ -43,23 +43,22 @@
 #include "provisioning_runtime_state.h"
 #include "request_backed_local_pin_context.h"
 #include "protocol/request_id.h"
-#include "session.h"
+#include "protocol/session_state.h"
 #include "sign_personal_message_user_ingress.h"
 #include "sign_transaction_policy_runtime.h"
 #include "policy_signing_execution.h"
 #include "user_signing_confirmation.h"
-#include "user_signing_flow.h"
+#include "signing/user_signing_flow.h"
 #include "sign_transaction_user_ingress.h"
 #include "user_signing_review_view_model.h"
 #include "user_signing_review_ui_flow.h"
-#include "user_signing_critical_section.h"
+#include "signing/user_signing_critical_section.h"
 #include "signing_route.h"
 #include "protocol/signing_mode.h"
 #include "sui_account.h"
 #include "sui_account_settings.h"
 #include "sui_account_store.h"
 #include "sui_signing_preparation.h"
-#include "sui_signing_service.h"
 #include "sui_zklogin_proof_store.h"
 #include "sui_zklogin_proposal_flow.h"
 #include "sui_zklogin_review_ui_flow.h"
@@ -95,6 +94,7 @@
 #include "protocol/signing_response_store.h"
 #include "transport/usb_session_grace.h"
 #include "usb_session_loss.h"
+#include "user_signing_service_adapter.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
 #include "esp_err.h"
@@ -661,7 +661,6 @@ bool write_user_signing_confirmation_history(
             : "device_confirmed",
         snapshot.payload_digest,
         nullptr,
-        nullptr,
     };
     return signing::approval_history_append_required_signing(
         input,
@@ -682,7 +681,6 @@ bool write_user_signing_physical_confirmation_history(
             ? "blind_signing_confirmed"
             : "device_confirmed",
         snapshot.payload_digest,
-        nullptr,
         nullptr,
     };
     return signing::approval_history_append_required_signing(
@@ -711,7 +709,6 @@ bool write_user_signing_terminal_history(
         snapshot.method,
         reason,
         snapshot.payload_digest,
-        nullptr,
         nullptr,
     };
     return signing::approval_history_append_required_signing(
@@ -893,17 +890,21 @@ void execute_user_signing_critical_section_and_finish(const char* request_id)
     }
     signing::UserSigningOutput signing_output = {};
     UserSigningOutputReadyContext ready_context{request_id};
+    const signing::UserSigningCriticalSectionOps critical_ops{
+        signing::sign_user_signing_payload_from_active_identity,
+    };
     const signing::UserSigningHandoffReport signing_report =
         signing::user_signing_execute_critical_section(
             &signing_output,
             user_signing_signed_response_fits,
-            &ready_context);
+            &ready_context,
+            critical_ops);
     if (signing_report.result != signing::UserSigningHandoffResult::ok) {
         ESP_LOGW(kTag,
                  "user_signing signing failed: id=%s handoff=%s signing=%s",
                  request_id,
                  signing::user_signing_handoff_result_name(signing_report.result),
-                 signing::sui_signing_status_to_string(signing_report.signing_status));
+                 signing::user_signing_sign_status_name(signing_report.signing_status));
         finish_user_signing_terminal(request_id);
         signing::user_signing_output_wipe(&signing_output);
         return;
@@ -1278,7 +1279,6 @@ bool unrelated_user_signing_ingress_busy()
             signing::PayloadDeliveryOperationAdmissionInput{
                 current_timeout_tick(),
                 entry->payload_delivery_operation,
-                nullptr,
             });
     return user_signing_ingress_busy() ||
            signing::payload_delivery_admission_blocks_sensitive_flow(admission);
@@ -1300,7 +1300,6 @@ bool write_payload_delivery_operation_busy(
             signing::PayloadDeliveryOperationAdmissionInput{
                 current_timeout_tick(),
                 entry->payload_delivery_operation,
-                nullptr,
             });
     if (!signing::payload_delivery_admission_blocks_sensitive_flow(admission)) {
         return false;
@@ -1386,7 +1385,6 @@ bool write_payload_delivery_disconnect_admission_error(
             signing::PayloadDeliveryOperationAdmissionInput{
                 current_timeout_tick(),
                 entry->payload_delivery_operation,
-                nullptr,
             });
     if (signing::payload_delivery_admission_allows_disconnect_cleanup(admission)) {
         return false;
@@ -1411,7 +1409,6 @@ bool write_payload_delivery_safe_read_admission_error(
             signing::PayloadDeliveryOperationAdmissionInput{
                 current_timeout_tick(),
                 entry->payload_delivery_operation,
-                nullptr,
             });
     if (signing::payload_delivery_admission_allows_safe_read(admission)) {
         return false;
@@ -1436,7 +1433,6 @@ bool write_payload_delivery_retained_response_admission_error(
             signing::PayloadDeliveryOperationAdmissionInput{
                 current_timeout_tick(),
                 entry->payload_delivery_operation,
-                nullptr,
             });
     if (signing::payload_delivery_admission_allows_retained_response_cleanup(admission)) {
         return false;
@@ -4806,6 +4802,9 @@ void init_usb_request_server()
         storage_maintenance_persistence_ops(),
         persistent_material_ops());
     signing::session_init();
+    signing::user_signing_flow_set_session_validator(
+        validate_session_for_user_signing,
+        nullptr);
     if (!signing::local_auth_worker_init()) {
         ESP_LOGE(kTag, "Local auth worker init failed");
     }

@@ -1,17 +1,16 @@
-#include "user_signing_flow.h"
+#include "signing/user_signing_flow.h"
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "protocol_input_copy.h"
-
-#include "bip39.h"
-#include "sui_account_store.h"
-#include "sui_network.h"
+#include "protocol/protocol_input_copy.h"
+#include "sui/network.h"
 
 namespace signing {
 namespace {
+
+void wipe_user_signing_buffer(void* data, size_t size);
 
 struct UserSigningFlowState {
     UserSigningStage stage = UserSigningStage::none;
@@ -35,7 +34,7 @@ struct UserSigningFlowState {
     bool blind_signing_confirmation = false;
     SuiPolicySubjectFacts sui_policy_subject = {};
     SuiReviewSummary sui_review = {};
-    char account_address[kSuiAddressBufferSize] = {};
+    char account_address[kSuiAddressStringBufferSize] = {};
     char message_preview[kSignPersonalMessagePreviewSize] = {};
 
     bool active() const
@@ -46,7 +45,7 @@ struct UserSigningFlowState {
     void wipe_payload()
     {
         if (signable_payload != nullptr && signable_payload_size > 0) {
-            wipe_sensitive_buffer(signable_payload, signable_payload_size);
+            wipe_user_signing_buffer(signable_payload, signable_payload_size);
             free(signable_payload);
         }
         signable_payload = nullptr;
@@ -56,8 +55,8 @@ struct UserSigningFlowState {
 
     void wipe_review_metadata()
     {
-        wipe_sensitive_buffer(session_id, sizeof(session_id));
-        wipe_sensitive_buffer(network, sizeof(network));
+        wipe_user_signing_buffer(session_id, sizeof(session_id));
+        wipe_user_signing_buffer(network, sizeof(network));
         request_window = kTimeoutWindowNone;
         paused_request_window = kPausedTimeoutWindowNone;
         pin_input_window = kTimeoutWindowNone;
@@ -65,8 +64,8 @@ struct UserSigningFlowState {
         blind_signing_confirmation = false;
         memset(&sui_policy_subject, 0, sizeof(sui_policy_subject));
         memset(&sui_review, 0, sizeof(sui_review));
-        wipe_sensitive_buffer(account_address, sizeof(account_address));
-        wipe_sensitive_buffer(message_preview, sizeof(message_preview));
+        wipe_user_signing_buffer(account_address, sizeof(account_address));
+        wipe_user_signing_buffer(message_preview, sizeof(message_preview));
     }
 
     void clear()
@@ -75,11 +74,11 @@ struct UserSigningFlowState {
         stage = UserSigningStage::none;
         terminal_result = UserSigningTerminalResult::none;
         signing_route = Route::unsupported;
-        wipe_sensitive_buffer(request_id, sizeof(request_id));
-        wipe_sensitive_buffer(request_identity, sizeof(request_identity));
-        wipe_sensitive_buffer(chain, sizeof(chain));
-        wipe_sensitive_buffer(method, sizeof(method));
-        wipe_sensitive_buffer(payload_digest, sizeof(payload_digest));
+        wipe_user_signing_buffer(request_id, sizeof(request_id));
+        wipe_user_signing_buffer(request_identity, sizeof(request_identity));
+        wipe_user_signing_buffer(chain, sizeof(chain));
+        wipe_user_signing_buffer(method, sizeof(method));
+        wipe_user_signing_buffer(payload_digest, sizeof(payload_digest));
         wipe_review_metadata();
     }
 
@@ -93,6 +92,8 @@ struct UserSigningFlowState {
 };
 
 UserSigningFlowState g_state;
+UserSigningSessionValidateFn g_validate_session = nullptr;
+void* g_validate_session_context = nullptr;
 
 struct UserSigningBeginMetadata {
     Route route = Route::unsupported;
@@ -108,6 +109,26 @@ struct UserSigningBeginMetadata {
 bool printable_ascii(uint8_t value)
 {
     return value >= 0x20 && value <= 0x7e;
+}
+
+void wipe_user_signing_buffer(void* data, size_t size)
+{
+    volatile uint8_t* cursor = static_cast<volatile uint8_t*>(data);
+    while (cursor != nullptr && size > 0) {
+        *cursor++ = 0;
+        --size;
+    }
+}
+
+SessionValidationResult validate_flow_session(const char* session_id)
+{
+    if (!session_id_format_valid(session_id)) {
+        return SessionValidationResult::invalid_format;
+    }
+    if (g_validate_session == nullptr) {
+        return SessionValidationResult::missing;
+    }
+    return g_validate_session(session_id, g_validate_session_context);
 }
 
 void make_message_preview(const uint8_t* message, size_t message_size, char* output, size_t output_size)
@@ -167,7 +188,7 @@ UserSigningFlowBeginResult prepare_common_begin_metadata(
         memset(output, 0, sizeof(*output));
         return UserSigningFlowBeginResult::invalid_argument;
     }
-    if (session_validate(output->session_id) != SessionValidationResult::ok) {
+    if (validate_flow_session(output->session_id) != SessionValidationResult::ok) {
         memset(output, 0, sizeof(*output));
         return UserSigningFlowBeginResult::invalid_session;
     }
@@ -409,7 +430,7 @@ UserSigningTransitionResult terminalize_invalid_session()
 
 UserSigningTransitionResult require_active_session()
 {
-    if (session_validate(g_state.session_id) != SessionValidationResult::ok) {
+    if (validate_flow_session(g_state.session_id) != SessionValidationResult::ok) {
         return terminalize_invalid_session();
     }
     return UserSigningTransitionResult::ok;
@@ -510,6 +531,14 @@ UserSigningTransitionResult user_signing_flow_clear()
                       : UserSigningTransitionResult::inactive;
 }
 
+void user_signing_flow_set_session_validator(
+    UserSigningSessionValidateFn validate_fn,
+    void* context)
+{
+    g_validate_session = validate_fn;
+    g_validate_session_context = context;
+}
+
 bool user_signing_flow_active()
 {
     return g_state.active();
@@ -533,7 +562,7 @@ SessionValidationResult user_signing_flow_validate_session()
     if (!g_state.active() || g_state.session_id[0] == '\0') {
         return SessionValidationResult::missing;
     }
-    return session_validate(g_state.session_id);
+    return validate_flow_session(g_state.session_id);
 }
 
 UserSigningFlowCoreSnapshot user_signing_flow_core_snapshot()
@@ -1193,7 +1222,7 @@ UserSigningTransitionResult user_signing_flow_cancel_for_session_loss()
     if (g_state.stage == UserSigningStage::signing_critical_section) {
         return UserSigningTransitionResult::busy;
     }
-    if (session_validate(g_state.session_id) == SessionValidationResult::ok) {
+    if (validate_flow_session(g_state.session_id) == SessionValidationResult::ok) {
         return UserSigningTransitionResult::session_still_active;
     }
     return terminalize_if_precritical_cleanup(UserSigningTerminalResult::canceled);

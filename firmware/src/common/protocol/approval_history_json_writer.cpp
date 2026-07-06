@@ -1,4 +1,4 @@
-#include "protocol/approval_history.h"
+#include "protocol/approval_history_json_writer.h"
 
 #include "numeric/u64_decimal.h"
 

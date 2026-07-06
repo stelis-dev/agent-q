@@ -33,6 +33,7 @@ for required in \
   "${RUNTIME_DIR}/usb_response_writer.h" \
   "${COMMON_ROOT}/numeric/u64_decimal.h" \
   "${REPO_ROOT}/firmware/src/common/protocol/approval_history_json_writer.cpp" \
+  "${REPO_ROOT}/firmware/src/common/protocol/approval_history_json_writer.h" \
   "${REPO_ROOT}/firmware/src/common/protocol/approval_history.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2

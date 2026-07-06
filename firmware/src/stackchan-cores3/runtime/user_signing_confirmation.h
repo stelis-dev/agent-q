@@ -2,7 +2,7 @@
 
 #include "local_auth_worker.h"
 #include "transport/timeout_window.h"
-#include "user_signing_flow.h"
+#include "signing/user_signing_flow.h"
 #include "freertos/FreeRTOS.h"
 
 namespace signing {

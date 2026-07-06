@@ -1,6 +1,7 @@
 #pragma once
 
 #include "transport/payload_delivery_operation_kind.h"
+#include "transport/payload_delivery_store.h"
 
 namespace signing {
 
@@ -38,6 +39,15 @@ struct PayloadDeliveryAdmissionDecision {
     PayloadDeliveryAdmissionReason reason;
 };
 
+struct PayloadDeliveryOperationAdmissionInput {
+    TimeoutTick now_tick;
+    PayloadDeliveryOperationKind operation;
+};
+
+using PayloadDeliveryOperationAdmissionFn =
+    PayloadDeliveryAdmissionDecision (*)(
+        const PayloadDeliveryOperationAdmissionInput& input);
+
 inline bool operator==(
     const PayloadDeliveryAdmissionDecision& decision,
     PayloadDeliveryAdmissionResult result)
@@ -55,6 +65,8 @@ inline bool operator!=(
 PayloadDeliveryAdmissionDecision payload_delivery_admit_operation_for_state(
     PayloadDeliveryAdmissionState state,
     PayloadDeliveryOperationKind operation);
+PayloadDeliveryAdmissionDecision payload_delivery_admit_operation(
+    const PayloadDeliveryOperationAdmissionInput& input);
 
 inline bool payload_delivery_admission_allowed(
     const PayloadDeliveryAdmissionDecision& decision)

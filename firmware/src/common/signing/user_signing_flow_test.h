@@ -6,7 +6,7 @@
 // declared here, not in user_signing_flow.h, so the product API surface
 // does not advertise test seams. The definitions live in
 // user_signing_flow.cpp.
-#include "user_signing_flow.h"
+#include "signing/user_signing_flow.h"
 
 namespace signing {
 

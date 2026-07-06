@@ -4,7 +4,7 @@
 
 #include "local_pin_auth.h"
 #include "protocol/request_id.h"
-#include "session.h"
+#include "protocol/session_state.h"
 #include "transport/timeout_window.h"
 #include "freertos/FreeRTOS.h"
 

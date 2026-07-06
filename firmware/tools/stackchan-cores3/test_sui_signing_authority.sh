@@ -26,6 +26,8 @@ for required in \
   "${RUNTIME_DIR}/sui_signing_authority.cpp" \
   "${RUNTIME_DIR}/sui_signing_authority.h" \
   "${RUNTIME_DIR}/sui_account_settings.h" \
+  "${COMMON_ROOT}/sui/account_binding.cpp" \
+  "${COMMON_ROOT}/sui/account_binding.h" \
   "${COMMON_ROOT}/sui/transaction_facts.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -194,6 +196,7 @@ CPP
   -I"${COMMON_ROOT}/sui" \
   "${TMP_DIR}/test.cpp" \
   "${RUNTIME_DIR}/sui_signing_authority.cpp" \
+  "${COMMON_ROOT}/sui/account_binding.cpp" \
   -o "${TMP_DIR}/sui_signing_authority_test"
 
 "${TMP_DIR}/sui_signing_authority_test"

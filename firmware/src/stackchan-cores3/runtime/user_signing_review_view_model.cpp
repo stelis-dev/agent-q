@@ -176,8 +176,8 @@ UserSigningReviewBuildResult user_signing_review_view_model_build(
     if (route == Route::unsupported) {
         return UserSigningReviewBuildResult::invalid_summary;
     }
-    const char* wire_chain = signing_route_wire_chain(route);
-    const char* wire_method = signing_route_wire_method(route);
+    const char* wire_chain = sign_route_wire_chain(route);
+    const char* wire_method = sign_route_wire_method(route);
     if (wire_chain == nullptr || wire_chain[0] == '\0' ||
         wire_method == nullptr || wire_method[0] == '\0') {
         return UserSigningReviewBuildResult::invalid_summary;

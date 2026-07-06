@@ -3,7 +3,7 @@
 #include <ArduinoJson.h>
 
 #include "protocol/request_id.h"
-#include "session.h"
+#include "protocol/session_state.h"
 #include "sui/zklogin_credential_outcome.h"
 #include "sui_zklogin_proof_store.h"
 #include "transport/timeout_window.h"

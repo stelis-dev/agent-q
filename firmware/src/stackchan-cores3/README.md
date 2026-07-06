@@ -543,7 +543,7 @@ fail closed until Device reset or development flash erase.
 | `signing_state` | `human_approval` | Human approval input mode setting; setup initializes it to `pin`, missing or invalid read fails closed to `pin`, internal settings repair restores the default, and Device reset removes it |
 | `signing_state` | `sui_acct_set` | Sui account setting flags, including whether the active account accepts gas sponsors |
 | `signing_state` | `sui_zkl_proof` | Bounded Sui zkLogin proof record used only for active account projection and final zkLogin signature-envelope construction; local proof clear, internal settings repair, Device reset, and error-state Device reset wipe it |
-| `signing_state` | `approval_hist` | Fixed-size 32-record binary approval-history ring buffer; internal settings repair, Device reset, and error-state Device reset wipe it |
+| `signing_state` | `approval_hist` | Fixed-size 8-record binary approval-history ring buffer; internal settings repair, Device reset, and error-state Device reset wipe it |
 | `signing_state` | `storage_action` | Internal Firmware-owned marker used to resume an interrupted settings repair or Device reset commit at boot; not a protocol state or host API |
 
 Device-local backup phrase setup stores generated phrase text and imported mnemonic

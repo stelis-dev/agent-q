@@ -10,6 +10,20 @@ PayloadDeliveryAdmissionDecision decision(
     return {result, reason};
 }
 
+PayloadDeliveryAdmissionState payload_delivery_admission_state_from_store(
+    PayloadDeliveryState state)
+{
+    switch (state) {
+        case PayloadDeliveryState::idle:
+            return PayloadDeliveryAdmissionState::idle;
+        case PayloadDeliveryState::receiving:
+            return PayloadDeliveryAdmissionState::receiving;
+        case PayloadDeliveryState::finalized:
+            return PayloadDeliveryAdmissionState::finalized;
+    }
+    return PayloadDeliveryAdmissionState::idle;
+}
+
 }  // namespace
 
 PayloadDeliveryAdmissionDecision payload_delivery_admit_operation_for_state(
@@ -98,6 +112,15 @@ PayloadDeliveryAdmissionDecision payload_delivery_admit_operation_for_state(
     return decision(
         PayloadDeliveryAdmissionResult::busy,
         PayloadDeliveryAdmissionReason::blocked_unrelated_sensitive_flow);
+}
+
+PayloadDeliveryAdmissionDecision payload_delivery_admit_operation(
+    const PayloadDeliveryOperationAdmissionInput& input)
+{
+    const PayloadDeliverySnapshot snapshot = payload_delivery_advance_and_snapshot(input.now_tick);
+    return payload_delivery_admit_operation_for_state(
+        payload_delivery_admission_state_from_store(snapshot.state),
+        input.operation);
 }
 
 const char* payload_delivery_admission_result_name(

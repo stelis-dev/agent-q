@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "sui/account_binding.h"
+
 namespace signing {
 
 namespace {
@@ -26,15 +28,14 @@ SuiSigningAccountBindingResult verify_sui_signing_active_account_binding(
                    ? SuiSigningAccountBindingResult::account_unavailable
                    : SuiSigningAccountBindingResult::active_identity_unavailable;
     }
-    const bool sender_matches = strcmp(facts.sender, active_identity.address) == 0;
-    if (!sender_matches) {
-        return SuiSigningAccountBindingResult::account_mismatch;
-    }
-    const bool gas_owner_matches = strcmp(facts.gas_owner, active_identity.address) == 0;
-    if (gas_owner_matches || account_settings.accept_gas_sponsor) {
-        return SuiSigningAccountBindingResult::ok;
-    }
-    return SuiSigningAccountBindingResult::account_mismatch;
+    const SuiTransactionAccountBindingResult binding =
+        verify_sui_transaction_account_binding(
+            facts,
+            active_identity.address,
+            account_settings.accept_gas_sponsor);
+    return binding == SuiTransactionAccountBindingResult::ok
+               ? SuiSigningAccountBindingResult::ok
+               : SuiSigningAccountBindingResult::account_mismatch;
 }
 
 SuiSigningActiveIdentityNetworkResult verify_sui_signing_active_identity_network(

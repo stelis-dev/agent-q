@@ -30,7 +30,7 @@ cat >"${TMP_DIR}/session_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "session.h"
+#include "protocol/session_state.h"
 
 namespace {
 
@@ -144,7 +144,7 @@ CPP
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/session_test.cpp" \
-  "${RUNTIME_DIR}/session.cpp" \
+  "${COMMON_ROOT}/protocol/session_state.cpp" \
   -o "${TMP_DIR}/session_test"
 
 "${TMP_DIR}/session_test"

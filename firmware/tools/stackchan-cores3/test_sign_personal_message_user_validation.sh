@@ -32,8 +32,8 @@ for required in \
   "${COMMON_ROOT}/sui/signing_payload.h" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${COMMON_ROOT}/protocol/request_id.h" \
-  "${RUNTIME_DIR}/session.cpp" \
-  "${RUNTIME_DIR}/session.h" \
+  "${COMMON_ROOT}/protocol/session_state.cpp" \
+  "${COMMON_ROOT}/protocol/session_state.h" \
   "${RUNTIME_DIR}/sign_personal_message_user_validation.cpp" \
   "${RUNTIME_DIR}/sign_personal_message_user_validation.h"; do
   if [[ ! -f "${required}" ]]; then
@@ -262,7 +262,7 @@ CPP
   "${COMMON_ROOT}/protocol/base64.cpp" \
   "${COMMON_ROOT}/sui/signing_payload.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
-  "${RUNTIME_DIR}/session.cpp" \
+  "${COMMON_ROOT}/protocol/session_state.cpp" \
   -o "${TMP_DIR}/sign_personal_message_user_validation_test"
 
 "${TMP_DIR}/sign_personal_message_user_validation_test"

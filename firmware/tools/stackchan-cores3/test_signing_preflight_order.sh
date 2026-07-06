@@ -53,9 +53,8 @@ for required in \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.h" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
-  "${RUNTIME_DIR}/session.cpp" \
+  "${COMMON_ROOT}/protocol/session_state.cpp" \
   "${COMMON_ROOT}/protocol/sign_request_identity.cpp" \
-  "${RUNTIME_DIR}/payload_delivery_admission.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_admission.h" \
   "${COMMON_ROOT}/transport/payload_delivery_operation_kind.h" \
@@ -71,6 +70,7 @@ for required in \
   "${RUNTIME_DIR}/sign_transaction_user_validation.cpp" \
   "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
   "${RUNTIME_DIR}/sui_signing_preparation.cpp" \
+  "${COMMON_SUI_DIR}/signing_preparation.cpp" \
   "${COMMON_SUI_DIR}/signing_payload.cpp" \
   "${COMMON_SUI_DIR}/offline_policy_facts.cpp" \
   "${COMMON_SUI_DIR}/sign_transaction_adapter.cpp" \
@@ -971,9 +971,8 @@ CPP
   "${COMMON_ROOT}/protocol/base64.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
-  "${RUNTIME_DIR}/session.cpp" \
+  "${COMMON_ROOT}/protocol/session_state.cpp" \
   "${COMMON_ROOT}/protocol/sign_request_identity.cpp" \
-  "${RUNTIME_DIR}/payload_delivery_admission.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_store.cpp" \
@@ -987,6 +986,7 @@ CPP
   "${RUNTIME_DIR}/sign_transaction_user_validation.cpp" \
   "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
   "${RUNTIME_DIR}/sui_signing_preparation.cpp" \
+  "${COMMON_SUI_DIR}/signing_preparation.cpp" \
   "${COMMON_SUI_DIR}/signing_payload.cpp" \
   "${COMMON_SUI_DIR}/offline_policy_facts.cpp" \
   "${COMMON_SUI_DIR}/sign_transaction_adapter.cpp" \

@@ -2,8 +2,8 @@
 
 #include <ArduinoJson.h>
 
-#include "payload_delivery_admission.h"
-#include "session.h"
+#include "transport/payload_delivery_admission.h"
+#include "protocol/session_state.h"
 #include "sign_transaction_user_validation.h"
 
 namespace signing {

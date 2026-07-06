@@ -276,7 +276,7 @@ CPP
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
-  "${RUNTIME_DIR}/session.cpp" \
+  "${COMMON_ROOT}/protocol/session_state.cpp" \
   "${RUNTIME_DIR}/usb_request_envelope.cpp" \
   "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \

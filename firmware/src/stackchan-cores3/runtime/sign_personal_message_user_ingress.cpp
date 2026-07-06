@@ -2,7 +2,7 @@
 
 #include <string.h>
 
-#include "protocol_input_copy.h"
+#include "protocol/protocol_input_copy.h"
 
 #include "protocol/json_input.h"
 #include "protocol/protocol_constants.h"

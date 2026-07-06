@@ -42,8 +42,6 @@ for required in \
   "${RUNTIME_DIR}/usb_active_session_request_guard.h" \
   "${RUNTIME_DIR}/usb_payload_transfer_handlers.cpp" \
   "${RUNTIME_DIR}/usb_payload_transfer_handlers.h" \
-  "${RUNTIME_DIR}/payload_delivery_admission.cpp" \
-  "${RUNTIME_DIR}/payload_delivery_admission.h" \
   "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_admission.h" \
   "${COMMON_ROOT}/transport/payload_delivery_operation_kind.h" \
@@ -52,7 +50,7 @@ for required in \
   "${COMMON_ROOT}/transport/payload_delivery_store.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_store.h" \
   "${COMMON_ROOT}/protocol/base64.cpp" \
-  "${RUNTIME_DIR}/session.cpp" \
+  "${COMMON_ROOT}/protocol/session_state.cpp" \
   "${COMMON_ROOT}/protocol/sign_route.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -918,7 +916,7 @@ CPP
   -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${RUNTIME_DIR}/payload_delivery_admission.cpp" \
+  -c "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
   -o "${TMP_DIR}/payload_delivery_admission.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
@@ -926,15 +924,7 @@ CPP
   -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
-  -o "${TMP_DIR}/payload_delivery_admission_core.o"
-
-"${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
-  -I"${RUNTIME_DIR}" \
-  -I"${COMMON_ROOT}" \
-  -I"${TMP_DIR}" \
-  -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${RUNTIME_DIR}/session.cpp" \
+  -c "${COMMON_ROOT}/protocol/session_state.cpp" \
   -o "${TMP_DIR}/session.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
@@ -965,7 +955,6 @@ cc -std=c99 -Wall -Wextra -Werror \
   "${TMP_DIR}/usb_payload_transfer_handlers.o" \
   "${TMP_DIR}/payload_delivery_primitives.o" \
   "${TMP_DIR}/payload_delivery_store.o" \
-  "${TMP_DIR}/payload_delivery_admission_core.o" \
   "${TMP_DIR}/payload_delivery_admission.o" \
   "${TMP_DIR}/session.o" \
   "${TMP_DIR}/base64.o" \

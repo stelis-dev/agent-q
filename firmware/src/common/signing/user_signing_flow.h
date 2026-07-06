@@ -4,19 +4,20 @@
 #include <stdint.h>
 
 #include "protocol/approval_history.h"
-#include "sui/signing_limits.h"
 #include "protocol/sign_request_identity.h"
-#include "signing_route.h"
-#include "session.h"
+#include "protocol/sign_route.h"
+#include "protocol/session_id.h"
+#include "sui/signing_limits.h"
+#include "sui/signing_preparation_types.h"
 #include "transport/timeout_window.h"
-#include "user_signing_limits.h"
-#include "user_signing_review_timer_state.h"
-#include "sui_account.h"
-#include "sui_signing_preparation.h"
+#include "signing/user_signing_limits.h"
+#include "signing/user_signing_review_timer_state.h"
 #include "sui/transaction_facts.h"
 #include "freertos/FreeRTOS.h"
 
 namespace signing {
+
+using Route = SupportedSignRoute;
 
 enum class UserSigningFlowBeginResult {
     ok,
@@ -88,6 +89,9 @@ struct UserSigningPersonalMessageBeginInput {
     TimeoutWindow request_window;
 };
 
+using UserSigningSessionValidateFn =
+    SessionValidationResult (*)(const char* session_id, void* context);
+
 // Small lifecycle snapshot for state gates, terminal handling, history writes,
 // and signing handoff. Keep large review-only facts out of these paths.
 struct UserSigningFlowCoreSnapshot {
@@ -114,7 +118,7 @@ struct UserSigningFlowCoreSnapshot {
 struct UserSigningFlowSnapshot : UserSigningFlowCoreSnapshot {
     SuiPolicySubjectFacts sui_policy_subject;
     SuiReviewSummary sui_review;
-    char account_address[kSuiAddressBufferSize];
+    char account_address[kSuiAddressStringBufferSize];
     char message_preview[kSignPersonalMessagePreviewSize];
 };
 
@@ -122,6 +126,9 @@ using UserSigningHistoryWriteFn =
     bool (*)(const UserSigningFlowCoreSnapshot& snapshot, void* context);
 
 UserSigningTransitionResult user_signing_flow_clear();
+void user_signing_flow_set_session_validator(
+    UserSigningSessionValidateFn validate_fn,
+    void* context);
 bool user_signing_flow_active();
 bool user_signing_flow_session_matches(const char* session_id);
 UserSigningFlowCoreSnapshot user_signing_flow_core_snapshot();

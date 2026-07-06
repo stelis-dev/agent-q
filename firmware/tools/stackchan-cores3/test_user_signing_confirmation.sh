@@ -21,6 +21,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
+DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 CXX_BIN="${CXX:-c++}"
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-signature-request-confirmation.XXXXXX")"
@@ -29,6 +31,12 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 mkdir -p "${TMP_DIR}/firmware_common" "${TMP_DIR}/freertos"
 ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/firmware_common/sui"
 ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
+
+if [[ ! -f "${ARDUINOJSON_ROOT}/ArduinoJson.h" ]]; then
+  echo "Missing required ArduinoJson source: ${ARDUINOJSON_ROOT}/ArduinoJson.h" >&2
+  echo "Run firmware/tools/stackchan-cores3/build.sh first, or set FIRMWARE_ARDUINOJSON_ROOT." >&2
+  exit 1
+fi
 
 cat >"${TMP_DIR}/freertos/FreeRTOS.h" <<'H'
 #pragma once
@@ -59,7 +67,8 @@ cat >"${TMP_DIR}/user_signing_confirmation_test.cpp" <<'CPP'
 #include "local_pin_auth.h"
 #include "pin_attempt.h"
 #include "user_signing_confirmation_test.h"
-#include "user_signing_flow_test.h"
+#include "signing/user_signing_flow_test.h"
+#include "protocol/session_state.h"
 #include "sui_account_settings.h"
 #include "sui_account_store.h"
 #include "sui_zklogin_proof_store.h"
@@ -80,6 +89,11 @@ bool store_sui_account_settings(const SuiAccountSettings&)
 }  // namespace signing
 
 namespace {
+
+signing::SessionValidationResult validate_flow_session(const char* session_id, void*)
+{
+    return signing::session_validate(session_id);
+}
 
 int failures = 0;
 TickType_t g_now = 1;
@@ -299,6 +313,7 @@ void reset_all()
                "test cleanup consumes terminal flow");
     }
     signing::user_signing_flow_clear();
+    signing::user_signing_flow_set_session_validator(validate_flow_session, nullptr);
     signing::session_clear();
     signing::pin_attempt_clear();
     g_now = 1;
@@ -1046,13 +1061,15 @@ CPP
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   -I"${COMMON_ROOT}/sui" \
+  -I"${ARDUINOJSON_ROOT}" \
   "${TMP_DIR}/user_signing_confirmation_test.cpp" \
   "${RUNTIME_DIR}/user_signing_confirmation.cpp" \
-  "${RUNTIME_DIR}/user_signing_flow.cpp" \
+  "${COMMON_ROOT}/signing/user_signing_flow.cpp" \
   "${RUNTIME_DIR}/sui_signing_authority.cpp" \
   "${RUNTIME_DIR}/local_pin_auth.cpp" \
   "${RUNTIME_DIR}/pin_attempt.cpp" \
-  "${RUNTIME_DIR}/session.cpp" \
+  "${COMMON_ROOT}/protocol/session_state.cpp" \
+  "${COMMON_ROOT}/sui/account_binding.cpp" \
   "${COMMON_ROOT}/sui/sign_transaction_adapter.cpp" \
   "${COMMON_ROOT}/sui/transaction_facts.cpp" \
   "${COMMON_ROOT}/sui/bcs_reader.cpp" \

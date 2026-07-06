@@ -890,7 +890,7 @@ CPP
   -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/protocol_pin_approval_test.cpp" \
   "${RUNTIME_DIR}/protocol_pin_approval.cpp" \
-  "${RUNTIME_DIR}/session.cpp" \
+  "${COMMON_ROOT}/protocol/session_state.cpp" \
   -o "${TMP_DIR}/protocol_pin_approval_test"
 
 "${TMP_DIR}/protocol_pin_approval_test"

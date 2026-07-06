@@ -54,7 +54,7 @@ cat >"${TMP_DIR}/request_backed_local_pin_context_test.cpp" <<'CPP'
 #include "request_backed_local_pin_context.h"
 #include "sui_zklogin_proposal_flow.h"
 #include "user_signing_confirmation.h"
-#include "user_signing_flow.h"
+#include "signing/user_signing_flow.h"
 
 namespace {
 
