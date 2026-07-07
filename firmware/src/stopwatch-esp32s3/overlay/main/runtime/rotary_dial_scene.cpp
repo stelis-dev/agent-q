@@ -1,6 +1,7 @@
 #include "rotary_dial_scene.h"
 
 #include "assets/dial/dial_assets_generated.h"
+#include "display_geometry.h"
 
 #include <esp_heap_caps.h>
 #include <lgfx/utility/lgfx_miniz.h>
@@ -11,7 +12,6 @@
 namespace stopwatch_target {
 namespace {
 
-constexpr int kScreenCenter = 233;
 constexpr int kDigitRadius = 27;
 constexpr int kDigitHitRadius = 44;
 constexpr int kDialStopContactX = 328;
@@ -69,8 +69,8 @@ float clockwise_angle_delta(float from_degrees, float to_degrees)
 float point_angle_degrees(int x, int y)
 {
     return atan2f(
-               static_cast<float>(y - kScreenCenter),
-               static_cast<float>(x - kScreenCenter)) *
+               static_cast<float>(y - kDisplayCenterPx),
+               static_cast<float>(x - kDisplayCenterPx)) *
            180.0F / kPi;
 }
 

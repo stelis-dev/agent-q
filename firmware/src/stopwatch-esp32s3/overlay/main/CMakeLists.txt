@@ -6,6 +6,7 @@ idf_component_register(
     SRCS
         "main.cpp"
         "runtime/app.cpp"
+        "runtime/clock_scene.cpp"
         "runtime/credential_preparation_state.cpp"
         "runtime/local_auth.cpp"
         "runtime/local_auth_entry_state.cpp"
@@ -112,6 +113,7 @@ idf_component_register(
         "assets/sfx/boot_sfx.bin"
         "assets/dial/1_baseplate.rgb565a8.bin"
         "assets/dial/2_dial_frames.idx8.deflate.bin"
+        "assets/watch/clock_1_face.i8.bin"
 )
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE

@@ -220,6 +220,18 @@ for required_dial_asset in \
   fi
   cp "${OVERLAY_MAIN}/assets/dial/${required_dial_asset}" "${CHECKOUT_DIR}/main/assets/dial/${required_dial_asset}"
 done
+rm -rf "${CHECKOUT_DIR}/main/assets/watch"
+mkdir -p "${CHECKOUT_DIR}/main/assets/watch"
+for required_watch_asset in \
+  watch_assets_generated.h \
+  clock_1_face.i8.bin; do
+  if [[ ! -f "${OVERLAY_MAIN}/assets/watch/${required_watch_asset}" ]]; then
+    echo "Missing generated StopWatch watch asset: ${OVERLAY_MAIN}/assets/watch/${required_watch_asset}" >&2
+    echo "Run firmware/tools/stopwatch-esp32s3/generate_watch_assets.mjs after updating watch PNG sources." >&2
+    exit 1
+  fi
+  cp "${OVERLAY_MAIN}/assets/watch/${required_watch_asset}" "${CHECKOUT_DIR}/main/assets/watch/${required_watch_asset}"
+done
 rm -rf "${CHECKOUT_DIR}/main/runtime"
 mkdir -p "${CHECKOUT_DIR}/main/runtime"
 cp -R "${OVERLAY_MAIN}/runtime/." "${CHECKOUT_DIR}/main/runtime/"

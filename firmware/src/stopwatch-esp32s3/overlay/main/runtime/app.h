@@ -9,6 +9,7 @@
 #include "local_auth.h"
 #include "local_auth_entry_state.h"
 #include "local_auth_setup_state.h"
+#include "clock_scene.h"
 #include "device_reset.h"
 #include "protocol/signing_mode.h"
 #include "rotary_dial_scene.h"
@@ -51,7 +52,12 @@ private:
     lv_obj_t* prompt_label_ = nullptr;
     lv_obj_t* detail_label_ = nullptr;
     RotaryDialScene rotary_dial_;
+    ClockScene clock_scene_;
     uint32_t last_update_ms_ = 0;
+    uint32_t unlock_idle_started_ms_ = 0;
+    bool unlock_watch_timer_armed_ = false;
+    bool watch_visible_ = false;
+    bool ignore_touch_until_release_ = false;
     uint32_t last_seen_rejected_connects_ = 0;
     ScreenMode screen_mode_ = ScreenMode::setup_enter;
     bool locally_unlocked_ = false;
@@ -83,8 +89,12 @@ private:
     void set_button_feedback_suppressed(bool suppressed);
     void record_feedback(uint16_t vibration_ms, uint8_t strength, bool lvgl_locked);
     void enter_mode(ScreenMode mode);
+    void reset_unlock_watch();
+    void show_unlock_watch();
+    bool unlock_watch_allowed() const;
     void refresh_auth_mode();
     void refresh_auth_mode(const LocalAuthSnapshot& snapshot);
+    void maybe_enter_watch(uint32_t now_ms);
     void sync_usb_runtime_state();
     void sync_usb_runtime_state(const LocalAuthSnapshot& snapshot);
     void relock();

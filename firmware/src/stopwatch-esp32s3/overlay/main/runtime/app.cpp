@@ -10,6 +10,7 @@
 
 #include "credential_preparation_state.h"
 #include "device_reset.h"
+#include "display_geometry.h"
 #include "policy/policy_store.h"
 #include "policy/policy_update_flow.h"
 #include "policy/policy_update_marker.h"
@@ -26,6 +27,7 @@ namespace {
 
 constexpr const char* kAppName = "Device";
 constexpr uint32_t kUiRefreshMs = 250;
+constexpr uint32_t kUnlockWatchDelayMs = 60U * 1000U;
 constexpr uint32_t kDialReturnFrameMs = 24;
 constexpr float kDialReturnBaseStepDegrees = 30.0F;
 constexpr float kDialReturnDistanceFactor = 0.13F;
@@ -215,6 +217,7 @@ void RuntimeApp::onRunning()
         set_display_on(true, false, false);
     }
     refresh_auth_mode(snapshot);
+    maybe_enter_watch(now);
     const UsbPendingRequest pending = usb_transport_pending_request();
     if (pending.kind == UsbPendingRequestKind::connect) {
         if (!display_on_) {
@@ -297,15 +300,16 @@ void RuntimeApp::create_ui()
     lv_obj_set_style_bg_color(screen, lv_color_black(), LV_PART_MAIN);
 
     root_ = lv_obj_create(screen);
-    lv_obj_set_size(root_, 466, 466);
+    lv_obj_set_size(root_, kDisplaySizePx, kDisplaySizePx);
     lv_obj_align(root_, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(root_, lv_color_hex(0x050607), LV_PART_MAIN);
     lv_obj_set_style_border_width(root_, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(root_, 233, LV_PART_MAIN);
+    lv_obj_set_style_radius(root_, kDisplayCenterPx, LV_PART_MAIN);
     lv_obj_set_style_pad_all(root_, 0, LV_PART_MAIN);
     lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
 
     rotary_dial_.create(root_);
+    clock_scene_.create(root_);
 
     constexpr int kSlotWidth = 32;
     constexpr int kSlotGap = 2;
@@ -349,6 +353,8 @@ void RuntimeApp::create_ui()
 
 void RuntimeApp::destroy_ui()
 {
+    rotary_dial_.destroy();
+    clock_scene_.destroy();
     if (root_ != nullptr) {
         lv_obj_delete(root_);
     }
@@ -358,7 +364,6 @@ void RuntimeApp::destroy_ui()
     }
     prompt_label_ = nullptr;
     detail_label_ = nullptr;
-    rotary_dial_.destroy();
     dial_return_active_ = false;
     dial_return_last_ms_ = 0;
 }
@@ -378,11 +383,25 @@ void RuntimeApp::update_ui(bool force)
     update_input_slots();
     update_prompt_label();
     update_detail_label();
-    rotary_dial_.set_visible(auth_entry_mode());
+    rotary_dial_.set_visible(auth_entry_mode() && !watch_visible_);
+    clock_scene_.set_visible(watch_visible_);
+    clock_scene_.update(now);
 }
 
 void RuntimeApp::handle_key_event(input::KeyEvent event, uint32_t now_ms)
 {
+    if (event != input::KeyEvent::None &&
+        display_on_ &&
+        watch_visible_) {
+        const bool touch_was_down = touch_down_;
+        reset_unlock_watch();
+        if (touch_was_down) {
+            ignore_touch_until_release_ = true;
+        }
+        record_feedback(20, 45, false);
+        return;
+    }
+
     switch (event) {
         case input::KeyEvent::GoPrevious:
             if (!display_on_) {
@@ -580,6 +599,25 @@ void RuntimeApp::handle_touch_poll(uint32_t now_ms)
         return;
     }
 
+    if (watch_visible_) {
+        if (down) {
+            ignore_touch_until_release_ = true;
+        }
+        touch_down_ = down;
+        touch_digit_ = -1;
+        dial_return_active_ = false;
+        return;
+    }
+
+    if (ignore_touch_until_release_) {
+        touch_down_ = down;
+        touch_digit_ = -1;
+        if (!down) {
+            ignore_touch_until_release_ = false;
+        }
+        return;
+    }
+
     if (!auth_entry_mode()) {
         touch_down_ = down;
         touch_digit_ = -1;
@@ -756,7 +794,41 @@ void RuntimeApp::enter_mode(ScreenMode mode)
         setup_state_.clear();
     }
     screen_mode_ = mode;
+    reset_unlock_watch();
     last_update_ms_ = 0;
+}
+
+void RuntimeApp::reset_unlock_watch()
+{
+    unlock_idle_started_ms_ = 0;
+    unlock_watch_timer_armed_ = false;
+    watch_visible_ = false;
+    ignore_touch_until_release_ = false;
+    last_update_ms_ = 0;
+}
+
+void RuntimeApp::show_unlock_watch()
+{
+    if (watch_visible_) {
+        return;
+    }
+    watch_visible_ = true;
+    unlock_watch_timer_armed_ = false;
+    last_update_ms_ = 0;
+}
+
+bool RuntimeApp::unlock_watch_allowed() const
+{
+    const UsbPendingRequest pending = usb_transport_pending_request();
+    const UsbIdentificationDisplay identification = usb_transport_identification_display();
+    const bool request_prompt_active = pending.kind != UsbPendingRequestKind::none ||
+                                       identification.active;
+    return screen_mode_ == ScreenMode::unlock &&
+           display_on_ &&
+           !locally_unlocked_ &&
+           auth_entry_.length() == 0 &&
+           !dial_return_active_ &&
+           !request_prompt_active;
 }
 
 void RuntimeApp::refresh_auth_mode()
@@ -797,7 +869,9 @@ void RuntimeApp::refresh_auth_mode(const LocalAuthSnapshot& snapshot)
         return;
     }
     if (!locally_unlocked_) {
-        if (screen_mode_ != ScreenMode::setup_enter && screen_mode_ != ScreenMode::setup_confirm) {
+        if (screen_mode_ != ScreenMode::setup_enter &&
+            screen_mode_ != ScreenMode::setup_confirm &&
+            screen_mode_ != ScreenMode::unlock) {
             enter_mode(ScreenMode::unlock);
         }
         return;
@@ -805,6 +879,35 @@ void RuntimeApp::refresh_auth_mode(const LocalAuthSnapshot& snapshot)
     if (screen_mode_ == ScreenMode::unlock ||
         screen_mode_ == ScreenMode::lockout) {
         enter_mode(ScreenMode::idle);
+    }
+}
+
+void RuntimeApp::maybe_enter_watch(uint32_t now_ms)
+{
+    const bool state_allows_watch = unlock_watch_allowed();
+    if (watch_visible_) {
+        if (!state_allows_watch) {
+            const bool touch_was_down = touch_down_;
+            reset_unlock_watch();
+            if (touch_was_down) {
+                ignore_touch_until_release_ = true;
+            }
+        }
+        return;
+    }
+
+    if (!state_allows_watch) {
+        unlock_watch_timer_armed_ = false;
+        unlock_idle_started_ms_ = 0;
+        return;
+    }
+    if (!unlock_watch_timer_armed_) {
+        unlock_idle_started_ms_ = now_ms;
+        unlock_watch_timer_armed_ = true;
+        return;
+    }
+    if (now_ms - unlock_idle_started_ms_ >= kUnlockWatchDelayMs) {
+        show_unlock_watch();
     }
 }
 
@@ -854,6 +957,7 @@ void RuntimeApp::sync_usb_runtime_state(const LocalAuthSnapshot& snapshot)
 void RuntimeApp::relock()
 {
     locally_unlocked_ = false;
+    reset_unlock_watch();
     clear_auth_scratch();
     usb_transport_reject_pending_request("user_rejected");
     const LocalAuthSnapshot snapshot = local_auth_snapshot(GetHAL().millis());
@@ -1212,7 +1316,7 @@ void RuntimeApp::update_input_slots()
         if (input_slot_labels_[index] == nullptr) {
             continue;
         }
-        if (!auth_entry_mode()) {
+        if (!auth_entry_mode() || watch_visible_) {
             set_label_text(input_slot_labels_[index], "");
             lv_obj_add_flag(input_slot_labels_[index], LV_OBJ_FLAG_HIDDEN);
             continue;
@@ -1249,12 +1353,19 @@ void RuntimeApp::update_prompt_label()
         return;
     }
 
+    if (watch_visible_) {
+        lv_obj_add_flag(prompt_label_, LV_OBJ_FLAG_HIDDEN);
+        set_label_text(prompt_label_, "");
+        return;
+    }
+
     const char* text = "";
     lv_color_t color = lv_color_hex(0xC9D2D8);
     const UsbIdentificationDisplay identification = usb_transport_identification_display();
     if (identification.active) {
         text = identification.code;
         color = lv_color_hex(0xB8E3FF);
+        lv_obj_remove_flag(prompt_label_, LV_OBJ_FLAG_HIDDEN);
         lv_obj_align(prompt_label_, LV_ALIGN_CENTER, 0, kPromptSceneY);
         lv_obj_set_style_text_color(prompt_label_, color, LV_PART_MAIN);
         set_label_text(prompt_label_, text);
@@ -1283,6 +1394,7 @@ void RuntimeApp::update_prompt_label()
                 color = lv_color_hex(0xB8E3FF);
                 break;
         }
+        lv_obj_remove_flag(prompt_label_, LV_OBJ_FLAG_HIDDEN);
         lv_obj_align(prompt_label_, LV_ALIGN_CENTER, 0, kPromptReviewY);
         lv_obj_set_style_text_color(prompt_label_, color, LV_PART_MAIN);
         set_label_text(prompt_label_, text);
@@ -1353,6 +1465,7 @@ void RuntimeApp::update_prompt_label()
                              screen_mode_ == ScreenMode::policy_review ||
                              screen_mode_ == ScreenMode::signing_mode_review ||
                              screen_mode_ == ScreenMode::device_reset_review;
+    lv_obj_remove_flag(prompt_label_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_align(
         prompt_label_,
         LV_ALIGN_CENTER,
@@ -1367,6 +1480,12 @@ void RuntimeApp::update_prompt_label()
 void RuntimeApp::update_detail_label()
 {
     if (detail_label_ == nullptr) {
+        return;
+    }
+
+    if (watch_visible_) {
+        set_label_text(detail_label_, "");
+        lv_obj_add_flag(detail_label_, LV_OBJ_FLAG_HIDDEN);
         return;
     }
 
