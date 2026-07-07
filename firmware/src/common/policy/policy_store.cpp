@@ -214,7 +214,7 @@ PolicyStoreStatus read_blob(
             return PolicyStoreStatus::missing;
         }
         if (log_failures) {
-            ESP_LOGW(kTag, "NVS open failed while reading %s: %s", key, esp_err_to_name(result));
+            ESP_LOGW(kTag, "NVS open failed while reading policy record: %s", esp_err_to_name(result));
         }
         return PolicyStoreStatus::storage_error;
     }
@@ -228,7 +228,7 @@ PolicyStoreStatus read_blob(
     if (result != ESP_OK) {
         nvs_close(nvs);
         if (log_failures) {
-            ESP_LOGW(kTag, "Policy blob size read failed for %s: %s", key, esp_err_to_name(result));
+            ESP_LOGW(kTag, "Policy blob size read failed: %s", esp_err_to_name(result));
         }
         return PolicyStoreStatus::storage_error;
     }
@@ -241,7 +241,7 @@ PolicyStoreStatus read_blob(
     nvs_close(nvs);
     if (result != ESP_OK || blob_size > out_capacity) {
         if (log_failures) {
-            ESP_LOGW(kTag, "Policy blob read failed for %s: %s", key, esp_err_to_name(result));
+            ESP_LOGW(kTag, "Policy blob read failed: %s", esp_err_to_name(result));
         }
         memset(out, 0, out_capacity);
         return PolicyStoreStatus::storage_error;
@@ -260,7 +260,7 @@ bool write_blob(const char* key, const uint8_t* record, size_t record_size)
     nvs_handle_t nvs = 0;
     esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
     if (result != ESP_OK) {
-        ESP_LOGW(kTag, "NVS open failed while writing %s: %s", key, esp_err_to_name(result));
+        ESP_LOGW(kTag, "NVS open failed while writing policy record: %s", esp_err_to_name(result));
         return false;
     }
 
@@ -271,7 +271,7 @@ bool write_blob(const char* key, const uint8_t* record, size_t record_size)
     nvs_close(nvs);
 
     if (result != ESP_OK) {
-        ESP_LOGW(kTag, "NVS write failed for %s: %s", key, esp_err_to_name(result));
+        ESP_LOGW(kTag, "NVS policy record write failed: %s", esp_err_to_name(result));
         return false;
     }
     return true;
@@ -292,7 +292,7 @@ bool erase_policy_key(const char* key)
     nvs_handle_t nvs = 0;
     esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
     if (result != ESP_OK) {
-        ESP_LOGW(kTag, "NVS open failed while erasing %s: %s", key, esp_err_to_name(result));
+        ESP_LOGW(kTag, "NVS open failed while erasing policy record: %s", esp_err_to_name(result));
         return false;
     }
 
@@ -303,7 +303,7 @@ bool erase_policy_key(const char* key)
     nvs_close(nvs);
 
     if (!erased || result != ESP_OK) {
-        ESP_LOGW(kTag, "NVS erase failed for %s: %s", key, esp_err_to_name(result));
+        ESP_LOGW(kTag, "NVS policy record erase failed: %s", esp_err_to_name(result));
         return false;
     }
     return true;
@@ -477,7 +477,7 @@ PolicyStoreStatus read_policy_record_key(
     }
     if (!validate_policy_record(out, *out_size)) {
         if (log_failures) {
-            ESP_LOGW(kTag, "Policy record validation failed for %s", key);
+            ESP_LOGW(kTag, "Policy record validation failed");
         }
         memset(out, 0, out_capacity);
         *out_size = 0;

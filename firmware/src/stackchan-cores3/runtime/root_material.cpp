@@ -3,13 +3,13 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "nvs.h"
-#include "protocol/persistent_storage_names.h"
+#include "stackchan_storage_names.h"
 
 namespace signing {
 namespace {
 
 constexpr const char* kTag = "RootMaterial";
-constexpr const char* kNvsNamespace = kSigningKeyMaterialNvsNamespace;
+constexpr const char* kNvsNamespace = kStackChanSigningKeyMaterialNvsNamespace;
 constexpr const char* kRootMaterialKey = "root_entropy";
 
 }  // namespace

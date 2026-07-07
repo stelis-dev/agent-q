@@ -1,4 +1,4 @@
-#include "connect_review_response_flow.h"
+#include "transport/connect_review_response_flow.h"
 
 #include "protocol/request_id.h"
 
@@ -48,14 +48,14 @@ void log_review_recovered(
 void show_result_and_clear_review(
     const ConnectReviewResponseFlowOps& ops,
     const char* message,
-    MessageKind kind)
+    ConnectReviewTerminalUiKind kind)
 {
     if (ops.show_result_and_clear_review != nullptr) {
         ops.show_result_and_clear_review(message, kind);
     }
 }
 
-TickType_t current_tick(const ConnectReviewResponseFlowOps& ops)
+TimeoutTick current_tick(const ConnectReviewResponseFlowOps& ops)
 {
     return ops.now != nullptr ? ops.now() : 0;
 }
@@ -87,7 +87,7 @@ void drain_connect_review_choice_events(
             continue;
         }
 
-        const TickType_t now = current_tick(ops);
+        const TimeoutTick now = current_tick(ops);
         if (choice == ConnectApprovalChoice::approved &&
             ops.human_approval_requires_pin != nullptr &&
             ops.human_approval_requires_pin()) {
@@ -132,7 +132,7 @@ void send_connect_terminal_response_if_needed(
             show_result_and_clear_review(
                 ops,
                 "Connection timed out",
-                MessageKind::timeout);
+                ConnectReviewTerminalUiKind::timeout);
         }
         return;
     }
@@ -154,7 +154,10 @@ void send_connect_terminal_response_if_needed(
                     "rng_unavailable");
             }
             log_error(ops, "connect could not create session id", request_id);
-            show_result_and_clear_review(ops, "RNG error", MessageKind::error);
+            show_result_and_clear_review(
+                ops,
+                "RNG error",
+                ConnectReviewTerminalUiKind::error);
             return;
         }
         if (ops.write_approved != nullptr && ops.write_approved(request_id)) {
@@ -162,7 +165,10 @@ void send_connect_terminal_response_if_needed(
         } else {
             log_write_failure(ops, "connect", request_id);
         }
-        show_result_and_clear_review(ops, "Connected", MessageKind::success);
+        show_result_and_clear_review(
+            ops,
+            "Connected",
+            ConnectReviewTerminalUiKind::success);
         return;
     }
 
@@ -175,7 +181,7 @@ void send_connect_terminal_response_if_needed(
     show_result_and_clear_review(
         ops,
         "Connection rejected",
-        MessageKind::rejected);
+        ConnectReviewTerminalUiKind::rejected);
 }
 
 void ensure_connect_review_ui(const ConnectReviewResponseFlowOps& ops)

@@ -19,14 +19,13 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 CXX_BIN="${CXX:-c++}"
 
 for required in \
   "${COMMON_ROOT}/protocol/request_id.h" \
-  "${RUNTIME_DIR}/connect_review_response_flow.cpp" \
-  "${RUNTIME_DIR}/connect_review_response_flow.h"; do
+  "${COMMON_ROOT}/transport/connect_review_response_flow.cpp" \
+  "${COMMON_ROOT}/transport/connect_review_response_flow.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
@@ -36,40 +35,18 @@ done
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-connect-review-response-flow.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-mkdir -p "${TMP_DIR}/stubs/freertos" "${TMP_DIR}/stubs/lvgl"
-
-cat >"${TMP_DIR}/stubs/freertos/FreeRTOS.h" <<'H'
-#pragma once
-
-#include <stdint.h>
-
-typedef uint32_t TickType_t;
-#define pdMS_TO_TICKS(ms) (static_cast<TickType_t>(ms))
-H
-
-cat >"${TMP_DIR}/stubs/lvgl.h" <<'H'
-#pragma once
-
-typedef void (*lv_event_cb_t)(void*);
-typedef struct {
-    int x1;
-    int y1;
-    int x2;
-    int y2;
-} lv_area_t;
-typedef struct _lv_obj_t lv_obj_t;
-H
+mkdir -p "${TMP_DIR}/stubs"
 
 cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "connect_review_response_flow.h"
+#include "transport/connect_review_response_flow.h"
 
 namespace {
 
 int failures = 0;
-TickType_t g_now = 100;
+signing::TimeoutTick g_now = 100;
 bool g_local_pin_flow_active = false;
 bool g_has_choice_event = false;
 bool g_awaiting_choice = false;
@@ -99,7 +76,8 @@ int g_show_result_calls = 0;
 int g_show_review_calls = 0;
 signing::ConnectApprovalChoice g_last_chosen =
     signing::ConnectApprovalChoice::none;
-signing::MessageKind g_last_result_kind = signing::MessageKind::info;
+signing::ConnectReviewTerminalUiKind g_last_result_kind =
+    signing::ConnectReviewTerminalUiKind::error;
 char g_last_result_message[80] = {};
 char g_last_response_code[80] = {};
 char g_last_response_message[120] = {};
@@ -148,13 +126,13 @@ void reset_harness()
     g_show_result_calls = 0;
     g_show_review_calls = 0;
     g_last_chosen = signing::ConnectApprovalChoice::none;
-    g_last_result_kind = signing::MessageKind::info;
+    g_last_result_kind = signing::ConnectReviewTerminalUiKind::error;
     g_last_result_message[0] = '\0';
     g_last_response_code[0] = '\0';
     g_last_response_message[0] = '\0';
 }
 
-TickType_t now() { return g_now; }
+signing::TimeoutTick now() { return g_now; }
 bool local_pin_flow_active() { return g_local_pin_flow_active; }
 void reset_choices() { ++g_reset_choice_calls; }
 bool receive_choice(signing::ConnectApprovalChoice* choice)
@@ -171,13 +149,13 @@ bool receive_choice(signing::ConnectApprovalChoice* choice)
 }
 bool awaiting_choice() { return g_awaiting_choice; }
 bool requires_pin() { return g_requires_pin; }
-bool begin_pin(TickType_t tick)
+bool begin_pin(signing::TimeoutTick tick)
 {
     expect(tick == g_now, "PIN handoff receives current tick");
     ++g_begin_pin_calls;
     return true;
 }
-bool choose(signing::ConnectApprovalChoice choice, TickType_t tick)
+bool choose(signing::ConnectApprovalChoice choice, signing::TimeoutTick tick)
 {
     expect(tick == g_now, "choice receives current tick");
     ++g_choose_calls;
@@ -186,7 +164,7 @@ bool choose(signing::ConnectApprovalChoice choice, TickType_t tick)
     return true;
 }
 signing::ConnectApprovalSnapshot snapshot() { return g_snapshot; }
-bool deadline_reached(TickType_t tick)
+bool deadline_reached(signing::TimeoutTick tick)
 {
     expect(tick == g_now, "deadline check receives current tick");
     return g_deadline_reached;
@@ -230,7 +208,7 @@ void log_info(const char*, const char*) { ++g_log_info_calls; }
 void log_error(const char*, const char*) { ++g_log_error_calls; }
 void log_write_failure(const char*, const char*) { ++g_log_write_failure_calls; }
 void log_recovered(const char*) { ++g_log_recovered_calls; }
-void show_result(const char* message, signing::MessageKind kind)
+void show_result(const char* message, signing::ConnectReviewTerminalUiKind kind)
 {
     ++g_show_result_calls;
     snprintf(g_last_result_message, sizeof(g_last_result_message), "%s", message);
@@ -274,7 +252,7 @@ const signing::ConnectReviewResponseFlowOps& ops()
 int main()
 {
     using signing::ConnectApprovalChoice;
-    using signing::MessageKind;
+    using signing::ConnectReviewTerminalUiKind;
 
     reset_harness();
     g_local_pin_flow_active = true;
@@ -309,7 +287,7 @@ int main()
     expect(strcmp(g_last_response_code, "user_rejected") == 0, "rejected response code");
     expect(g_show_result_calls == 1, "terminal rejected connect shows result");
     expect(strcmp(g_last_result_message, "Connection rejected") == 0, "rejected result message");
-    expect(g_last_result_kind == MessageKind::rejected, "rejected result kind");
+    expect(g_last_result_kind == ConnectReviewTerminalUiKind::rejected, "rejected result kind");
 
     reset_harness();
     g_deadline_reached = true;
@@ -319,7 +297,7 @@ int main()
     expect(strcmp(g_last_response_code, "timeout") == 0, "timeout response code");
     expect(g_show_result_calls == 1, "timeout shows result");
     expect(strcmp(g_last_result_message, "Connection timed out") == 0, "timeout result message");
-    expect(g_last_result_kind == MessageKind::timeout, "timeout result kind");
+    expect(g_last_result_kind == ConnectReviewTerminalUiKind::timeout, "timeout result kind");
 
     reset_harness();
     g_snapshot.choice = ConnectApprovalChoice::approved;
@@ -329,7 +307,7 @@ int main()
     expect(g_write_approved_calls == 1, "approved connect writes approved response");
     expect(g_show_result_calls == 1, "approved connect shows result");
     expect(strcmp(g_last_result_message, "Connected") == 0, "approved result message");
-    expect(g_last_result_kind == MessageKind::success, "approved result kind");
+    expect(g_last_result_kind == ConnectReviewTerminalUiKind::success, "approved result kind");
 
     reset_harness();
     g_snapshot.choice = ConnectApprovalChoice::approved;
@@ -339,7 +317,7 @@ int main()
     expect(strcmp(g_last_response_code, "rng_unavailable") == 0, "session failure code");
     expect(g_log_error_calls == 1, "session creation failure logs error");
     expect(strcmp(g_last_result_message, "RNG error") == 0, "session failure result");
-    expect(g_last_result_kind == MessageKind::error, "session failure result kind");
+    expect(g_last_result_kind == ConnectReviewTerminalUiKind::error, "session failure result kind");
 
     reset_harness();
     g_snapshot.choice = ConnectApprovalChoice::approved;
@@ -373,9 +351,8 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
   -I"${COMMON_ROOT}" \
-  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${RUNTIME_DIR}/connect_review_response_flow.cpp" \
+  "${COMMON_ROOT}/transport/connect_review_response_flow.cpp" \
   -o "${TMP_DIR}/connect_review_response_flow_test"
 
 "${TMP_DIR}/connect_review_response_flow_test"

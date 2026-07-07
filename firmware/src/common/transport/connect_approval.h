@@ -4,7 +4,6 @@
 
 #include "protocol/request_id.h"
 #include "transport/timeout_window.h"
-#include "freertos/FreeRTOS.h"
 
 namespace signing {
 
@@ -33,12 +32,12 @@ ConnectApprovalSnapshot connect_approval_snapshot();
 bool connect_approval_begin(
     const char* request_id,
     const char* client_name,
-    TickType_t now,
+    TimeoutTick now,
     TimeoutWindow approval_window);
-bool connect_approval_review_action_available(TickType_t now);
-bool connect_approval_choose(ConnectApprovalChoice choice, TickType_t now);
-bool connect_approval_return_to_review(TickType_t now, TimeoutWindow approval_window);
-bool connect_approval_deadline_reached(TickType_t now);
+bool connect_approval_review_action_available(TimeoutTick now);
+bool connect_approval_choose(ConnectApprovalChoice choice, TimeoutTick now);
+bool connect_approval_return_to_review(TimeoutTick now, TimeoutWindow approval_window);
+bool connect_approval_deadline_reached(TimeoutTick now);
 bool connect_approval_request_id(char* output, size_t output_size);
 
 }  // namespace signing

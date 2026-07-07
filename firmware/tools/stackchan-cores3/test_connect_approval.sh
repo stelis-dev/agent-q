@@ -18,26 +18,17 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 CXX_BIN="${CXX:-c++}"
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-connect-approval.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-mkdir -p "${TMP_DIR}/freertos"
-cat >"${TMP_DIR}/freertos/FreeRTOS.h" <<'H'
-#pragma once
-#include <stdint.h>
-using TickType_t = uint32_t;
-#define pdMS_TO_TICKS(ms) (ms)
-H
-
 cat >"${TMP_DIR}/connect_approval_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "connect_approval.h"
+#include "transport/connect_approval.h"
 
 namespace {
 
@@ -178,9 +169,8 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
   -I"${COMMON_ROOT}" \
-  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/connect_approval_test.cpp" \
-  "${RUNTIME_DIR}/connect_approval.cpp" \
+  "${COMMON_ROOT}/transport/connect_approval.cpp" \
   -o "${TMP_DIR}/connect_approval_test"
 
 "${TMP_DIR}/connect_approval_test"

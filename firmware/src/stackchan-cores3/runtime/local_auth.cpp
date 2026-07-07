@@ -7,7 +7,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "nvs.h"
-#include "protocol/persistent_storage_names.h"
+#include "stackchan_storage_names.h"
 
 extern "C" {
 #include "lib/monocypher/monocypher.h"
@@ -17,7 +17,7 @@ namespace signing {
 namespace {
 
 constexpr const char* kTag = "LocalAuth";
-constexpr const char* kNvsNamespace = kAuthorityGateNvsNamespace;
+constexpr const char* kNvsNamespace = kStackChanAuthorityGateNvsNamespace;
 constexpr const char* kLocalAuthKey = "pin_auth";
 constexpr uint8_t kRecordFormatVersion = 0;
 constexpr uint8_t kKdfPbkdf2HmacSha512 = 1;

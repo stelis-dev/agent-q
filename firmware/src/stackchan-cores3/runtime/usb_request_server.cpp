@@ -11,8 +11,8 @@
 #include "protocol/approval_history.h"
 #include "bip39.h"
 #include "bip39_wordlist.h"
-#include "connect_approval.h"
-#include "connect_review_response_flow.h"
+#include "transport/connect_approval.h"
+#include "transport/connect_review_response_flow.h"
 #include "human_approval_settings.h"
 #include "drawing_surface.h"
 #include "entropy.h"
@@ -27,8 +27,8 @@
 #include "local_settings_touch_entry.h"
 #include "storage_maintenance.h"
 #include "modal_drawing.h"
-#include "protocol/persistent_storage_names.h"
 #include "persistent_material.h"
+#include "stackchan_storage_names.h"
 #include "transport/payload_delivery_admission.h"
 #include "transport/payload_delivery_resolution.h"
 #include "transport/payload_delivery_store.h"
@@ -126,7 +126,7 @@ constexpr int kProtocolVersion = signing::kProtocolVersion;
 constexpr const char* kFirmwareName = "Agent-Q Firmware";
 constexpr const char* kHardwareId = "stackchan-cores3";
 constexpr const char* kFirmwareVersion = "0.0.0";
-constexpr const char* kNvsNamespace = signing::kDeviceIdentityNvsNamespace;
+constexpr const char* kNvsNamespace = signing::kStackChanDeviceIdentityNvsNamespace;
 constexpr const char* kDeviceIdKey = "device_id";
 constexpr uint32_t kIdentifyDisplayDefaultMs = 30000;
 constexpr uint32_t kConnectApprovalDefaultMs = 30000;
@@ -2056,10 +2056,32 @@ void clear_connect_review_state()
     signing::identification_display_clear();
 }
 
-void show_result_and_clear_connect_review(const char* message, MessageKind kind)
+MessageKind connect_review_terminal_kind_to_message_kind(
+    signing::ConnectReviewTerminalUiKind kind)
+{
+    switch (kind) {
+        case signing::ConnectReviewTerminalUiKind::success:
+            return MessageKind::success;
+        case signing::ConnectReviewTerminalUiKind::rejected:
+            return MessageKind::rejected;
+        case signing::ConnectReviewTerminalUiKind::timeout:
+            return MessageKind::timeout;
+        case signing::ConnectReviewTerminalUiKind::error:
+        default:
+            return MessageKind::error;
+    }
+}
+
+void show_result_and_clear_connect_review(
+    const char* message,
+    signing::ConnectReviewTerminalUiKind kind)
 {
     clear_signing_panel_if_kind(UiPanelKind::connect_review, SensitiveUiClearPolicy::preserve);
-    signing::avatar_overlay_show_message(message, kind, UiMode::result, kResultDisplayMs);
+    signing::avatar_overlay_show_message(
+        message,
+        connect_review_terminal_kind_to_message_kind(kind),
+        UiMode::result,
+        kResultDisplayMs);
     clear_connect_review_state();
 }
 
@@ -3478,7 +3500,7 @@ bool connect_local_pin_flow_active()
            snapshot.purpose == LocalPinAuthPurpose::connect;
 }
 
-bool begin_connect_pin_auth_from_review(TickType_t now)
+bool begin_connect_pin_auth_from_review(signing::TimeoutTick now)
 {
     if (!signing::connect_approval_review_action_available(now)) {
         return false;

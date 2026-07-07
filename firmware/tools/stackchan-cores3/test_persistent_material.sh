@@ -41,15 +41,15 @@ require_pattern() {
 
 require_pattern \
   "${RUNTIME_DIR}/root_material.cpp" \
-  "kNvsNamespace = kSigningKeyMaterialNvsNamespace" \
+  "kNvsNamespace = kStackChanSigningKeyMaterialNvsNamespace" \
   "root material must use the protected signing-key namespace"
 require_pattern \
   "${RUNTIME_DIR}/local_auth.cpp" \
-  "kNvsNamespace = kAuthorityGateNvsNamespace" \
+  "kNvsNamespace = kStackChanAuthorityGateNvsNamespace" \
   "local authentication verifier must use the protected authority-gate namespace"
 require_pattern \
   "${RUNTIME_DIR}/usb_request_server.cpp" \
-  "kNvsNamespace = signing::kDeviceIdentityNvsNamespace" \
+  "kNvsNamespace = signing::kStackChanDeviceIdentityNvsNamespace" \
   "protocol device id must use the stable device-identity namespace"
 if [[ ! -f "${ARDUINOJSON_ROOT}/ArduinoJson.h" ]]; then
   echo "Missing required ArduinoJson source: ${ARDUINOJSON_ROOT}/ArduinoJson.h" >&2

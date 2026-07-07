@@ -40,7 +40,9 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/firmware_common" "${TMP_DIR}/stubs/freertos"
 ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
+ln -s "${COMMON_ROOT}/protocol" "${TMP_DIR}/firmware_common/protocol"
 ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/firmware_common/sui"
+ln -s "${COMMON_ROOT}/transport" "${TMP_DIR}/firmware_common/transport"
 
 cat >"${TMP_DIR}/stubs/freertos/FreeRTOS.h" <<'H'
 #pragma once
@@ -1035,6 +1037,7 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
   -I"${TMP_DIR}" \
+  -I"${TMP_DIR}/firmware_common" \
   -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/local_pin_auth_test.cpp" \
   "${TMP_DIR}/stubs.cpp" \

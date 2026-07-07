@@ -1,4 +1,4 @@
-#include "connect_approval.h"
+#include "transport/connect_approval.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -58,7 +58,7 @@ ConnectApprovalSnapshot connect_approval_snapshot()
 bool connect_approval_begin(
     const char* request_id,
     const char* client_name,
-    TickType_t now,
+    TimeoutTick now,
     TimeoutWindow approval_window)
 {
     if (g_state.active) {
@@ -78,14 +78,14 @@ bool connect_approval_begin(
     return true;
 }
 
-bool connect_approval_review_action_available(TickType_t now)
+bool connect_approval_review_action_available(TimeoutTick now)
 {
     return connect_approval_awaiting_choice() &&
            timeout_window_valid(g_state.approval_window) &&
            !timeout_window_reached(g_state.approval_window, now);
 }
 
-bool connect_approval_choose(ConnectApprovalChoice choice, TickType_t now)
+bool connect_approval_choose(ConnectApprovalChoice choice, TimeoutTick now)
 {
     if (!connect_approval_review_action_available(now) ||
         choice == ConnectApprovalChoice::none) {
@@ -95,7 +95,7 @@ bool connect_approval_choose(ConnectApprovalChoice choice, TickType_t now)
     return true;
 }
 
-bool connect_approval_return_to_review(TickType_t now, TimeoutWindow approval_window)
+bool connect_approval_return_to_review(TimeoutTick now, TimeoutWindow approval_window)
 {
     if (!g_state.active ||
         !timeout_window_valid_and_open_at(approval_window, now)) {
@@ -106,7 +106,7 @@ bool connect_approval_return_to_review(TickType_t now, TimeoutWindow approval_wi
     return true;
 }
 
-bool connect_approval_deadline_reached(TickType_t now)
+bool connect_approval_deadline_reached(TimeoutTick now)
 {
     return g_state.active && timeout_window_reached(g_state.approval_window, now);
 }

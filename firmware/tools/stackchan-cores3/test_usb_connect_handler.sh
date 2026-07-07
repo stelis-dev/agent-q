@@ -18,7 +18,6 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 COMMON_TRANSPORT_DIR="${COMMON_ROOT}/transport"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
@@ -29,7 +28,6 @@ for required in \
   "${COMMON_TRANSPORT_DIR}/usb_connect_handler.cpp" \
   "${COMMON_TRANSPORT_DIR}/usb_connect_handler.h" \
   "${COMMON_ROOT}/protocol/usb_operation_response_writer.h" \
-  "${RUNTIME_DIR}/connect_approval.h" \
   "${COMMON_ROOT}/transport/timeout_window.h" \
   "${COMMON_ROOT}/protocol/request_id.h"; do
   if [[ ! -f "${required}" ]]; then
@@ -407,7 +405,6 @@ CPP
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
   -I"${COMMON_ROOT}" \
-  -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
   "${COMMON_TRANSPORT_DIR}/usb_connect_handler.cpp" \
   -o "${TMP_DIR}/test_usb_connect_handler"

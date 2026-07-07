@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-#include "connect_approval.h"
+#include "transport/connect_approval.h"
 #include "drawing_surface.h"
 #include "lvgl.h"
 

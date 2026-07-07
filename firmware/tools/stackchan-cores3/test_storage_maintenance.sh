@@ -23,13 +23,23 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 CXX_BIN="${CXX:-c++}"
+DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
+ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
+
+if [[ ! -f "${ARDUINOJSON_ROOT}/ArduinoJson.h" ]]; then
+  echo "Missing required ArduinoJson source: ${ARDUINOJSON_ROOT}/ArduinoJson.h" >&2
+  echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
+  exit 1
+fi
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-storage-maintenance.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/firmware_common" "${TMP_DIR}/stubs/freertos"
 ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
+ln -s "${COMMON_ROOT}/protocol" "${TMP_DIR}/firmware_common/protocol"
 ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/firmware_common/sui"
+ln -s "${COMMON_ROOT}/transport" "${TMP_DIR}/firmware_common/transport"
 
 cat >"${TMP_DIR}/stubs/freertos/FreeRTOS.h" <<'H'
 #pragma once
@@ -973,6 +983,7 @@ CPP
 "${CXX_BIN}" -std=c++17 \
   -I"${TMP_DIR}/stubs" \
   -I"${TMP_DIR}" \
+  -I"${ARDUINOJSON_ROOT}" \
   -I"${RUNTIME_DIR}" -I"${TMP_DIR}/firmware_common" \
   "${RUNTIME_DIR}/pin_attempt.cpp" \
   "${RUNTIME_DIR}/persistent_material.cpp" \

@@ -20,6 +20,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 
 for required in \
   "${RUNTIME_DIR}/provisioning_flow.cpp" \
@@ -455,6 +456,7 @@ int main()
 CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
+  -I"${COMMON_ROOT}" \
   -I"${RUNTIME_DIR}" \
   -I"${TMP_DIR}/stubs" \
   "${TMP_DIR}/stubs.cpp" \
