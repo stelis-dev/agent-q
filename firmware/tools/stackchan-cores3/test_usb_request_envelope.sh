@@ -28,9 +28,8 @@ for required in \
   "${COMMON_ROOT}/protocol/device_contract.h" \
   "${RUNTIME_DIR}/usb_request_envelope.cpp" \
   "${RUNTIME_DIR}/usb_request_envelope.h" \
-  "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
-  "${RUNTIME_DIR}/usb_operation_manifest.h" \
-  "${RUNTIME_DIR}/usb_operation_type.h" \
+  "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
+  "${COMMON_ROOT}/protocol/usb_operation_type.h" \
   "${COMMON_ROOT}/protocol/request_id.cpp"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -278,7 +277,7 @@ CPP
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${COMMON_ROOT}/protocol/session_state.cpp" \
   "${RUNTIME_DIR}/usb_request_envelope.cpp" \
-  "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
+  "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   -o "${TMP_DIR}/test"
 

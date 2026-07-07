@@ -3,12 +3,11 @@
 #include <stdio.h>
 
 #include "protocol/json_input.h"
-#include "policy/policy_json_writer.h"
 #include "transport/payload_delivery_store.h"
 #include "protocol/protocol_constants.h"
 #include "signing_route.h"
 #include "sui/signing_limits.h"
-#include "usb_active_session_request_guard.h"
+#include "protocol/usb_active_session_request_guard.h"
 #include "usb_response_writer.h"
 
 extern "C" {
@@ -19,20 +18,8 @@ namespace signing {
 
 namespace {
 
-constexpr size_t kPolicyIdBufferSize = 80;
 constexpr size_t kSuiActivePublicKeyBase64BufferSize =
     ((kSuiZkLoginPublicKeyMaxBytes + 2) / 3) * 4 + 1;
-
-struct SessionReadPolicyDocument {
-    const char* schema = nullptr;
-    char policy_id[kPolicyIdBufferSize] = {};
-    const char* default_action = nullptr;
-    size_t blockchain_count = 0;
-    size_t network_count = 0;
-    size_t policy_count = 0;
-    size_t condition_count = 0;
-    const CurrentPolicyDocument* document = nullptr;
-};
 
 bool guard_session_read_request(
     const char* id,
@@ -191,25 +178,6 @@ bool write_accounts_response(
     return usb_response_write_success_result(id, "get_accounts", result.as<JsonObjectConst>());
 }
 
-bool read_active_policy(
-    const UsbSessionReadHandlerOps& ops,
-    SessionReadPolicyDocument* policy)
-{
-    if (policy == nullptr || ops.read_active_policy == nullptr) {
-        return false;
-    }
-    return ops.read_active_policy(
-        &policy->schema,
-        policy->policy_id,
-        sizeof(policy->policy_id),
-        &policy->default_action,
-        &policy->blockchain_count,
-        &policy->network_count,
-        &policy->policy_count,
-        &policy->condition_count,
-        &policy->document);
-}
-
 }  // namespace
 
 void handle_usb_get_capabilities_request(
@@ -288,50 +256,6 @@ void handle_usb_get_accounts_request(
         ops.record_root_material_unreadable();
     }
     writer.write_error(id, "account_unavailable");
-}
-
-void handle_usb_policy_get_request(
-    const char* id,
-    JsonDocument& request,
-    const UsbOperationResponseWriter& writer,
-    const UsbSessionReadHandlerOps& ops)
-{
-    const char* session_id = nullptr;
-    if (!guard_session_read_request(
-            id,
-            request,
-            writer,
-            ops,
-            UsbOperationType::policy_get,
-            &session_id)) {
-        return;
-    }
-    (void)session_id;
-
-    SessionReadPolicyDocument policy;
-    if (!read_active_policy(ops, &policy) ||
-        policy.document == nullptr) {
-        if (ops.record_active_policy_unavailable != nullptr) {
-            ops.record_active_policy_unavailable();
-        }
-        writer.write_error(id, "policy_unavailable");
-        return;
-    }
-    JsonDocument result;
-    if (write_current_policy_json(
-            result["policy"].to<JsonObject>(),
-        policy.schema,
-            policy.policy_id,
-        policy.default_action,
-        policy.blockchain_count,
-        policy.network_count,
-        policy.policy_count,
-        policy.condition_count,
-            policy.document) &&
-        usb_response_write_success_result(id, "policy_get", result.as<JsonObjectConst>())) {
-        return;
-    }
-    writer.log_write_failure("policy_get", id);
 }
 
 }  // namespace signing

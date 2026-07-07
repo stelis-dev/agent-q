@@ -1,7 +1,7 @@
 #pragma once
 
 #include "transport/payload_delivery_operation_kind.h"
-#include "usb_operation_type.h"
+#include "protocol/usb_operation_type.h"
 
 namespace signing {
 
@@ -45,7 +45,6 @@ enum class UsbOperationReadSideEffectPolicy {
 
 struct UsbOperationManifestEntry {
     UsbOperationType type;
-    const char* wire_type;
     UsbOperationHandlerSlot handler_slot;
     PayloadDeliveryOperationKind payload_delivery_operation;
     UsbOperationCompletionPolicy completion_policy;

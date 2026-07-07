@@ -12,7 +12,7 @@
 #include "transport/payload_delivery_store.h"
 #include "protocol/protocol_constants.h"
 #include "numeric/u64_decimal.h"
-#include "usb_active_session_request_guard.h"
+#include "protocol/usb_active_session_request_guard.h"
 #include "usb_line_receiver.h"
 #include "usb_response_writer.h"
 

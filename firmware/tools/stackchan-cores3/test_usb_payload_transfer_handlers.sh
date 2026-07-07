@@ -38,8 +38,8 @@ for required in \
   "${MBEDTLS_INCLUDE_DIR}/mbedtls/sha256.h" \
   "${MBEDTLS_LIBRARY_DIR}/sha256.c" \
   "${MBEDTLS_LIBRARY_DIR}/platform_util.c" \
-  "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
-  "${RUNTIME_DIR}/usb_active_session_request_guard.h" \
+  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
+  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.h" \
   "${RUNTIME_DIR}/usb_payload_transfer_handlers.cpp" \
   "${RUNTIME_DIR}/usb_payload_transfer_handlers.h" \
   "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
@@ -883,7 +883,7 @@ CPP
   -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
+  -c "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
   -o "${TMP_DIR}/active_session_request_guard.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \

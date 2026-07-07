@@ -24,8 +24,8 @@ ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
-  "${RUNTIME_DIR}/usb_active_session_request_guard.h" \
+  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
+  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.h" \
   "${RUNTIME_DIR}/usb_retained_response_handlers.cpp" \
   "${RUNTIME_DIR}/usb_retained_response_handlers.h" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
@@ -397,7 +397,7 @@ CPP
   -I"${RUNTIME_DIR}" \
   -I"${RUNTIME_DIR}/../../common" \
   "${TMP_DIR}/test.cpp" \
-  "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
+  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
   "${RUNTIME_DIR}/usb_retained_response_handlers.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${COMMON_ROOT}/protocol/signing_response_store.cpp" \

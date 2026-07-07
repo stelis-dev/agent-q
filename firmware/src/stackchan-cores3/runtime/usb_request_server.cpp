@@ -72,11 +72,10 @@
 #include "usb_operation_dispatch.h"
 #include "usb_operation_manifest.h"
 #include "protocol/usb_operation_response_writer.h"
-#include "usb_policy_propose_handler.h"
+#include "policy/usb_policy_handlers.h"
 #include "usb_payload_transfer_handlers.h"
-#include "usb_policy_propose_outcome_writer.h"
 #include "ui_panel_cleanup.h"
-#include "usb_operation_type.h"
+#include "protocol/usb_operation_type.h"
 #include "usb_line_receiver.h"
 #include "usb_request_envelope.h"
 #include "usb_request_line_handler.h"
@@ -463,6 +462,7 @@ const UsbOperationResponseWriter& usb_operation_response_writer()
 {
     static const UsbOperationResponseWriter writer = {
         signing::usb_response_write_method_error,
+        signing::usb_response_write_success_result,
         signing::usb_response_log_write_failure,
     };
     return writer;
@@ -571,7 +571,12 @@ bool write_policy_propose_outcome_with_current_policy(
 {
     const signing::PolicyUpdateFlowSnapshot snapshot =
         signing::policy_update_flow_snapshot();
-    return signing::usb_policy_propose_outcome_write(id, status, reason_code, &snapshot);
+    return signing::usb_policy_propose_outcome_write(
+        id,
+        status,
+        reason_code,
+        &snapshot,
+        usb_operation_response_writer());
 }
 
 void clear_active_session()
@@ -4003,45 +4008,6 @@ void record_root_material_unreadable_for_session_read()
         persistent_material_ops());
 }
 
-bool read_active_policy_for_session_read(
-    const char** schema,
-    char* policy_id_out,
-    size_t policy_id_out_size,
-    const char** default_action,
-    size_t* blockchain_count,
-    size_t* network_count,
-    size_t* policy_count,
-    size_t* condition_count,
-    const signing::CurrentPolicyDocument** document)
-{
-    if (schema == nullptr ||
-        policy_id_out == nullptr ||
-        policy_id_out_size == 0 ||
-        default_action == nullptr ||
-        blockchain_count == nullptr ||
-        network_count == nullptr ||
-        policy_count == nullptr ||
-        condition_count == nullptr ||
-        document == nullptr) {
-        return false;
-    }
-
-    signing::StoredPolicyDocument stored_policy = {};
-    if (!signing::read_active_policy_document(&stored_policy) ||
-        stored_policy.document == nullptr) {
-        return false;
-    }
-    *schema = stored_policy.schema;
-    snprintf(policy_id_out, policy_id_out_size, "%s", stored_policy.policy_id);
-    *default_action = stored_policy.default_action;
-    *blockchain_count = stored_policy.blockchain_count;
-    *network_count = stored_policy.network_count;
-    *policy_count = stored_policy.policy_count;
-    *condition_count = stored_policy.condition_count;
-    *document = stored_policy.document;
-    return true;
-}
-
 void record_active_policy_unavailable_for_session_read()
 {
     signing::persistent_material_record_runtime_failure(
@@ -4067,8 +4033,6 @@ const signing::UsbSessionReadHandlerOps& session_read_handler_ops()
         sui_zklogin_credential_available_for_session_read,
         signing::resolve_active_sui_identity,
         record_root_material_unreadable_for_session_read,
-        read_active_policy_for_session_read,
-        record_active_policy_unavailable_for_session_read,
     };
     return ops;
 }
@@ -4094,6 +4058,8 @@ const signing::UsbPayloadTransferHandlerOps& payload_transfer_handler_ops()
     return ops;
 }
 
+const signing::UsbPolicyHandlerOps& policy_handler_ops();
+
 void handle_get_capabilities_request(
     const char* id,
     JsonDocument& request,
@@ -4115,7 +4081,7 @@ void handle_policy_get_request(
     JsonDocument& request,
     const UsbOperationResponseWriter& writer)
 {
-    signing::handle_usb_policy_get_request(id, request, writer, session_read_handler_ops());
+    signing::handle_usb_policy_get_request(id, request, writer, policy_handler_ops());
 }
 
 void handle_payload_transfer_begin_request(
@@ -4222,12 +4188,15 @@ void record_policy_update_waiting_for_review(const char* id)
     ESP_LOGI(kTag, "policy update waiting for local review: id=%s", id);
 }
 
-const signing::UsbPolicyProposeHandlerOps& policy_propose_handler_ops()
+const signing::UsbPolicyHandlerOps& policy_handler_ops()
 {
-    static const signing::UsbPolicyProposeHandlerOps ops = {
+    static const signing::UsbPolicyHandlerOps ops = {
         provisioned_material_ready,
+        write_busy_if_pending_or_local_flow_active_allow_settings,
+        write_payload_delivery_safe_read_admission_error,
         write_payload_delivery_policy_propose_busy,
         require_active_matching_session,
+        record_active_policy_unavailable_for_session_read,
         current_timeout_tick,
         make_policy_update_review_window,
         signing::policy_update_flow_begin,
@@ -4245,7 +4214,7 @@ void handle_policy_propose_request(
     JsonDocument& request,
     const UsbOperationResponseWriter& writer)
 {
-    signing::handle_usb_policy_propose_request(id, request, writer, policy_propose_handler_ops());
+    signing::handle_usb_policy_propose_request(id, request, writer, policy_handler_ops());
 }
 
 const signing::UsbSuiZkLoginCredentialHandlerOps& sui_zklogin_credential_handler_ops()

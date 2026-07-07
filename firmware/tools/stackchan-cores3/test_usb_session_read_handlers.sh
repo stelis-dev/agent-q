@@ -6,8 +6,8 @@ usage() {
 Usage: firmware/tools/stackchan-cores3/test_usb_session_read_handlers.sh
 
 Compiles extracted USB session-scoped read handlers and verifies
-get_capabilities, get_accounts, and policy_get validation/response behavior. It
-does not require hardware.
+get_capabilities and get_accounts validation/response behavior. It does not
+require hardware.
 EOF
 }
 
@@ -26,12 +26,8 @@ ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${COMMON_ROOT}/protocol/sign_route.h" \
-  "${COMMON_ROOT}/policy/document.cpp" \
-  "${COMMON_ROOT}/policy/document.h" \
-  "${COMMON_ROOT}/policy/policy_json_writer.cpp" \
-  "${COMMON_ROOT}/policy/policy_json_writer.h" \
-  "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
-  "${RUNTIME_DIR}/usb_active_session_request_guard.h" \
+  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
+  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.h" \
   "${RUNTIME_DIR}/usb_session_read_handlers.cpp" \
   "${RUNTIME_DIR}/usb_session_read_handlers.h" \
   "${COMMON_ROOT}/protocol/usb_operation_response_writer.h"; do
@@ -101,8 +97,6 @@ int g_read_sui_account_settings_calls = 0;
 int g_sui_zklogin_credential_available_calls = 0;
 int g_resolve_active_identity_calls = 0;
 int g_record_root_material_unreadable_calls = 0;
-int g_read_policy_calls = 0;
-int g_record_policy_unavailable_calls = 0;
 int g_write_json_calls = 0;
 bool g_material_ready = true;
 bool g_busy = false;
@@ -116,8 +110,6 @@ signing::SuiActiveIdentityKind g_active_identity_kind =
     signing::SuiActiveIdentityKind::native;
 signing::SuiActiveIdentityError g_active_identity_error =
     signing::SuiActiveIdentityError::none;
-bool g_read_policy_ok = true;
-bool g_policy_has_document = true;
 bool g_write_json_ok = true;
 const char* g_last_id = nullptr;
 const char* g_last_session = nullptr;
@@ -142,10 +134,6 @@ size_t g_last_json_signing_method_count = 0;
 bool g_last_json_credentials_array_present = false;
 size_t g_last_json_credential_count = 0;
 size_t g_last_json_credential_operation_count = 0;
-size_t g_last_json_policy_count = 0;
-size_t g_last_json_policy_condition_count = 0;
-
-signing::CurrentPolicyDocument g_policy_document = {};
 
 void reset_state()
 {
@@ -160,8 +148,6 @@ void reset_state()
     g_sui_zklogin_credential_available_calls = 0;
     g_resolve_active_identity_calls = 0;
     g_record_root_material_unreadable_calls = 0;
-    g_read_policy_calls = 0;
-    g_record_policy_unavailable_calls = 0;
     g_write_json_calls = 0;
     g_material_ready = true;
     g_busy = false;
@@ -173,8 +159,6 @@ void reset_state()
     g_sui_zklogin_credential_available = true;
     g_active_identity_kind = signing::SuiActiveIdentityKind::native;
     g_active_identity_error = signing::SuiActiveIdentityError::none;
-    g_read_policy_ok = true;
-    g_policy_has_document = true;
     g_write_json_ok = true;
     g_last_id = nullptr;
     g_last_session = nullptr;
@@ -199,37 +183,6 @@ void reset_state()
     g_last_json_credentials_array_present = false;
     g_last_json_credential_count = 0;
     g_last_json_credential_operation_count = 0;
-    g_last_json_policy_count = 0;
-    g_last_json_policy_condition_count = 0;
-    g_policy_document = signing::CurrentPolicyDocument{
-        signing::kCurrentPolicySchema,
-        signing::CurrentPolicyAction::reject,
-        nullptr,
-        0,
-    };
-}
-
-void count_policy_document(
-    const signing::CurrentPolicyDocument& document,
-    size_t* network_count,
-    size_t* policy_count,
-    size_t* condition_count)
-{
-    *network_count = 0;
-    *policy_count = 0;
-    *condition_count = 0;
-    for (size_t blockchain_index = 0; blockchain_index < document.blockchain_count; ++blockchain_index) {
-        const signing::CurrentPolicyBlockchainScope& blockchain =
-            document.blockchains[blockchain_index];
-        *network_count += blockchain.network_count;
-        for (size_t network_index = 0; network_index < blockchain.network_count; ++network_index) {
-            const signing::CurrentPolicyNetworkScope& network = blockchain.networks[network_index];
-            *policy_count += network.policy_count;
-            for (size_t policy_index = 0; policy_index < network.policy_count; ++policy_index) {
-                *condition_count += network.policies[policy_index].condition_count;
-            }
-        }
-    }
 }
 
 }  // namespace
@@ -292,13 +245,6 @@ bool usb_response_write_json(JsonDocument& response)
         sizeof(g_last_json_capability_derivation_path),
         "%s",
         capability_derivation_path);
-    const char* policy_id = result["policy"]["policyId"] | "";
-    snprintf(g_last_json_policy_id, sizeof(g_last_json_policy_id), "%s", policy_id);
-    const char* where_type =
-        result["policy"]["blockchains"][0]["networks"][0]["policies"][0]["conditions"][0]["where"]["type"] | "";
-    snprintf(g_last_json_condition_where_type, sizeof(g_last_json_condition_where_type), "%s", where_type);
-    g_last_json_policy_count = result["policy"]["policyCount"] | 0;
-    g_last_json_policy_condition_count = result["policy"]["conditionCount"] | 0;
     return g_write_json_ok;
 }
 
@@ -354,8 +300,7 @@ bool write_payload_admission_error(
     const signing::UsbOperationResponseWriter& writer)
 {
     assert(operation == signing::UsbOperationType::get_capabilities ||
-           operation == signing::UsbOperationType::get_accounts ||
-           operation == signing::UsbOperationType::policy_get);
+           operation == signing::UsbOperationType::get_accounts);
     g_payload_admission_calls += 1;
     g_last_id = id;
     if (g_payload_admission_error) {
@@ -432,45 +377,6 @@ void record_root_material_unreadable()
     g_record_root_material_unreadable_calls += 1;
 }
 
-bool read_active_policy(
-    const char** schema,
-    char* policy_id_out,
-    size_t policy_id_out_size,
-    const char** default_action,
-    size_t* blockchain_count,
-    size_t* network_count,
-    size_t* policy_count,
-    size_t* condition_count,
-    const signing::CurrentPolicyDocument** document)
-{
-    g_read_policy_calls += 1;
-    if (!g_read_policy_ok) {
-        return false;
-    }
-    *schema = signing::kCurrentPolicySchema;
-    snprintf(policy_id_out, policy_id_out_size, "sha256:test");
-    *default_action = "reject";
-    size_t counted_networks = 0;
-    size_t counted_policies = 0;
-    size_t counted_conditions = 0;
-    count_policy_document(
-        g_policy_document,
-        &counted_networks,
-        &counted_policies,
-        &counted_conditions);
-    *blockchain_count = g_policy_document.blockchain_count;
-    *network_count = counted_networks;
-    *policy_count = counted_policies;
-    *condition_count = counted_conditions;
-    *document = g_policy_has_document ? &g_policy_document : nullptr;
-    return true;
-}
-
-void record_policy_unavailable()
-{
-    g_record_policy_unavailable_calls += 1;
-}
-
 signing::UsbOperationResponseWriter make_writer()
 {
     return signing::UsbOperationResponseWriter{
@@ -491,8 +397,6 @@ signing::UsbSessionReadHandlerOps make_ops()
         sui_zklogin_credential_available,
         resolve_active_identity,
         record_root_material_unreadable,
-        read_active_policy,
-        record_policy_unavailable,
     };
 }
 
@@ -744,114 +648,6 @@ int main()
         assert(g_resolve_active_identity_calls == 0);
     }
 
-    {
-        reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_get\",\"sessionId\":\"session\"}");
-        signing::handle_usb_policy_get_request("req", request, make_writer(), make_ops());
-        assert(g_write_error_calls == 0);
-        assert(g_payload_admission_calls == 1);
-        assert(g_read_policy_calls == 1);
-        assert(g_write_json_calls == 1);
-        assert(strcmp(g_last_json_type, "policy_get") == 0);
-        assert(strcmp(g_last_json_policy_id, "sha256:test") == 0);
-        assert(g_last_json_policy_count == 0);
-        assert(g_last_json_policy_condition_count == 0);
-        assert(g_record_policy_unavailable_calls == 0);
-    }
-
-    {
-        reset_state();
-        constexpr const char* kSuiTypeTag =
-            "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI";
-        const char* amount_values[] = {"1000000000"};
-        const signing::CurrentPolicyCondition conditions[] = {
-            {
-                "sui.token_totals_by_type.amount_raw",
-                signing::CurrentPolicyOperator::lte,
-                amount_values,
-                sizeof(amount_values) / sizeof(amount_values[0]),
-                kSuiTypeTag,
-            },
-        };
-        const signing::CurrentPolicy policies[] = {
-            {
-                "sui-testnet-max-one-sui",
-                signing::CurrentPolicyAction::sign,
-                conditions,
-                sizeof(conditions) / sizeof(conditions[0]),
-            },
-        };
-        const signing::CurrentPolicyNetworkScope networks[] = {
-            {
-                "testnet",
-                policies,
-                sizeof(policies) / sizeof(policies[0]),
-            },
-        };
-        const signing::CurrentPolicyBlockchainScope blockchains[] = {
-            {
-                "sui",
-                networks,
-                sizeof(networks) / sizeof(networks[0]),
-            },
-        };
-        g_policy_document = signing::CurrentPolicyDocument{
-            signing::kCurrentPolicySchema,
-            signing::CurrentPolicyAction::reject,
-            blockchains,
-            sizeof(blockchains) / sizeof(blockchains[0]),
-        };
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_get\",\"sessionId\":\"session\"}");
-        signing::handle_usb_policy_get_request("req", request, make_writer(), make_ops());
-        assert(g_write_error_calls == 0);
-        assert(g_read_policy_calls == 1);
-        assert(g_write_json_calls == 1);
-        assert(g_last_json_policy_count == 1);
-        assert(g_last_json_policy_condition_count == 1);
-        assert(strcmp(g_last_json_condition_where_type, kSuiTypeTag) == 0);
-    }
-
-    {
-        reset_state();
-        g_read_policy_ok = false;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_get\",\"sessionId\":\"session\"}");
-        signing::handle_usb_policy_get_request("req", request, make_writer(), make_ops());
-        assert(g_read_policy_calls == 1);
-        assert(g_record_policy_unavailable_calls == 1);
-        assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "policy_unavailable") == 0);
-    }
-
-    {
-        reset_state();
-        g_policy_has_document = false;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_get\",\"sessionId\":\"session\"}");
-        signing::handle_usb_policy_get_request("req", request, make_writer(), make_ops());
-        assert(g_read_policy_calls == 1);
-        assert(g_record_policy_unavailable_calls == 1);
-        assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "policy_unavailable") == 0);
-    }
-
-    {
-        reset_state();
-        g_write_json_ok = false;
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_get\",\"sessionId\":\"session\"}");
-        signing::handle_usb_policy_get_request("req", request, make_writer(), make_ops());
-        assert(g_read_policy_calls == 1);
-        assert(g_log_write_failure_calls == 1);
-        assert(g_write_error_calls == 0);
-    }
-
-    {
-        reset_state();
-        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"policy_get\",\"sessionId\":\"session\",\"extra\":1}");
-        signing::handle_usb_policy_get_request("req", request, make_writer(), make_ops());
-        assert(g_write_error_calls == 1);
-        assert(strcmp(g_last_error_code, "invalid_request") == 0);
-        assert(g_read_policy_calls == 0);
-    }
-
     printf("USB session-read handler tests passed\n");
     return 0;
 }
@@ -864,10 +660,8 @@ CPP
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
-  "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
+  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
   "${RUNTIME_DIR}/usb_session_read_handlers.cpp" \
-  "${COMMON_ROOT}/policy/document.cpp" \
-  "${COMMON_ROOT}/policy/policy_json_writer.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

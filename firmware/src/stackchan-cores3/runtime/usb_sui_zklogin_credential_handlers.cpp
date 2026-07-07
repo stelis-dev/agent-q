@@ -4,7 +4,7 @@
 
 #include "protocol/json_input.h"
 #include "sui/zklogin_credential_payload.h"
-#include "usb_active_session_request_guard.h"
+#include "protocol/usb_active_session_request_guard.h"
 #include "usb_sui_zklogin_credential_outcome_writer.h"
 
 namespace signing {

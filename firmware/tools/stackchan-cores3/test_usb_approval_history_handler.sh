@@ -25,8 +25,8 @@ ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
-  "${RUNTIME_DIR}/usb_active_session_request_guard.h" \
+  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
+  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.h" \
   "${RUNTIME_DIR}/usb_approval_history_handler.cpp" \
   "${RUNTIME_DIR}/usb_approval_history_handler.h" \
   "${COMMON_ROOT}/protocol/usb_operation_response_writer.h" \
@@ -477,7 +477,7 @@ CPP
   -I"${RUNTIME_DIR}" \
   -I"${TMP_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
+  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
   "${RUNTIME_DIR}/usb_approval_history_handler.cpp" \
   "${REPO_ROOT}/firmware/src/common/protocol/approval_history_json_writer.cpp" \
   -o "${TMP_DIR}/test"

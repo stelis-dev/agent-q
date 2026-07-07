@@ -29,7 +29,8 @@ for required in \
   "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
   "${RUNTIME_DIR}/usb_operation_manifest.h" \
   "${COMMON_ROOT}/protocol/usb_operation_response_writer.h" \
-  "${RUNTIME_DIR}/usb_operation_type.h"; do
+  "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
+  "${COMMON_ROOT}/protocol/usb_operation_type.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -274,6 +275,7 @@ CPP
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
+  "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
   "${RUNTIME_DIR}/usb_operation_dispatch.cpp" \
   "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
   -o "${TMP_DIR}/test"

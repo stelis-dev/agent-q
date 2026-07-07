@@ -24,7 +24,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 USB_SERVER="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_request_server.cpp"
 USB_APPROVAL_HISTORY_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_approval_history_handler.cpp"
 USB_CONNECT_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_connect_handler.cpp"
-USB_OPERATION_TYPE_HEADER="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_operation_type.h"
+USB_OPERATION_TYPE_HEADER="${REPO_ROOT}/firmware/src/common/protocol/usb_operation_type.h"
+USB_OPERATION_TYPE_SOURCE="${REPO_ROOT}/firmware/src/common/protocol/usb_operation_type.cpp"
 USB_OPERATION_MANIFEST_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_operation_manifest.cpp"
 USB_OPERATION_RESPONSE_WRITER_HEADER="${REPO_ROOT}/firmware/src/common/protocol/usb_operation_response_writer.h"
 USB_OPERATION_DISPATCH_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_operation_dispatch.cpp"
@@ -37,8 +38,7 @@ USB_DISCONNECT_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtim
 USB_SIGNING_OUTCOME_WRITER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_signing_outcome_writer.cpp"
 USB_RETAINED_RESPONSE_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_retained_response_handlers.cpp"
 USB_SESSION_READ_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_session_read_handlers.cpp"
-USB_POLICY_PROPOSE_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_policy_propose_handler.cpp"
-USB_POLICY_PROPOSE_OUTCOME_WRITER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_policy_propose_outcome_writer.cpp"
+USB_POLICY_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/common/policy/usb_policy_handlers.cpp"
 USB_SIGNING_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/common/signing/usb_signing_handlers.cpp"
 CONNECT_REVIEW_RESPONSE_FLOW_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/connect_review_response_flow.cpp"
 LOCAL_SETTINGS_RESET_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/storage_maintenance_ui_flow.cpp"
@@ -175,10 +175,12 @@ expect_absent "${USER_SIGNING_CONFIRMATION_SOURCE}" 'UserSigningFlowSnapshot' \
 expect_absent "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'UserSigningFlowSnapshot' \
   "request-backed local PIN context must not copy large review snapshots"
 
-expect_present "${USB_OPERATION_MANIFEST_SOURCE}" '"sign_transaction"' \
-  "USB operation manifest must accept public sign_transaction messages"
-expect_absent "${USB_OPERATION_MANIFEST_SOURCE}" '"sign_transaction_user"|"sign_transaction_policy"' \
-  "USB operation classifier must not accept host-selected authorization request types"
+expect_present "${USB_OPERATION_TYPE_SOURCE}" '"sign_transaction"' \
+  "shared USB operation classifier must accept public sign_transaction messages"
+expect_absent "${USB_OPERATION_TYPE_SOURCE}" '"sign_transaction_user"|"sign_transaction_policy"' \
+  "shared USB operation classifier must not accept host-selected authorization request types"
+expect_absent "${USB_OPERATION_MANIFEST_SOURCE}" '"sign_transaction"|"sign_transaction_user"|"sign_transaction_policy"' \
+  "StackChan USB operation manifest must not duplicate public operation wire names"
 expect_present "${USB_SIGNING_OUTCOME_WRITER_SOURCE}" 'device_response_prepare_success_result|device_response_prepare_method_error' \
   "USB signing outcome writer must emit DeviceResponse envelopes through the shared response helper"
 expect_absent "${USB_SIGNING_OUTCOME_WRITER_SOURCE}" 'response\["type"\]' \
@@ -327,7 +329,7 @@ expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" 'handle_usb_get_accounts_re
   "get_accounts operation handler must live outside the USB server"
 expect_present "${USB_SERVER}" 'handle_policy_get_request' \
   "USB request server must route policy_get through an operation handler"
-expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" 'handle_usb_policy_get_request' \
+expect_present "${USB_POLICY_HANDLER_SOURCE}" 'handle_usb_policy_get_request' \
   "policy_get operation handler must live outside the USB server"
 expect_present "${USB_SERVER}" 'handle_disconnect_request' \
   "USB request server must route disconnect through an operation handler"
@@ -345,9 +347,9 @@ expect_absent "${USB_SERVER}" 'response\["type"\][[:space:]]*=[[:space:]]*"appro
   "USB request server must not own approval_history response JSON"
 expect_present "${USB_SERVER}" 'handle_policy_propose_request' \
   "USB request server must route policy_propose through an operation handler"
-expect_present "${USB_POLICY_PROPOSE_HANDLER_SOURCE}" 'handle_usb_policy_propose_request' \
+expect_present "${USB_POLICY_HANDLER_SOURCE}" 'handle_usb_policy_propose_request' \
   "policy_propose operation handler must live outside the USB server"
-expect_present "${USB_POLICY_PROPOSE_OUTCOME_WRITER_SOURCE}" 'usb_response_write_success_result\(id,[[:space:]]*"policy_propose"' \
+expect_present "${USB_POLICY_HANDLER_SOURCE}" 'writer\.write_success_result' \
   "policy_propose outcome writer must own policy_propose response JSON"
 expect_absent "${USB_SERVER}" 'response\["type"\]|usb_response_write_success_result\([^;]*"policy_propose"' \
   "USB request server must not own policy proposal outcome response JSON"
@@ -609,7 +611,7 @@ expect_absent "${USB_CLEAR_MESSAGE_SNIPPET}" 'avatar_overlay_message_deadline_re
 
 expect_present "${USB_CONNECT_HANDLER_SOURCE}" '\{"id", "version", "method", "payload"\}' \
   "extracted connect handler must exact-check top-level request fields"
-expect_present "${USB_POLICY_PROPOSE_HANDLER_SOURCE}" '\{"id", "version", "method", "sessionId", "payload"\}' \
+expect_present "${USB_POLICY_HANDLER_SOURCE}" '\{"id", "version", "method", "sessionId", "payload"\}' \
   "extracted policy_propose handler must exact-check top-level request fields"
 expect_present "${USB_DEVICE_HANDLERS_SOURCE}" '\{"id", "version", "method"\}' \
   "extracted get_status handler must exact-check top-level request fields"
@@ -627,7 +629,7 @@ expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" '\{"id", "version", "method
   "extracted get_capabilities handler must exact-check top-level request fields"
 expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" '\{"id", "version", "method", "sessionId"\}' \
   "extracted get_accounts handler must exact-check top-level request fields"
-expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" '\{"id", "version", "method", "sessionId"\}' \
+expect_present "${USB_POLICY_HANDLER_SOURCE}" '\{"id", "version", "method", "sessionId"\}' \
   "extracted policy_get handler must exact-check top-level request fields"
 
 expect_tree_present "${CORE_SOURCE}" 'signTransaction|sign_transaction|signing outcome' \

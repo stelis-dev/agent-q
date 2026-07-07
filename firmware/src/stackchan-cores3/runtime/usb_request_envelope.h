@@ -3,7 +3,7 @@
 #include <ArduinoJson.h>
 
 #include "protocol/device_contract.h"
-#include "usb_operation_type.h"
+#include "protocol/usb_operation_type.h"
 
 namespace signing {
 

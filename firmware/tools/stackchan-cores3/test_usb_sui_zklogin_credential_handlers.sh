@@ -31,8 +31,8 @@ for required in \
   "${COMMON_ROOT}/sui/zklogin_credential_payload.h" \
   "${COMMON_ROOT}/protocol/json_input.h" \
   "${COMMON_ROOT}/protocol/request_id.h" \
-  "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
-  "${RUNTIME_DIR}/usb_active_session_request_guard.h" \
+  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
+  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.h" \
   "${RUNTIME_DIR}/usb_sui_zklogin_credential_handlers.cpp" \
   "${RUNTIME_DIR}/usb_sui_zklogin_credential_handlers.h" \
   "${RUNTIME_DIR}/usb_sui_zklogin_credential_outcome_writer.cpp" \
@@ -507,7 +507,7 @@ CPP
   -I"${COMMON_ROOT}" \
   -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${RUNTIME_DIR}/usb_active_session_request_guard.cpp" \
+  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
   "${RUNTIME_DIR}/usb_sui_zklogin_credential_handlers.cpp" \
   "${RUNTIME_DIR}/usb_sui_zklogin_credential_outcome_writer.cpp" \
   "${COMMON_ROOT}/sui/zklogin_credential_outcome.cpp" \

@@ -3,7 +3,7 @@
 #include "protocol/json_input.h"
 #include "protocol/request_id.h"
 #include "protocol/signing_response_store.h"
-#include "usb_active_session_request_guard.h"
+#include "protocol/usb_active_session_request_guard.h"
 #include "usb_response_writer.h"
 
 namespace signing {

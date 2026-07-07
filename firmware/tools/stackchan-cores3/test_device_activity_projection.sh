@@ -30,7 +30,8 @@ for required in \
   "${RUNTIME_DIR}/device_activity_projection.h" \
   "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
   "${RUNTIME_DIR}/usb_operation_manifest.h" \
-  "${RUNTIME_DIR}/usb_operation_type.h"; do
+  "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
+  "${COMMON_ROOT}/protocol/usb_operation_type.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required file: ${required}" >&2
     exit 1
@@ -55,7 +56,7 @@ cat >"${TMP_DIR}/device_activity_projection_test.cpp" <<'CPP'
 #include <string.h>
 
 #include "device_activity_projection.h"
-#include "usb_operation_type.h"
+#include "protocol/usb_operation_type.h"
 
 namespace {
 
@@ -317,6 +318,7 @@ CPP
   "${TMP_DIR}/device_activity_projection_test.cpp" \
   "${RUNTIME_DIR}/device_activity_projection.cpp" \
   "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
+  "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
   -o "${TMP_DIR}/device_activity_projection_test"
 
 "${TMP_DIR}/device_activity_projection_test"

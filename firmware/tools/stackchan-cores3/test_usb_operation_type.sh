@@ -19,9 +19,11 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 
 for required in \
-  "${RUNTIME_DIR}/usb_operation_type.h" \
+  "${COMMON_ROOT}/protocol/usb_operation_type.h" \
+  "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
   "${RUNTIME_DIR}/usb_operation_manifest.h" \
   "${RUNTIME_DIR}/usb_operation_manifest.cpp"; do
   if [[ ! -f "${required}" ]]; then
@@ -48,7 +50,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <string.h>
 
 #include "usb_operation_manifest.h"
-#include "usb_operation_type.h"
+#include "protocol/usb_operation_type.h"
 
 namespace {
 
@@ -159,7 +161,9 @@ CPP
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}" \
   -I"${RUNTIME_DIR}" \
+  -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
+  "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
   "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
   -o "${TMP_DIR}/test"
 

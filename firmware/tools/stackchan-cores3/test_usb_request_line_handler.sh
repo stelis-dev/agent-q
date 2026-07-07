@@ -35,7 +35,8 @@ for required in \
   "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
   "${RUNTIME_DIR}/usb_operation_manifest.h" \
   "${COMMON_ROOT}/protocol/usb_operation_response_writer.h" \
-  "${RUNTIME_DIR}/usb_operation_type.h" \
+  "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
+  "${COMMON_ROOT}/protocol/usb_operation_type.h" \
   "${COMMON_ROOT}/protocol/session_state.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp"; do
   if [[ ! -f "${required}" ]]; then
@@ -346,6 +347,7 @@ CPP
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${RUNTIME_DIR}/usb_operation_dispatch.cpp" \
   "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
+  "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
   "${COMMON_ROOT}/protocol/session_state.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   -o "${TMP_DIR}/test"

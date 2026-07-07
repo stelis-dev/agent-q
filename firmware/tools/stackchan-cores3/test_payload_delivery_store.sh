@@ -25,12 +25,13 @@ USB_REQUEST_SERVER_SOURCE="${TARGET_ROOT}/runtime/usb_request_server.cpp"
 USB_OPERATION_MANIFEST_SOURCE="${TARGET_ROOT}/runtime/usb_operation_manifest.cpp"
 USB_DEVICE_HANDLER_SOURCE="${TARGET_ROOT}/runtime/usb_device_handlers.cpp"
 USB_SESSION_READ_HANDLER_SOURCE="${TARGET_ROOT}/runtime/usb_session_read_handlers.cpp"
+USB_POLICY_HANDLER_SOURCE="${COMMON_ROOT}/policy/usb_policy_handlers.cpp"
 USB_APPROVAL_HISTORY_HANDLER_SOURCE="${TARGET_ROOT}/runtime/usb_approval_history_handler.cpp"
 USB_RETAINED_RESPONSE_HANDLER_SOURCE="${TARGET_ROOT}/runtime/usb_retained_response_handlers.cpp"
 USB_DISCONNECT_HANDLER_SOURCE="${TARGET_ROOT}/runtime/usb_disconnect_handler.cpp"
 USB_CONNECT_HANDLER_HEADER="${TARGET_ROOT}/runtime/usb_connect_handler.h"
 USB_DEVICE_HANDLER_HEADER="${TARGET_ROOT}/runtime/usb_device_handlers.h"
-USB_POLICY_PROPOSE_HANDLER_HEADER="${TARGET_ROOT}/runtime/usb_policy_propose_handler.h"
+USB_POLICY_HANDLER_HEADER="${COMMON_ROOT}/policy/usb_policy_handlers.h"
 USB_SUI_ZKLOGIN_CREDENTIAL_HANDLER_HEADER="${TARGET_ROOT}/runtime/usb_sui_zklogin_credential_handlers.h"
 
 if [[ -z "${IDF_PATH:-}" ]]; then
@@ -236,7 +237,7 @@ expect_source_wiring \
   'UsbOperationType::get_accounts' \
   "get_accounts handler must pass its own USB operation to safe-read admission"
 expect_source_wiring \
-  "${USB_SESSION_READ_HANDLER_SOURCE}" \
+  "${USB_POLICY_HANDLER_SOURCE}" \
   'UsbOperationType::policy_get' \
   "policy_get handler must pass its own USB operation to safe-read admission"
 expect_source_wiring \
@@ -308,10 +309,10 @@ expect_manifest_operation_wiring \
   'PayloadDeliveryOperationKind::sign_personal_message' \
   "sign_personal_message manifest entry must bind USB operation to payload admission kind"
 
-if grep -Eq 'write_busy_if_pending_or_local_flow_active' \
+ if grep -Eq 'write_busy_if_pending_or_local_flow_active' \
     "${USB_CONNECT_HANDLER_HEADER}" \
     "${USB_DEVICE_HANDLER_HEADER}" \
-    "${USB_POLICY_PROPOSE_HANDLER_HEADER}" \
+    "${USB_POLICY_HANDLER_HEADER}" \
     "${USB_SUI_ZKLOGIN_CREDENTIAL_HANDLER_HEADER}"; then
   echo "FAILED: sensitive USB handlers must expose operation-specific admission callbacks" >&2
   exit 1
@@ -325,7 +326,7 @@ grep -q 'write_identify_device_admission_error' "${USB_DEVICE_HANDLER_HEADER}" |
   echo "FAILED: identify_device handler must expose identify admission callback" >&2
   exit 1
 }
-grep -q 'write_policy_propose_busy' "${USB_POLICY_PROPOSE_HANDLER_HEADER}" || {
+grep -q 'write_policy_propose_busy' "${USB_POLICY_HANDLER_HEADER}" || {
   echo "FAILED: policy_propose handler must expose payload delivery busy callback" >&2
   exit 1
 }

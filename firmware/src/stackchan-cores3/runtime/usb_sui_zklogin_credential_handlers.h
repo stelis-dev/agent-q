@@ -6,7 +6,7 @@
 #include "sui_zklogin_proposal_flow.h"
 #include "transport/timeout_window.h"
 #include "protocol/usb_operation_response_writer.h"
-#include "usb_operation_type.h"
+#include "protocol/usb_operation_type.h"
 
 namespace signing {
 
