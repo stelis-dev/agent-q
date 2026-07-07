@@ -18,18 +18,34 @@ enum class UsbPendingRequestKind {
     none,
     connect,
     credential_propose,
+    policy_propose,
+    sign_transaction,
+    sign_personal_message,
 };
 
 struct UsbPendingRequest {
     UsbPendingRequestKind kind;
     char id[signing::kRequestIdSize];
-    char label[32];
+    char label[240];
     signing::TimeoutWindow request_window;
 };
 
 struct UsbIdentificationDisplay {
     bool active;
     char code[5];
+};
+
+enum class UsbSigningNoticeKind {
+    info,
+    rejected,
+    error,
+    success,
+};
+
+struct UsbSigningNotice {
+    bool active;
+    UsbSigningNoticeKind kind;
+    char message[48];
 };
 
 struct UsbStatus {
@@ -48,8 +64,10 @@ bool usb_transport_init();
 void usb_transport_poll();
 UsbStatus usb_transport_status();
 void usb_transport_set_runtime_state(UsbRuntimeState state);
+bool usb_transport_projected_device_state_is_error();
 UsbPendingRequest usb_transport_pending_request();
 UsbIdentificationDisplay usb_transport_identification_display();
+UsbSigningNotice usb_transport_signing_notice();
 bool usb_transport_approve_pending_request();
 bool usb_transport_reject_pending_request(const char* error_code);
 void usb_transport_clear_session_scoped_state();

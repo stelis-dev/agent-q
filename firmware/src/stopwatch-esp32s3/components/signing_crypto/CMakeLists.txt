@@ -13,6 +13,7 @@ idf_component_register(
     SRCS
         "${SIGNING_CRYPTO_CORE}/byte_conversions.c"
         "${SIGNING_CRYPTO_CORE}/key_management.c"
+        "${SIGNING_CRYPTO_CORE}/sign.c"
         "${SIGNING_CRYPTO_CORE}/lib/monocypher/monocypher.c"
     INCLUDE_DIRS
         "."

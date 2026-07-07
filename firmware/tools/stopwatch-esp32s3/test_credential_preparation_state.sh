@@ -130,7 +130,7 @@ CPP
   -I"${MICROSUI_CORE}" \
   "${TMP_DIR}/credential_preparation_state_test.cpp" \
   "${RUNTIME_DIR}/credential_preparation_state.cpp" \
-  "${RUNTIME_DIR}/session_state.cpp" \
+  "${COMMON_ROOT}/protocol/session_state.cpp" \
   "${RUNTIME_DIR}/sensitive_memory.cpp" \
   "${RUNTIME_DIR}/sui_public_material.cpp" \
   "${TMP_DIR}/byte_conversions.o" \

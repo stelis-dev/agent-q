@@ -9,6 +9,8 @@
 #include "local_auth.h"
 #include "local_auth_entry_state.h"
 #include "local_auth_setup_state.h"
+#include "device_reset.h"
+#include "protocol/signing_mode.h"
 #include "rotary_dial_scene.h"
 #include "usb_transport.h"
 
@@ -31,9 +33,14 @@ private:
         idle,
         connect_review,
         proof_review,
+        policy_review,
+        signing_review,
+        signing_mode_review,
         proof_auth,
-        proof_clear_review,
-        proof_clear_auth,
+        policy_auth,
+        signing_mode_auth,
+        device_reset_review,
+        device_reset_auth,
         lockout,
         error,
     };
@@ -48,7 +55,7 @@ private:
     uint32_t last_seen_rejected_connects_ = 0;
     ScreenMode screen_mode_ = ScreenMode::setup_enter;
     bool locally_unlocked_ = false;
-    bool previous_usb_connected_ = false;
+    bool previous_external_power_present_ = false;
     LocalAuthEntryState auth_entry_;
     LocalAuthSetupState setup_state_;
     bool touch_down_ = false;
@@ -62,6 +69,7 @@ private:
     bool button_feedback_suppressed_ = false;
     bool power_policy_synced_ = false;
     bool synced_external_power_present_ = false;
+    signing::AuthorizationMode pending_signing_mode_ = signing::AuthorizationMode::user;
     Hal::ButtonConfig saved_button_config_ = {};
 
     void create_ui();
@@ -83,8 +91,7 @@ private:
     void append_digit(char digit, uint32_t now_ms);
     void delete_digit(uint32_t now_ms);
     void submit_entry(uint32_t now_ms);
-    bool active_proof_clear_available() const;
-    bool complete_active_proof_clear();
+    bool complete_device_reset();
     bool auth_entry_mode() const;
     bool input_timed_out(uint32_t now) const;
     bool capture_touch_digit(int x, int y);

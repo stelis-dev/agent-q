@@ -9,12 +9,17 @@
 #include <smooth_lvgl.hpp>
 
 #include "credential_preparation_state.h"
-#include "payload_transfer_state.h"
+#include "device_reset.h"
+#include "policy/policy_store.h"
+#include "policy/policy_update_flow.h"
+#include "policy/policy_update_marker.h"
+#include "protocol/approval_history.h"
+#include "protocol/signing_mode.h"
 #include "secure_random.h"
-#include "session_state.h"
-#include "sui_zklogin_credential_clear.h"
+#include "protocol/session_state.h"
 #include "sui_zklogin_credential_store.h"
 #include "sui_zklogin_proposal_state.h"
+#include "transport/payload_delivery_store.h"
 
 namespace stopwatch_target {
 namespace {
@@ -86,6 +91,42 @@ void set_label_text(lv_obj_t* label, const char* text)
     }
 }
 
+bool wipe_setup_settings()
+{
+    const bool policy_wiped = signing::wipe_policy();
+    const bool signing_mode_wiped = signing::wipe_signing_authorization_mode();
+    const bool history_wiped = signing::approval_history_wipe();
+    const bool marker_cleared = signing::policy_update_marker_clear();
+    return policy_wiped && signing_mode_wiped && history_wiped && marker_cleared;
+}
+
+bool store_new_auth_and_default_settings(const char* code, size_t length)
+{
+    if (code == nullptr ||
+        length < kLocalAuthMinDigits ||
+        length > kLocalAuthMaxDigits) {
+        return false;
+    }
+    if (!signing::store_default_policy()) {
+        return false;
+    }
+    if (!signing::store_signing_authorization_mode(signing::AuthorizationMode::user)) {
+        wipe_setup_settings();
+        return false;
+    }
+    if (!signing::approval_history_wipe() ||
+        !signing::policy_update_marker_clear()) {
+        wipe_setup_settings();
+        return false;
+    }
+    if (!local_auth_store_new_code(code, length)) {
+        local_auth_clear();
+        wipe_setup_settings();
+        return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 RuntimeApp::RuntimeApp()
@@ -104,9 +145,9 @@ void RuntimeApp::onOpen()
     mclog::tagInfo(kAppName, "on open");
     key_manager_ = std::make_unique<input::KeyManager>();
     local_auth_init(GetHAL().millis());
-    session_state_init();
+    signing::session_init();
     credential_preparation_state_init();
-    payload_transfer_state_init();
+    signing::payload_delivery_store_reset();
     sui_zklogin_proposal_state_init();
     secure_random_init();
     usb_transport_init();
@@ -116,8 +157,9 @@ void RuntimeApp::onOpen()
     saved_button_config_ = GetHAL().getButtonConfig();
     display_restore_brightness_ = kDefaultBacklightBrightness;
     GetHAL().setBackLightBrightness(display_restore_brightness_, false);
-    sync_power_button_policy(GetHAL().isExternalPowerPresent());
-    previous_usb_connected_ = usb_transport_status().connected;
+    const bool external_power_present = GetHAL().isExternalPowerPresent();
+    sync_power_button_policy(external_power_present);
+    previous_external_power_present_ = external_power_present;
 
     const LocalAuthSnapshot snapshot = local_auth_snapshot(GetHAL().millis());
     if (snapshot.status == LocalAuthStoreStatus::missing) {
@@ -130,6 +172,9 @@ void RuntimeApp::onOpen()
         screen_mode_ = ScreenMode::error;
     }
     sync_usb_runtime_state();
+    if (usb_transport_projected_device_state_is_error()) {
+        screen_mode_ = ScreenMode::error;
+    }
 
     LvglLockGuard lock;
     create_ui();
@@ -140,20 +185,19 @@ void RuntimeApp::onRunning()
 {
     sync_usb_runtime_state();
 
-    const UsbStatus status = usb_transport_status();
-    if (previous_usb_connected_ != status.connected) {
+    const bool external_power_present = GetHAL().isExternalPowerPresent();
+    if (previous_external_power_present_ != external_power_present) {
         relock();
         if (!display_on_) {
             set_display_on(true, false, false);
         }
     }
-    previous_usb_connected_ = status.connected;
+    previous_external_power_present_ = external_power_present;
 
     const uint32_t now = GetHAL().millis();
 
     if (key_manager_) {
         const input::KeyEvent key_event = key_manager_->update();
-        const bool external_power_present = GetHAL().isExternalPowerPresent();
         sync_power_button_policy(external_power_present);
         handle_power_button(external_power_present);
         handle_key_event(key_event, now);
@@ -183,9 +227,27 @@ void RuntimeApp::onRunning()
         if (locally_unlocked_ && screen_mode_ == ScreenMode::idle) {
             enter_mode(ScreenMode::proof_review);
         }
+    } else if (pending.kind == UsbPendingRequestKind::policy_propose) {
+        if (!display_on_) {
+            set_display_on(true, false, false);
+        }
+        if (locally_unlocked_ && screen_mode_ == ScreenMode::idle) {
+            enter_mode(ScreenMode::policy_review);
+        }
+    } else if (pending.kind == UsbPendingRequestKind::sign_transaction ||
+               pending.kind == UsbPendingRequestKind::sign_personal_message) {
+        if (!display_on_) {
+            set_display_on(true, false, false);
+        }
+        if (locally_unlocked_ && screen_mode_ == ScreenMode::idle) {
+            enter_mode(ScreenMode::signing_review);
+        }
     } else if (screen_mode_ == ScreenMode::connect_review ||
                screen_mode_ == ScreenMode::proof_review ||
-               screen_mode_ == ScreenMode::proof_auth) {
+               screen_mode_ == ScreenMode::signing_review ||
+               screen_mode_ == ScreenMode::policy_review ||
+               screen_mode_ == ScreenMode::proof_auth ||
+               screen_mode_ == ScreenMode::policy_auth) {
         enter_mode(locally_unlocked_ ? ScreenMode::idle : ScreenMode::unlock);
     }
 
@@ -342,14 +404,54 @@ void RuntimeApp::handle_key_event(input::KeyEvent event, uint32_t now_ms)
                 }
                 return;
             }
-            if (screen_mode_ == ScreenMode::proof_clear_review) {
+            if (screen_mode_ == ScreenMode::policy_review) {
+                if (usb_transport_reject_pending_request("user_rejected")) {
+                    enter_mode(ScreenMode::idle);
+                    record_feedback(35, 70, false);
+                } else {
+                    record_feedback(60, 90, false);
+                }
+                return;
+            }
+            if (screen_mode_ == ScreenMode::signing_mode_review) {
                 enter_mode(ScreenMode::idle);
                 record_feedback(25, 45, false);
                 return;
             }
-            if (screen_mode_ == ScreenMode::proof_clear_auth) {
+            if (screen_mode_ == ScreenMode::signing_review) {
+                if (usb_transport_reject_pending_request("user_rejected")) {
+                    enter_mode(ScreenMode::idle);
+                    record_feedback(35, 70, false);
+                } else {
+                    record_feedback(60, 90, false);
+                }
+                return;
+            }
+            if (screen_mode_ == ScreenMode::device_reset_review) {
+                enter_mode(ScreenMode::idle);
+                record_feedback(25, 45, false);
+                return;
+            }
+            if (screen_mode_ == ScreenMode::device_reset_auth) {
                 clear_entry();
-                enter_mode(ScreenMode::proof_clear_review);
+                enter_mode(ScreenMode::device_reset_review);
+                record_feedback(25, 45, false);
+                return;
+            }
+            if (screen_mode_ == ScreenMode::policy_auth) {
+                clear_entry();
+                enter_mode(ScreenMode::policy_review);
+                record_feedback(25, 45, false);
+                return;
+            }
+            if (screen_mode_ == ScreenMode::signing_mode_auth) {
+                clear_entry();
+                enter_mode(ScreenMode::signing_mode_review);
+                record_feedback(25, 45, false);
+                return;
+            }
+            if (screen_mode_ == ScreenMode::idle) {
+                enter_mode(ScreenMode::signing_mode_review);
                 record_feedback(25, 45, false);
                 return;
             }
@@ -393,14 +495,57 @@ void RuntimeApp::handle_key_event(input::KeyEvent event, uint32_t now_ms)
                 }
                 return;
             }
-            if (screen_mode_ == ScreenMode::proof_clear_review) {
+            if (screen_mode_ == ScreenMode::policy_review) {
+                usb_transport_poll();
+                const UsbPendingRequest pending = usb_transport_pending_request();
+                if (pending.kind != UsbPendingRequestKind::policy_propose) {
+                    enter_mode(ScreenMode::idle);
+                    record_feedback(45, 75, false);
+                    return;
+                }
+                const signing::PolicyUpdateFlowTransitionResult transition =
+                    signing::policy_update_flow_continue_to_pin(now_ms);
+                if (transition == signing::PolicyUpdateFlowTransitionResult::ok) {
+                    clear_entry();
+                    enter_mode(ScreenMode::policy_auth);
+                    record_feedback(35, 65, false);
+                } else {
+                    record_feedback(80, 100, false);
+                }
+                return;
+            }
+            if (screen_mode_ == ScreenMode::signing_mode_review) {
+                signing::AuthorizationMode current_mode = signing::AuthorizationMode::user;
+                if (!signing::read_signing_authorization_mode(&current_mode)) {
+                    record_feedback(80, 100, false);
+                    return;
+                }
+                pending_signing_mode_ = current_mode == signing::AuthorizationMode::policy
+                                            ? signing::AuthorizationMode::user
+                                            : signing::AuthorizationMode::policy;
                 clear_entry();
-                enter_mode(ScreenMode::proof_clear_auth);
+                enter_mode(ScreenMode::signing_mode_auth);
                 record_feedback(35, 65, false);
                 return;
             }
-            if (screen_mode_ == ScreenMode::idle && active_proof_clear_available()) {
-                enter_mode(ScreenMode::proof_clear_review);
+            if (screen_mode_ == ScreenMode::signing_review) {
+                if (usb_transport_approve_pending_request()) {
+                    enter_mode(ScreenMode::idle);
+                    record_feedback(45, 75, false);
+                } else {
+                    enter_mode(ScreenMode::idle);
+                    record_feedback(80, 100, false);
+                }
+                return;
+            }
+            if (screen_mode_ == ScreenMode::device_reset_review) {
+                clear_entry();
+                enter_mode(ScreenMode::device_reset_auth);
+                record_feedback(35, 65, false);
+                return;
+            }
+            if (screen_mode_ == ScreenMode::idle) {
+                enter_mode(ScreenMode::device_reset_review);
                 record_feedback(25, 45, false);
                 return;
             }
@@ -613,7 +758,13 @@ void RuntimeApp::enter_mode(ScreenMode mode)
 
 void RuntimeApp::refresh_auth_mode()
 {
+    sync_usb_runtime_state();
     const LocalAuthSnapshot snapshot = local_auth_snapshot(GetHAL().millis());
+    if (usb_transport_projected_device_state_is_error()) {
+        locally_unlocked_ = false;
+        enter_mode(ScreenMode::error);
+        return;
+    }
     if (snapshot.status == LocalAuthStoreStatus::missing) {
         locally_unlocked_ = false;
         if (screen_mode_ != ScreenMode::setup_enter && screen_mode_ != ScreenMode::setup_confirm) {
@@ -672,9 +823,14 @@ void RuntimeApp::sync_usb_runtime_state()
     }
     const bool ui_busy = screen_mode_ == ScreenMode::connect_review ||
                          screen_mode_ == ScreenMode::proof_review ||
+                         screen_mode_ == ScreenMode::policy_review ||
+                         screen_mode_ == ScreenMode::signing_review ||
+                         screen_mode_ == ScreenMode::signing_mode_review ||
                          screen_mode_ == ScreenMode::proof_auth ||
-                         screen_mode_ == ScreenMode::proof_clear_review ||
-                         screen_mode_ == ScreenMode::proof_clear_auth;
+                         screen_mode_ == ScreenMode::policy_auth ||
+                         screen_mode_ == ScreenMode::signing_mode_auth ||
+                         screen_mode_ == ScreenMode::device_reset_review ||
+                         screen_mode_ == ScreenMode::device_reset_auth;
     usb_transport_set_runtime_state(UsbRuntimeState{
         auth_status,
         locally_unlocked_,
@@ -708,6 +864,7 @@ void RuntimeApp::clear_auth_scratch()
 {
     auth_entry_.clear();
     setup_state_.clear();
+    pending_signing_mode_ = signing::AuthorizationMode::user;
 }
 
 void RuntimeApp::append_digit(char digit, uint32_t now_ms)
@@ -747,8 +904,8 @@ void RuntimeApp::submit_entry(uint32_t now_ms)
         return;
     }
     if (screen_mode_ == ScreenMode::error) {
-        if (local_auth_clear()) {
-            relock();
+        if (complete_device_reset()) {
+            locally_unlocked_ = false;
             enter_mode(ScreenMode::setup_enter);
             record_feedback(45, 75, false);
         } else {
@@ -779,7 +936,7 @@ void RuntimeApp::submit_entry(uint32_t now_ms)
     if (screen_mode_ == ScreenMode::setup_confirm) {
         const bool matches = setup_state_.matches(auth_entry_.code(), auth_entry_.length());
         setup_state_.clear();
-        if (matches && local_auth_store_new_code(auth_entry_.code(), auth_entry_.length())) {
+        if (matches && store_new_auth_and_default_settings(auth_entry_.code(), auth_entry_.length())) {
             clear_entry();
             locally_unlocked_ = true;
             enter_mode(ScreenMode::idle);
@@ -863,22 +1020,97 @@ void RuntimeApp::submit_entry(uint32_t now_ms)
         }
     }
 
-    if (screen_mode_ == ScreenMode::proof_clear_auth) {
+    if (screen_mode_ == ScreenMode::policy_auth) {
         const LocalAuthVerifyResult result = local_auth_verify_code(auth_entry_.code(), auth_entry_.length(), now_ms);
         clear_entry();
         switch (result) {
             case LocalAuthVerifyResult::verified:
-                if (complete_active_proof_clear()) {
-                    locally_unlocked_ = true;
+                if (usb_transport_approve_pending_request()) {
                     enter_mode(ScreenMode::idle);
                     record_feedback(45, 75, false);
                 } else {
-                    enter_mode(ScreenMode::proof_clear_review);
+                    enter_mode(ScreenMode::idle);
                     record_feedback(80, 100, false);
                 }
                 return;
             case LocalAuthVerifyResult::rejected:
-                enter_mode(ScreenMode::proof_clear_auth);
+                enter_mode(ScreenMode::policy_auth);
+                record_feedback(65, 95, false);
+                return;
+            case LocalAuthVerifyResult::locked:
+                locally_unlocked_ = false;
+                enter_mode(ScreenMode::lockout);
+                record_feedback(80, 100, false);
+                return;
+            case LocalAuthVerifyResult::missing:
+                locally_unlocked_ = false;
+                usb_transport_reject_pending_request("auth_unavailable");
+                enter_mode(ScreenMode::setup_enter);
+                record_feedback(45, 75, false);
+                return;
+            case LocalAuthVerifyResult::invalid:
+            case LocalAuthVerifyResult::storage_error:
+                locally_unlocked_ = false;
+                usb_transport_reject_pending_request("auth_unavailable");
+                enter_mode(ScreenMode::error);
+                record_feedback(80, 100, false);
+                return;
+        }
+    }
+
+    if (screen_mode_ == ScreenMode::signing_mode_auth) {
+        const LocalAuthVerifyResult result = local_auth_verify_code(auth_entry_.code(), auth_entry_.length(), now_ms);
+        clear_entry();
+        switch (result) {
+            case LocalAuthVerifyResult::verified:
+                if (signing::store_signing_authorization_mode(pending_signing_mode_)) {
+                    locally_unlocked_ = true;
+                    enter_mode(ScreenMode::idle);
+                    record_feedback(45, 75, false);
+                } else {
+                    enter_mode(ScreenMode::signing_mode_review);
+                    record_feedback(80, 100, false);
+                }
+                return;
+            case LocalAuthVerifyResult::rejected:
+                enter_mode(ScreenMode::signing_mode_auth);
+                record_feedback(65, 95, false);
+                return;
+            case LocalAuthVerifyResult::locked:
+                locally_unlocked_ = false;
+                enter_mode(ScreenMode::lockout);
+                record_feedback(80, 100, false);
+                return;
+            case LocalAuthVerifyResult::missing:
+                locally_unlocked_ = false;
+                enter_mode(ScreenMode::setup_enter);
+                record_feedback(45, 75, false);
+                return;
+            case LocalAuthVerifyResult::invalid:
+            case LocalAuthVerifyResult::storage_error:
+                locally_unlocked_ = false;
+                enter_mode(ScreenMode::error);
+                record_feedback(80, 100, false);
+                return;
+        }
+    }
+
+    if (screen_mode_ == ScreenMode::device_reset_auth) {
+        const LocalAuthVerifyResult result = local_auth_verify_code(auth_entry_.code(), auth_entry_.length(), now_ms);
+        clear_entry();
+        switch (result) {
+            case LocalAuthVerifyResult::verified:
+                if (complete_device_reset()) {
+                    locally_unlocked_ = false;
+                    enter_mode(ScreenMode::setup_enter);
+                    record_feedback(45, 75, false);
+                } else {
+                    enter_mode(ScreenMode::device_reset_review);
+                    record_feedback(80, 100, false);
+                }
+                return;
+            case LocalAuthVerifyResult::rejected:
+                enter_mode(ScreenMode::device_reset_auth);
                 record_feedback(65, 95, false);
                 return;
             case LocalAuthVerifyResult::locked:
@@ -901,14 +1133,10 @@ void RuntimeApp::submit_entry(uint32_t now_ms)
     }
 }
 
-bool RuntimeApp::active_proof_clear_available() const
+bool RuntimeApp::complete_device_reset()
 {
-    return sui_zklogin_credential_status() == SuiZkLoginCredentialStatus::active;
-}
-
-bool RuntimeApp::complete_active_proof_clear()
-{
-    return sui_zklogin_clear_active_credential();
+    clear_auth_scratch();
+    return device_reset_all();
 }
 
 bool RuntimeApp::auth_entry_mode() const
@@ -917,7 +1145,9 @@ bool RuntimeApp::auth_entry_mode() const
            screen_mode_ == ScreenMode::setup_confirm ||
            screen_mode_ == ScreenMode::unlock ||
            screen_mode_ == ScreenMode::proof_auth ||
-           screen_mode_ == ScreenMode::proof_clear_auth;
+           screen_mode_ == ScreenMode::policy_auth ||
+           screen_mode_ == ScreenMode::signing_mode_auth ||
+           screen_mode_ == ScreenMode::device_reset_auth;
 }
 
 bool RuntimeApp::input_timed_out(uint32_t now) const
@@ -1015,6 +1245,34 @@ void RuntimeApp::update_prompt_label()
         lv_obj_invalidate(prompt_label_);
         return;
     }
+    const UsbSigningNotice signing_notice = usb_transport_signing_notice();
+    if (screen_mode_ == ScreenMode::idle && signing_notice.active) {
+        switch (signing_notice.kind) {
+            case UsbSigningNoticeKind::rejected:
+                text = "REJECT";
+                color = lv_color_hex(0xFFCA7A);
+                break;
+            case UsbSigningNoticeKind::error:
+                text = "ERROR";
+                color = lv_color_hex(0xFF8A8A);
+                break;
+            case UsbSigningNoticeKind::success:
+                text = "SIGNED";
+                color = lv_color_hex(0x9BE7B5);
+                break;
+            case UsbSigningNoticeKind::info:
+            default:
+                text = "POLICY";
+                color = lv_color_hex(0xB8E3FF);
+                break;
+        }
+        lv_obj_align(prompt_label_, LV_ALIGN_CENTER, 0, kPromptReviewY);
+        lv_obj_set_style_text_color(prompt_label_, color, LV_PART_MAIN);
+        set_label_text(prompt_label_, text);
+        lv_obj_move_foreground(prompt_label_);
+        lv_obj_invalidate(prompt_label_);
+        return;
+    }
     switch (screen_mode_) {
         case ScreenMode::setup_enter:
             text = "SET";
@@ -1037,15 +1295,29 @@ void RuntimeApp::update_prompt_label()
             text = "PROOF";
             color = lv_color_hex(0xB8E3FF);
             break;
+        case ScreenMode::signing_review:
+            text = "SIGN?";
+            color = lv_color_hex(0xB8E3FF);
+            break;
+        case ScreenMode::policy_review:
+            text = "POLICY";
+            color = lv_color_hex(0xB8E3FF);
+            break;
+        case ScreenMode::signing_mode_review:
+            text = "MODE";
+            color = lv_color_hex(0xB8E3FF);
+            break;
         case ScreenMode::proof_auth:
+        case ScreenMode::policy_auth:
+        case ScreenMode::signing_mode_auth:
             text = "CHECK";
             color = lv_color_hex(0xB8E3FF);
             break;
-        case ScreenMode::proof_clear_review:
-            text = "CLEAR?";
+        case ScreenMode::device_reset_review:
+            text = "RESET?";
             color = lv_color_hex(0xFFCA7A);
             break;
-        case ScreenMode::proof_clear_auth:
+        case ScreenMode::device_reset_auth:
             text = "CHECK";
             color = lv_color_hex(0xFFCA7A);
             break;
@@ -1060,7 +1332,10 @@ void RuntimeApp::update_prompt_label()
     }
     const bool review_mode = screen_mode_ == ScreenMode::connect_review ||
                              screen_mode_ == ScreenMode::proof_review ||
-                             screen_mode_ == ScreenMode::proof_clear_review;
+                             screen_mode_ == ScreenMode::signing_review ||
+                             screen_mode_ == ScreenMode::policy_review ||
+                             screen_mode_ == ScreenMode::signing_mode_review ||
+                             screen_mode_ == ScreenMode::device_reset_review;
     lv_obj_align(
         prompt_label_,
         LV_ALIGN_CENTER,
@@ -1080,7 +1355,29 @@ void RuntimeApp::update_detail_label()
 
     char text[320] = {};
     lv_color_t color = lv_color_hex(0xC9D2D8);
-    if (screen_mode_ == ScreenMode::connect_review) {
+    const UsbSigningNotice signing_notice = usb_transport_signing_notice();
+    if (screen_mode_ == ScreenMode::idle && signing_notice.active) {
+        snprintf(
+            text,
+            sizeof(text),
+            "%s",
+            signing_notice.message[0] != '\0' ? signing_notice.message : "Signing result");
+        switch (signing_notice.kind) {
+            case UsbSigningNoticeKind::rejected:
+                color = lv_color_hex(0xFFCA7A);
+                break;
+            case UsbSigningNoticeKind::error:
+                color = lv_color_hex(0xFF8A8A);
+                break;
+            case UsbSigningNoticeKind::success:
+                color = lv_color_hex(0x9BE7B5);
+                break;
+            case UsbSigningNoticeKind::info:
+            default:
+                color = lv_color_hex(0xB8E3FF);
+                break;
+        }
+    } else if (screen_mode_ == ScreenMode::connect_review) {
         const UsbPendingRequest pending = usb_transport_pending_request();
         snprintf(
             text,
@@ -1105,8 +1402,56 @@ void RuntimeApp::update_detail_label()
             snapshot.max_epoch != nullptr ? snapshot.max_epoch : "",
             proof_preview);
         color = lv_color_hex(0xB8E3FF);
-    } else if (screen_mode_ == ScreenMode::proof_clear_review) {
-        snprintf(text, sizeof(text), "Clear zkLogin proof\nA cancel  B continue");
+    } else if (screen_mode_ == ScreenMode::signing_review) {
+        const UsbPendingRequest pending = usb_transport_pending_request();
+        snprintf(
+            text,
+            sizeof(text),
+            "%s\nA reject  B sign",
+            pending.label[0] != '\0' ? pending.label : "Sui request");
+        color = lv_color_hex(0xB8E3FF);
+    } else if (screen_mode_ == ScreenMode::policy_review) {
+        const signing::PolicyUpdateFlowSnapshot snapshot =
+            signing::policy_update_flow_snapshot();
+        char policy_preview[24] = {};
+        copy_middle_elided(
+            snapshot.policy_hash != nullptr ? snapshot.policy_hash : "",
+            policy_preview,
+            sizeof(policy_preview),
+            10,
+            6);
+        snprintf(
+            text,
+            sizeof(text),
+            "%s\n%s\n%s\n%s\nA reject  B approve",
+            snapshot.scope_summary != nullptr && snapshot.scope_summary[0] != '\0'
+                ? snapshot.scope_summary
+                : "Policy update",
+            snapshot.review_summary != nullptr && snapshot.review_summary[0] != '\0'
+                ? snapshot.review_summary
+                : "Review changes",
+            snapshot.highest_action != nullptr && snapshot.highest_action[0] != '\0'
+                ? snapshot.highest_action
+                : "Action",
+            policy_preview);
+        color = lv_color_hex(0xB8E3FF);
+    } else if (screen_mode_ == ScreenMode::signing_mode_review) {
+        signing::AuthorizationMode current_mode = signing::AuthorizationMode::user;
+        const bool mode_available = signing::read_signing_authorization_mode(&current_mode);
+        const signing::AuthorizationMode next_mode =
+            current_mode == signing::AuthorizationMode::policy
+                ? signing::AuthorizationMode::user
+                : signing::AuthorizationMode::policy;
+        snprintf(
+            text,
+            sizeof(text),
+            "%s\nCurrent %s\nB set %s\nA cancel",
+            mode_available ? "Signing mode" : "Mode unavailable",
+            signing::authorization_mode_name(current_mode),
+            signing::authorization_mode_name(next_mode));
+        color = lv_color_hex(0xB8E3FF);
+    } else if (screen_mode_ == ScreenMode::device_reset_review) {
+        snprintf(text, sizeof(text), "Reset device\nA cancel  B reset");
         color = lv_color_hex(0xFFCA7A);
     } else {
         lv_obj_add_flag(detail_label_, LV_OBJ_FLAG_HIDDEN);

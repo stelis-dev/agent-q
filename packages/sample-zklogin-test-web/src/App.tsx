@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { SuiJsonRpcClient, getJsonRpcFullnodeUrl } from "@mysten/sui/jsonRpc";
+import { SuiGraphQLClient } from "@mysten/sui/graphql";
 import { Transaction } from "@mysten/sui/transactions";
-import { toBase64 } from "@mysten/sui/utils";
+import { verifyTransactionSignature } from "@mysten/sui/verify";
+import { fromBase64, toBase64 } from "@mysten/sui/utils";
 import {
   ZkLoginPublicIdentifier,
   type ZkLoginSignatureInputs,
@@ -37,7 +38,11 @@ type Notice = {
   title: string;
   lines: string[];
 };
+type SignatureVerification =
+  | { status: "verified"; address: string }
+  | { status: "failed"; message: string };
 type SuiSignTransactionNetwork = CredentialProposeInput["network"];
+type ZkLoginNetwork = Exclude<SuiSignTransactionNetwork, "localnet">;
 type CredentialPreparation = Extract<CredentialPrepareResult, { source: "live" }>["preparation"];
 type ZkLoginSignatureInputsDto = CredentialProposeInput["inputs"];
 type CredentialCapabilityView = {
@@ -72,10 +77,13 @@ type OAuthCallbackMessage = {
   errorDescription?: string;
 };
 
-const TEST_NETWORK: Exclude<SuiSignTransactionNetwork, "localnet"> = "testnet";
+const ZKLOGIN_NETWORKS: readonly ZkLoginNetwork[] = ["mainnet", "testnet", "devnet"];
+const DEFAULT_NETWORK = parseDefaultNetwork(envString("VITE_SUI_NETWORK", "testnet"));
 const GOOGLE_PROVIDER: EnokiAuthProvider = "google";
 const DEFAULT_GAS_BUDGET_MIST = "10000000";
 const DEFAULT_TRANSFER_AMOUNT_MIST = "1";
+const SIGN_ONLY_GAS_OBJECT_ID = `0x${"22".repeat(32)}`;
+const SIGN_ONLY_GAS_DIGEST = "11111111111111111111111111111111";
 const DEFAULT_ENOKI_API_URL = envString("VITE_ENOKI_API_URL", "https://api.enoki.mystenlabs.com");
 const DEFAULT_ENOKI_API_KEY = envString("VITE_ENOKI_PUBLIC_API_KEY", "");
 const DEFAULT_GOOGLE_CLIENT_ID = envString("VITE_ZKLOGIN_GOOGLE_CLIENT_ID", "");
@@ -90,6 +98,8 @@ const SIGN_TRANSACTION_OPERATION = "sign_transaction";
 
 function App() {
   const [provider] = useState(() => createSuiBrowserDeviceProvider({ clientName: CLIENT_NAME }));
+  const initialPendingLogin = useMemo(() => readPendingEnokiLogin(), []);
+  const [network, setNetwork] = useState<ZkLoginNetwork>(() => initialPendingLogin?.network ?? DEFAULT_NETWORK);
   const [busy, setBusy] = useState<string | null>(null);
   const [session, setSession] = useState<ConnectDeviceResult | null>(null);
   const [capabilities, setCapabilities] = useState<SuiDeviceWalletGetCapabilitiesResult | null>(null);
@@ -102,13 +112,14 @@ function App() {
   const [oauthScope, setOauthScope] = useState("openid email profile");
   const [amountMist, setAmountMist] = useState(DEFAULT_TRANSFER_AMOUNT_MIST);
   const [gasBudgetMist, setGasBudgetMist] = useState(DEFAULT_GAS_BUDGET_MIST);
-  const [lastPreparation, setLastPreparation] = useState<CredentialPreparation | null>(() => readPendingEnokiLogin()?.preparation ?? null);
+  const [lastPreparation, setLastPreparation] = useState<CredentialPreparation | null>(() => initialPendingLogin?.preparation ?? null);
   const [lastTxBytes, setLastTxBytes] = useState("");
   const [lastSignature, setLastSignature] = useState<SuiDeviceWalletSignResult | null>(null);
+  const [lastSignatureVerification, setLastSignatureVerification] = useState<SignatureVerification | null>(null);
   const [notice, setNotice] = useState<Notice>({
     tone: "neutral",
     title: "Idle",
-    lines: ["Ready to create a zkLogin ephemeral key with Enoki."],
+    lines: ["Ready to connect Google for zkLogin with Enoki."],
   });
 
   const providerAvailable = isSuiBrowserDeviceProviderAvailable();
@@ -143,7 +154,7 @@ function App() {
         setNotice({
           tone: "error",
           title: "OAuth callback",
-          lines: ["Google callback did not match the pending ephemeral key. Create a new ephemeral key and try again."],
+          lines: ["Google callback did not match the pending login. Start Google login again."],
         });
         return;
       }
@@ -311,8 +322,8 @@ function App() {
   }
 
   async function prepareZkLoginCredential(): Promise<void> {
-    await run("Create ephemeral key", async () => {
-      setBusy("Create ephemeral key");
+    await run("Prepare Google login", async () => {
+      setBusy("Prepare Google login");
       const enokiConfig = requireEnokiConfig();
       const live = await ensureConnected();
       const blockedReason = getCredentialPreparationBlockedReason(live.session, live.activeAccount, live.credentialCapability);
@@ -330,7 +341,7 @@ function App() {
       }
       setLastPreparation(response.preparation);
       const nextNonce = await createEnokiNonce(enokiConfig, {
-        network: toEnokiNetwork(TEST_NETWORK),
+        network: toEnokiNetwork(network),
         ephemeralPublicKey: response.preparation.publicKey,
         additionalEpochs: parseOptionalEpochs(enokiAdditionalEpochs),
       });
@@ -338,7 +349,7 @@ function App() {
         version: 1,
         createdAt: Date.now(),
         enokiConfig,
-        network: TEST_NETWORK,
+        network,
         provider: GOOGLE_PROVIDER,
         preparation: response.preparation,
         nonce: nextNonce.nonce,
@@ -348,10 +359,9 @@ function App() {
       writePendingEnokiLogin(pending);
       setNotice({
         tone: "neutral",
-        title: "Ephemeral key ready",
+        title: "Google login ready",
         lines: [
-          `Ephemeral address: ${short(response.preparation.address)}`,
-          `Ephemeral public key: ${short(response.preparation.publicKey)}`,
+          "Device prepared the zkLogin login.",
           "Continue with Google to create the zkLogin proof.",
           `Expires: ${formatTimestamp(nextNonce.estimatedExpiration)}`,
         ],
@@ -364,7 +374,7 @@ function App() {
       const pending = readPendingEnokiLogin();
       if (pending === null) {
         setLastPreparation(null);
-        throw new Error("No ephemeral key was found. Create an ephemeral key first.");
+        throw new Error("No pending Google login was found. Start Google login again.");
       }
       const oauth = await resolveEnokiOAuth(pending.enokiConfig);
       const oauthState = createOAuthState();
@@ -385,8 +395,6 @@ function App() {
         tone: "neutral",
         title: "Google login opened",
         lines: [
-          `Ephemeral address: ${short(pending.preparation.address)}`,
-          `Ephemeral public key: ${short(pending.preparation.publicKey)}`,
           "Google login is waiting in the popup.",
         ],
       });
@@ -400,7 +408,7 @@ function App() {
         throw new Error("No pending Enoki login was found. Start login again.");
       }
       if (pending.oauthState === undefined || pending.oauthState !== oauthState) {
-        throw new Error("OAuth callback did not match the pending ephemeral key.");
+        throw new Error("OAuth callback did not match the pending Google login.");
       }
       removePendingEnokiLogin();
       const trimmedJwt = idToken.trim();
@@ -498,28 +506,43 @@ function App() {
       if (signingAccount === null) {
         throw new Error("Activate zkLogin before running the transaction signing test.");
       }
-      const txBytes = await buildSelfTransferTxBytes({
-        network: TEST_NETWORK,
+      const txBytes = await buildSignOnlySelfTransferTxBytes({
         sender: signingAccount.address,
         amountMist,
         gasBudgetMist,
       });
       setLastTxBytes(txBytes);
+      setLastSignature(null);
+      setLastSignatureVerification(null);
       const response = await provider.signTransaction({
         chain: "sui",
         method: "sign_transaction",
-        network: TEST_NETWORK,
+        network,
         txBytes,
         purpose: PROVIDER_PURPOSE,
       });
       setLastSignature(response);
+      const verification =
+        response.source === "live" && response.status === "signed" && typeof response.signature === "string"
+          ? await verifyZkLoginTransactionSignature({
+              txBytes,
+              signature: response.signature,
+              address: signingAccount.address,
+              network,
+            })
+          : null;
+      setLastSignatureVerification(verification);
       if (response.source !== "live") {
         clearDeviceMirror();
       }
+      const signedAndVerified =
+        response.source === "live" &&
+        response.status === "signed" &&
+        verification?.status === "verified";
       setNotice({
-        tone: response.source === "live" && response.status === "signed" ? "success" : "error",
+        tone: signedAndVerified ? "success" : "error",
         title: "Signing outcome",
-        lines: signResultLines(response, txBytes),
+        lines: signResultLines(response, txBytes, verification),
       });
     });
   }
@@ -530,6 +553,19 @@ function App() {
     setAccounts([]);
     setLastTxBytes("");
     setLastSignature(null);
+    setLastSignatureVerification(null);
+  }
+
+  function changeNetwork(nextNetwork: string): void {
+    if (!isZkLoginNetwork(nextNetwork) || nextNetwork === network) {
+      return;
+    }
+    removePendingEnokiLogin();
+    setNetwork(nextNetwork);
+    setLastPreparation(null);
+    setLastTxBytes("");
+    setLastSignature(null);
+    setLastSignatureVerification(null);
   }
 
   return (
@@ -537,7 +573,7 @@ function App() {
       <header className="app-header">
         <div>
           <h1>Agent-Q zkLogin Test</h1>
-          <p>{providerAvailable ? "Agent-Q ready" : "Agent-Q unavailable"} · Network: {TEST_NETWORK}</p>
+          <p>{providerAvailable ? "Agent-Q ready" : "Agent-Q unavailable"} · Network: {network}</p>
         </div>
       </header>
 
@@ -584,8 +620,8 @@ function App() {
                 <dd>{signingAvailable ? "available" : "not available"}</dd>
               </div>
               <div>
-                <dt>Ephemeral address</dt>
-                <dd>{lastPreparation === null ? credentialPreparationReady ? "created by credential_prepare" : "not available" : short(lastPreparation.address)}</dd>
+                <dt>Google login</dt>
+                <dd>{lastPreparation === null ? credentialPreparationReady ? "ready" : "not available" : "prepared"}</dd>
               </div>
             </dl>
           </details>
@@ -604,6 +640,14 @@ function App() {
           </div>
           <details className="settings-slide">
             <summary>Open Enoki settings</summary>
+            <label>
+              Network
+              <select value={network} onChange={(event) => changeNetwork(event.target.value)} disabled={busy !== null}>
+                {ZKLOGIN_NETWORKS.map((entry) => (
+                  <option key={entry} value={entry}>{entry}</option>
+                ))}
+              </select>
+            </label>
             <label>
               Enoki API URL
               <input value={enokiApiUrl} onChange={(event) => setEnokiApiUrl(event.target.value)} spellCheck={false} />
@@ -637,28 +681,38 @@ function App() {
           <div className="flow-step-head">
             <span>3</span>
             <div>
-              <h2>Create zkLogin ephemeral key</h2>
+              <h2>Google login</h2>
               <p>{preparationStepStatus}</p>
             </div>
           </div>
-          <button
-            type="button"
-            className="primary login-button"
-            onClick={credentialPrepared ? continueWithGoogle : prepareZkLoginCredential}
-            disabled={busy !== null || (!credentialPrepared && !canPrepareZkLoginCredential)}
-          >
-            {credentialPrepared ? "Continue with Google" : "Create ephemeral key"}
-          </button>
+          <div className="button-row">
+            <button
+              type="button"
+              className="primary"
+              onClick={prepareZkLoginCredential}
+              disabled={busy !== null || !canPrepareZkLoginCredential || activeZkLoginAccount !== null}
+            >
+              1. Prepare Google login
+            </button>
+            <button
+              type="button"
+              className="primary"
+              onClick={continueWithGoogle}
+              disabled={busy !== null || !credentialPrepared}
+            >
+              2. Continue with Google
+            </button>
+          </div>
           {lastPreparation !== null && activeZkLoginAccount === null && (
             <details className="settings-slide">
-              <summary>Ephemeral key</summary>
+              <summary>Login preparation details</summary>
               <dl className="facts compact">
                 <div>
-                  <dt>Address</dt>
+                  <dt>Prepared address</dt>
                   <dd><code>{lastPreparation.address}</code></dd>
                 </div>
                 <div>
-                  <dt>Public key</dt>
+                  <dt>Prepared public key</dt>
                   <dd><code>{lastPreparation.publicKey}</code></dd>
                 </div>
               </dl>
@@ -675,7 +729,7 @@ function App() {
             </div>
           </div>
           <button type="button" className="primary" onClick={buildAndSignTransaction} disabled={!canSignZkLoginTest}>
-            Sign test transfer
+            Sign test transaction
           </button>
           {signBlockedReason !== null && (
             <p className="inline-warning">{signBlockedReason}</p>
@@ -708,6 +762,10 @@ function App() {
               <div>
                 <dt>Signature</dt>
                 <dd>{lastSignature?.source === "live" && lastSignature.status === "signed" ? short(lastSignature.signature) : "none"}</dd>
+              </div>
+              <div>
+                <dt>Verification</dt>
+                <dd>{lastSignatureVerification === null ? "none" : signatureVerificationLabel(lastSignatureVerification)}</dd>
               </div>
             </dl>
           </details>
@@ -758,9 +816,9 @@ function credentialPreparationStatusLabel(
     return `zkLogin ${short(activeZkLoginAccount.address)}`;
   }
   if (preparation !== null) {
-    return `Ephemeral address ${short(preparation.address)}`;
+    return "Google login ready";
   }
-  return credentialPreparationReady ? "Create ephemeral key" : "Ephemeral key unavailable";
+  return credentialPreparationReady ? "Prepare Google login" : "Google login unavailable";
 }
 
 function credentialPreparationStepStatusLabel(
@@ -771,7 +829,7 @@ function credentialPreparationStepStatusLabel(
     return short(activeZkLoginAccount.address);
   }
   if (preparation !== null) {
-    return `ephemeral ${short(preparation.address)}`;
+    return "ready";
   }
   return "not activated";
 }
@@ -784,10 +842,10 @@ function credentialPreparationNoticeLines(
   const accountLine = activeZkLoginAccount !== null
     ? `zkLogin account: ${short(activeZkLoginAccount.address)}`
     : preparation !== null
-      ? `Ephemeral address: ${short(preparation.address)}`
+      ? "Google login is ready."
       : credentialPreparationAvailable(credentialCapability)
-        ? "Create an ephemeral key to display the ephemeral address."
-        : "Ephemeral key creation is not available.";
+        ? "Prepare Google login to start zkLogin."
+        : "Google login is not available.";
   return [accountLine, credentialPreparationCapabilityLine(credentialCapability)];
 }
 
@@ -1124,7 +1182,7 @@ function isPendingEnokiLogin(value: unknown): value is PendingEnokiLogin {
     isRecord(value.enokiConfig) &&
     typeof value.enokiConfig.apiUrl === "string" &&
     typeof value.enokiConfig.apiKey === "string" &&
-    value.network === TEST_NETWORK &&
+    isZkLoginNetwork(value.network) &&
     value.provider === GOOGLE_PROVIDER &&
     isRecord(value.preparation) &&
     typeof value.preparation.publicKey === "string" &&
@@ -1159,21 +1217,26 @@ function deriveZkLoginPublicKey(address: string, inputs: ZkLoginSignatureInputsD
     .toSuiPublicKey();
 }
 
-async function buildSelfTransferTxBytes(input: {
-  network: Exclude<SuiSignTransactionNetwork, "localnet">;
+async function buildSignOnlySelfTransferTxBytes(input: {
   sender: string;
   amountMist: string;
   gasBudgetMist: string;
 }): Promise<string> {
   const amount = parsePositiveBigInt(input.amountMist, "amount MIST");
   const gasBudget = parsePositiveBigInt(input.gasBudgetMist, "gas budget MIST");
-  const client = new SuiJsonRpcClient({ url: getJsonRpcFullnodeUrl(input.network) });
   const transaction = new Transaction();
   transaction.setSender(input.sender);
+  transaction.setGasOwner(input.sender);
+  transaction.setGasPrice(1000n);
   transaction.setGasBudget(gasBudget);
+  transaction.setGasPayment([{
+    objectId: SIGN_ONLY_GAS_OBJECT_ID,
+    version: "1",
+    digest: SIGN_ONLY_GAS_DIGEST,
+  }]);
   const [coin] = transaction.splitCoins(transaction.gas, [amount]);
   transaction.transferObjects([coin], input.sender);
-  const bytes = await transaction.build({ client });
+  const bytes = await transaction.build();
   return toBase64(bytes);
 }
 
@@ -1224,7 +1287,28 @@ function resultSummary(value: unknown): string {
   return `${source}${reason}`;
 }
 
-function signResultLines(response: SuiDeviceWalletSignResult, txBytes: string): string[] {
+async function verifyZkLoginTransactionSignature(input: {
+  txBytes: string;
+  signature: string;
+  address: string;
+  network: ZkLoginNetwork;
+}): Promise<SignatureVerification> {
+  try {
+    await verifyTransactionSignature(fromBase64(input.txBytes), input.signature, {
+      client: new SuiGraphQLClient({ url: graphqlUrlForNetwork(input.network) }),
+      address: input.address,
+    });
+    return { status: "verified", address: input.address };
+  } catch (error) {
+    return { status: "failed", message: errorMessage(error) };
+  }
+}
+
+function signResultLines(
+  response: SuiDeviceWalletSignResult,
+  txBytes: string,
+  verification: SignatureVerification | null,
+): string[] {
   if (response.source !== "live") {
     return [
       `Source: ${response.source}`,
@@ -1236,6 +1320,7 @@ function signResultLines(response: SuiDeviceWalletSignResult, txBytes: string): 
       `Authorization: ${response.authorization}`,
       `txBytes chars: ${txBytes.length}`,
       `Signature: ${short(response.signature)}`,
+      verificationLine(verification),
     ];
   }
   if ("error" in response) {
@@ -1250,6 +1335,14 @@ function signResultLines(response: SuiDeviceWalletSignResult, txBytes: string): 
 
 function signStatusLabel(response: SuiDeviceWalletSignResult): string {
   return response.source === "live" ? response.status ?? "unknown" : response.source;
+}
+
+function signatureVerificationLabel(value: SignatureVerification): string {
+  return value.status === "verified" ? `verified ${short(value.address)}` : `failed: ${value.message}`;
+}
+
+function verificationLine(value: SignatureVerification | null): string {
+  return value === null ? "Verification: not run" : `Verification: ${signatureVerificationLabel(value)}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1267,6 +1360,19 @@ function errorMessage(error: unknown): string {
 function envString(name: string, fallback: string): string {
   const value = import.meta.env[name];
   return typeof value === "string" && value.length > 0 ? value : fallback;
+}
+
+function isZkLoginNetwork(value: unknown): value is ZkLoginNetwork {
+  return typeof value === "string" && ZKLOGIN_NETWORKS.includes(value as ZkLoginNetwork);
+}
+
+function parseDefaultNetwork(value: string): ZkLoginNetwork {
+  return isZkLoginNetwork(value) ? value : "testnet";
+}
+
+function graphqlUrlForNetwork(network: ZkLoginNetwork): string {
+  const envName = `VITE_SUI_${network.toUpperCase()}_GRAPHQL_URL`;
+  return envString(envName, `https://graphql.${network}.sui.io/graphql`);
 }
 
 function formatTimestamp(value: number): string {

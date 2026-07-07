@@ -15,9 +15,9 @@ cat >"${TMP_DIR}/session_state_test.cpp" <<'CPP'
 #include <stdint.h>
 #include <string.h>
 
-#include "session_state.h"
+#include "protocol/session_state.h"
 
-using namespace stopwatch_target;
+using namespace signing;
 
 namespace {
 
@@ -43,43 +43,43 @@ bool failing_random(void*, size_t, void*)
 
 int main()
 {
-    session_state_init();
-    assert(!session_state_active());
-    assert(strcmp(session_state_id(), "") == 0);
+    signing::session_init();
+    assert(!signing::session_active());
+    assert(strcmp(signing::session_id(), "") == 0);
 
-    assert(!session_id_format_valid(nullptr));
-    assert(!session_id_format_valid(""));
-    assert(!session_id_format_valid("not_session_0000000000000000"));
-    assert(!session_id_format_valid("session_"));
-    assert(session_id_format_valid("session_0"));
-    assert(session_id_format_valid("session_000102030405060"));
-    assert(!session_id_format_valid("session_000000000000000g"));
-    assert(session_id_format_valid("session_00010203040506070"));
-    assert(!session_id_format_valid("session_00000000000000000000000000000000"));
-    assert(!session_id_format_valid("session_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
-    assert(!session_id_format_valid("session_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
-    assert(session_id_format_valid("session_0001020304050607"));
+    assert(!signing::session_id_format_valid(nullptr));
+    assert(!signing::session_id_format_valid(""));
+    assert(!signing::session_id_format_valid("not_session_0000000000000000"));
+    assert(!signing::session_id_format_valid("session_"));
+    assert(signing::session_id_format_valid("session_0"));
+    assert(signing::session_id_format_valid("session_000102030405060"));
+    assert(!signing::session_id_format_valid("session_000000000000000g"));
+    assert(signing::session_id_format_valid("session_00010203040506070"));
+    assert(!signing::session_id_format_valid("session_00000000000000000000000000000000"));
+    assert(!signing::session_id_format_valid("session_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+    assert(!signing::session_id_format_valid("session_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+    assert(signing::session_id_format_valid("session_0001020304050607"));
 
-    assert(session_state_validate("session_0001020304050607") == SessionValidationResult::missing);
+    assert(signing::session_validate("session_0001020304050607") == signing::SessionValidationResult::missing);
 
     uint8_t counter = 0;
-    assert(session_state_replace(fill_counter_random, &counter) == SessionStartResult::ok);
-    assert(session_state_active());
-    assert(strcmp(session_state_id(), "session_0001020304050607") == 0);
-    assert(session_state_validate("bad") == SessionValidationResult::invalid_format);
-    assert(session_state_validate("session_08090a0b0c0d0e0f") == SessionValidationResult::mismatch);
-    assert(session_state_validate("session_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == SessionValidationResult::invalid_format);
-    assert(session_state_validate("session_0001020304050607") == SessionValidationResult::ok);
+    assert(signing::session_replace(fill_counter_random, &counter) == signing::SessionStartResult::ok);
+    assert(signing::session_active());
+    assert(strcmp(signing::session_id(), "session_0001020304050607") == 0);
+    assert(signing::session_validate("bad") == signing::SessionValidationResult::invalid_format);
+    assert(signing::session_validate("session_08090a0b0c0d0e0f") == signing::SessionValidationResult::mismatch);
+    assert(signing::session_validate("session_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == signing::SessionValidationResult::invalid_format);
+    assert(signing::session_validate("session_0001020304050607") == signing::SessionValidationResult::ok);
 
-    assert(session_state_replace(fill_counter_random, &counter) == SessionStartResult::ok);
-    assert(strcmp(session_state_id(), "session_08090a0b0c0d0e0f") == 0);
-    assert(session_state_validate("session_0001020304050607") == SessionValidationResult::mismatch);
-    assert(session_state_validate("session_08090a0b0c0d0e0f") == SessionValidationResult::ok);
+    assert(signing::session_replace(fill_counter_random, &counter) == signing::SessionStartResult::ok);
+    assert(strcmp(signing::session_id(), "session_08090a0b0c0d0e0f") == 0);
+    assert(signing::session_validate("session_0001020304050607") == signing::SessionValidationResult::mismatch);
+    assert(signing::session_validate("session_08090a0b0c0d0e0f") == signing::SessionValidationResult::ok);
 
-    session_state_clear();
-    assert(!session_state_active());
-    assert(session_state_replace(failing_random, nullptr) == SessionStartResult::rng_error);
-    assert(!session_state_active());
+    signing::session_clear();
+    assert(!signing::session_active());
+    assert(signing::session_replace(failing_random, nullptr) == signing::SessionStartResult::rng_error);
+    assert(!signing::session_active());
 
     return 0;
 }
@@ -89,7 +89,7 @@ CPP
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/session_state_test.cpp" \
-  "${RUNTIME_DIR}/session_state.cpp" \
+  "${COMMON_ROOT}/protocol/session_state.cpp" \
   -o "${TMP_DIR}/session_state_test"
 
 "${TMP_DIR}/session_state_test"

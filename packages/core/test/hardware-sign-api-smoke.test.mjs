@@ -10,25 +10,30 @@
 // User-authorized sign_transaction smoke:
 //   SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER=1 \
 //   SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_SCENARIO=positive \
+//   SIGNING_HW_CLIENT_NETWORK=<network> \
 //   SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_TX_BYTES=<base64> \
 //   node --test packages/core/test/hardware-sign-api-smoke.test.mjs
 //
 // Policy-authorized sign_transaction smoke:
 //   SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY=1 \
 //   SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY_SCENARIO=rejected \
+//   SIGNING_HW_CLIENT_NETWORK=<network> \
 //   node --test packages/core/test/hardware-sign-api-smoke.test.mjs
 //
 // User-authorized sign_personal_message smoke:
 //   SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER=1 \
 //   SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_SCENARIO=positive \
+//   SIGNING_HW_CLIENT_NETWORK=<network> \
 //   node --test packages/core/test/hardware-sign-api-smoke.test.mjs
 //
 // Policy-mode sign_personal_message fail-closed smoke:
 //   SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY=1 \
+//   SIGNING_HW_CLIENT_NETWORK=<network> \
 //   node --test packages/core/test/hardware-sign-api-smoke.test.mjs
 //
 // Policy update smoke mutates the active policy on the device:
 //   SIGNING_HW_CLIENT_POLICY_UPDATE=1 \
+//   SIGNING_HW_CLIENT_NETWORK=<network> \
 //   node --test packages/core/test/hardware-sign-api-smoke.test.mjs
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
@@ -44,6 +49,7 @@ import {
   MAX_APPROVAL_HISTORY_RECORDS,
   MAX_POLICY_TOTAL_POLICIES,
   SUI_ED25519_SIGNATURE_BASE64_PATTERN,
+  SUI_SIGN_TRANSACTION_NETWORKS,
 } from "../dist/protocol.js";
 
 const USER_SIGNING_METHODS = Object.freeze([
@@ -55,8 +61,7 @@ const POLICY_SIGNING_METHODS = Object.freeze([
 ]);
 const DEFAULT_PERSONAL_MESSAGE_BYTES = Buffer.from("Agent-Q personal message check").toString("base64");
 
-function smokePolicyDocument(policies = []) {
-  const conditionCount = policies.reduce((sum, policy) => sum + policy.conditions.length, 0);
+function smokePolicyDocument(network, policies = []) {
   return {
     schema: "signing.policy",
     defaultAction: "reject",
@@ -65,16 +70,12 @@ function smokePolicyDocument(policies = []) {
         blockchain: "sui",
         networks: [
           {
-            network: "testnet",
+            network,
             policies,
           },
         ],
       },
     ],
-    blockchainCount: 1,
-    networkCount: 1,
-    policyCount: policies.length,
-    conditionCount,
   };
 }
 
@@ -83,12 +84,17 @@ const userSigningScenario = process.env.SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_
 const userSigningDeviceId = process.env.SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_DEVICE_ID ?? "";
 const userSigningTxBytes = (process.env.SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_TX_BYTES ?? "").replace(/\s+/g, "");
 const userSigningScenarios = new Set(["positive", "reject", "timeout", "disconnect"]);
+const defaultSmokeNetwork = process.env.SIGNING_HW_CLIENT_NETWORK ?? "";
+const userSigningNetwork =
+  process.env.SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_NETWORK ?? defaultSmokeNetwork;
 
 const policySigningEnabled = process.env.SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY === "1";
 const policySigningScenario = process.env.SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY_SCENARIO ?? "";
 const policySigningDeviceId = process.env.SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY_DEVICE_ID ?? "";
 const policySigningTxBytes = (process.env.SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY_TX_BYTES ?? "").replace(/\s+/g, "");
 const policySigningScenarios = new Set(["signed", "rejected"]);
+const policySigningNetwork =
+  process.env.SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY_NETWORK ?? defaultSmokeNetwork;
 
 const userPersonalMessageEnabled = process.env.SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER === "1";
 const userPersonalMessageScenario = process.env.SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_SCENARIO ?? "";
@@ -97,15 +103,20 @@ const userPersonalMessageBytes = (
   process.env.SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_MESSAGE ?? DEFAULT_PERSONAL_MESSAGE_BYTES
 ).replace(/\s+/g, "");
 const userPersonalMessageScenarios = new Set(["positive", "reject", "timeout", "disconnect"]);
+const userPersonalMessageNetwork =
+  process.env.SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_NETWORK ?? defaultSmokeNetwork;
 
 const policyPersonalMessageEnabled = process.env.SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY === "1";
 const policyPersonalMessageDeviceId = process.env.SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY_DEVICE_ID ?? "";
 const policyPersonalMessageBytes = (
   process.env.SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY_MESSAGE ?? DEFAULT_PERSONAL_MESSAGE_BYTES
 ).replace(/\s+/g, "");
+const policyPersonalMessageNetwork =
+  process.env.SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY_NETWORK ?? defaultSmokeNetwork;
 
 const policyUpdateEnabled = process.env.SIGNING_HW_CLIENT_POLICY_UPDATE === "1";
 const policyUpdateDeviceId = process.env.SIGNING_HW_CLIENT_POLICY_UPDATE_DEVICE_ID ?? "";
+const policyUpdateNetwork = process.env.SIGNING_HW_CLIENT_POLICY_UPDATE_NETWORK ?? defaultSmokeNetwork;
 
 const SIGN_TRANSACTION_USER_PURPOSE = "hw.sign_tx.user";
 const SIGN_TRANSACTION_POLICY_PURPOSE = "hw.sign_tx.policy";
@@ -115,6 +126,10 @@ const POLICY_UPDATE_PURPOSE = "client-policy-update-smoke";
 const DEVICE_VISIBLE_CLIENT_NAME = "Agent-Q";
 const RECONNECT_SCAN_ATTEMPTS = 20;
 const RECONNECT_SCAN_INTERVAL_MS = 1000;
+
+function isSmokeNetwork(value) {
+  return SUI_SIGN_TRANSACTION_NETWORKS.includes(value);
+}
 
 function isCanonicalBase64(value) {
   if (value.length === 0 || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
@@ -138,6 +153,9 @@ function userSigningSkipReason() {
   if (!isCanonicalBase64(userSigningTxBytes)) {
     return "set SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_TX_BYTES to canonical base64 txBytes accepted by the device";
   }
+  if (!isSmokeNetwork(userSigningNetwork)) {
+    return "set SIGNING_HW_CLIENT_SIGN_TRANSACTION_USER_NETWORK or SIGNING_HW_CLIENT_NETWORK to the txBytes credential network";
+  }
   return false;
 }
 
@@ -150,6 +168,9 @@ function policySigningSkipReason() {
   }
   if (policySigningScenario === "signed" && !isCanonicalBase64(policySigningTxBytes)) {
     return "set SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY_TX_BYTES to txBytes matching the active sign policy";
+  }
+  if (!isSmokeNetwork(policySigningNetwork)) {
+    return "set SIGNING_HW_CLIENT_SIGN_TRANSACTION_POLICY_NETWORK or SIGNING_HW_CLIENT_NETWORK to the active credential network";
   }
   return false;
 }
@@ -164,6 +185,9 @@ function userPersonalMessageSkipReason() {
   if (!isCanonicalBase64(userPersonalMessageBytes)) {
     return "set SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_MESSAGE to canonical base64 message bytes";
   }
+  if (!isSmokeNetwork(userPersonalMessageNetwork)) {
+    return "set SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_USER_NETWORK or SIGNING_HW_CLIENT_NETWORK to the active credential network";
+  }
   return false;
 }
 
@@ -174,13 +198,20 @@ function policyPersonalMessageSkipReason() {
   if (!isCanonicalBase64(policyPersonalMessageBytes)) {
     return "set SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY_MESSAGE to canonical base64 message bytes";
   }
+  if (!isSmokeNetwork(policyPersonalMessageNetwork)) {
+    return "set SIGNING_HW_CLIENT_SIGN_PERSONAL_MESSAGE_POLICY_NETWORK or SIGNING_HW_CLIENT_NETWORK to the active credential network";
+  }
   return false;
 }
 
 function policyUpdateSkipReason() {
-  return policyUpdateEnabled
-    ? false
-    : "set SIGNING_HW_CLIENT_POLICY_UPDATE=1 with a provisioned development device whose policy may be changed";
+  if (!policyUpdateEnabled) {
+    return "set SIGNING_HW_CLIENT_POLICY_UPDATE=1 with a provisioned development device whose policy may be changed";
+  }
+  if (!isSmokeNetwork(policyUpdateNetwork)) {
+    return "set SIGNING_HW_CLIENT_POLICY_UPDATE_NETWORK or SIGNING_HW_CLIENT_NETWORK to the target policy network";
+  }
+  return false;
 }
 
 function scanDeviceId(device) {
@@ -522,7 +553,7 @@ test(
           purpose: SIGN_TRANSACTION_USER_PURPOSE,
           chain: "sui",
           method: "sign_transaction",
-          network: "devnet",
+          network: userSigningNetwork,
           txBytes: userSigningTxBytes,
         });
         assertNoSmokeOutputLeak(result, forbiddenPayload("raw transaction bytes", userSigningTxBytes));
@@ -641,18 +672,21 @@ test(
         assert.equal(beforeHistory.source, "live");
         const previousTopSeq = topSeq(beforeHistory);
 
-        console.log("[client-sign-transaction-policy-smoke] sending policy-authorized Sui sign_transaction...");
-        const result = await core.signTransaction({
-          deviceId,
-          purpose: SIGN_TRANSACTION_POLICY_PURPOSE,
-          chain: "sui",
-          method: "sign_transaction",
-          network: "devnet",
-          txBytes,
-        });
-        assertNoSmokeOutputLeak(result, forbiddenPayload("raw transaction bytes", txBytes));
-        assert.equal(result.source, "live");
-        assert.equal(result.authorization, "policy");
+        console.log("[client-sign-transaction-policy-smoke] sending policy-mode Sui sign_transaction...");
+        let result = null;
+        let rejectedError = null;
+        try {
+          result = await core.signTransaction({
+            deviceId,
+            purpose: SIGN_TRANSACTION_POLICY_PURPOSE,
+            chain: "sui",
+            method: "sign_transaction",
+            network: policySigningNetwork,
+            txBytes,
+          });
+        } catch (error) {
+          rejectedError = error;
+        }
 
         const afterHistory = await core.getApprovalHistory({
           deviceId,
@@ -662,16 +696,22 @@ test(
         assertNoSmokeOutputLeak(afterHistory, forbiddenPayload("raw transaction bytes", txBytes));
 
         if (policySigningScenario === "signed") {
+          assert.equal(rejectedError, null);
+          assertNoSmokeOutputLeak(result, forbiddenPayload("raw transaction bytes", txBytes));
+          assert.equal(result.source, "live");
+          assert.equal(result.authorization, "policy");
           assert.equal(result.status, "signed");
           assert.equal(result.chain, "sui");
           assert.equal(result.method, "sign_transaction");
           assert.match(result.signature, SUI_ED25519_SIGNATURE_BASE64_PATTERN);
           assertNewestSigningTerminal(afterHistory, previousTopSeq, "policy", "signed");
         } else {
-          assert.equal(result.status, "policy_rejected");
-          assert.equal(result.error.code, "policy_rejected");
-          assert.match(result.policyHash, /^sha256:[0-9a-f]{64}$/);
-          assert.equal(typeof result.ruleRef, "string");
+          assert.equal(result, null);
+          assert.equal(rejectedError?.code, "policy_rejected");
+          assertNoSmokeOutputLeak(
+            { code: rejectedError.code, message: rejectedError.message },
+            forbiddenPayload("raw transaction bytes", txBytes),
+          );
           assertNewestSigningTerminal(afterHistory, previousTopSeq, "policy", "policy_rejected");
         }
       } finally {
@@ -745,7 +785,7 @@ test(
           purpose: SIGN_PERSONAL_MESSAGE_USER_PURPOSE,
           chain: "sui",
           method: "sign_personal_message",
-          network: "devnet",
+          network: userPersonalMessageNetwork,
           message: userPersonalMessageBytes,
         });
 
@@ -875,7 +915,7 @@ test(
             purpose: SIGN_PERSONAL_MESSAGE_POLICY_PURPOSE,
             chain: "sui",
             method: "sign_personal_message",
-            network: "devnet",
+            network: policyPersonalMessageNetwork,
             message: policyPersonalMessageBytes,
           }),
           { code: "unsupported_method" },
@@ -928,11 +968,11 @@ test(
         assert.equal(historyBeforeUpdate.source, "live");
         const previousHistoryTopSeq = approvalHistoryTopSeq(historyBeforeUpdate);
 
-        const proposal = smokePolicyDocument([
+        const proposal = smokePolicyDocument(policyUpdateNetwork, [
           {
-            id: "reject_devnet",
+            id: "reject_policy_smoke",
             action: "reject",
-            conditions: [{ field: "sui.command_kinds", op: "not_contains", values: ["publish"] }],
+            conditions: [{ field: "sui.command_kinds", op: "not_contains", value: "publish" }],
           },
         ]);
 

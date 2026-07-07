@@ -3,8 +3,8 @@
 This directory contains the StopWatch ESP32-S3 hardware-specific Firmware
 source overlay.
 
-Current status: the target implements the local-authentication base slice and
-the Sui zkLogin proof-bootstrap slice:
+Current status: the target implements the local-authentication base slice, the
+Sui zkLogin proof-bootstrap slice, and the Sui signing/policy slice:
 
 - USB Serial/JTAG newline-delimited JSON transport;
 - `get_status` with shared status projection for first-run setup,
@@ -21,7 +21,15 @@ the Sui zkLogin proof-bootstrap slice:
 - `credential_prepare`, `payload_transfer`, and `credential_propose` for
   installing a Sui zkLogin proof after device-local review and local
   authentication;
-- device-local active proof clear from the idle screen;
+- device-local Device reset from the idle screen. Device reset also resets the
+  StopWatch zkLogin credential and returns the device to first-run
+  local-authentication setup;
+- user-confirmed Sui `sign_personal_message` and user-confirmed or
+  policy-authorized Sui `sign_transaction` for an active zkLogin account,
+  including retained response lookup and acknowledgement for signed results;
+- current policy storage, `policy_get`, device-confirmed `policy_propose`, and
+  approval-history records for policy updates and signing decisions;
+- device-local signing authorization mode selection after local authentication;
 - shared failure responses for methods that are unavailable in this target
   state or slice;
 - local display, touch, physical button, and vibration feedback used by this
@@ -31,9 +39,8 @@ the Sui zkLogin proof-bootstrap slice:
   remains the StopWatch PMIC power-on/reset behavior; hardware double-click
   power-off remains PMIC-owned.
 
-The target does not implement transaction signing, personal-message signing,
-policy storage or policy update review, approval history, retained responses,
-Bluetooth, QR, camera, pairing, host-triggered proof clear, or a mnemonic/native
+The target does not implement Bluetooth, QR, camera, pairing, host-triggered
+reset, Firmware-local Sui zkLogin proof verification, or a mnemonic/native
 root-material wallet path.
 
 Target-specific behavior and capability status live in `SPEC.md`.

@@ -66,6 +66,7 @@ int main()
         stopwatch_device_state(StateProjectionInput{
             LocalAuthProjectionStatus::missing,
             CredentialProjectionStatus::missing,
+            SettingsProjectionStatus::missing,
             false,
             false,
         }),
@@ -75,6 +76,7 @@ int main()
         stopwatch_provisioning_state(StateProjectionInput{
             LocalAuthProjectionStatus::missing,
             CredentialProjectionStatus::missing,
+            SettingsProjectionStatus::missing,
             false,
             false,
         }),
@@ -82,8 +84,49 @@ int main()
         "missing local auth is externally unprovisioned");
     expect_text(
         stopwatch_device_state(StateProjectionInput{
+            LocalAuthProjectionStatus::missing,
+            CredentialProjectionStatus::active,
+            SettingsProjectionStatus::missing,
+            false,
+            false,
+        }),
+        "error",
+        "active credential without local auth authority fails closed");
+    expect_text(
+        stopwatch_provisioning_state(StateProjectionInput{
+            LocalAuthProjectionStatus::missing,
+            CredentialProjectionStatus::active,
+            SettingsProjectionStatus::missing,
+            false,
+            false,
+        }),
+        "error",
+        "active credential without local auth authority is not setup");
+    expect_text(
+        stopwatch_device_state(StateProjectionInput{
+            LocalAuthProjectionStatus::missing,
+            CredentialProjectionStatus::missing,
+            SettingsProjectionStatus::active,
+            false,
+            false,
+        }),
+        "error",
+        "mutable settings without local auth authority fail closed");
+    expect_text(
+        stopwatch_provisioning_state(StateProjectionInput{
+            LocalAuthProjectionStatus::missing,
+            CredentialProjectionStatus::missing,
+            SettingsProjectionStatus::active,
+            false,
+            false,
+        }),
+        "error",
+        "mutable settings without local auth authority are not setup");
+    expect_text(
+        stopwatch_device_state(StateProjectionInput{
             LocalAuthProjectionStatus::active,
             CredentialProjectionStatus::missing,
+            SettingsProjectionStatus::active,
             false,
             false,
         }),
@@ -93,6 +136,7 @@ int main()
         stopwatch_device_state(StateProjectionInput{
             LocalAuthProjectionStatus::active,
             CredentialProjectionStatus::missing,
+            SettingsProjectionStatus::active,
             true,
             false,
         }),
@@ -102,6 +146,7 @@ int main()
         stopwatch_device_state(StateProjectionInput{
             LocalAuthProjectionStatus::locked,
             CredentialProjectionStatus::active,
+            SettingsProjectionStatus::active,
             true,
             true,
         }),
@@ -111,6 +156,7 @@ int main()
         stopwatch_provisioning_state(StateProjectionInput{
             LocalAuthProjectionStatus::locked,
             CredentialProjectionStatus::active,
+            SettingsProjectionStatus::active,
             false,
             false,
         }),
@@ -120,6 +166,7 @@ int main()
         stopwatch_device_state(StateProjectionInput{
             LocalAuthProjectionStatus::active,
             CredentialProjectionStatus::missing,
+            SettingsProjectionStatus::active,
             true,
             true,
         }),
@@ -129,6 +176,7 @@ int main()
         stopwatch_device_state(StateProjectionInput{
             LocalAuthProjectionStatus::active,
             CredentialProjectionStatus::storage_error,
+            SettingsProjectionStatus::active,
             true,
             false,
         }),
@@ -138,6 +186,7 @@ int main()
         stopwatch_provisioning_state(StateProjectionInput{
             LocalAuthProjectionStatus::active,
             CredentialProjectionStatus::invalid,
+            SettingsProjectionStatus::active,
             true,
             false,
         }),
@@ -147,6 +196,7 @@ int main()
         stopwatch_device_state(StateProjectionInput{
             LocalAuthProjectionStatus::invalid,
             CredentialProjectionStatus::missing,
+            SettingsProjectionStatus::active,
             true,
             true,
         }),
@@ -156,11 +206,32 @@ int main()
         stopwatch_provisioning_state(StateProjectionInput{
             LocalAuthProjectionStatus::storage_error,
             CredentialProjectionStatus::missing,
+            SettingsProjectionStatus::active,
             true,
             false,
         }),
         "error",
         "storage error projects provisioning error");
+    expect_text(
+        stopwatch_device_state(StateProjectionInput{
+            LocalAuthProjectionStatus::active,
+            CredentialProjectionStatus::active,
+            SettingsProjectionStatus::missing,
+            true,
+            false,
+        }),
+        "error",
+        "configured auth with missing required settings projects device error");
+    expect_text(
+        stopwatch_provisioning_state(StateProjectionInput{
+            LocalAuthProjectionStatus::locked,
+            CredentialProjectionStatus::active,
+            SettingsProjectionStatus::invalid,
+            false,
+            false,
+        }),
+        "error",
+        "locked configured auth with invalid required settings projects provisioning error");
     if (failures != 0) {
         fprintf(stderr, "StopWatch state projection tests failed: %d\n", failures);
         return 1;

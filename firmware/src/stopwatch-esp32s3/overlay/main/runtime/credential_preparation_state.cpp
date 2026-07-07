@@ -10,7 +10,7 @@ namespace {
 
 struct CredentialPreparationState {
     bool active = false;
-    char session_id[kSessionIdSize] = {};
+    char session_id[signing::kSessionIdSize] = {};
     uint8_t seed[kSuiEd25519SeedBytes] = {};
     SuiEd25519Preparation preparation = {};
 
@@ -42,7 +42,7 @@ CredentialPreparationBeginResult credential_preparation_begin(
     CredentialPreparationRandomFn random_fn,
     void* random_context)
 {
-    if (!session_id_format_valid(session_id) || random_fn == nullptr) {
+    if (!signing::session_id_format_valid(session_id) || random_fn == nullptr) {
         return CredentialPreparationBeginResult::invalid_session;
     }
 

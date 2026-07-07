@@ -26,7 +26,7 @@ already exposed through that provider:
 
 It does not add host-process routes, provider management APIs, signer selection,
 or a proof-clear API. If zkLogin proof material already exists, clear it locally
-on the device through `Settings > Accounts > Sui`.
+on the device through that hardware target's device-local account or reset UI.
 
 ## Run
 
@@ -59,8 +59,10 @@ connect device
 -> request a sign-only zkLogin test transaction through sign_transaction
 ```
 
-The page uses Sui `testnet` for Enoki nonce creation, proof proposal, and the
-transaction signing test. The browser stores pending public Enoki configuration
+The page defaults to `VITE_SUI_NETWORK` when it is set to `mainnet`, `testnet`,
+or `devnet`; otherwise it defaults to `testnet`. The selected network is used
+consistently for Enoki nonce creation, proof proposal, transaction signing, and
+signature verification. The browser stores pending public Enoki configuration
 and nonce preparation material in `sessionStorage` only until the OAuth callback
 is handled. JWTs and proof JSON still pass through the browser process and
 network requests during the test flow, but the page does not display them, keep

@@ -153,7 +153,6 @@ public:
     std::array<uint8_t, 6> getFactoryMac();
     std::string getFactoryMacString(std::string divider = "");
     void reboot();
-    void factoryReset();
 
     /* ---------------------------------- Power --------------------------------- */
     uint8_t getBatteryLevel();

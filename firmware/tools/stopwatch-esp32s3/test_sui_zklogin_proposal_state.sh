@@ -30,9 +30,10 @@ for required in \
   "${COMMON_DIR}/protocol/base64.cpp" \
   "${COMMON_DIR}/protocol/request_id.cpp" \
   "${COMMON_DIR}/sui/zklogin_credential_outcome.cpp" \
+  "${COMMON_DIR}/sui/zklogin_proof_payload.cpp" \
   "${COMMON_DIR}/sui/zklogin_proof_record.cpp" \
   "${RUNTIME_DIR}/protocol_input_encoding.cpp" \
-  "${RUNTIME_DIR}/session_state.cpp" \
+  "${COMMON_DIR}/protocol/session_state.cpp" \
   "${RUNTIME_DIR}/sensitive_memory.cpp" \
   "${RUNTIME_DIR}/sui_public_material.cpp" \
   "${RUNTIME_DIR}/sui_zklogin_credential_store.cpp" \
@@ -59,6 +60,7 @@ extern "C" {
 #include "byte_conversions.h"
 }
 
+using namespace signing;
 using namespace stopwatch_target;
 
 namespace {
@@ -394,11 +396,12 @@ CPP
   "${RUNTIME_DIR}/sui_zklogin_credential_store.cpp" \
   "${RUNTIME_DIR}/protocol_input_encoding.cpp" \
   "${RUNTIME_DIR}/sui_public_material.cpp" \
-  "${RUNTIME_DIR}/session_state.cpp" \
+  "${COMMON_DIR}/protocol/session_state.cpp" \
   "${RUNTIME_DIR}/sensitive_memory.cpp" \
   "${COMMON_DIR}/protocol/base64.cpp" \
   "${COMMON_DIR}/protocol/request_id.cpp" \
   "${COMMON_DIR}/sui/zklogin_credential_outcome.cpp" \
+  "${COMMON_DIR}/sui/zklogin_proof_payload.cpp" \
   "${COMMON_DIR}/sui/zklogin_proof_record.cpp" \
   "${TMP_DIR}/byte_conversions.o" \
   "${TMP_DIR}/key_management.o" \

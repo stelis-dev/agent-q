@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "session_state.h"
+#include "protocol/session_state.h"
 #include "sui_public_material.h"
 
 namespace stopwatch_target {

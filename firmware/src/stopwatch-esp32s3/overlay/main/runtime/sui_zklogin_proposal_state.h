@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #include "protocol/request_id.h"
-#include "session_state.h"
+#include "protocol/session_state.h"
 #include "sui/zklogin_credential_outcome.h"
 #include "sui_zklogin_credential_store.h"
 #include "transport/timeout_window.h"

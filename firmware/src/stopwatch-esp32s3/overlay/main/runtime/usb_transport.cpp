@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "driver/usb_serial_jtag.h"
@@ -13,32 +14,68 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "protocol/device_contract.h"
 #include "protocol/device_response.h"
 #include "protocol/json_input.h"
+#include "protocol/approval_history.h"
+#include "protocol/approval_history_json_writer.h"
 #include "numeric/u64_decimal.h"
+#include "policy/policy_store.h"
+#include "policy/policy_proposal_parser.h"
+#include "policy/usb_policy_handlers.h"
+#include "policy/policy_update_flow.h"
+#include "policy/policy_update_marker.h"
 #include "protocol/protocol_constants.h"
 #include "protocol/request_id.h"
 #include "protocol/request_line.h"
+#include "protocol/sign_route.h"
+#include "protocol/signing_mode.h"
+#include "protocol/signing_response_store.h"
+#include "protocol/usb_active_session_request_guard.h"
+#include "protocol/usb_json_response.h"
+#include "protocol/usb_approval_history_handler.h"
+#include "protocol/usb_device_handlers.h"
+#include "protocol/usb_operation_manifest.h"
+#include "protocol/usb_request_line_handler.h"
+#include "protocol/usb_session_read_handlers.h"
+#include "protocol/usb_sui_zklogin_credential_handlers.h"
+#include "sui/network.h"
+#include "sui/active_identity.h"
+#include "sui/account_settings_types.h"
+#include "sui/account_binding.h"
+#include "sui/sign_transaction_adapter.h"
+#include "sui/signing_preparation.h"
+#include "sui/signing_limits.h"
+#include "signing/policy_signing_execution_result.h"
+#include "signing/sign_transaction_policy_runtime.h"
+#include "signing/signing_retry_response.h"
+#include "signing/user_signing_critical_section.h"
+#include "signing/user_signing_flow.h"
+#include "signing/usb_signing_handlers.h"
+#include "signing/usb_signing_outcome_writer.h"
+#include "transport/connect_approval.h"
+#include "transport/connect_review_response_flow.h"
 #include "transport/usb_link_state.h"
+#include "transport/payload_delivery_admission.h"
+#include "transport/payload_delivery_resolution.h"
+#include "transport/payload_delivery_store.h"
+#include "transport/usb_connect_handler.h"
+#include "transport/usb_disconnect_handler.h"
+#include "transport/usb_payload_transfer_handlers.h"
+#include "transport/usb_retained_response_handlers.h"
 #include "transport/usb_session_grace.h"
 
 #include "credential_preparation_state.h"
-#include "payload_digest.h"
-#include "payload_transfer_request.h"
-#include "payload_transfer_state.h"
 #include "protocol/base64.h"
 #include "protocol_input_encoding.h"
 #include "secure_random.h"
 #include "sensitive_memory.h"
-#include "session_state.h"
+#include "protocol/session_state.h"
 #include "sui/zklogin_credential_payload.h"
 #include "sui_zklogin_credential_store.h"
 #include "sui_zklogin_proposal_state.h"
-
-extern "C" {
-#include "byte_conversions.h"
-}
+#include "sui_zklogin_signing_service.h"
 
 namespace stopwatch_target {
 namespace {
@@ -52,13 +89,28 @@ constexpr uint32_t kUsbHostLinkCheckMs = 10;
 constexpr uint32_t kUsbSessionGraceMs = 2000;
 constexpr uint32_t kIdentifyDisplayMs = 30000;
 constexpr uint32_t kConnectApprovalMs = 30000;
+constexpr uint32_t kSigningApprovalMs = 30000;
+constexpr uint32_t kPolicyUpdateReviewMs = 30000;
 constexpr size_t kApprovalHistoryPageMax = 4;
 constexpr const char* kFirmwareName = "Agent-Q Firmware";
 constexpr const char* kHardwareId = "stopwatch-esp32s3";
 constexpr const char* kFirmwareVersion = "0.0.0";
 constexpr const char* kFallbackDeviceId = "stopwatch-esp32s3-unavailable";
-constexpr size_t kZkLoginPublicKeyBase64BufferSize =
-    ((kSuiZkLoginPublicKeyMaxBytes + 2) / 3) * 4 + 1;
+constexpr size_t kSigningPayloadLabelSize = 32;
+constexpr size_t kReviewValuePreviewSize = 36;
+constexpr size_t kPayloadTransferChunkMaxBytes = signing::kPayloadDeliveryDefaultChunkMaxBytes;
+constexpr size_t kPolicyReadbackEnvelopeReserveBytes = 1024;
+constexpr uint32_t kSigningNoticeDisplayMs = 2500;
+
+static_assert(
+    signing::kPolicyProposalMaxSerializedObjectBytes + kPolicyReadbackEnvelopeReserveBytes <=
+        signing::kUsbJsonResponseLineMaxBytes,
+    "policy_get readback for accepted policy proposals must fit within the USB response line cap");
+
+using PayloadTransferAdmissionResult = signing::PayloadDeliveryAdmissionResult;
+using PayloadTransferAdmissionReason = signing::PayloadDeliveryAdmissionReason;
+using PayloadTransferAdmissionDecision = signing::PayloadDeliveryAdmissionDecision;
+using PayloadTransferResult = signing::PayloadDeliveryResult;
 
 char g_line_buffer[kLineBufferBytes];
 size_t g_line_size = 0;
@@ -70,24 +122,51 @@ UsbPendingRequest g_pending_request{
     UsbPendingRequestKind::none,
     {},
     {},
-    signing::kTimeoutWindowNone,
+signing::kTimeoutWindowNone,
 };
 UsbIdentificationDisplay g_identification_display{false, {}};
 uint32_t g_identification_display_deadline_ms = 0;
+UsbSigningNotice g_signing_notice{false, UsbSigningNoticeKind::info, {}};
+uint32_t g_signing_notice_deadline_ms = 0;
 signing::UsbGraceState g_usb_session_grace;
+signing::UserSigningFlowSnapshot g_user_signing_snapshot_scratch = {};
+SuiZkLoginCredentialRecord g_signing_credential_scratch = {};
+char g_signing_preflight_retry_stored_response[signing::kResponseMaxSize] = {};
 
 bool reject_line(const char* id, const char* method, const char* code);
-bool device_request_fields_supported_or_reject(
+void record_success(const char* id, const char* method);
+void record_error(const char* id, const char* method, const char* code);
+bool write_success_response(const char* id, const char* method, JsonObjectConst result);
+const signing::UsbOperationResponseWriter& common_method_response_writer();
+const signing::UsbApprovalHistoryHandlerOps& approval_history_handler_ops();
+const signing::UsbGetStatusHandlerOps& get_status_handler_ops();
+const signing::UsbIdentifyDeviceHandlerOps& identify_device_handler_ops();
+void finish_policy_update(
     const char* id,
-    const char* method,
-    JsonDocument& request,
-    const char* const* fields,
-    size_t count);
-bool payload_has_only_fields(JsonDocument& request, const char* const* fields, size_t count);
-PayloadTransferAdmissionOperation payload_transfer_sensitive_operation(const char* method);
+    signing::PolicyUpdateFlowTerminalResult terminal_result);
 bool reject_if_payload_transfer_blocks_sensitive_flow(const char* id, const char* method);
+bool reject_if_payload_transfer_blocks_safe_read(const char* id, const char* method);
 CredentialProjectionStatus credential_projection_status();
+SettingsProjectionStatus settings_projection_status();
 StateProjectionInput state_projection_input();
+bool finish_user_signing_terminal(
+    const char* id,
+    const uint8_t* signature = nullptr,
+    size_t signature_size = 0,
+    const uint8_t* message_bytes = nullptr,
+    size_t message_size = 0);
+const char* user_signing_terminal_error_code(
+    signing::UserSigningTerminalResult result);
+bool write_user_signing_terminal_history(
+    const signing::UserSigningFlowCoreSnapshot& snapshot,
+    signing::UserSigningTerminalResult result);
+bool write_policy_execution_response(
+    const char* id,
+    const uint8_t* request_identity,
+    const signing::PolicySigningExecutionResult& result);
+void show_policy_signing_notice_for_common(
+    const char* message,
+    signing::UsbSigningNoticeKind kind);
 
 uint32_t current_payload_transfer_ms()
 {
@@ -108,6 +187,43 @@ signing::TimeoutWindow make_connect_approval_window(uint32_t now_ms)
         now_ms + kConnectApprovalMs);
 }
 
+signing::TimeoutWindow make_signing_approval_window(uint32_t now_ms)
+{
+    return signing::timeout_window_from_deadline(
+        now_ms,
+        now_ms + kSigningApprovalMs);
+}
+
+signing::TimeoutWindow make_policy_update_review_window(uint32_t now_ms)
+{
+    return signing::timeout_window_from_deadline(
+        now_ms,
+        now_ms + kPolicyUpdateReviewMs);
+}
+
+bool pending_kind_is_signing(UsbPendingRequestKind kind)
+{
+    return kind == UsbPendingRequestKind::sign_transaction ||
+           kind == UsbPendingRequestKind::sign_personal_message;
+}
+
+bool any_request_pending()
+{
+    return g_pending_request.kind != UsbPendingRequestKind::none ||
+           signing::connect_approval_active();
+}
+
+const char* pending_signing_method()
+{
+    if (g_pending_request.kind == UsbPendingRequestKind::sign_transaction) {
+        return "sign_transaction";
+    }
+    if (g_pending_request.kind == UsbPendingRequestKind::sign_personal_message) {
+        return "sign_personal_message";
+    }
+    return "";
+}
+
 void copy_status_text(char* output, size_t output_size, const char* value)
 {
     if (output == nullptr || output_size == 0) {
@@ -118,6 +234,95 @@ void copy_status_text(char* output, size_t output_size, const char* value)
         return;
     }
     strlcpy(output, value, output_size);
+}
+
+void copy_middle_elided(
+    const char* input,
+    char* output,
+    size_t output_size,
+    size_t prefix_chars,
+    size_t suffix_chars)
+{
+    if (output == nullptr || output_size == 0) {
+        return;
+    }
+    output[0] = '\0';
+    if (input == nullptr) {
+        return;
+    }
+    const size_t length = strlen(input);
+    if (length + 1 <= output_size ||
+        prefix_chars + suffix_chars + 4 >= output_size ||
+        length <= prefix_chars + suffix_chars + 3) {
+        strlcpy(output, input, output_size);
+        return;
+    }
+    memcpy(output, input, prefix_chars);
+    memcpy(output + prefix_chars, "...", 3);
+    memcpy(output + prefix_chars + 3, input + length - suffix_chars, suffix_chars);
+    output[prefix_chars + 3 + suffix_chars] = '\0';
+}
+
+bool append_review_text(char* output, size_t output_size, const char* text)
+{
+    if (output == nullptr || output_size == 0 || text == nullptr) {
+        return false;
+    }
+    const size_t used = strlen(output);
+    if (used >= output_size) {
+        return false;
+    }
+    const int written = snprintf(output + used, output_size - used, "%s", text);
+    return written >= 0 && static_cast<size_t>(written) < output_size - used;
+}
+
+bool append_review_line(
+    char* output,
+    size_t output_size,
+    const char* label,
+    const char* value)
+{
+    if (label == nullptr || label[0] == '\0' ||
+        value == nullptr || value[0] == '\0') {
+        return true;
+    }
+    char preview[kReviewValuePreviewSize] = {};
+    copy_middle_elided(value, preview, sizeof(preview), 12, 8);
+    if (output[0] != '\0' && !append_review_text(output, output_size, "\n")) {
+        return false;
+    }
+    return append_review_text(output, output_size, label) &&
+           append_review_text(output, output_size, ": ") &&
+           append_review_text(output, output_size, preview);
+}
+
+const signing::SuiReviewRow* find_review_row(
+    const signing::SuiReviewSummary& review,
+    const char* label)
+{
+    if (label == nullptr) {
+        return nullptr;
+    }
+    for (uint16_t index = 0; index < review.row_count; ++index) {
+        if (strcmp(review.rows[index].label, label) == 0) {
+            return &review.rows[index];
+        }
+    }
+    return nullptr;
+}
+
+bool append_review_row(
+    char* output,
+    size_t output_size,
+    const signing::SuiReviewSummary& review,
+    const char* row_label,
+    const char* display_label)
+{
+    const signing::SuiReviewRow* row = find_review_row(review, row_label);
+    if (row == nullptr) {
+        return true;
+    }
+    return append_review_line(output, output_size, display_label, row->value);
 }
 
 void format_device_id()
@@ -151,6 +356,22 @@ const char* device_state()
     return stopwatch_device_state(state_projection_input());
 }
 
+signing::UsbDeviceStatusInfo usb_device_status_info()
+{
+    format_device_id();
+    const StateProjectionInput projection = state_projection_input();
+    return signing::UsbDeviceStatusInfo{
+        signing::DeviceResponseDeviceFields{
+            g_device_id,
+            stopwatch_device_state(projection),
+            kFirmwareName,
+            kHardwareId,
+            kFirmwareVersion,
+        },
+        stopwatch_provisioning_state(projection),
+    };
+}
+
 CredentialProjectionStatus credential_projection_status()
 {
     switch (sui_zklogin_credential_status()) {
@@ -166,11 +387,67 @@ CredentialProjectionStatus credential_projection_status()
     }
 }
 
+SettingsProjectionStatus settings_projection_status()
+{
+    bool missing = false;
+
+    switch (signing::active_policy_status()) {
+    case signing::PolicyStoreStatus::active:
+        break;
+    case signing::PolicyStoreStatus::storage_error:
+        return SettingsProjectionStatus::storage_error;
+    case signing::PolicyStoreStatus::invalid:
+        return SettingsProjectionStatus::invalid;
+    case signing::PolicyStoreStatus::missing:
+    default:
+        missing = true;
+        break;
+    }
+
+    switch (signing::authorization_mode_status()) {
+    case signing::AuthorizationModeStatus::active:
+        break;
+    case signing::AuthorizationModeStatus::unreadable:
+        return SettingsProjectionStatus::storage_error;
+    case signing::AuthorizationModeStatus::invalid:
+        return SettingsProjectionStatus::invalid;
+    case signing::AuthorizationModeStatus::missing:
+    default:
+        missing = true;
+        break;
+    }
+
+    switch (signing::approval_history_status()) {
+    case signing::ApprovalHistoryStorageStatus::active:
+    case signing::ApprovalHistoryStorageStatus::missing:
+        break;
+    case signing::ApprovalHistoryStorageStatus::storage_error:
+        return SettingsProjectionStatus::storage_error;
+    case signing::ApprovalHistoryStorageStatus::invalid:
+    default:
+        return SettingsProjectionStatus::invalid;
+    }
+
+    switch (signing::policy_update_marker_status()) {
+    case signing::PolicyUpdateMarkerStatus::clear:
+        break;
+    case signing::PolicyUpdateMarkerStatus::storage_error:
+        return SettingsProjectionStatus::storage_error;
+    case signing::PolicyUpdateMarkerStatus::pending:
+    case signing::PolicyUpdateMarkerStatus::invalid:
+    default:
+        return SettingsProjectionStatus::invalid;
+    }
+
+    return missing ? SettingsProjectionStatus::missing : SettingsProjectionStatus::active;
+}
+
 StateProjectionInput state_projection_input()
 {
     return StateProjectionInput{
         g_runtime_state.auth_status,
         credential_projection_status(),
+        settings_projection_status(),
         g_runtime_state.locally_unlocked,
         g_runtime_state.ui_busy,
     };
@@ -189,21 +466,48 @@ bool credential_status_allows_install(SuiZkLoginCredentialStatus status)
 
 void clear_pending_request()
 {
+    if (pending_kind_is_signing(g_pending_request.kind)) {
+        signing::user_signing_flow_clear();
+    }
     memset(&g_pending_request, 0, sizeof(g_pending_request));
     g_pending_request.kind = UsbPendingRequestKind::none;
     g_pending_request.request_window = signing::kTimeoutWindowNone;
 }
 
-void reject_expired_connect_request(uint32_t now_ms)
+void reject_expired_signing_request(uint32_t now_ms)
 {
-    if (g_pending_request.kind != UsbPendingRequestKind::connect ||
-        !signing::timeout_window_reached(g_pending_request.request_window, now_ms)) {
+    if (!pending_kind_is_signing(g_pending_request.kind)) {
+        return;
+    }
+    const signing::UserSigningTransitionResult result =
+        signing::user_signing_flow_record_timeout(now_ms);
+    if (result == signing::UserSigningTransitionResult::deadline_not_reached ||
+        result == signing::UserSigningTransitionResult::inactive) {
         return;
     }
     char pending_id[signing::kRequestIdSize] = {};
     strlcpy(pending_id, g_pending_request.id, sizeof(pending_id));
-    reject_line(pending_id, "connect", "timeout");
+    if (result == signing::UserSigningTransitionResult::ok ||
+        signing::user_signing_flow_terminal_pending()) {
+        finish_user_signing_terminal(pending_id);
+    } else {
+        reject_line(pending_id, pending_signing_method(), "invalid_state");
+        signing::user_signing_flow_clear();
+    }
     clear_pending_request();
+}
+
+void reject_expired_policy_update_request(uint32_t now_ms)
+{
+    if (g_pending_request.kind != UsbPendingRequestKind::policy_propose ||
+        !signing::policy_update_flow_review_deadline_reached(now_ms)) {
+        return;
+    }
+    char pending_id[signing::kRequestIdSize] = {};
+    strlcpy(pending_id, g_pending_request.id, sizeof(pending_id));
+    finish_policy_update(
+        pending_id,
+        signing::policy_update_flow_record_timed_out(now_ms));
 }
 
 const char* pending_credential_proposal_request_to_notify(const char* current_request_id)
@@ -233,12 +537,78 @@ void cancel_pending_credential_proposal_after_session_loss(const char* current_r
     clear_pending_request();
 }
 
+void cancel_pending_signing_after_session_loss(const char* current_request_id)
+{
+    if (!pending_kind_is_signing(g_pending_request.kind)) {
+        return;
+    }
+    if (current_request_id == nullptr || strcmp(g_pending_request.id, current_request_id) != 0) {
+        const signing::UserSigningTransitionResult result =
+            signing::user_signing_flow_cancel_for_session_loss();
+        if (result == signing::UserSigningTransitionResult::ok ||
+            signing::user_signing_flow_terminal_pending()) {
+            finish_user_signing_terminal(g_pending_request.id);
+        } else {
+            reject_line(g_pending_request.id, pending_signing_method(), "invalid_session");
+        }
+    }
+    clear_pending_request();
+}
+
+void finish_policy_update(
+    const char* id,
+    signing::PolicyUpdateFlowTerminalResult terminal_result)
+{
+    const signing::PolicyUpdateFlowSnapshot snapshot =
+        signing::policy_update_flow_snapshot();
+    const char* status = signing::policy_update_flow_terminal_status(terminal_result);
+    const char* reason = signing::policy_update_flow_terminal_reason(terminal_result);
+    if (id == nullptr ||
+        status == nullptr || status[0] == '\0' ||
+        reason == nullptr || reason[0] == '\0') {
+        record_error(id, "policy_propose", "internal_output_error");
+    } else {
+        if (signing::usb_policy_propose_outcome_write(
+                id,
+                status,
+                reason,
+                snapshot.active ? &snapshot : nullptr,
+                common_method_response_writer())) {
+            record_success(id, "policy_propose");
+        } else {
+            record_error(id, "policy_propose", "internal_output_error");
+        }
+    }
+    signing::policy_update_flow_clear();
+    clear_pending_request();
+}
+
+void cancel_pending_policy_update_after_session_loss(const char* current_request_id)
+{
+    if (g_pending_request.kind != UsbPendingRequestKind::policy_propose) {
+        return;
+    }
+    if (current_request_id == nullptr || strcmp(g_pending_request.id, current_request_id) != 0) {
+        finish_policy_update(
+            g_pending_request.id,
+            signing::policy_update_flow_record_ui_error());
+        return;
+    }
+    signing::policy_update_flow_clear();
+    clear_pending_request();
+}
+
 void clear_session_scoped_state()
 {
+    signing::connect_approval_clear();
+    if (signing::session_active()) {
+        signing::signing_response_clear_session(signing::session_id());
+    }
     sui_zklogin_proposal_state_clear();
     credential_preparation_state_clear();
-    payload_transfer_clear_all();
-    session_state_clear();
+    signing::policy_update_flow_clear();
+    signing::payload_delivery_clear_all();
+    signing::session_clear();
 }
 
 void reset_line_receiver_state()
@@ -296,20 +666,62 @@ bool write_usb_bytes(const char* data, size_t length)
     return usb_serial_jtag_wait_tx_done(pdMS_TO_TICKS(kWriteTimeoutMs)) == ESP_OK;
 }
 
+bool write_usb_response_bytes(const char* data, size_t length, void*)
+{
+    return write_usb_bytes(data, length);
+}
+
+void delay_usb_response_ms(uint32_t duration_ms, void*)
+{
+    vTaskDelay(pdMS_TO_TICKS(duration_ms));
+}
+
+const signing::UsbJsonResponseWriteOps& usb_json_response_write_ops()
+{
+    static const signing::UsbJsonResponseWriteOps ops{
+        write_usb_response_bytes,
+        delay_usb_response_ms,
+        nullptr,
+    };
+    return ops;
+}
+
+bool write_retry_response_json(JsonDocument& response, void*)
+{
+    return signing::usb_json_response_write(response, usb_json_response_write_ops());
+}
+
+bool write_method_error_for_signing_outcome(
+    const char* id,
+    const char* method,
+    const char* code,
+    void*)
+{
+    return reject_line(id, method, code);
+}
+
+const signing::UsbSigningOutcomeWriterOps& signing_outcome_writer_ops()
+{
+    static const signing::UsbSigningOutcomeWriterOps ops{
+        usb_json_response_write_ops(),
+        write_method_error_for_signing_outcome,
+        nullptr,
+    };
+    return ops;
+}
+
 bool write_json_response(JsonDocument& response, size_t output_size)
 {
-    char output[1024];
-    if (output_size > sizeof(output)) {
-        return false;
-    }
-    const size_t length = serializeJson(response, output, output_size);
-    if (length == 0 || length >= output_size) {
+    (void)output_size;
+    if (response.overflowed()) {
         copy_status_text(g_status.last_error, sizeof(g_status.last_error), "internal_output_error");
         return false;
     }
-    return write_usb_bytes("\n", 1) &&
-           write_usb_bytes(output, length) &&
-           write_usb_bytes("\n", 1);
+    const size_t measured_len = measureJson(response);
+    if (measured_len == 0 || measured_len > signing::kUsbJsonResponseLineMaxBytes) {
+        return false;
+    }
+    return signing::usb_json_response_write(response, usb_json_response_write_ops());
 }
 
 bool write_error_response(const char* id, const char* method, const char* code)
@@ -321,29 +733,17 @@ bool write_error_response(const char* id, const char* method, const char* code)
     return write_json_response(response, 768);
 }
 
-bool write_payload_transfer_error_response(const char* id, const char* code)
-{
-    const signing::DeviceErrorRow* row = signing::device_error_row(code);
-    JsonDocument response;
-    if (id != nullptr && id[0] != '\0') {
-        response["id"] = id;
-    }
-    response["version"] = signing::kProtocolVersion;
-    response["success"] = false;
-    JsonObject error = response["error"].to<JsonObject>();
-    error["code"] = code != nullptr ? code : "invalid_request";
-    error["message"] = row != nullptr ? row->message : "Device request is malformed.";
-    error["retryable"] = row != nullptr && row->retryable;
-    return write_json_response(response, 768);
-}
-
 bool write_success_response(const char* id, const char* method, JsonObjectConst result)
 {
     JsonDocument response;
     if (!signing::device_response_prepare_success_result(response, id, method, result)) {
         return false;
     }
-    return write_json_response(response, 1024);
+    if (!write_json_response(response, signing::kResponseMaxSize)) {
+        return false;
+    }
+    record_success(id, method);
+    return true;
 }
 
 bool write_empty_success_response(const char* id, const char* method)
@@ -353,60 +753,201 @@ bool write_empty_success_response(const char* id, const char* method)
     return write_success_response(id, method, object);
 }
 
+bool finish_user_signing_terminal(
+    const char* id,
+    const uint8_t* signature,
+    size_t signature_size,
+    const uint8_t* message_bytes,
+    size_t message_size)
+{
+    const signing::UserSigningFlowCoreSnapshot snapshot =
+        signing::user_signing_flow_core_snapshot();
+    const signing::UserSigningTerminalResult result = snapshot.terminal_result;
+    if (!snapshot.active ||
+        snapshot.stage != signing::UserSigningStage::terminal ||
+        result == signing::UserSigningTerminalResult::none) {
+        if (id != nullptr && id[0] != '\0') {
+            reject_line(id, pending_signing_method(), "invalid_state");
+        }
+        signing::user_signing_flow_clear();
+        return false;
+    }
+    if (!write_user_signing_terminal_history(snapshot, result)) {
+        if (id != nullptr && id[0] != '\0') {
+            reject_line(id, snapshot.method, "history_unavailable");
+        }
+        signing::user_signing_flow_clear();
+        return false;
+    }
+
+    bool written = false;
+    if (result == signing::UserSigningTerminalResult::signed_success) {
+        signing::UserSigningOutput signing_output = {};
+        signing_output.signing_route = snapshot.signing_route;
+        signing_output.signature_size = signature_size;
+        if (signature != nullptr &&
+            signature_size > 0 &&
+            signature_size <= sizeof(signing_output.signature)) {
+            memcpy(signing_output.signature, signature, signature_size);
+        }
+        if (message_bytes != nullptr &&
+            message_size > 0 &&
+            message_size <= sizeof(signing_output.message_bytes)) {
+            memcpy(signing_output.message_bytes, message_bytes, message_size);
+            signing_output.message_bytes_size = message_size;
+        }
+        written = signing::usb_signing_outcome_write_user_signed(
+            id,
+            signing::session_id(),
+            "user",
+            snapshot,
+            signing_output,
+            signing_outcome_writer_ops());
+        wipe_sensitive_buffer(&signing_output, sizeof(signing_output));
+        if (written) {
+            record_success(id, snapshot.method);
+        } else {
+            record_error(id, snapshot.method, "internal_output_error");
+        }
+    } else {
+        const char* code = user_signing_terminal_error_code(result);
+        if (code == nullptr || code[0] == '\0') {
+            code = "invalid_state";
+        }
+        (void)code;
+        written = signing::usb_signing_outcome_write_user_terminal(
+            id,
+            signing::session_id(),
+            snapshot.request_identity,
+            snapshot.method,
+            result,
+            signing_outcome_writer_ops());
+        if (written) {
+            record_error(id, snapshot.method, code);
+        } else {
+            record_error(id, snapshot.method, "internal_output_error");
+        }
+    }
+    signing::user_signing_flow_clear();
+    return written;
+}
+
+struct UserSigningOutputReadyContext {
+    const char* request_id;
+};
+
+struct UserSigningTerminalFinishContext {
+    const char* request_id;
+};
+
+bool user_signing_signed_response_fits(
+    const signing::UserSigningFlowCoreSnapshot& snapshot,
+    const signing::UserSigningOutput& signing_output,
+    void* context)
+{
+    const UserSigningOutputReadyContext* ready_context =
+        static_cast<const UserSigningOutputReadyContext*>(context);
+    if (ready_context == nullptr ||
+        ready_context->request_id == nullptr ||
+        ready_context->request_id[0] == '\0' ||
+        strcmp(ready_context->request_id, snapshot.request_id) != 0 ||
+        signing_output.signing_route != snapshot.signing_route) {
+        return false;
+    }
+    JsonDocument response;
+    return signing::usb_signing_outcome_prepare_signed_response(
+               response,
+               ready_context->request_id,
+               "user",
+               snapshot.signing_route,
+               signing_output.signature,
+               signing_output.signature_size,
+               signing_output.message_bytes_size > 0 ? signing_output.message_bytes : nullptr,
+               signing_output.message_bytes_size) &&
+           signing::usb_signing_outcome_response_fits(response);
+}
+
+bool finish_user_signing_from_common(
+    const signing::UserSigningOutput* signing_output,
+    void* context)
+{
+    const UserSigningTerminalFinishContext* finish_context =
+        static_cast<const UserSigningTerminalFinishContext*>(context);
+    if (finish_context == nullptr ||
+        finish_context->request_id == nullptr ||
+        finish_context->request_id[0] == '\0') {
+        return false;
+    }
+    if (signing_output != nullptr) {
+        return finish_user_signing_terminal(
+            finish_context->request_id,
+            signing_output->signature,
+            signing_output->signature_size,
+            signing_output->message_bytes_size > 0 ? signing_output->message_bytes : nullptr,
+            signing_output->message_bytes_size);
+    }
+    return finish_user_signing_terminal(finish_context->request_id);
+}
+
+signing::UserSigningSignStatus map_user_signing_status(
+    SuiZkLoginSigningResult result)
+{
+    switch (result) {
+        case SuiZkLoginSigningResult::ok:
+            return signing::UserSigningSignStatus::ok;
+        case SuiZkLoginSigningResult::invalid_input:
+            return signing::UserSigningSignStatus::invalid_input;
+        case SuiZkLoginSigningResult::account_unavailable:
+            return signing::UserSigningSignStatus::account_unavailable;
+        case SuiZkLoginSigningResult::signature_output_too_small:
+            return signing::UserSigningSignStatus::signature_output_too_small;
+        case SuiZkLoginSigningResult::zklogin_envelope_error:
+            return signing::UserSigningSignStatus::signature_envelope_error;
+        case SuiZkLoginSigningResult::signing_error:
+        default:
+            return signing::UserSigningSignStatus::signing_error;
+    }
+}
+
+signing::UserSigningSignStatus sign_user_signing_payload(
+    signing::Route route,
+    const uint8_t* payload,
+    size_t payload_size,
+    uint8_t signature_out[signing::kSuiSignatureEnvelopeMaxBytes],
+    size_t* signature_size_out,
+    void*)
+{
+    SuiZkLoginSigningResult result = SuiZkLoginSigningResult::invalid_input;
+    switch (route) {
+        case signing::Route::sui_sign_transaction:
+            result = sign_sui_zklogin_transaction(
+                payload,
+                payload_size,
+                signature_out,
+                signature_size_out);
+            break;
+        case signing::Route::sui_sign_personal_message:
+            result = sign_sui_zklogin_personal_message(
+                payload,
+                payload_size,
+                signature_out,
+                signature_size_out);
+            break;
+        case signing::Route::unsupported:
+        default:
+            result = SuiZkLoginSigningResult::invalid_input;
+            break;
+    }
+    return map_user_signing_status(result);
+}
+
 bool write_payload_transfer_success_response(const char* id, JsonObjectConst result)
 {
     JsonDocument response;
-    if (id != nullptr && id[0] != '\0') {
-        response["id"] = id;
-    }
-    response["version"] = signing::kProtocolVersion;
-    response["success"] = true;
-    response["result"] = result;
-    return write_json_response(response, 768);
-}
-
-bool write_status_response(const char* id)
-{
-    format_device_id();
-
-    const StateProjectionInput projection = state_projection_input();
-    const signing::DeviceResponseDeviceFields info{
-        g_device_id,
-        stopwatch_device_state(projection),
-        kFirmwareName,
-        kHardwareId,
-        kFirmwareVersion,
-    };
-    JsonDocument result;
-    signing::device_response_write_device_fields(result["device"].to<JsonObject>(), info);
-    result["provisioning"]["state"] = stopwatch_provisioning_state(projection);
-
-    JsonDocument response;
-    if (!signing::device_response_prepare_success_result(
-            response,
-            id,
-            "get_status",
-            result.as<JsonObjectConst>())) {
+    if (!signing::device_response_prepare_transport_success_result(response, id, result)) {
         return false;
     }
-    return write_json_response(response, 1024);
-}
-
-bool write_identify_device_response(const char* id, const char* code)
-{
-    format_device_id();
-
-    JsonDocument result;
-    result["code"] = code;
-    const signing::DeviceResponseDeviceFields info{
-        g_device_id,
-        device_state(),
-        kFirmwareName,
-        kHardwareId,
-        kFirmwareVersion,
-    };
-    signing::device_response_write_device_fields(result["device"].to<JsonObject>(), info);
-    return write_success_response(id, "identify_device", result.as<JsonObjectConst>());
+    return write_json_response(response, 768);
 }
 
 bool write_connect_response(const char* id)
@@ -414,8 +955,8 @@ bool write_connect_response(const char* id)
     format_device_id();
 
     JsonDocument result;
-    result["sessionId"] = session_state_id();
-    result["sessionTtlMs"] = kSessionAdvertisedTtlMs;
+    result["sessionId"] = signing::session_id();
+    result["sessionTtlMs"] = signing::kSessionAdvertisedTtlMs;
     const signing::DeviceResponseDeviceFields info{
         g_device_id,
         device_state(),
@@ -427,101 +968,131 @@ bool write_connect_response(const char* id)
     return write_success_response(id, "connect", result.as<JsonObjectConst>());
 }
 
-bool write_capabilities_response(const char* id)
+signing::HistoryTerminalResult history_terminal_result(
+    signing::UserSigningTerminalResult result)
 {
-    const SuiZkLoginAccountProjection account_projection = sui_zklogin_account_projection();
-    if (credential_status_is_error(account_projection.status)) {
-        return false;
+    switch (result) {
+        case signing::UserSigningTerminalResult::signed_success:
+            return signing::HistoryTerminalResult::signed_success;
+        case signing::UserSigningTerminalResult::rejected:
+            return signing::HistoryTerminalResult::user_rejected;
+        case signing::UserSigningTerminalResult::timed_out:
+            return signing::HistoryTerminalResult::user_timed_out;
+        case signing::UserSigningTerminalResult::signing_failed:
+            return signing::HistoryTerminalResult::signing_failed;
+        case signing::UserSigningTerminalResult::canceled:
+        case signing::UserSigningTerminalResult::history_error:
+        case signing::UserSigningTerminalResult::none:
+        default:
+            return signing::HistoryTerminalResult::none;
     }
-    JsonDocument result;
-    JsonArray chains = result["chains"].to<JsonArray>();
-    JsonObject sui = chains.add<JsonObject>();
-    sui["id"] = "sui";
-    JsonArray accounts = sui["accounts"].to<JsonArray>();
-    if (account_projection.active) {
-        JsonObject account = accounts.add<JsonObject>();
-        account["keyScheme"] = "zklogin";
-    }
-    sui["methods"].to<JsonArray>();
-
-    JsonArray credentials = result["credentials"].to<JsonArray>();
-    if (credential_status_allows_install(account_projection.status)) {
-        JsonObject credential = credentials.add<JsonObject>();
-        credential["chain"] = "sui";
-        credential["credential"] = "zklogin";
-        JsonArray operations = credential["operations"].to<JsonArray>();
-        operations.add("credential_prepare");
-        operations.add("credential_propose");
-    }
-
-    return write_success_response(id, "get_capabilities", result.as<JsonObjectConst>());
 }
 
-bool write_accounts_response(const char* id)
+const char* user_signing_terminal_error_code(
+    signing::UserSigningTerminalResult result)
 {
-    const SuiZkLoginAccountProjection account_projection = sui_zklogin_account_projection();
-    if (credential_status_is_error(account_projection.status)) {
-        return false;
+    switch (result) {
+        case signing::UserSigningTerminalResult::rejected:
+            return "user_rejected";
+        case signing::UserSigningTerminalResult::timed_out:
+            return "timeout";
+        case signing::UserSigningTerminalResult::signing_failed:
+            return "signing_failed";
+        case signing::UserSigningTerminalResult::history_error:
+            return "history_unavailable";
+        case signing::UserSigningTerminalResult::canceled:
+            return "invalid_session";
+        case signing::UserSigningTerminalResult::signed_success:
+        case signing::UserSigningTerminalResult::none:
+        default:
+            return "";
     }
-    JsonDocument result;
-    JsonArray accounts = result["accounts"].to<JsonArray>();
-    if (account_projection.active) {
-        char public_key_base64[kZkLoginPublicKeyBase64BufferSize] = {};
-        if (bytes_to_base64(
-                account_projection.public_key,
-                account_projection.public_key_size,
-                public_key_base64,
-                sizeof(public_key_base64)) != 0) {
-            return false;
-        }
-        JsonObject account = accounts.add<JsonObject>();
-        account["chain"] = "sui";
-        account["address"] = account_projection.address;
-        account["publicKey"] = public_key_base64;
-        account["keyScheme"] = "zklogin";
-        JsonObject sponsored = account["sponsoredTransactions"].to<JsonObject>();
-        sponsored["acceptGasSponsor"] = false;
-    }
-    return write_success_response(id, "get_accounts", result.as<JsonObjectConst>());
 }
 
-bool write_credential_preparation_response(const char* id)
+bool write_user_signing_confirmation_history(
+    const signing::UserSigningFlowCoreSnapshot& snapshot,
+    void*)
 {
-    const CredentialPreparationSnapshot snapshot = credential_preparation_snapshot();
-    if (!snapshot.active) {
-        return false;
-    }
-
-    JsonDocument result;
-    result["chain"] = "sui";
-    result["credential"] = "zklogin";
-    JsonObject preparation = result["preparation"].to<JsonObject>();
-    preparation["publicKey"] = snapshot.public_key_base64;
-    preparation["keyScheme"] = "ed25519";
-    preparation["address"] = snapshot.address;
-    return write_success_response(id, "credential_prepare", result.as<JsonObjectConst>());
+    const signing::HistoryAppendInput input{
+        signing::HistoryRecordKind::confirmation,
+        signing::ApprovalHistoryConfirmationKind::physical_confirm,
+        signing::HistoryTerminalResult::none,
+        snapshot.chain,
+        snapshot.method,
+        snapshot.blind_signing_confirmation
+            ? "blind_signing_confirmed"
+            : "device_confirmed",
+        snapshot.payload_digest,
+        nullptr,
+        nullptr,
+    };
+    return signing::approval_history_append_required_signing(
+        input,
+        current_payload_transfer_ms());
 }
 
-bool write_credential_proposal_outcome_response(
-    const char* id,
-    SuiZkLoginProposalTerminalResult terminal_result,
-    bool session_ended)
+bool write_user_signing_terminal_history(
+    const signing::UserSigningFlowCoreSnapshot& snapshot,
+    signing::UserSigningTerminalResult result)
 {
-    const char* status = sui_zklogin_proposal_terminal_status(terminal_result);
-    const char* reason = sui_zklogin_proposal_terminal_reason(terminal_result);
-    if (id == nullptr ||
-        status == nullptr ||
-        status[0] == '\0' ||
-        reason == nullptr ||
-        reason[0] == '\0') {
+    const signing::HistoryTerminalResult history_result =
+        history_terminal_result(result);
+    if (history_result == signing::HistoryTerminalResult::none) {
+        return true;
+    }
+    const char* reason = signing::user_signing_flow_terminal_reason(result);
+    if (reason == nullptr || reason[0] == '\0') {
         return false;
     }
+    const signing::HistoryAppendInput input{
+        signing::HistoryRecordKind::terminal,
+        signing::ApprovalHistoryConfirmationKind::none,
+        history_result,
+        snapshot.chain,
+        snapshot.method,
+        reason,
+        snapshot.payload_digest,
+        nullptr,
+        nullptr,
+    };
+    return signing::approval_history_append_required_signing(
+        input,
+        current_payload_transfer_ms());
+}
 
-    JsonDocument result;
-    result["status"] = status;
-    result["reasonCode"] = reason;
-    result["sessionEnded"] = session_ended;
-    return write_success_response(id, "credential_propose", result.as<JsonObjectConst>());
+bool append_policy_signing_history(
+    signing::HistoryRecordKind record_kind,
+    signing::HistoryTerminalResult terminal_result,
+    const char* reason_code,
+    const char* payload_digest,
+    const char* policy_hash,
+    const char* rule_ref,
+    bool enforce_write_budget)
+{
+    if (reason_code == nullptr || reason_code[0] == '\0' ||
+        payload_digest == nullptr || payload_digest[0] == '\0' ||
+        policy_hash == nullptr || policy_hash[0] == '\0' ||
+        rule_ref == nullptr || rule_ref[0] == '\0') {
+        return false;
+    }
+    const signing::HistoryAppendInput input{
+        record_kind,
+        signing::ApprovalHistoryConfirmationKind::policy,
+        terminal_result,
+        "sui",
+        "sign_transaction",
+        reason_code,
+        payload_digest,
+        policy_hash,
+        rule_ref,
+    };
+    return enforce_write_budget
+               ? signing::approval_history_append_budgeted_signing(
+                     input,
+                     current_payload_transfer_ms())
+               : signing::approval_history_append_required_signing(
+                     input,
+                     current_payload_transfer_ms());
 }
 
 void record_success(const char* id, const char* method)
@@ -548,33 +1119,6 @@ bool reject_line(const char* id, const char* method, const char* code)
         record_error(id, method, "internal_output_error");
         return false;
     }
-    return true;
-}
-
-bool reject_payload_transfer_line(const char* id, const char* code)
-{
-    record_error(id, "payload_transfer", code);
-    if (!write_payload_transfer_error_response(id, code)) {
-        record_error(id, "payload_transfer", "internal_output_error");
-        return false;
-    }
-    return true;
-}
-
-bool parse_size_string(const char* text, size_t* out)
-{
-    if (out != nullptr) {
-        *out = 0;
-    }
-    if (text == nullptr || out == nullptr) {
-        return false;
-    }
-    uint64_t parsed = 0;
-    if (!signing::parse_canonical_u64_decimal_string(text, &parsed) ||
-        parsed > static_cast<uint64_t>(SIZE_MAX)) {
-        return false;
-    }
-    *out = static_cast<size_t>(parsed);
     return true;
 }
 
@@ -611,12 +1155,53 @@ void clear_identification_display_if_expired(uint32_t now_ms)
     }
 }
 
-void show_identification_code(const char* code)
+void show_identification_code(const char* code, uint32_t duration_ms)
 {
     memset(&g_identification_display, 0, sizeof(g_identification_display));
     g_identification_display.active = true;
     strlcpy(g_identification_display.code, code, sizeof(g_identification_display.code));
-    g_identification_display_deadline_ms = current_payload_transfer_ms() + kIdentifyDisplayMs;
+    g_identification_display_deadline_ms = current_payload_transfer_ms() + duration_ms;
+}
+
+UsbSigningNoticeKind signing_notice_kind_for_common(signing::UsbSigningNoticeKind kind)
+{
+    switch (kind) {
+        case signing::UsbSigningNoticeKind::rejected:
+            return UsbSigningNoticeKind::rejected;
+        case signing::UsbSigningNoticeKind::error:
+            return UsbSigningNoticeKind::error;
+        case signing::UsbSigningNoticeKind::success:
+            return UsbSigningNoticeKind::success;
+        case signing::UsbSigningNoticeKind::info:
+        default:
+            return UsbSigningNoticeKind::info;
+    }
+}
+
+void clear_signing_notice_if_expired(uint32_t now_ms)
+{
+    if (!g_signing_notice.active) {
+        return;
+    }
+    if (static_cast<int32_t>(now_ms - g_signing_notice_deadline_ms) >= 0) {
+        memset(&g_signing_notice, 0, sizeof(g_signing_notice));
+        g_signing_notice.kind = UsbSigningNoticeKind::info;
+        g_signing_notice_deadline_ms = 0;
+    }
+}
+
+void show_policy_signing_notice_for_common(
+    const char* message,
+    signing::UsbSigningNoticeKind kind)
+{
+    memset(&g_signing_notice, 0, sizeof(g_signing_notice));
+    g_signing_notice.active = true;
+    g_signing_notice.kind = signing_notice_kind_for_common(kind);
+    strlcpy(
+        g_signing_notice.message,
+        message != nullptr && message[0] != '\0' ? message : "Signing result",
+        sizeof(g_signing_notice.message));
+    g_signing_notice_deadline_ms = current_payload_transfer_ms() + kSigningNoticeDisplayMs;
 }
 
 bool active_auth_allows_session_method(const char* id, const char* method)
@@ -625,54 +1210,39 @@ bool active_auth_allows_session_method(const char* id, const char* method)
         reject_line(id, method, "invalid_state");
         return false;
     }
+    if (settings_projection_status() != SettingsProjectionStatus::active) {
+        clear_session_scoped_state();
+        reject_line(id, method, "invalid_state");
+        return false;
+    }
     if (!g_runtime_state.locally_unlocked) {
         reject_line(id, method, "auth_unavailable");
         return false;
     }
     if (g_pending_request.kind == UsbPendingRequestKind::credential_propose &&
-        !session_state_active()) {
+        !signing::session_active()) {
         cancel_pending_credential_proposal_after_session_loss(id);
         reject_line(id, method, "invalid_session");
         return false;
     }
+    if (pending_kind_is_signing(g_pending_request.kind) &&
+        !signing::session_active()) {
+        cancel_pending_signing_after_session_loss(id);
+        reject_line(id, method, "invalid_session");
+        return false;
+    }
+    if (g_pending_request.kind == UsbPendingRequestKind::policy_propose &&
+        !signing::session_active()) {
+        cancel_pending_policy_update_after_session_loss(id);
+        reject_line(id, method, "invalid_session");
+        return false;
+    }
     if (g_runtime_state.ui_busy ||
-        g_pending_request.kind != UsbPendingRequestKind::none) {
+        any_request_pending()) {
         reject_line(id, method, "busy");
         return false;
     }
     return true;
-}
-
-void handle_identify_device_request(const char* id, JsonDocument& request)
-{
-    if (reject_if_payload_transfer_blocks_sensitive_flow(id, "identify_device")) {
-        return;
-    }
-
-    const char* const allowed_request_fields[] = {"id", "version", "method", "payload"};
-    if (!device_request_fields_supported_or_reject(id, "identify_device", request, allowed_request_fields, 4)) {
-        return;
-    }
-
-    const char* const allowed_payload_fields[] = {"code"};
-    if (!payload_has_only_fields(request, allowed_payload_fields, 1)) {
-        reject_line(id, "identify_device", "invalid_params");
-        return;
-    }
-
-    const char* code = nullptr;
-    if (!signing::json_value_c_string(request["payload"]["code"], &code) ||
-        !identification_code_safe(code)) {
-        reject_line(id, "identify_device", "invalid_params");
-        return;
-    }
-
-    show_identification_code(code);
-    if (write_identify_device_response(id, code)) {
-        record_success(id, "identify_device");
-    } else {
-        record_error(id, "identify_device", "internal_output_error");
-    }
 }
 
 bool reject_if_credential_store_error(const char* id, const char* method)
@@ -699,265 +1269,786 @@ bool require_credential_install_available(const char* id, const char* method)
     return false;
 }
 
-bool require_matching_session(const char* id, const char* method, JsonDocument& request)
+signing::SessionValidationResult validate_session_for_user_signing(
+    const char* session_id,
+    void*)
 {
-    const char* session_id = nullptr;
-    if (!signing::json_value_c_string(request["sessionId"], &session_id)) {
-        reject_line(id, method, "invalid_session");
-        return false;
-    }
-    switch (session_state_validate(session_id)) {
-        case SessionValidationResult::ok:
-            return true;
-        case SessionValidationResult::invalid_format:
-            reject_line(id, method, "invalid_session");
-            return false;
-        case SessionValidationResult::missing:
-            cancel_pending_credential_proposal_after_session_loss(id);
-            reject_line(id, method, "invalid_session");
-            return false;
-        case SessionValidationResult::mismatch:
-        default:
-            reject_line(id, method, "invalid_session");
-            return false;
-    }
+    return signing::session_validate(session_id);
 }
 
-bool require_session_shape(const char* id, const char* method, JsonDocument& request)
+bool signing_material_ready_for_common_handler()
 {
-    const char* session_id = nullptr;
-    if (!signing::json_value_c_string(request["sessionId"], &session_id) ||
-        !session_id_format_valid(session_id)) {
-        reject_line(id, method, "invalid_session");
-        return false;
-    }
-    return true;
+    return g_runtime_state.auth_status == LocalAuthProjectionStatus::active &&
+           settings_projection_status() == SettingsProjectionStatus::active &&
+           g_runtime_state.locally_unlocked;
 }
 
-bool request_has_only_fields(JsonDocument& request, const char* const* fields, size_t count)
+bool user_signing_ingress_busy()
 {
-    return signing::json_object_fields_supported(request.as<JsonObjectConst>(), fields, count);
+    return pending_kind_is_signing(g_pending_request.kind) ||
+           signing::user_signing_flow_active();
 }
 
-bool request_has_field(JsonDocument& request, const char* field)
+bool unrelated_user_signing_ingress_busy()
 {
-    if (field == nullptr) {
-        return false;
-    }
-    for (JsonPairConst pair : request.as<JsonObjectConst>()) {
-        if (signing::json_string_equals(pair.key(), field)) {
-            return true;
-        }
-    }
-    return false;
+    return any_request_pending() ||
+           signing::user_signing_flow_active();
 }
 
-bool device_request_fields_supported_or_reject(
-    const char* id,
+bool read_signing_mode_for_preflight(
+    signing::AuthorizationMode* mode,
+    void*)
+{
+    return signing::read_signing_authorization_mode(mode);
+}
+
+signing::PreflightRetryDisposition respond_to_signing_retry(
+    const char* request_id,
     const char* method,
-    JsonDocument& request,
-    const char* const* fields,
-    size_t count)
+    const signing::RetryDeliveryResult& retry,
+    const char* stored_response,
+    void*)
 {
-    if (request_has_only_fields(request, fields, count)) {
-        return true;
+    const signing::RetryResponseResult response_result =
+        signing::deliver_signing_retry_response(
+            request_id,
+            method,
+            retry,
+            stored_response,
+            write_retry_response_json,
+            nullptr);
+    switch (response_result) {
+        case signing::RetryResponseResult::not_found:
+        case signing::RetryResponseResult::invalid_stored_response:
+        case signing::RetryResponseResult::replay_write_failed:
+            return signing::PreflightRetryDisposition::continue_preflight;
+        case signing::RetryResponseResult::replayed_result:
+            record_success(request_id, method);
+            return signing::PreflightRetryDisposition::consumed;
+        case signing::RetryResponseResult::error_response:
+            record_error(
+                request_id,
+                method,
+                retry.error_code != nullptr ? retry.error_code : "internal_output_error");
+            return signing::PreflightRetryDisposition::consumed;
+        case signing::RetryResponseResult::error_write_failed:
+            record_error(request_id, method, "internal_output_error");
+            return signing::PreflightRetryDisposition::consumed;
     }
-    reject_line(id, method, "invalid_request");
-    return false;
+    return signing::PreflightRetryDisposition::consumed;
 }
 
-bool required_payload_present_or_reject(const char* id, const char* method, JsonDocument& request)
+void record_account_unavailable_runtime_failure()
 {
-    if (request_has_field(request, "payload")) {
-        return true;
-    }
-    reject_line(id, method, "invalid_params");
-    return false;
+    // StopWatch stores zkLogin credential state separately from settings. The
+    // credential projection already fails closed when the active proof/key
+    // record is missing, invalid, or unreadable.
 }
 
-bool device_method_rules_or_reject(const char* id, const char* method, JsonDocument& request)
+signing::SuiSigningPreparationResult check_stopwatch_transaction_account(
+    const signing::SuiPolicySubjectFacts& facts,
+    const char* network,
+    void*)
 {
-    const signing::DeviceMethodRow* row = signing::device_method_row(method);
-    if (row == nullptr) {
-        reject_line(id, nullptr, "unsupported_method");
-        return false;
+    if (network == nullptr || network[0] == '\0') {
+        return signing::SuiSigningPreparationResult::account_unavailable;
     }
-
-    const bool has_session_id = request_has_field(request, "sessionId");
-    if (row->session_rule == signing::DeviceSessionRule::forbidden && has_session_id) {
-        reject_line(id, method, "invalid_request");
-        return false;
+    wipe_sensitive_buffer(
+        &g_signing_credential_scratch,
+        sizeof(g_signing_credential_scratch));
+    SuiZkLoginCredentialRecord& credential = g_signing_credential_scratch;
+    const SuiZkLoginCredentialStatus status = read_sui_zklogin_credential(&credential);
+    if (status != SuiZkLoginCredentialStatus::active) {
+        wipe_sensitive_buffer(
+            &g_signing_credential_scratch,
+            sizeof(g_signing_credential_scratch));
+        return signing::SuiSigningPreparationResult::account_unavailable;
     }
-    if (row->session_rule == signing::DeviceSessionRule::required && !has_session_id) {
-        reject_line(id, method, "invalid_session");
-        return false;
+    if (strcmp(credential.proof.network, network) != 0) {
+        wipe_sensitive_buffer(
+            &g_signing_credential_scratch,
+            sizeof(g_signing_credential_scratch));
+        return signing::SuiSigningPreparationResult::invalid_network;
     }
-    if (has_session_id && !require_session_shape(id, method, request)) {
-        return false;
-    }
-
-    const bool has_payload = request_has_field(request, "payload");
-    if (row->payload_rule == signing::DevicePayloadRule::forbidden && has_payload) {
-        reject_line(id, method, "invalid_request");
-        return false;
-    }
-    if (row->payload_rule == signing::DevicePayloadRule::required && !has_payload) {
-        reject_line(id, method, "invalid_params");
-        return false;
-    }
-    return true;
+    const signing::SuiTransactionAccountBindingResult result =
+        signing::verify_sui_transaction_account_binding(
+            facts,
+            credential.proof.address,
+            false);
+    wipe_sensitive_buffer(
+        &g_signing_credential_scratch,
+        sizeof(g_signing_credential_scratch));
+    return result == signing::SuiTransactionAccountBindingResult::ok
+               ? signing::SuiSigningPreparationResult::ok
+               : signing::SuiSigningPreparationResult::account_unavailable;
 }
 
-bool payload_has_only_fields(JsonDocument& request, const char* const* fields, size_t count)
+signing::SuiSigningPreparationResult check_stopwatch_personal_message_account(
+    const char* network,
+    char account_address[signing::kSuiAddressStringBufferSize],
+    void*)
 {
-    return request["payload"].is<JsonObjectConst>() &&
-           signing::json_object_fields_supported(request["payload"].as<JsonObjectConst>(), fields, count);
+    if (network == nullptr || network[0] == '\0' || account_address == nullptr) {
+        return signing::SuiSigningPreparationResult::account_unavailable;
+    }
+    wipe_sensitive_buffer(
+        &g_signing_credential_scratch,
+        sizeof(g_signing_credential_scratch));
+    SuiZkLoginCredentialRecord& credential = g_signing_credential_scratch;
+    const SuiZkLoginCredentialStatus status = read_sui_zklogin_credential(&credential);
+    if (status != SuiZkLoginCredentialStatus::active) {
+        wipe_sensitive_buffer(
+            &g_signing_credential_scratch,
+            sizeof(g_signing_credential_scratch));
+        return signing::SuiSigningPreparationResult::account_unavailable;
+    }
+    if (strcmp(credential.proof.network, network) != 0) {
+        wipe_sensitive_buffer(
+            &g_signing_credential_scratch,
+            sizeof(g_signing_credential_scratch));
+        return signing::SuiSigningPreparationResult::invalid_network;
+    }
+    const size_t copied =
+        strlcpy(account_address, credential.proof.address, signing::kSuiAddressStringBufferSize);
+    wipe_sensitive_buffer(
+        &g_signing_credential_scratch,
+        sizeof(g_signing_credential_scratch));
+    return copied < signing::kSuiAddressStringBufferSize
+               ? signing::SuiSigningPreparationResult::ok
+               : signing::SuiSigningPreparationResult::account_unavailable;
 }
 
-bool retained_request_payload_valid(JsonDocument& request)
+signing::SuiSigningPreparationResult check_stopwatch_active_network(
+    const char* network,
+    void*)
 {
-    const char* const fields[] = {"retainedRequestId"};
-    const char* retained_request_id = nullptr;
-    return payload_has_only_fields(request, fields, 1) &&
-           signing::json_value_c_string(request["payload"]["retainedRequestId"], &retained_request_id) &&
-           signing::request_id_format_valid(retained_request_id);
+    if (network == nullptr || network[0] == '\0') {
+        return signing::SuiSigningPreparationResult::account_unavailable;
+    }
+    wipe_sensitive_buffer(
+        &g_signing_credential_scratch,
+        sizeof(g_signing_credential_scratch));
+    SuiZkLoginCredentialRecord& credential = g_signing_credential_scratch;
+    const SuiZkLoginCredentialStatus status = read_sui_zklogin_credential(&credential);
+    if (status != SuiZkLoginCredentialStatus::active) {
+        wipe_sensitive_buffer(
+            &g_signing_credential_scratch,
+            sizeof(g_signing_credential_scratch));
+        return signing::SuiSigningPreparationResult::account_unavailable;
+    }
+    const bool matched = strcmp(credential.proof.network, network) == 0;
+    wipe_sensitive_buffer(
+        &g_signing_credential_scratch,
+        sizeof(g_signing_credential_scratch));
+    return matched
+               ? signing::SuiSigningPreparationResult::ok
+               : signing::SuiSigningPreparationResult::invalid_network;
 }
 
-bool approval_history_payload_valid(JsonDocument& request)
-{
-    JsonObjectConst payload = request["payload"].as<JsonObjectConst>();
-    if (payload.isNull()) {
-        return false;
-    }
-    for (JsonPairConst pair : payload) {
-        if (signing::json_string_equals(pair.key(), "limit")) {
-            if (!pair.value().is<unsigned int>()) {
-                return false;
-            }
-            const unsigned int limit = pair.value().as<unsigned int>();
-            if (limit == 0 || limit > kApprovalHistoryPageMax) {
-                return false;
-            }
-            continue;
-        }
-        if (signing::json_string_equals(pair.key(), "beforeSeq")) {
-            const char* before_seq = nullptr;
-            uint64_t parsed = 0;
-            if (!signing::json_value_c_string(pair.value(), &before_seq) ||
-                !signing::parse_canonical_u64_decimal_string(before_seq, &parsed)) {
-                return false;
-            }
-            continue;
-        }
-        return false;
-    }
-    return true;
-}
+constexpr signing::SuiSigningPreparationOps kStopWatchSigningPreparationOps{
+    check_stopwatch_transaction_account,
+    check_stopwatch_personal_message_account,
+    check_stopwatch_active_network,
+    nullptr,
+};
 
-bool policy_propose_payload_wrapper_valid(JsonDocument& request)
-{
-    const char* const fields[] = {"policy"};
-    return payload_has_only_fields(request, fields, 1) &&
-           request["payload"]["policy"].is<JsonObjectConst>();
-}
-
-bool payload_ref_wrapper(JsonDocument& request, const char** payload_ref)
-{
-    if (payload_ref != nullptr) {
-        *payload_ref = nullptr;
-    }
-    JsonObjectConst payload = request["payload"].as<JsonObjectConst>();
-    if (payload.isNull()) {
-        return false;
-    }
-    const char* const payload_ref_fields[] = {"payloadRef"};
-    if (!signing::json_object_fields_supported(payload, payload_ref_fields, 1)) {
-        return false;
-    }
-    const char* ref = nullptr;
-    if (!signing::json_value_c_string(payload["payloadRef"], &ref)) {
-        return false;
-    }
-    if (payload_ref != nullptr) {
-        *payload_ref = ref;
-    }
-    return true;
-}
-
-const char* payload_resolver_error_code(PayloadTransferResult result)
+const char* signing_error_code(SuiZkLoginSigningResult result)
 {
     switch (result) {
-        case PayloadTransferResult::invalid_session:
-            return "invalid_session";
-        case PayloadTransferResult::payload_too_large:
-            return "payload_too_large";
-        case PayloadTransferResult::allocation_failed:
-        case PayloadTransferResult::digest_error:
-            return "internal_output_error";
-        case PayloadTransferResult::invalid_argument:
+        case SuiZkLoginSigningResult::invalid_input:
             return "invalid_params";
-        case PayloadTransferResult::invalid_payload_ref:
-        case PayloadTransferResult::invalid_state:
-        case PayloadTransferResult::not_found:
-            return "payload_unavailable";
-        case PayloadTransferResult::ok:
-        case PayloadTransferResult::invalid_payload_digest:
-        case PayloadTransferResult::invalid_transfer_id:
-        case PayloadTransferResult::chunk_too_large:
-        case PayloadTransferResult::offset_mismatch:
-        case PayloadTransferResult::payload_overflow:
-        case PayloadTransferResult::size_mismatch:
-        case PayloadTransferResult::digest_mismatch:
+        case SuiZkLoginSigningResult::account_unavailable:
+            return "account_unavailable";
+        case SuiZkLoginSigningResult::signing_error:
+        case SuiZkLoginSigningResult::signature_output_too_small:
+        case SuiZkLoginSigningResult::zklogin_envelope_error:
+            return "signing_failed";
+        case SuiZkLoginSigningResult::ok:
         default:
-            return "invalid_params";
+            return "internal_output_error";
     }
+}
+
+const char* policy_runtime_code(
+    const signing::SignTransactionPolicyRuntimeResult& result)
+{
+    return result.code != nullptr && result.code[0] != '\0'
+               ? result.code
+               : "policy_unavailable";
+}
+
+signing::PolicySigningExecutionResult make_policy_execution_result(
+    signing::PolicySigningExecutionStatus status,
+    const char* code,
+    const char* message)
+{
+    signing::PolicySigningExecutionResult result = {};
+    result.status = status;
+    result.signing_route = signing::Route::sui_sign_transaction;
+    result.code = code;
+    result.message = message;
+    return result;
+}
+
+bool copy_policy_execution_metadata(
+    signing::PolicySigningExecutionResult* output,
+    const signing::SignTransactionPolicyRuntimeResult& input)
+{
+    if (output == nullptr ||
+        input.policy_hash[0] == '\0' ||
+        input.rule_ref[0] == '\0') {
+        return false;
+    }
+    strlcpy(output->policy_hash, input.policy_hash, sizeof(output->policy_hash));
+    strlcpy(output->rule_ref, input.rule_ref, sizeof(output->rule_ref));
+    return output->policy_hash[0] != '\0' && output->rule_ref[0] != '\0';
+}
+
+signing::PolicySigningExecutionResult handle_policy_runtime_terminal_result(
+    const signing::SignTransactionPolicyRuntimeResult& policy_result)
+{
+    if (policy_result.status == signing::SignTransactionPolicyRuntimeStatus::policy_rejected) {
+        const char* reason_code =
+            policy_result.reason_code[0] != '\0'
+                ? policy_result.reason_code
+                : "policy_rejected";
+        if (!append_policy_signing_history(
+                signing::HistoryRecordKind::terminal,
+                signing::HistoryTerminalResult::policy_rejected,
+                reason_code,
+                policy_result.payload_digest,
+                policy_result.policy_hash,
+                policy_result.rule_ref,
+                true)) {
+            return make_policy_execution_result(
+                signing::PolicySigningExecutionStatus::history_error,
+                "history_unavailable",
+                "Could not record policy signing rejection.");
+        }
+        signing::PolicySigningExecutionResult result = make_policy_execution_result(
+            signing::PolicySigningExecutionStatus::policy_rejected,
+            "policy_rejected",
+            "The signing request was rejected by device policy.");
+        return copy_policy_execution_metadata(&result, policy_result)
+                   ? result
+                   : make_policy_execution_result(
+                         signing::PolicySigningExecutionStatus::history_error,
+                         "history_unavailable",
+                         "Could not record policy signing rejection.");
+    }
+    return make_policy_execution_result(
+        signing::PolicySigningExecutionStatus::request_error,
+        policy_runtime_code(policy_result),
+        policy_result.message);
+}
+
+signing::PolicySigningExecutionResult execute_policy_sign_transaction_for_common(
+    const signing::SignTransactionPolicyRuntimeResult& policy_result)
+{
+    if (policy_result.status != signing::SignTransactionPolicyRuntimeStatus::policy_authorized) {
+        return handle_policy_runtime_terminal_result(policy_result);
+    }
+    if (!append_policy_signing_history(
+            signing::HistoryRecordKind::confirmation,
+            signing::HistoryTerminalResult::none,
+            "policy_authorized",
+            policy_result.payload_digest,
+            policy_result.policy_hash,
+            policy_result.rule_ref,
+            false)) {
+        return make_policy_execution_result(
+            signing::PolicySigningExecutionStatus::history_error,
+            "history_unavailable",
+            "Could not record policy signing authorization.");
+    }
+
+    signing::PolicySigningExecutionResult result = make_policy_execution_result(
+        signing::PolicySigningExecutionStatus::signed_success,
+        "policy_signed",
+        "Policy authorized signing.");
+    if (!copy_policy_execution_metadata(&result, policy_result)) {
+        return make_policy_execution_result(
+            signing::PolicySigningExecutionStatus::history_error,
+            "history_unavailable",
+            "Could not record policy signing terminal result.");
+    }
+    if (policy_result.tx_bytes == nullptr || policy_result.tx_bytes_size == 0) {
+        return make_policy_execution_result(
+            signing::PolicySigningExecutionStatus::request_error,
+            "invalid_params",
+            "Policy signing payload is unavailable.");
+    }
+
+    const SuiZkLoginSigningResult sign_result =
+        sign_sui_zklogin_transaction(
+            policy_result.tx_bytes,
+            policy_result.tx_bytes_size,
+            result.signature,
+            &result.signature_size);
+    if (sign_result != SuiZkLoginSigningResult::ok) {
+        wipe_sensitive_buffer(result.signature, sizeof(result.signature));
+        result.signature_size = 0;
+        const char* code = signing_error_code(sign_result);
+        if (!append_policy_signing_history(
+                signing::HistoryRecordKind::terminal,
+                signing::HistoryTerminalResult::signing_failed,
+                code,
+                policy_result.payload_digest,
+                policy_result.policy_hash,
+                policy_result.rule_ref,
+                false)) {
+            return make_policy_execution_result(
+                signing::PolicySigningExecutionStatus::history_error,
+                "history_unavailable",
+                "Could not record policy signing terminal result.");
+        }
+        return make_policy_execution_result(
+            signing::PolicySigningExecutionStatus::signing_failed,
+            code,
+            "The device could not produce a signature.");
+    }
+
+    if (!append_policy_signing_history(
+            signing::HistoryRecordKind::terminal,
+            signing::HistoryTerminalResult::signed_success,
+            "policy_signed",
+            policy_result.payload_digest,
+            policy_result.policy_hash,
+            policy_result.rule_ref,
+            false)) {
+        wipe_sensitive_buffer(result.signature, sizeof(result.signature));
+        result.signature_size = 0;
+        return make_policy_execution_result(
+            signing::PolicySigningExecutionStatus::history_error,
+            "history_unavailable",
+            "Could not record policy signing terminal result.");
+    }
+    return result;
+}
+
+bool write_policy_execution_response(
+    const char* id,
+    const uint8_t* request_identity,
+    const signing::PolicySigningExecutionResult& result)
+{
+    const bool written = signing::usb_signing_outcome_write_policy_execution(
+        id,
+        signing::session_id(),
+        request_identity,
+        result,
+        signing_outcome_writer_ops());
+    switch (result.status) {
+        case signing::PolicySigningExecutionStatus::request_error:
+        case signing::PolicySigningExecutionStatus::history_error:
+        case signing::PolicySigningExecutionStatus::account_error: {
+            const char* code =
+                result.code != nullptr && result.code[0] != '\0'
+                    ? result.code
+                    : "internal_output_error";
+            if (!written) {
+                record_error(id, "sign_transaction", "internal_output_error");
+                return false;
+            }
+            record_error(id, "sign_transaction", code);
+            return true;
+        }
+        case signing::PolicySigningExecutionStatus::policy_rejected:
+            if (written) {
+                record_error(id, "sign_transaction", "policy_rejected");
+                return true;
+            }
+            record_error(id, "sign_transaction", "internal_output_error");
+            return false;
+        case signing::PolicySigningExecutionStatus::signing_failed: {
+            const char* code =
+                result.code != nullptr && result.code[0] != '\0'
+                    ? result.code
+                    : "signing_failed";
+            if (written) {
+                record_error(id, "sign_transaction", code);
+                return true;
+            }
+            record_error(id, "sign_transaction", "internal_output_error");
+            return false;
+        }
+        case signing::PolicySigningExecutionStatus::signed_success:
+            if (written) {
+                record_success(id, "sign_transaction");
+                return true;
+            }
+            record_error(id, "sign_transaction", "internal_output_error");
+            return false;
+    }
+    record_error(id, "sign_transaction", "internal_output_error");
+    return false;
+}
+
+bool prepare_signing_review_label_from_snapshot(
+    const signing::UserSigningFlowSnapshot& snapshot,
+    char* output,
+    size_t output_size)
+{
+    if (output == nullptr || output_size == 0) {
+        return false;
+    }
+    output[0] = '\0';
+    if (snapshot.signing_route == signing::SupportedSignRoute::sui_sign_personal_message) {
+        strlcpy(output, "Sui message", output_size);
+        return true;
+    }
+    if (snapshot.signing_route != signing::SupportedSignRoute::sui_sign_transaction) {
+        return false;
+    }
+    const bool blind = snapshot.blind_signing_confirmation;
+    strlcpy(output, blind ? "Blind Sui tx" : "Sui tx", output_size);
+    return append_review_line(
+               output,
+               output_size,
+               "Type",
+               snapshot.sui_review.type_summary[0] != '\0'
+                   ? snapshot.sui_review.type_summary
+                   : "Transaction") &&
+           append_review_line(
+               output,
+               output_size,
+               "Risk",
+               snapshot.sui_review.risk_label[0] != '\0'
+                   ? snapshot.sui_review.risk_label
+                   : (blind ? "High" : "Review")) &&
+           (!blind ||
+            append_review_row(output, output_size, snapshot.sui_review, "Reason", "Reason")) &&
+           append_review_row(output, output_size, snapshot.sui_review, "Sender", "Sender") &&
+           append_review_row(output, output_size, snapshot.sui_review, "Gas max", "Gas") &&
+           append_review_row(output, output_size, snapshot.sui_review, "Commands", "Cmds");
+}
+
+bool show_user_signing_review_for_common()
+{
+    wipe_sensitive_buffer(
+        &g_user_signing_snapshot_scratch,
+        sizeof(g_user_signing_snapshot_scratch));
+    signing::UserSigningFlowSnapshot& snapshot = g_user_signing_snapshot_scratch;
+    char review_label[sizeof(g_pending_request.label)] = {};
+    if (!signing::user_signing_flow_snapshot_copy(&snapshot) ||
+        !prepare_signing_review_label_from_snapshot(
+            snapshot,
+            review_label,
+            sizeof(review_label))) {
+        wipe_sensitive_buffer(
+            &g_user_signing_snapshot_scratch,
+            sizeof(g_user_signing_snapshot_scratch));
+        return false;
+    }
+    g_pending_request.kind =
+        snapshot.signing_route == signing::SupportedSignRoute::sui_sign_transaction
+            ? UsbPendingRequestKind::sign_transaction
+            : UsbPendingRequestKind::sign_personal_message;
+    strlcpy(g_pending_request.id, snapshot.request_id, sizeof(g_pending_request.id));
+    strlcpy(g_pending_request.label, review_label, sizeof(g_pending_request.label));
+    g_pending_request.request_window = snapshot.request_window;
+    wipe_sensitive_buffer(
+        &g_user_signing_snapshot_scratch,
+        sizeof(g_user_signing_snapshot_scratch));
+    return true;
+}
+
+void clear_user_signing_flow_for_common()
+{
+    signing::user_signing_flow_clear();
+}
+
+void show_user_signing_display_error()
+{
+    copy_status_text(g_status.last_error, sizeof(g_status.last_error), "ui_error");
+}
+
+void record_user_signing_waiting_for_review(
+    const char* id,
+    signing::Route signing_route)
+{
+    (void)id;
+    (void)signing_route;
+}
+
+void log_policy_rejected(
+    const char* id,
+    const char* chain,
+    const char* method,
+    const char* rule_ref)
+{
+    (void)id;
+    (void)chain;
+    (void)method;
+    (void)rule_ref;
+}
+
+void log_policy_signing_failed(
+    const char* id,
+    const char* chain,
+    const char* method)
+{
+    (void)id;
+    (void)chain;
+    (void)method;
+}
+
+void log_policy_signed(
+    const char* id,
+    const char* chain,
+    const char* method,
+    const char* rule_ref)
+{
+    (void)id;
+    (void)chain;
+    (void)method;
+    (void)rule_ref;
+}
+
+void log_response_write_failure(const char* response_type, const char* id)
+{
+    record_error(id, response_type, "internal_output_error");
+}
+
+bool write_common_method_error_response(
+    const char* id,
+    const char* method,
+    const char* code)
+{
+    return reject_line(id, method, code);
+}
+
+bool write_common_method_success_response(const char* id, const char* method, JsonObjectConst result)
+{
+    if (!write_success_response(id, method, result)) {
+        return false;
+    }
+    if (method != nullptr && strcmp(method, "get_status") == 0) {
+        ++g_status.status_responses;
+    }
+    return true;
+}
+
+const signing::UsbOperationResponseWriter& common_method_response_writer()
+{
+    static const signing::UsbOperationResponseWriter writer(
+        write_common_method_error_response,
+        write_common_method_success_response,
+        write_payload_transfer_success_response,
+        log_response_write_failure);
+    return writer;
+}
+
+const signing::UsbSigningHandlerOps& usb_signing_handler_ops()
+{
+    static const signing::UsbSigningHandlerOps ops = {
+        signing_material_ready_for_common_handler,
+        user_signing_ingress_busy,
+        unrelated_user_signing_ingress_busy,
+        current_payload_transfer_ms,
+        validate_session_for_user_signing,
+        nullptr,
+        signing::payload_delivery_admit_operation,
+        read_signing_mode_for_preflight,
+        nullptr,
+        respond_to_signing_retry,
+        nullptr,
+        g_signing_preflight_retry_stored_response,
+        sizeof(g_signing_preflight_retry_stored_response),
+        kStopWatchSigningPreparationOps,
+        signing::evaluate_sign_transaction_preflight,
+        signing::evaluate_sign_personal_message_preflight,
+        record_account_unavailable_runtime_failure,
+        signing::evaluate_sign_transaction_policy,
+        execute_policy_sign_transaction_for_common,
+        write_policy_execution_response,
+        signing::clear_policy_signing_execution_result,
+        signing::clear_sign_transaction_policy_runtime_result,
+        make_signing_approval_window,
+        signing::user_signing_flow_begin,
+        signing::user_signing_flow_begin_personal_message,
+        signing::clear_sui_prepared_sign_transaction,
+        signing::clear_sui_prepared_personal_message,
+        show_user_signing_review_for_common,
+        clear_user_signing_flow_for_common,
+        show_user_signing_display_error,
+        record_user_signing_waiting_for_review,
+        show_policy_signing_notice_for_common,
+        log_policy_rejected,
+        log_policy_signing_failed,
+        log_policy_signed,
+        log_response_write_failure,
+    };
+    return ops;
+}
+
+bool policy_material_ready_for_common_handler()
+{
+    if (settings_projection_status() != SettingsProjectionStatus::active) {
+        clear_session_scoped_state();
+        return false;
+    }
+    return g_runtime_state.auth_status == LocalAuthProjectionStatus::active;
+}
+
+bool write_policy_get_busy_for_common(
+    const char* id,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    (void)writer;
+    return !active_auth_allows_session_method(id, "policy_get");
+}
+
+bool write_policy_get_admission_error_for_common(
+    const char* id,
+    signing::UsbOperationType operation,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    (void)operation;
+    (void)writer;
+    return reject_if_payload_transfer_blocks_safe_read(id, "policy_get");
+}
+
+bool write_policy_propose_busy_for_common(
+    const char* id,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    (void)writer;
+    return !active_auth_allows_session_method(id, "policy_propose") ||
+           reject_if_payload_transfer_blocks_sensitive_flow(id, "policy_propose");
+}
+
+bool show_policy_update_review_for_common()
+{
+    const signing::PolicyUpdateFlowSnapshot snapshot =
+        signing::policy_update_flow_snapshot();
+    if (!snapshot.active ||
+        snapshot.request_id == nullptr ||
+        snapshot.request_id[0] == '\0') {
+        return false;
+    }
+    clear_pending_request();
+    g_pending_request.kind = UsbPendingRequestKind::policy_propose;
+    strlcpy(g_pending_request.id, snapshot.request_id, sizeof(g_pending_request.id));
+    strlcpy(
+        g_pending_request.label,
+        snapshot.scope_summary != nullptr && snapshot.scope_summary[0] != '\0'
+            ? snapshot.scope_summary
+            : "Policy update",
+        sizeof(g_pending_request.label));
+    g_pending_request.request_window = snapshot.review_window;
+    return true;
+}
+
+bool require_policy_matching_session_for_common(
+    const char* id,
+    const char* session_id,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    switch (signing::session_validate(session_id)) {
+        case signing::SessionValidationResult::ok:
+            return true;
+        case signing::SessionValidationResult::missing:
+            cancel_pending_credential_proposal_after_session_loss(id);
+            writer.write_error(id, "invalid_session");
+            return false;
+        case signing::SessionValidationResult::invalid_format:
+        case signing::SessionValidationResult::mismatch:
+        default:
+            writer.write_error(id, "invalid_session");
+            return false;
+    }
+}
+
+void record_policy_update_waiting_for_review(const char* id)
+{
+    (void)id;
+}
+
+const signing::UsbPolicyHandlerOps& usb_policy_handler_ops()
+{
+    static const signing::UsbPolicyHandlerOps ops = {
+        policy_material_ready_for_common_handler,
+        write_policy_get_busy_for_common,
+        write_policy_get_admission_error_for_common,
+        write_policy_propose_busy_for_common,
+        require_policy_matching_session_for_common,
+        nullptr,
+        current_payload_transfer_ms,
+        make_policy_update_review_window,
+        signing::policy_update_flow_begin,
+        signing::policy_update_flow_begin_result_reason,
+        show_policy_update_review_for_common,
+        signing::policy_update_flow_record_ui_error,
+        finish_policy_update,
+        record_policy_update_waiting_for_review,
+    };
+    return ops;
+}
+
+void handle_policy_get_request(const char* id, JsonDocument& request)
+{
+    signing::handle_usb_policy_get_request(
+        id,
+        request,
+        common_method_response_writer().for_method("policy_get"),
+        usb_policy_handler_ops());
+}
+
+void handle_policy_propose_request(const char* id, JsonDocument& request)
+{
+    signing::handle_usb_policy_propose_request(
+        id,
+        request,
+        common_method_response_writer().for_method("policy_propose"),
+        usb_policy_handler_ops());
+}
+
+void handle_get_approval_history_request(const char* id, JsonDocument& request)
+{
+    if (!active_auth_allows_session_method(id, "get_approval_history")) {
+        return;
+    }
+    signing::handle_usb_get_approval_history_request(
+        id,
+        request,
+        common_method_response_writer().for_method("get_approval_history"),
+        approval_history_handler_ops());
 }
 
 bool resolve_request_payload_ref(const char* id, const char* method, JsonDocument& request)
 {
-    const char* payload_ref = nullptr;
-    if (!payload_ref_wrapper(request, &payload_ref)) {
-        return true;
-    }
-
-    const char* session_id = nullptr;
-    if (!signing::json_value_c_string(request["sessionId"], &session_id)) {
-        reject_line(id, method, "invalid_session");
-        return false;
-    }
-
-    PayloadTransferOwnedPayload owned_payload = {};
-    const PayloadTransferResult result =
-        payload_transfer_take(current_payload_transfer_ms(), session_id, payload_ref, &owned_payload);
-    if (result != PayloadTransferResult::ok) {
-        reject_line(id, method, payload_resolver_error_code(result));
-        return false;
-    }
-
     JsonDocument resolved_payload;
-    const DeserializationError parse_error =
-        deserializeJson(resolved_payload, owned_payload.bytes, owned_payload.size_bytes);
-    payload_transfer_wipe_owned_payload(&owned_payload);
-    if (parse_error || resolved_payload.as<JsonObjectConst>().isNull()) {
-        reject_line(id, method, "invalid_params");
-        return false;
-    }
-    request["payload"].set(resolved_payload.as<JsonObjectConst>());
-    return true;
+    const signing::UsbRequestEnvelope envelope{
+        id,
+        method,
+        signing::classify_usb_operation_type(method),
+    };
+    return signing::payload_delivery_resolve_request_payload_ref(
+        request,
+        resolved_payload,
+        current_payload_transfer_ms(),
+        envelope,
+        common_method_response_writer().for_method(method));
 }
 
 bool reject_if_payload_transfer_blocks_sensitive_flow(const char* id, const char* method)
 {
-    const PayloadTransferAdmissionOperation operation =
-        payload_transfer_sensitive_operation(method);
+    const signing::UsbOperationManifestEntry* entry =
+        signing::usb_operation_manifest_entry_for_wire_type(method);
+    if (entry == nullptr) {
+        reject_line(id, method, "unknown_request");
+        return true;
+    }
     const PayloadTransferAdmissionDecision admission =
-        payload_transfer_admit_operation(
-            current_payload_transfer_ms(),
-            operation);
+        signing::payload_delivery_admit_operation(
+            signing::PayloadDeliveryOperationAdmissionInput{
+                current_payload_transfer_ms(),
+                entry->payload_delivery_operation,
+            });
     if (admission.result == PayloadTransferAdmissionResult::ok) {
         return false;
     }
-    if (payload_transfer_admission_blocks_sensitive_flow(admission)) {
+    if (signing::payload_delivery_admission_blocks_sensitive_flow(admission)) {
         reject_line(id, method, "busy");
         return true;
     }
@@ -967,100 +2058,123 @@ bool reject_if_payload_transfer_blocks_sensitive_flow(const char* id, const char
 
 bool reject_if_payload_transfer_blocks_safe_read(const char* id, const char* method)
 {
+    const signing::UsbOperationManifestEntry* entry =
+        signing::usb_operation_manifest_entry_for_wire_type(method);
+    if (entry == nullptr) {
+        reject_line(id, method, "unknown_request");
+        return true;
+    }
     const PayloadTransferAdmissionDecision admission =
-        payload_transfer_admit_operation(
-            current_payload_transfer_ms(),
-            PayloadTransferAdmissionOperation::safe_read);
-    if (admission.result == PayloadTransferAdmissionResult::ok) {
+        signing::payload_delivery_admit_operation(
+            signing::PayloadDeliveryOperationAdmissionInput{
+                current_payload_transfer_ms(),
+                entry->payload_delivery_operation,
+            });
+    if (admission.result == PayloadTransferAdmissionResult::ok ||
+        signing::payload_delivery_admission_allows_safe_read(admission)) {
         return false;
     }
     reject_line(id, method, "busy");
     return true;
 }
 
-PayloadTransferAdmissionOperation payload_transfer_admission_operation(
-    PayloadTransferRequestAction action)
-{
-    switch (action) {
-        case PayloadTransferRequestAction::begin:
-            return PayloadTransferAdmissionOperation::payload_transfer_begin;
-        case PayloadTransferRequestAction::chunk:
-            return PayloadTransferAdmissionOperation::payload_transfer_chunk;
-        case PayloadTransferRequestAction::finish:
-            return PayloadTransferAdmissionOperation::payload_transfer_finish;
-        case PayloadTransferRequestAction::abort:
-            return PayloadTransferAdmissionOperation::payload_transfer_abort;
-    }
-    return PayloadTransferAdmissionOperation::payload_transfer_abort;
-}
-
-PayloadTransferAdmissionOperation payload_transfer_sensitive_operation(const char* method)
-{
-    if (method == nullptr) {
-        return PayloadTransferAdmissionOperation::credential_propose;
-    }
-    if (strcmp(method, "connect") == 0) {
-        return PayloadTransferAdmissionOperation::connect;
-    }
-    if (strcmp(method, "identify_device") == 0) {
-        return PayloadTransferAdmissionOperation::identify_device;
-    }
-    if (strcmp(method, "credential_propose") == 0) {
-        return PayloadTransferAdmissionOperation::credential_propose;
-    }
-    if (strcmp(method, "policy_propose") == 0) {
-        return PayloadTransferAdmissionOperation::policy_propose;
-    }
-    if (strcmp(method, "sign_transaction") == 0) {
-        return PayloadTransferAdmissionOperation::sign_transaction;
-    }
-    if (strcmp(method, "sign_personal_message") == 0) {
-        return PayloadTransferAdmissionOperation::sign_personal_message;
-    }
-    return PayloadTransferAdmissionOperation::credential_propose;
-}
-
-bool reject_if_payload_transfer_action_unavailable(
+bool write_payload_delivery_safe_read_admission_error_for_common(
     const char* id,
-    PayloadTransferRequestAction action,
-    uint32_t now_ms)
+    signing::UsbOperationType operation,
+    const signing::UsbOperationResponseWriter&)
 {
-    const PayloadTransferAdmissionDecision admission =
-        payload_transfer_admit_operation(
-            now_ms,
-            payload_transfer_admission_operation(action));
-    if (admission.result == PayloadTransferAdmissionResult::ok) {
-        return false;
-    }
-    if (admission.result == PayloadTransferAdmissionResult::busy) {
-        reject_payload_transfer_line(id, "busy");
+    const char* method = signing::usb_operation_type_wire_name(operation);
+    return reject_if_payload_transfer_blocks_safe_read(
+        id,
+        method != nullptr ? method : "get_status");
+}
+
+bool write_payload_delivery_identify_device_admission_error_for_common(
+    const char* id,
+    const signing::UsbOperationResponseWriter&)
+{
+    return reject_if_payload_transfer_blocks_sensitive_flow(id, "identify_device");
+}
+
+bool payload_transfer_material_ready_for_common_handler()
+{
+    return g_runtime_state.auth_status == LocalAuthProjectionStatus::active;
+}
+
+bool write_payload_transfer_busy_or_auth_error_for_common(
+    const char* id,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    if (!g_runtime_state.locally_unlocked) {
+        writer.write_error(id, "auth_unavailable");
         return true;
     }
-    reject_payload_transfer_line(id, "unknown_request");
-    return true;
+    if (g_pending_request.kind == UsbPendingRequestKind::credential_propose &&
+        !signing::session_active()) {
+        cancel_pending_credential_proposal_after_session_loss(id);
+        writer.write_error(id, "invalid_session");
+        return true;
+    }
+    if (pending_kind_is_signing(g_pending_request.kind) &&
+        !signing::session_active()) {
+        cancel_pending_signing_after_session_loss(id);
+        writer.write_error(id, "invalid_session");
+        return true;
+    }
+    if (g_pending_request.kind == UsbPendingRequestKind::policy_propose &&
+        !signing::session_active()) {
+        cancel_pending_policy_update_after_session_loss(id);
+        writer.write_error(id, "invalid_session");
+        return true;
+    }
+    if (g_runtime_state.ui_busy ||
+        any_request_pending()) {
+        writer.write_error(id, "busy");
+        return true;
+    }
+    return false;
 }
 
-bool printable_client_name(const char* value)
+bool require_payload_transfer_session_for_common(
+    const char* id,
+    const char* session_id,
+    const signing::UsbOperationResponseWriter& writer)
 {
-    if (value == nullptr || value[0] == '\0') {
-        return false;
-    }
-    size_t length = 0;
-    for (const char* cursor = value; *cursor != '\0'; ++cursor) {
-        if (++length >= sizeof(g_pending_request.label)) {
+    switch (signing::session_validate(session_id)) {
+        case signing::SessionValidationResult::ok:
+            return true;
+        case signing::SessionValidationResult::invalid_format:
+        case signing::SessionValidationResult::missing:
+        case signing::SessionValidationResult::mismatch:
+        default:
+            writer.write_error(id, "invalid_session");
             return false;
-        }
-        const unsigned char c = static_cast<unsigned char>(*cursor);
-        if (c < 0x20 || c > 0x7E) {
-            return false;
-        }
     }
-    return true;
+}
+
+signing::TimeoutWindow payload_transfer_timeout_window_for_size(size_t size_bytes)
+{
+    const uint32_t now_ms = current_payload_transfer_ms();
+    return signing::timeout_window_from_deadline(
+        now_ms,
+        now_ms + signing::payload_delivery_timeout_window_ms_for_size(size_bytes));
+}
+
+const signing::UsbPayloadTransferHandlerOps& payload_transfer_handler_ops()
+{
+    static const signing::UsbPayloadTransferHandlerOps ops = {
+        payload_transfer_material_ready_for_common_handler,
+        write_payload_transfer_busy_or_auth_error_for_common,
+        require_payload_transfer_session_for_common,
+        current_payload_transfer_ms,
+        payload_transfer_timeout_window_for_size,
+    };
+    return ops;
 }
 
 bool write_existing_session_connect_response(const char* id)
 {
-    if (!session_state_active()) {
+    if (!signing::session_active()) {
         return false;
     }
     if (write_connect_response(id)) {
@@ -1071,175 +2185,629 @@ bool write_existing_session_connect_response(const char* id)
     return true;
 }
 
-bool connect_material_allows_request(const char* id)
+bool connect_material_ready_for_common()
+{
+    return true;
+}
+
+bool write_connect_admission_error_for_common(
+    const char* id,
+    const signing::UsbOperationResponseWriter& writer)
 {
     if (g_runtime_state.auth_status == LocalAuthProjectionStatus::missing ||
         g_runtime_state.auth_status == LocalAuthProjectionStatus::invalid ||
         g_runtime_state.auth_status == LocalAuthProjectionStatus::storage_error) {
         clear_session_scoped_state();
-        reject_line(id, "connect", "invalid_state");
-        return false;
+        writer.write_error(id, "invalid_state");
+        return true;
+    }
+    if (settings_projection_status() != SettingsProjectionStatus::active) {
+        clear_session_scoped_state();
+        writer.write_error(id, "invalid_state");
+        return true;
     }
     if (reject_if_credential_store_error(id, "connect")) {
+        return true;
+    }
+    if (signing::session_active()) {
         return false;
     }
+    if (g_runtime_state.auth_status == LocalAuthProjectionStatus::locked) {
+        writer.write_error(id, "auth_unavailable");
+        return true;
+    }
+    if (g_runtime_state.auth_status != LocalAuthProjectionStatus::active) {
+        clear_session_scoped_state();
+        writer.write_error(id, "invalid_state");
+        return true;
+    }
+    if (reject_if_payload_transfer_blocks_sensitive_flow(id, "connect")) {
+        return true;
+    }
+    if (g_runtime_state.ui_busy ||
+        any_request_pending()) {
+        writer.write_error(id, "busy");
+        return true;
+    }
+    return false;
+}
+
+bool begin_connect_approval_for_common(
+    const char* request_id,
+    const char* client_name,
+    signing::TimeoutTick now,
+    signing::TimeoutWindow approval_window)
+{
+    return signing::connect_approval_begin(
+        request_id,
+        client_name,
+        now,
+        approval_window);
+}
+
+void reset_connect_review_choice_queue_for_common()
+{
+}
+
+void show_connect_review_for_common()
+{
+}
+
+void show_connect_unavailable_for_common()
+{
+}
+
+void record_connect_waiting_for_review(const char* id, const char* client_name)
+{
+    (void)id;
+    (void)client_name;
+}
+
+bool receive_connect_review_choice(signing::ConnectApprovalChoice*)
+{
+    return false;
+}
+
+bool connect_review_human_approval_requires_pin()
+{
+    return false;
+}
+
+bool begin_connect_pin_auth_from_review(signing::TimeoutTick)
+{
+    return false;
+}
+
+bool replace_active_session_for_connect_review()
+{
+    return signing::session_replace(secure_random_fill_with_context, nullptr) ==
+           signing::SessionStartResult::ok;
+}
+
+bool write_connect_error_for_flow(const char* id, const char* code)
+{
+    return reject_line(id, "connect", code);
+}
+
+bool write_connect_rejected_for_flow(const char* id, const char* code)
+{
+    return reject_line(id, "connect", code);
+}
+
+void show_connect_result_for_flow(
+    const char*,
+    signing::ConnectReviewTerminalUiKind)
+{
+}
+
+bool connect_review_panel_visible_for_flow()
+{
     return true;
+}
+
+void log_connect_review_flow_info(const char*, const char*)
+{
+}
+
+void log_connect_review_flow_error(const char*, const char*)
+{
+}
+
+void log_connect_review_write_failure(const char* response_type, const char* id)
+{
+    record_error(id, response_type != nullptr ? response_type : "connect", "internal_output_error");
+}
+
+void log_connect_review_recovered(const char*)
+{
+}
+
+const signing::ConnectReviewResponseFlowOps& connect_review_response_flow_ops()
+{
+    static const signing::ConnectReviewResponseFlowOps ops = {
+        current_payload_transfer_ms,
+        nullptr,
+        reset_connect_review_choice_queue_for_common,
+        receive_connect_review_choice,
+        signing::connect_approval_awaiting_choice,
+        connect_review_human_approval_requires_pin,
+        begin_connect_pin_auth_from_review,
+        signing::connect_approval_choose,
+        signing::connect_approval_snapshot,
+        signing::connect_approval_deadline_reached,
+        signing::connect_approval_request_id,
+        signing::connect_approval_clear,
+        replace_active_session_for_connect_review,
+        write_connect_error_for_flow,
+        write_connect_response,
+        write_connect_rejected_for_flow,
+        log_connect_review_flow_info,
+        log_connect_review_flow_error,
+        log_connect_review_write_failure,
+        log_connect_review_recovered,
+        show_connect_result_for_flow,
+        connect_review_panel_visible_for_flow,
+        show_connect_review_for_common,
+    };
+    return ops;
+}
+
+const signing::UsbConnectHandlerOps& connect_handler_ops()
+{
+    static const signing::UsbConnectHandlerOps ops = {
+        connect_material_ready_for_common,
+        write_connect_admission_error_for_common,
+        write_existing_session_connect_response,
+        current_payload_transfer_ms,
+        make_connect_approval_window,
+        begin_connect_approval_for_common,
+        show_connect_unavailable_for_common,
+        reset_connect_review_choice_queue_for_common,
+        show_connect_review_for_common,
+        record_connect_waiting_for_review,
+    };
+    return ops;
+}
+
+bool require_active_matching_session_for_common(
+    const char* id,
+    const char* session_id,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    switch (signing::session_validate(session_id)) {
+        case signing::SessionValidationResult::ok:
+            return true;
+        case signing::SessionValidationResult::missing:
+            cancel_pending_credential_proposal_after_session_loss(id);
+            writer.write_error(id, "invalid_session");
+            return false;
+        case signing::SessionValidationResult::invalid_format:
+        case signing::SessionValidationResult::mismatch:
+        default:
+            writer.write_error(id, "invalid_session");
+            return false;
+    }
+}
+
+bool write_disconnect_success_for_common(const char* id)
+{
+    clear_session_scoped_state();
+    if (write_empty_success_response(id, "disconnect")) {
+        return true;
+    } else {
+        record_error(id, "disconnect", "internal_output_error");
+        return false;
+    }
+}
+
+bool disconnect_pending_credential_proposal_for_common(const char* id, const char*)
+{
+    if (g_pending_request.kind != UsbPendingRequestKind::credential_propose) {
+        return false;
+    }
+    cancel_pending_credential_proposal_after_session_loss(id);
+    write_disconnect_success_for_common(id);
+    return true;
+}
+
+bool disconnect_pending_policy_update_for_common(const char* id, const char*)
+{
+    if (g_pending_request.kind != UsbPendingRequestKind::policy_propose) {
+        return false;
+    }
+    cancel_pending_policy_update_after_session_loss(id);
+    write_disconnect_success_for_common(id);
+    return true;
+}
+
+bool disconnect_pending_user_signing_for_common(const char* id, const char*)
+{
+    if (!pending_kind_is_signing(g_pending_request.kind)) {
+        return false;
+    }
+    cancel_pending_signing_after_session_loss(id);
+    write_disconnect_success_for_common(id);
+    return true;
+}
+
+bool write_busy_if_pending_or_local_flow_active_for_disconnect_common(
+    const char* id,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    if (g_runtime_state.ui_busy ||
+        any_request_pending()) {
+        writer.write_error(id, "busy");
+        return true;
+    }
+    return false;
+}
+
+bool write_payload_delivery_disconnect_admission_error_for_common(
+    const char* id,
+    signing::UsbOperationType,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    const signing::PayloadDeliveryAdmissionDecision admission =
+        signing::payload_delivery_admit_operation(
+            signing::PayloadDeliveryOperationAdmissionInput{
+                current_payload_transfer_ms(),
+                signing::PayloadDeliveryOperationKind::disconnect,
+            });
+    if (admission.result == signing::PayloadDeliveryAdmissionResult::ok) {
+        return false;
+    }
+    writer.write_error(
+        id,
+        admission.result == signing::PayloadDeliveryAdmissionResult::unknown_request
+            ? "unknown_request"
+            : "busy");
+    return true;
+}
+
+const signing::UsbDisconnectHandlerOps& disconnect_handler_ops()
+{
+    static const signing::UsbDisconnectHandlerOps ops = {
+        require_active_matching_session_for_common,
+        disconnect_pending_policy_update_for_common,
+        disconnect_pending_credential_proposal_for_common,
+        disconnect_pending_user_signing_for_common,
+        write_busy_if_pending_or_local_flow_active_for_disconnect_common,
+        write_payload_delivery_disconnect_admission_error_for_common,
+        clear_session_scoped_state,
+    };
+    return ops;
+}
+
+bool retained_response_material_ready_for_common()
+{
+    return g_runtime_state.auth_status == LocalAuthProjectionStatus::active &&
+           settings_projection_status() == SettingsProjectionStatus::active;
+}
+
+bool write_payload_delivery_retained_response_admission_error_for_common(
+    const char* id,
+    signing::UsbOperationType,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    const signing::PayloadDeliveryAdmissionDecision admission =
+        signing::payload_delivery_admit_operation(
+            signing::PayloadDeliveryOperationAdmissionInput{
+                current_payload_transfer_ms(),
+                signing::PayloadDeliveryOperationKind::retained_response_read_cleanup,
+            });
+    if (admission.result == signing::PayloadDeliveryAdmissionResult::ok) {
+        return false;
+    }
+    writer.write_error(
+        id,
+        admission.result == signing::PayloadDeliveryAdmissionResult::unknown_request
+            ? "unknown_request"
+            : "busy");
+    return true;
+}
+
+const signing::UsbRetainedResponseHandlerOps& retained_response_handler_ops()
+{
+    static const signing::UsbRetainedResponseHandlerOps ops = {
+        retained_response_material_ready_for_common,
+        write_payload_delivery_retained_response_admission_error_for_common,
+        require_active_matching_session_for_common,
+    };
+    return ops;
+}
+
+bool approval_history_busy_for_common(
+    const char*,
+    const signing::UsbOperationResponseWriter&)
+{
+    return false;
+}
+
+const signing::UsbApprovalHistoryHandlerOps& approval_history_handler_ops()
+{
+    static const signing::UsbApprovalHistoryHandlerOps ops = {
+        retained_response_material_ready_for_common,
+        approval_history_busy_for_common,
+        write_payload_delivery_retained_response_admission_error_for_common,
+        require_active_matching_session_for_common,
+        signing::approval_history_read_page,
+    };
+    return ops;
+}
+
+const signing::UsbGetStatusHandlerOps& get_status_handler_ops()
+{
+    static const signing::UsbGetStatusHandlerOps ops = {
+        nullptr,
+        write_payload_delivery_safe_read_admission_error_for_common,
+        usb_device_status_info,
+    };
+    return ops;
+}
+
+const signing::UsbIdentifyDeviceHandlerOps& identify_device_handler_ops()
+{
+    static const signing::UsbIdentifyDeviceHandlerOps ops = {
+        write_payload_delivery_identify_device_admission_error_for_common,
+        identification_code_safe,
+        show_identification_code,
+        usb_device_status_info,
+        kIdentifyDisplayMs,
+    };
+    return ops;
+}
+
+bool session_method_material_ready_for_common()
+{
+    return true;
+}
+
+bool write_session_method_state_error_for_common(
+    const char* id,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    const char* method = writer.method != nullptr ? writer.method : "";
+    return !active_auth_allows_session_method(id, method);
+}
+
+const signing::UsbActiveSessionRequestGuardOps& safe_read_session_guard_ops()
+{
+    static const signing::UsbActiveSessionRequestGuardOps ops = {
+        session_method_material_ready_for_common,
+        write_session_method_state_error_for_common,
+        write_payload_delivery_safe_read_admission_error_for_common,
+        require_active_matching_session_for_common,
+    };
+    return ops;
+}
+
+const signing::UsbActiveSessionRequestGuardOps& state_only_session_guard_ops()
+{
+    static const signing::UsbActiveSessionRequestGuardOps ops = {
+        session_method_material_ready_for_common,
+        write_session_method_state_error_for_common,
+        nullptr,
+        require_active_matching_session_for_common,
+    };
+    return ops;
+}
+
+bool read_stopwatch_sui_account_settings(signing::SuiAccountSettings* settings)
+{
+    if (settings == nullptr) {
+        return false;
+    }
+    *settings = signing::kDefaultSuiAccountSettings;
+    return true;
+}
+
+bool stopwatch_zklogin_credential_available_for_session_read()
+{
+    return credential_status_allows_install(sui_zklogin_credential_status());
+}
+
+signing::SuiActiveIdentity resolve_stopwatch_active_sui_identity()
+{
+    signing::SuiActiveIdentity identity = {};
+    identity.kind = signing::SuiActiveIdentityKind::none;
+    identity.error = signing::SuiActiveIdentityError::none;
+
+    const SuiZkLoginAccountProjection account_projection = sui_zklogin_account_projection();
+    if (account_projection.status == SuiZkLoginCredentialStatus::missing) {
+        return identity;
+    }
+    if (credential_status_is_error(account_projection.status) ||
+        !account_projection.active ||
+        account_projection.address[0] == '\0' ||
+        account_projection.public_key_size == 0 ||
+        account_projection.public_key_size > sizeof(identity.public_key)) {
+        identity.kind = signing::SuiActiveIdentityKind::error;
+        identity.error = signing::SuiActiveIdentityError::proof_storage_error;
+        return identity;
+    }
+
+    identity.kind = signing::SuiActiveIdentityKind::zklogin;
+    strlcpy(identity.address, account_projection.address, sizeof(identity.address));
+    memcpy(identity.public_key, account_projection.public_key, account_projection.public_key_size);
+    identity.public_key_size = account_projection.public_key_size;
+    return identity;
+}
+
+const signing::UsbSessionReadHandlerOps& session_read_handler_ops()
+{
+    static const signing::UsbSessionReadHandlerOps ops = {
+        session_method_material_ready_for_common,
+        write_session_method_state_error_for_common,
+        write_payload_delivery_safe_read_admission_error_for_common,
+        require_active_matching_session_for_common,
+        signing::read_signing_authorization_mode,
+        read_stopwatch_sui_account_settings,
+        stopwatch_zklogin_credential_available_for_session_read,
+        resolve_stopwatch_active_sui_identity,
+        nullptr,
+    };
+    return ops;
 }
 
 void handle_connect_request(const char* id, JsonDocument& request)
 {
-    if (!connect_material_allows_request(id)) {
-        return;
-    }
-
-    const char* const allowed_request_fields[] = {"id", "version", "method", "payload"};
-    if (!device_request_fields_supported_or_reject(id, "connect", request, allowed_request_fields, 4)) {
-        return;
-    }
-
-    const char* const allowed_payload_fields[] = {"clientName"};
-    if (!payload_has_only_fields(request, allowed_payload_fields, 1)) {
-        reject_line(id, "connect", "invalid_params");
-        return;
-    }
-    const char* client_name = nullptr;
-    if (!signing::json_value_c_string(request["payload"]["clientName"], &client_name) ||
-        !printable_client_name(client_name)) {
-        reject_line(id, "connect", "invalid_params");
-        return;
-    }
-
-    if (write_existing_session_connect_response(id)) {
-        return;
-    }
-
-    if (g_runtime_state.auth_status == LocalAuthProjectionStatus::locked) {
-        reject_line(id, "connect", "auth_unavailable");
-        return;
-    }
-    if (g_runtime_state.auth_status != LocalAuthProjectionStatus::active) {
-        clear_session_scoped_state();
-        reject_line(id, "connect", "invalid_state");
-        return;
-    }
-    if (reject_if_payload_transfer_blocks_sensitive_flow(id, "connect")) {
-        return;
-    }
-    if (g_runtime_state.ui_busy ||
-        g_pending_request.kind != UsbPendingRequestKind::none) {
-        reject_line(id, "connect", "busy");
-        return;
-    }
-
-    const uint32_t now_ms = current_payload_transfer_ms();
-    const signing::TimeoutWindow request_window = make_connect_approval_window(now_ms);
-    if (!signing::timeout_window_valid_and_open_at(request_window, now_ms)) {
-        reject_line(id, "connect", "internal_output_error");
-        return;
-    }
-
-    clear_pending_request();
-    g_pending_request.kind = UsbPendingRequestKind::connect;
-    strlcpy(g_pending_request.id, id, sizeof(g_pending_request.id));
-    strlcpy(g_pending_request.label, client_name, sizeof(g_pending_request.label));
-    g_pending_request.request_window = request_window;
+    signing::handle_usb_connect_request(
+        id,
+        request,
+        common_method_response_writer().for_method("connect"),
+        connect_handler_ops());
 }
 
 void handle_disconnect_request(const char* id, JsonDocument& request)
 {
-    const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId"};
-    if (!device_request_fields_supported_or_reject(id, "disconnect", request, allowed_request_fields, 4) ||
-        !require_session_shape(id, "disconnect", request)) {
-        return;
-    }
-    if (!require_matching_session(id, "disconnect", request)) {
-        return;
-    }
-    const char* canceled_proposal_id = pending_credential_proposal_request_to_notify(id);
-    if (canceled_proposal_id != nullptr) {
-        reject_line(canceled_proposal_id, "credential_propose", "invalid_session");
-    }
-    clear_pending_request();
-    clear_session_scoped_state();
-    if (write_empty_success_response(id, "disconnect")) {
-        record_success(id, "disconnect");
-    } else {
-        record_error(id, "disconnect", "internal_output_error");
-    }
+    signing::handle_usb_disconnect_request(
+        id,
+        request,
+        common_method_response_writer().for_method("disconnect"),
+        disconnect_handler_ops());
 }
 
 void handle_get_capabilities_request(const char* id, JsonDocument& request)
 {
-    const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId"};
-    if (!device_request_fields_supported_or_reject(id, "get_capabilities", request, allowed_request_fields, 4) ||
-        !require_session_shape(id, "get_capabilities", request)) {
-        return;
-    }
-    if (!active_auth_allows_session_method(id, "get_capabilities") ||
-        reject_if_payload_transfer_blocks_safe_read(id, "get_capabilities") ||
-        !require_matching_session(id, "get_capabilities", request)) {
-        return;
-    }
-    if (write_capabilities_response(id)) {
-        record_success(id, "get_capabilities");
-    } else {
-        reject_line(id, "get_capabilities", "account_unavailable");
-    }
+    signing::handle_usb_get_capabilities_request(
+        id,
+        request,
+        common_method_response_writer().for_method("get_capabilities"),
+        session_read_handler_ops());
 }
 
 void handle_get_accounts_request(const char* id, JsonDocument& request)
 {
-    const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId"};
-    if (!device_request_fields_supported_or_reject(id, "get_accounts", request, allowed_request_fields, 4) ||
-        !require_session_shape(id, "get_accounts", request)) {
-        return;
+    signing::handle_usb_get_accounts_request(
+        id,
+        request,
+        common_method_response_writer().for_method("get_accounts"),
+        session_read_handler_ops());
+}
+
+bool write_credential_prepare_state_error_for_common(
+    const char* id,
+    const signing::UsbOperationResponseWriter&)
+{
+    return !require_credential_install_available(id, "credential_prepare");
+}
+
+bool write_credential_propose_state_error_for_common(
+    const char* id,
+    const signing::UsbOperationResponseWriter&)
+{
+    if (any_request_pending() ||
+        sui_zklogin_proposal_state_active()) {
+        reject_line(id, "credential_propose", "busy");
+        return true;
     }
-    if (!active_auth_allows_session_method(id, "get_accounts") ||
-        reject_if_payload_transfer_blocks_safe_read(id, "get_accounts") ||
-        !require_matching_session(id, "get_accounts", request)) {
-        return;
+    if (!require_credential_install_available(id, "credential_propose")) {
+        return true;
     }
-    if (write_accounts_response(id)) {
-        record_success(id, "get_accounts");
-    } else {
-        reject_line(id, "get_accounts", "account_unavailable");
+    return reject_if_payload_transfer_blocks_sensitive_flow(id, "credential_propose");
+}
+
+signing::UsbSuiZkLoginCredentialPrepareResult prepare_stopwatch_sui_zklogin_credential_for_common(
+    const char* session_id,
+    signing::UsbSuiZkLoginCredentialPreparation* output)
+{
+    if (output == nullptr) {
+        return signing::UsbSuiZkLoginCredentialPrepareResult::internal_output_error;
     }
+    memset(output, 0, sizeof(*output));
+    const CredentialPreparationBeginResult result =
+        credential_preparation_begin(session_id, secure_random_fill_with_context, nullptr);
+    if (result == CredentialPreparationBeginResult::invalid_session) {
+        return signing::UsbSuiZkLoginCredentialPrepareResult::invalid_session;
+    }
+    if (result != CredentialPreparationBeginResult::ok) {
+        return signing::UsbSuiZkLoginCredentialPrepareResult::internal_output_error;
+    }
+    const CredentialPreparationSnapshot snapshot = credential_preparation_snapshot();
+    if (!snapshot.active ||
+        snapshot.address == nullptr ||
+        snapshot.address[0] == '\0' ||
+        snapshot.public_key_base64 == nullptr ||
+        snapshot.public_key_base64[0] == '\0') {
+        return signing::UsbSuiZkLoginCredentialPrepareResult::internal_output_error;
+    }
+    strlcpy(output->address, snapshot.address, sizeof(output->address));
+    strlcpy(
+        output->public_key_base64,
+        snapshot.public_key_base64,
+        sizeof(output->public_key_base64));
+    return output->address[0] != '\0' && output->public_key_base64[0] != '\0'
+               ? signing::UsbSuiZkLoginCredentialPrepareResult::ok
+               : signing::UsbSuiZkLoginCredentialPrepareResult::internal_output_error;
+}
+
+signing::UsbSuiZkLoginCredentialProposalBeginResult begin_stopwatch_sui_zklogin_proposal_for_common(
+    JsonVariantConst params,
+    const char* request_id,
+    const char* session_id,
+    signing::TimeoutTick now,
+    signing::TimeoutWindow request_window)
+{
+    uint8_t prepared_seed[kSuiEd25519SeedBytes] = {};
+    if (!credential_preparation_copy_seed_for_session(session_id, prepared_seed)) {
+        return signing::UsbSuiZkLoginCredentialProposalBeginResult::invalid_state;
+    }
+    const SuiZkLoginProposalBeginResult begin_result =
+        sui_zklogin_proposal_state_begin(
+            params,
+            request_id,
+            session_id,
+            now,
+            request_window,
+            prepared_seed);
+    wipe_sensitive_buffer(prepared_seed, sizeof(prepared_seed));
+    return begin_result == SuiZkLoginProposalBeginResult::ok
+               ? signing::UsbSuiZkLoginCredentialProposalBeginResult::ok
+               : signing::UsbSuiZkLoginCredentialProposalBeginResult::invalid_proof;
+}
+
+void clear_stopwatch_credential_preparation_after_begin_failure()
+{
+    credential_preparation_state_clear();
+}
+
+bool show_stopwatch_sui_zklogin_proposal_review(const char* id)
+{
+    clear_pending_request();
+    g_pending_request.kind = UsbPendingRequestKind::credential_propose;
+    strlcpy(g_pending_request.id, id, sizeof(g_pending_request.id));
+    strlcpy(g_pending_request.label, "zkLogin proof", sizeof(g_pending_request.label));
+    return g_pending_request.id[0] != '\0';
+}
+
+const signing::UsbSuiZkLoginCredentialHandlerOps& sui_zklogin_credential_handler_ops()
+{
+    static const signing::UsbSuiZkLoginCredentialHandlerOps ops = {
+        nullptr,
+        nullptr,
+        write_credential_prepare_state_error_for_common,
+        write_credential_propose_state_error_for_common,
+        safe_read_session_guard_ops(),
+        state_only_session_guard_ops(),
+        signing::UsbSessionIdMode::required,
+        signing::UsbSessionIdMode::required,
+        prepare_stopwatch_sui_zklogin_credential_for_common,
+        current_payload_transfer_ms,
+        make_sui_zklogin_proposal_window,
+        begin_stopwatch_sui_zklogin_proposal_for_common,
+        clear_stopwatch_credential_preparation_after_begin_failure,
+        show_stopwatch_sui_zklogin_proposal_review,
+    };
+    return ops;
 }
 
 void handle_credential_prepare_request(const char* id, JsonDocument& request)
 {
-    if (!active_auth_allows_session_method(id, "credential_prepare") ||
-        reject_if_payload_transfer_blocks_safe_read(id, "credential_prepare") ||
-        !require_matching_session(id, "credential_prepare", request)) {
-        return;
-    }
-    const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId", "payload"};
-    if (!device_request_fields_supported_or_reject(id, "credential_prepare", request, allowed_request_fields, 5) ||
-        !required_payload_present_or_reject(id, "credential_prepare", request)) {
-        return;
-    }
-    if (!require_credential_install_available(id, "credential_prepare")) {
-        return;
-    }
-    if (!signing::sui_zklogin_credential_prepare_payload_shape_valid(request["payload"])) {
-        reject_line(id, "credential_prepare", "invalid_params");
-        return;
-    }
-    const CredentialPreparationBeginResult result =
-        credential_preparation_begin(session_state_id(), secure_random_fill_with_context, nullptr);
-    if (result == CredentialPreparationBeginResult::invalid_session) {
-        reject_line(id, "credential_prepare", "invalid_session");
-        return;
-    }
-    if (result != CredentialPreparationBeginResult::ok) {
-        reject_line(id, "credential_prepare", "internal_output_error");
-        return;
-    }
-    if (write_credential_preparation_response(id)) {
-        record_success(id, "credential_prepare");
-    } else {
-        record_error(id, "credential_prepare", "internal_output_error");
-    }
+    signing::handle_usb_credential_prepare_request(
+        id,
+        request,
+        common_method_response_writer().for_method("credential_prepare"),
+        sui_zklogin_credential_handler_ops());
 }
 
 void finish_credential_proposal(
@@ -1248,8 +2816,9 @@ void finish_credential_proposal(
 {
     const bool session_ended =
         sui_zklogin_proposal_terminal_ends_session(terminal_result);
-    if (write_credential_proposal_outcome_response(
+    if (signing::write_usb_credential_proposal_outcome_response(
             id,
+            common_method_response_writer().for_method("credential_propose"),
             terminal_result,
             session_ended)) {
         record_success(id, "credential_propose");
@@ -1264,504 +2833,319 @@ void finish_credential_proposal(
     }
 }
 
-void finish_credential_proposal_begin_failure(
-    const char* id,
-    SuiZkLoginProposalBeginResult begin_result)
-{
-    (void)begin_result;
-    if (write_credential_proposal_outcome_response(
-            id,
-            SuiZkLoginProposalTerminalResult::invalid_proof,
-            false)) {
-        record_success(id, "credential_propose");
-    } else {
-        record_error(id, "credential_propose", "internal_output_error");
-    }
-    credential_preparation_state_clear();
-}
-
 void handle_credential_propose_request(const char* id, JsonDocument& request)
 {
-    if (!active_auth_allows_session_method(id, "credential_propose")) {
-        return;
-    }
-    if (!require_matching_session(id, "credential_propose", request)) {
-        return;
-    }
-    const char* const allowed_request_fields[] = {"id", "version", "method", "sessionId", "payload"};
-    if (!device_request_fields_supported_or_reject(id, "credential_propose", request, allowed_request_fields, 5) ||
-        !required_payload_present_or_reject(id, "credential_propose", request)) {
-        return;
-    }
-    if (g_pending_request.kind != UsbPendingRequestKind::none ||
-        sui_zklogin_proposal_state_active()) {
-        reject_line(id, "credential_propose", "busy");
-        return;
-    }
-    if (!require_credential_install_available(id, "credential_propose")) {
-        return;
-    }
-    if (reject_if_payload_transfer_blocks_sensitive_flow(id, "credential_propose")) {
-        return;
-    }
-    if (!signing::sui_zklogin_credential_propose_payload_shape_valid(request["payload"])) {
-        reject_line(id, "credential_propose", "invalid_params");
-        return;
-    }
-
-    uint8_t prepared_seed[kSuiEd25519SeedBytes] = {};
-    if (!credential_preparation_copy_seed_for_session(session_state_id(), prepared_seed)) {
-        reject_line(id, "credential_propose", "invalid_state");
-        return;
-    }
-    const uint32_t now_ms = current_payload_transfer_ms();
-    const SuiZkLoginProposalBeginResult begin_result =
-        sui_zklogin_proposal_state_begin(
-            request["payload"],
-            id,
-            session_state_id(),
-            now_ms,
-            make_sui_zklogin_proposal_window(now_ms),
-            prepared_seed);
-    wipe_sensitive_buffer(prepared_seed, sizeof(prepared_seed));
-    if (begin_result != SuiZkLoginProposalBeginResult::ok) {
-        finish_credential_proposal_begin_failure(id, begin_result);
-        return;
-    }
-
-    clear_pending_request();
-    g_pending_request.kind = UsbPendingRequestKind::credential_propose;
-    strlcpy(g_pending_request.id, id, sizeof(g_pending_request.id));
-    strlcpy(g_pending_request.label, "zkLogin proof", sizeof(g_pending_request.label));
+    signing::handle_usb_credential_propose_request(
+        id,
+        request,
+        common_method_response_writer().for_method("credential_propose"),
+        sui_zklogin_credential_handler_ops());
 }
 
-void handle_session_unavailable_method(const char* id, const char* method, JsonDocument& request)
+void handle_signing_request(
+    const char* id,
+    const char* method,
+    JsonDocument& request,
+    signing::SupportedSignRoute route)
 {
-    const bool requires_payload =
-        strcmp(method, "policy_get") != 0;
-    const char* const no_payload_fields[] = {"id", "version", "method", "sessionId"};
-    const char* const payload_fields[] = {"id", "version", "method", "sessionId", "payload"};
-    if (!device_request_fields_supported_or_reject(
+    if (!active_auth_allows_session_method(id, method)) {
+        return;
+    }
+    const signing::UsbOperationResponseWriter writer =
+        common_method_response_writer().for_method(method);
+    if (route == signing::SupportedSignRoute::sui_sign_transaction) {
+        signing::handle_usb_sign_transaction_request(
             id,
-            method,
             request,
-            requires_payload ? payload_fields : no_payload_fields,
-            requires_payload ? 5 : 4) ||
-        !require_session_shape(id, method, request) ||
-        (requires_payload && !required_payload_present_or_reject(id, method, request))) {
+            writer,
+            usb_signing_handler_ops());
         return;
     }
-    if (!active_auth_allows_session_method(id, method) ||
-        !require_matching_session(id, method, request)) {
-        return;
-    }
-    if (strcmp(method, "policy_get") == 0 ||
-        strcmp(method, "get_approval_history") == 0 ||
-        strcmp(method, "get_result") == 0 ||
-        strcmp(method, "ack_result") == 0) {
-        if (reject_if_payload_transfer_blocks_safe_read(id, method)) {
-            return;
-        }
-    } else if (reject_if_payload_transfer_blocks_sensitive_flow(id, method)) {
-        return;
-    }
-    if (strcmp(method, "policy_get") == 0 ||
-        strcmp(method, "policy_propose") == 0) {
-        if (strcmp(method, "policy_propose") == 0 &&
-            !policy_propose_payload_wrapper_valid(request)) {
-            reject_line(id, method, "invalid_params");
-            return;
-        }
-        reject_line(id, method, "policy_unavailable");
-        return;
-    }
-    if (strcmp(method, "get_approval_history") == 0) {
-        if (!approval_history_payload_valid(request)) {
-            reject_line(id, method, "invalid_params");
-            return;
-        }
-        reject_line(id, method, "history_unavailable");
-        return;
-    }
-    if (strcmp(method, "get_result") == 0) {
-        if (!retained_request_payload_valid(request)) {
-            reject_line(id, method, "invalid_params");
-            return;
-        }
-        reject_line(id, method, "unknown_request");
-        return;
-    }
-    if (strcmp(method, "ack_result") == 0) {
-        if (!retained_request_payload_valid(request)) {
-            reject_line(id, method, "invalid_params");
-            return;
-        }
-        reject_line(id, method, "unknown_request");
+    if (route == signing::SupportedSignRoute::sui_sign_personal_message) {
+        signing::handle_usb_sign_personal_message_request(
+            id,
+            request,
+            writer,
+            usb_signing_handler_ops());
         return;
     }
     reject_line(id, method, "unsupported_method");
 }
 
-void handle_payload_transfer_line(JsonDocument& request)
+void handle_get_result_request(const char* id, JsonDocument& request)
 {
-    PayloadTransferRequestEnvelope envelope = {};
-    const PayloadTransferRequestParseStatus parse_status =
-        payload_transfer_request_parse(request, &envelope);
-    if (parse_status != PayloadTransferRequestParseStatus::ok) {
-        const char* code = payload_transfer_request_error_code(parse_status);
-        if (parse_status == PayloadTransferRequestParseStatus::invalid_envelope) {
-            ++g_status.invalid_lines;
-        }
-        reject_payload_transfer_line(envelope.id, code);
+    if (!active_auth_allows_session_method(id, "get_result") ||
+        !g_runtime_state.locally_unlocked) {
         return;
     }
+    signing::handle_usb_get_result_request(
+        id,
+        request,
+        common_method_response_writer().for_method("get_result"),
+        retained_response_handler_ops());
+}
 
-    const char* id = envelope.id;
-    const char* session_id = envelope.session_id;
+void handle_ack_result_request(const char* id, JsonDocument& request)
+{
+    if (!active_auth_allows_session_method(id, "ack_result") ||
+        !g_runtime_state.locally_unlocked) {
+        return;
+    }
+    signing::handle_usb_ack_result_request(
+        id,
+        request,
+        common_method_response_writer().for_method("ack_result"),
+        retained_response_handler_ops());
+}
 
-    if (g_runtime_state.auth_status != LocalAuthProjectionStatus::active) {
-        reject_payload_transfer_line(id, "invalid_state");
-        return;
-    }
-    if (!g_runtime_state.locally_unlocked) {
-        reject_payload_transfer_line(id, "auth_unavailable");
-        return;
-    }
-    if (g_pending_request.kind == UsbPendingRequestKind::credential_propose &&
-        !session_state_active()) {
-        cancel_pending_credential_proposal_after_session_loss(id);
-        reject_payload_transfer_line(id, "invalid_session");
-        return;
-    }
-    if (g_runtime_state.ui_busy ||
-        g_pending_request.kind != UsbPendingRequestKind::none) {
-        reject_payload_transfer_line(id, "busy");
-        return;
-    }
-    switch (session_state_validate(session_id)) {
-        case SessionValidationResult::ok:
-            break;
-        case SessionValidationResult::invalid_format:
-        case SessionValidationResult::missing:
-        case SessionValidationResult::mismatch:
-        default:
-            reject_payload_transfer_line(id, "invalid_session");
-            return;
-    }
-    const uint32_t now_ms = current_payload_transfer_ms();
-    if (reject_if_payload_transfer_action_unavailable(id, envelope.action, now_ms)) {
-        return;
-    }
+void handle_get_status_operation(
+    const char* id,
+    JsonDocument& request,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    signing::handle_usb_get_status_request(
+        id,
+        request,
+        writer.for_method("get_status"),
+        get_status_handler_ops());
+}
 
-    if (envelope.action == PayloadTransferRequestAction::begin) {
-        const char* total_bytes_text = nullptr;
-        const char* digest = nullptr;
-        size_t total_bytes = 0;
-        if (!signing::json_value_c_string(request["totalBytes"], &total_bytes_text) ||
-            !signing::json_value_c_string(request["payloadDigest"], &digest) ||
-            !parse_size_string(total_bytes_text, &total_bytes)) {
-            reject_payload_transfer_line(id, "invalid_params");
-            return;
-        }
-        PayloadTransferBeginOutput output = {};
-        const PayloadTransferResult result =
-            payload_transfer_begin(now_ms, session_id, total_bytes, digest, &output);
-        if (result != PayloadTransferResult::ok) {
-            reject_payload_transfer_line(id, signing::payload_delivery_transfer_error_code(result));
-            return;
-        }
-        JsonDocument response_result;
-        response_result["transferId"] = output.transfer_id;
-        response_result["receivedBytes"] = "0";
-        char chunk_max[12] = {};
-        snprintf(chunk_max, sizeof(chunk_max), "%u", static_cast<unsigned>(output.chunk_max_bytes));
-        response_result["chunkMaxBytes"] = chunk_max;
-        if (write_payload_transfer_success_response(id, response_result.as<JsonObjectConst>())) {
-            record_success(id, "payload_transfer_begin");
-        } else {
-            record_error(id, "payload_transfer_begin", "internal_output_error");
-        }
-        return;
-    }
+void handle_identify_device_operation(
+    const char* id,
+    JsonDocument& request,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    signing::handle_usb_identify_device_request(
+        id,
+        request,
+        writer.for_method("identify_device"),
+        identify_device_handler_ops());
+}
 
-    if (envelope.action == PayloadTransferRequestAction::chunk) {
-        const char* transfer_id = nullptr;
-        const char* offset_text = nullptr;
-        const char* chunk_base64 = nullptr;
-        size_t offset = 0;
-        if (!signing::json_value_c_string(request["transferId"], &transfer_id) ||
-            !signing::json_value_c_string(request["offsetBytes"], &offset_text) ||
-            !signing::json_value_c_string(request["chunk"], &chunk_base64) ||
-            !parse_size_string(offset_text, &offset)) {
-            reject_payload_transfer_line(id, "invalid_params");
-            return;
-        }
-        size_t decoded_size = 0;
-        if (!signing::validate_canonical_base64_syntax(
-                chunk_base64,
-                signing::kRequestLineMaxBytes,
-                &decoded_size)) {
-            reject_payload_transfer_line(id, "invalid_params");
-            return;
-        }
-        if (decoded_size > kPayloadTransferChunkMaxBytes) {
-            const PayloadTransferResult result =
-                payload_transfer_reject_chunk_too_large(now_ms, session_id, transfer_id);
-            reject_payload_transfer_line(id, signing::payload_delivery_transfer_error_code(result));
-            return;
-        }
-        uint8_t chunk[kPayloadTransferChunkMaxBytes] = {};
-        if (!decode_canonical_base64_input(
-                chunk_base64,
-                signing::kRequestLineMaxBytes,
-                chunk,
-                sizeof(chunk),
-                &decoded_size)) {
-            reject_payload_transfer_line(id, "invalid_params");
-            return;
-        }
-        size_t received = 0;
-        const PayloadTransferResult result =
-            payload_transfer_append_chunk(now_ms, session_id, transfer_id, offset, chunk, decoded_size, &received);
-        wipe_sensitive_buffer(chunk, sizeof(chunk));
-        if (result != PayloadTransferResult::ok) {
-            reject_payload_transfer_line(id, signing::payload_delivery_transfer_error_code(result));
-            return;
-        }
-        JsonDocument response_result;
-        char received_text[16] = {};
-        snprintf(received_text, sizeof(received_text), "%u", static_cast<unsigned>(received));
-        response_result["receivedBytes"] = received_text;
-        if (write_payload_transfer_success_response(id, response_result.as<JsonObjectConst>())) {
-            record_success(id, "payload_transfer_chunk");
-        } else {
-            record_error(id, "payload_transfer_chunk", "internal_output_error");
-        }
-        return;
-    }
+void handle_connect_operation(
+    const char* id,
+    JsonDocument& request,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    (void)writer;
+    handle_connect_request(id, request);
+}
 
-    if (envelope.action == PayloadTransferRequestAction::finish) {
-        const char* transfer_id = nullptr;
-        if (!signing::json_value_c_string(request["transferId"], &transfer_id)) {
-            reject_payload_transfer_line(id, "invalid_params");
-            return;
-        }
-        PayloadTransferFinishOutput output = {};
-        const PayloadTransferResult result =
-            payload_transfer_finish(now_ms, session_id, transfer_id, payload_digest_sha256, &output);
-        if (result != PayloadTransferResult::ok) {
-            reject_payload_transfer_line(id, signing::payload_delivery_transfer_error_code(result));
-            return;
-        }
-        JsonDocument response_result;
-        response_result["payloadRef"] = output.payload_ref;
-        if (write_payload_transfer_success_response(id, response_result.as<JsonObjectConst>())) {
-            record_success(id, "payload_transfer_finish");
-        } else {
-            record_error(id, "payload_transfer_finish", "internal_output_error");
-        }
-        return;
-    }
+void handle_sign_transaction_operation(
+    const char* id,
+    JsonDocument& request,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    (void)writer;
+    handle_signing_request(
+        id,
+        "sign_transaction",
+        request,
+        signing::SupportedSignRoute::sui_sign_transaction);
+}
 
-    if (envelope.action == PayloadTransferRequestAction::abort) {
-        const char* transfer_id = nullptr;
-        const char* payload_ref = nullptr;
-        const bool has_transfer_id = request_has_field(request, "transferId");
-        const bool has_payload_ref = request_has_field(request, "payloadRef");
-        if (has_transfer_id && has_payload_ref) {
-            reject_payload_transfer_line(id, "invalid_request");
-            return;
-        }
-        if (has_transfer_id) {
-            if (!signing::json_value_c_string(request["transferId"], &transfer_id)) {
-                reject_payload_transfer_line(id, "invalid_params");
-                return;
-            }
-        } else if (has_payload_ref) {
-            if (!signing::json_value_c_string(request["payloadRef"], &payload_ref)) {
-                reject_payload_transfer_line(id, "invalid_params");
-                return;
-            }
-        } else {
-            reject_payload_transfer_line(id, "invalid_params");
-            return;
-        }
-        const PayloadTransferResult result =
-            payload_transfer_abort(now_ms, session_id, transfer_id, payload_ref);
-        if (result != PayloadTransferResult::ok) {
-            reject_payload_transfer_line(id, signing::payload_delivery_transfer_error_code(result));
-            return;
-        }
-        JsonDocument response_result;
-        if (write_payload_transfer_success_response(id, response_result.as<JsonObjectConst>())) {
-            record_success(id, "payload_transfer_abort");
-        } else {
-            record_error(id, "payload_transfer_abort", "internal_output_error");
-        }
-        return;
-    }
+void handle_sign_personal_message_operation(
+    const char* id,
+    JsonDocument& request,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    (void)writer;
+    handle_signing_request(
+        id,
+        "sign_personal_message",
+        request,
+        signing::SupportedSignRoute::sui_sign_personal_message);
+}
 
-    reject_payload_transfer_line(id, "unsupported_method");
+void handle_get_result_operation(
+    const char* id,
+    JsonDocument& request,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    (void)writer;
+    handle_get_result_request(id, request);
+}
+
+void handle_ack_result_operation(
+    const char* id,
+    JsonDocument& request,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    (void)writer;
+    handle_ack_result_request(id, request);
+}
+
+void handle_disconnect_operation(
+    const char* id,
+    JsonDocument& request,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    (void)writer;
+    handle_disconnect_request(id, request);
+}
+
+void handle_get_capabilities_operation(
+    const char* id,
+    JsonDocument& request,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    (void)writer;
+    handle_get_capabilities_request(id, request);
+}
+
+void handle_get_accounts_operation(
+    const char* id,
+    JsonDocument& request,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    (void)writer;
+    handle_get_accounts_request(id, request);
+}
+
+void handle_policy_get_operation(
+    const char* id,
+    JsonDocument& request,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    (void)writer;
+    handle_policy_get_request(id, request);
+}
+
+void handle_get_approval_history_operation(
+    const char* id,
+    JsonDocument& request,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    (void)writer;
+    handle_get_approval_history_request(id, request);
+}
+
+void handle_policy_propose_operation(
+    const char* id,
+    JsonDocument& request,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    (void)writer;
+    handle_policy_propose_request(id, request);
+}
+
+void handle_credential_prepare_operation(
+    const char* id,
+    JsonDocument& request,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    (void)writer;
+    handle_credential_prepare_request(id, request);
+}
+
+void handle_credential_propose_operation(
+    const char* id,
+    JsonDocument& request,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    (void)writer;
+    handle_credential_propose_request(id, request);
+}
+
+void handle_payload_transfer_begin_operation(
+    const char* id,
+    JsonDocument& request,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    signing::handle_usb_payload_transfer_begin_request(
+        id,
+        request,
+        writer,
+        payload_transfer_handler_ops());
+}
+
+void handle_payload_transfer_chunk_operation(
+    const char* id,
+    JsonDocument& request,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    signing::handle_usb_payload_transfer_chunk_request(
+        id,
+        request,
+        writer,
+        payload_transfer_handler_ops());
+}
+
+void handle_payload_transfer_finish_operation(
+    const char* id,
+    JsonDocument& request,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    signing::handle_usb_payload_transfer_finish_request(
+        id,
+        request,
+        writer,
+        payload_transfer_handler_ops());
+}
+
+void handle_payload_transfer_abort_operation(
+    const char* id,
+    JsonDocument& request,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    signing::handle_usb_payload_transfer_abort_request(
+        id,
+        request,
+        writer,
+        payload_transfer_handler_ops());
+}
+
+const signing::UsbOperationHandlers& stopwatch_usb_operation_handlers()
+{
+    static const signing::UsbOperationHandlers handlers = {
+        handle_get_status_operation,
+        handle_identify_device_operation,
+        handle_connect_operation,
+        handle_sign_transaction_operation,
+        handle_sign_personal_message_operation,
+        handle_get_result_operation,
+        handle_ack_result_operation,
+        handle_disconnect_operation,
+        handle_get_capabilities_operation,
+        handle_get_accounts_operation,
+        handle_policy_get_operation,
+        handle_get_approval_history_operation,
+        handle_policy_propose_operation,
+        handle_credential_prepare_operation,
+        handle_credential_propose_operation,
+        handle_payload_transfer_begin_operation,
+        handle_payload_transfer_chunk_operation,
+        handle_payload_transfer_finish_operation,
+        handle_payload_transfer_abort_operation,
+    };
+    return handlers;
+}
+
+bool resolve_payload_ref_for_common_handler(
+    JsonDocument& request,
+    JsonDocument& resolved_payload,
+    signing::TimeoutTick now_tick,
+    const signing::UsbRequestEnvelope& envelope,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    (void)resolved_payload;
+    (void)now_tick;
+    (void)writer;
+    if (envelope.method == nullptr || envelope.method[0] == '\0') {
+        return true;
+    }
+    return resolve_request_payload_ref(envelope.id, envelope.method, request);
 }
 
 void handle_request_line(const char* line)
 {
     ++g_status.received_lines;
-
-    JsonDocument request;
-    if (!signing::json_line_is_single_object(line)) {
-        ++g_status.invalid_lines;
-        reject_line(nullptr, nullptr, "invalid_request");
-        return;
-    }
-
-    const DeserializationError parse_error =
-        deserializeJson(request, line, DeserializationOption::NestingLimit(signing::kRequestJsonNestingLimit));
-    if (parse_error) {
-        ++g_status.invalid_lines;
-        reject_line(nullptr, nullptr, "invalid_request");
-        return;
-    }
-
-    if (!request["type"].isNull()) {
-        const char* typed_id = nullptr;
-        if (!signing::json_value_c_string(request["id"], &typed_id) ||
-            !signing::request_id_format_valid(typed_id)) {
-            ++g_status.invalid_lines;
-            reject_line(nullptr, nullptr, "invalid_request");
-            return;
-        }
-        if (!request["version"].is<int>()) {
-            ++g_status.invalid_lines;
-            reject_line(typed_id, nullptr, "invalid_request");
-            return;
-        }
-        if (request["version"].as<int>() != signing::kProtocolVersion) {
-            reject_line(typed_id, nullptr, "unsupported_version");
-            return;
-        }
-        const char* type = nullptr;
-        if (!signing::json_value_c_string(request["type"], &type)) {
-            ++g_status.invalid_lines;
-            reject_line(typed_id, nullptr, "invalid_request");
-            return;
-        }
-        if (strcmp(type, "payload_transfer") == 0) {
-            handle_payload_transfer_line(request);
-            return;
-        }
-        if (type[0] == '\0') {
-            ++g_status.invalid_lines;
-            reject_line(typed_id, nullptr, "invalid_request");
-            return;
-        }
-        reject_line(typed_id, nullptr, "unsupported_method");
-        return;
-    }
-
-    const char* id = nullptr;
-    const char* method_text = nullptr;
-    const bool has_id = signing::json_value_c_string(request["id"], &id);
-    if (!has_id || !signing::request_id_format_valid(id)) {
-        ++g_status.invalid_lines;
-        reject_line(nullptr, nullptr, "invalid_request");
-        return;
-    }
-
-    const bool has_method_text = signing::json_value_c_string(request["method"], &method_text);
-    const char* method = has_method_text && signing::device_method_row(method_text) != nullptr ? method_text : nullptr;
-    if (!has_method_text || !request["version"].is<int>()) {
-        ++g_status.invalid_lines;
-        reject_line(id, method, "invalid_request");
-        return;
-    }
-
-    if (request["version"].as<int>() != signing::kProtocolVersion) {
-        reject_line(id, method, "unsupported_version");
-        return;
-    }
-
-    if (method == nullptr) {
-        reject_line(id, nullptr, "unsupported_method");
-        return;
-    }
-
-    const char* const allowed_device_request_fields[] = {
-        "id", "version", "method", "sessionId", "payload",
-    };
-    if (!device_request_fields_supported_or_reject(
-            id,
-            method,
-            request,
-            allowed_device_request_fields,
-            5)) {
-        return;
-    }
-
-    if (!device_method_rules_or_reject(id, method, request)) {
-        return;
-    }
-    if (!resolve_request_payload_ref(id, method, request)) {
-        return;
-    }
-
-    if (strcmp(method, "get_status") == 0) {
-        const char* const allowed_status_fields[] = {"id", "version", "method"};
-        if (!device_request_fields_supported_or_reject(id, method, request, allowed_status_fields, 3)) {
-            return;
-        }
-        if (reject_if_payload_transfer_blocks_safe_read(id, method)) {
-            return;
-        }
-        if (write_status_response(id)) {
-            ++g_status.status_responses;
-            record_success(id, method);
-        } else {
-            record_error(id, method, "internal_output_error");
-        }
-        return;
-    }
-
-    if (strcmp(method, "identify_device") == 0) {
-        handle_identify_device_request(id, request);
-        return;
-    }
-    if (strcmp(method, "connect") == 0) {
-        handle_connect_request(id, request);
-        return;
-    }
-    if (strcmp(method, "disconnect") == 0) {
-        handle_disconnect_request(id, request);
-        return;
-    }
-    if (strcmp(method, "get_capabilities") == 0) {
-        handle_get_capabilities_request(id, request);
-        return;
-    }
-    if (strcmp(method, "get_accounts") == 0) {
-        handle_get_accounts_request(id, request);
-        return;
-    }
-    if (strcmp(method, "credential_prepare") == 0) {
-        handle_credential_prepare_request(id, request);
-        return;
-    }
-    if (strcmp(method, "credential_propose") == 0) {
-        handle_credential_propose_request(id, request);
-        return;
-    }
-    if (strcmp(method, "policy_get") == 0 ||
-        strcmp(method, "get_approval_history") == 0 ||
-        strcmp(method, "policy_propose") == 0 ||
-        strcmp(method, "sign_transaction") == 0 ||
-        strcmp(method, "sign_personal_message") == 0 ||
-        strcmp(method, "get_result") == 0 ||
-        strcmp(method, "ack_result") == 0) {
-        handle_session_unavailable_method(id, method, request);
-        return;
-    }
-
-    reject_line(id, method, "invalid_state");
+    signing::handle_usb_request_line(
+        line,
+        current_payload_transfer_ms(),
+        common_method_response_writer(),
+        stopwatch_usb_operation_handlers(),
+        resolve_payload_ref_for_common_handler);
 }
 
 void feed_byte(char value)
@@ -1787,10 +3171,18 @@ void feed_byte(char value)
 
 }  // namespace
 
+bool usb_transport_projected_device_state_is_error()
+{
+    return strcmp(device_state(), "error") == 0;
+}
+
 bool usb_transport_init()
 {
     format_device_id();
     signing::usb_link_state_clear();
+    signing::user_signing_flow_set_session_validator(
+        validate_session_for_user_signing,
+        nullptr);
     g_usb_session_grace = signing::UsbGraceState{};
     reset_line_receiver_state();
     if (!usb_serial_jtag_is_driver_installed()) {
@@ -1816,7 +3208,8 @@ void usb_transport_poll()
     }
     const uint32_t now_ms = current_payload_transfer_ms();
     clear_identification_display_if_expired(now_ms);
-    payload_transfer_clear_expired(now_ms);
+    clear_signing_notice_if_expired(now_ms);
+    signing::payload_delivery_clear_expired(now_ms);
     if (sui_zklogin_proposal_deadline_reached(now_ms)) {
         const SuiZkLoginProposalSnapshot snapshot = sui_zklogin_proposal_state_snapshot();
         finish_credential_proposal(
@@ -1826,7 +3219,9 @@ void usb_transport_poll()
     if (!refresh_usb_connection()) {
         return;
     }
-    reject_expired_connect_request(now_ms);
+    signing::connect_review_response_flow_run(connect_review_response_flow_ops());
+    reject_expired_signing_request(now_ms);
+    reject_expired_policy_update_request(now_ms);
 
     uint8_t buffer[kReadChunkBytes];
     const int read_count = usb_serial_jtag_read_bytes(buffer, sizeof(buffer), 0);
@@ -1850,6 +3245,12 @@ UsbIdentificationDisplay usb_transport_identification_display()
     return g_identification_display;
 }
 
+UsbSigningNotice usb_transport_signing_notice()
+{
+    clear_signing_notice_if_expired(current_payload_transfer_ms());
+    return g_signing_notice;
+}
+
 void usb_transport_set_runtime_state(UsbRuntimeState state)
 {
     g_runtime_state = state;
@@ -1863,6 +3264,16 @@ void usb_transport_set_runtime_state(UsbRuntimeState state)
 
 UsbPendingRequest usb_transport_pending_request()
 {
+    const signing::ConnectApprovalSnapshot approval =
+        signing::connect_approval_snapshot();
+    if (approval.active) {
+        UsbPendingRequest pending = {};
+        pending.kind = UsbPendingRequestKind::connect;
+        strlcpy(pending.id, approval.request_id, sizeof(pending.id));
+        strlcpy(pending.label, approval.client_name, sizeof(pending.label));
+        pending.request_window = approval.approval_window;
+        return pending;
+    }
     return g_pending_request;
 }
 
@@ -1884,35 +3295,84 @@ bool usb_transport_approve_pending_request()
         return result == SuiZkLoginProposalTerminalResult::activated;
     }
 
-    if (g_pending_request.kind != UsbPendingRequestKind::connect) {
-        return false;
-    }
-
-    const SessionStartResult start = session_state_replace(secure_random_fill_with_context, nullptr);
-    if (start != SessionStartResult::ok) {
-        if (g_pending_request.id[0] != '\0') {
-            reject_line(g_pending_request.id, "connect", "internal_output_error");
+    if (pending_kind_is_signing(g_pending_request.kind)) {
+        const char* method = pending_signing_method();
+        const uint32_t now_ms = current_payload_transfer_ms();
+        const signing::UserSigningTransitionResult confirmed =
+            signing::user_signing_flow_record_physical_confirmed_and_write_confirmation_history(
+                now_ms,
+                write_user_signing_confirmation_history,
+                nullptr);
+        if (confirmed != signing::UserSigningTransitionResult::ok) {
+            if (signing::user_signing_flow_terminal_pending()) {
+                finish_user_signing_terminal(g_pending_request.id);
+            } else {
+                const char* code =
+                    confirmed == signing::UserSigningTransitionResult::history_error
+                        ? "history_unavailable"
+                        : "invalid_state";
+                reject_line(g_pending_request.id, method, code);
+                signing::user_signing_flow_clear();
+            }
+            clear_pending_request();
+            return false;
         }
+
+        UserSigningOutputReadyContext ready_context{g_pending_request.id};
+        UserSigningTerminalFinishContext finish_context{g_pending_request.id};
+        const signing::UserSigningCriticalSectionOps critical_ops{
+            sign_user_signing_payload,
+            nullptr,
+        };
+        const signing::UserSigningHandoffFinishReport report =
+            signing::user_signing_execute_critical_section_and_finish(
+                user_signing_signed_response_fits,
+                &ready_context,
+                finish_user_signing_from_common,
+                &finish_context,
+                critical_ops);
         clear_pending_request();
-        return false;
+        return report.terminal_written &&
+               report.handoff.result == signing::UserSigningHandoffResult::ok;
     }
 
-    const bool written = write_connect_response(g_pending_request.id);
-    if (written) {
-        record_success(g_pending_request.id, "connect");
-    } else {
-        record_error(g_pending_request.id, "connect", "internal_output_error");
+    if (g_pending_request.kind == UsbPendingRequestKind::policy_propose) {
+        if (signing::policy_update_flow_mark_pin_verifying() !=
+            signing::PolicyUpdateFlowTransitionResult::ok) {
+            return false;
+        }
+        const signing::PolicyUpdateFlowTerminalResult result =
+            signing::policy_update_flow_commit(current_payload_transfer_ms());
+        finish_policy_update(g_pending_request.id, result);
+        return result == signing::PolicyUpdateFlowTerminalResult::applied;
     }
-    clear_pending_request();
-    return written;
+
+    if (signing::connect_approval_active()) {
+        return signing::connect_approval_choose(
+            signing::ConnectApprovalChoice::approved,
+            current_payload_transfer_ms());
+    }
+
+    return false;
 }
 
 bool usb_transport_reject_pending_request(const char* error_code)
 {
-    if (g_pending_request.kind == UsbPendingRequestKind::none) {
-        return false;
-    }
     const char* code = error_code != nullptr ? error_code : "user_rejected";
+    if (g_pending_request.kind == UsbPendingRequestKind::none) {
+        if (!signing::connect_approval_active()) {
+            return false;
+        }
+        if (strcmp(code, "user_rejected") == 0) {
+            return signing::connect_approval_choose(
+                signing::ConnectApprovalChoice::rejected,
+                current_payload_transfer_ms());
+        }
+        char request_id[signing::kRequestIdSize] = {};
+        signing::connect_approval_request_id(request_id, sizeof(request_id));
+        signing::connect_approval_clear();
+        return reject_line(request_id, "connect", code);
+    }
     bool written = false;
     if (g_pending_request.kind == UsbPendingRequestKind::credential_propose) {
         if (strcmp(code, "user_rejected") == 0) {
@@ -1946,9 +3406,51 @@ bool usb_transport_reject_pending_request(const char* error_code)
         clear_pending_request();
         return written;
     }
-    written = reject_line(g_pending_request.id, "connect", code);
-    clear_pending_request();
-    return written;
+    if (pending_kind_is_signing(g_pending_request.kind)) {
+        if (strcmp(code, "user_rejected") == 0) {
+            signing::user_signing_flow_record_device_rejected();
+            finish_user_signing_terminal(g_pending_request.id);
+            clear_pending_request();
+            return true;
+        }
+        if (strcmp(code, "timeout") == 0) {
+            signing::user_signing_flow_record_timeout(current_payload_transfer_ms());
+            finish_user_signing_terminal(g_pending_request.id);
+            clear_pending_request();
+            return true;
+        }
+        if (strcmp(code, "auth_unavailable") == 0 ||
+            strcmp(code, "consistency_error") == 0 ||
+            strcmp(code, "ui_error") == 0) {
+            signing::user_signing_flow_cancel_for_ui_loss();
+            finish_user_signing_terminal(g_pending_request.id);
+            clear_pending_request();
+            return true;
+        }
+        written = reject_line(g_pending_request.id, pending_signing_method(), code);
+        signing::user_signing_flow_clear();
+        clear_pending_request();
+        return written;
+    }
+    if (g_pending_request.kind == UsbPendingRequestKind::policy_propose) {
+        if (strcmp(code, "user_rejected") == 0) {
+            finish_policy_update(
+                g_pending_request.id,
+                signing::policy_update_flow_record_rejected(current_payload_transfer_ms()));
+            return true;
+        }
+        if (strcmp(code, "timeout") == 0) {
+            finish_policy_update(
+                g_pending_request.id,
+                signing::policy_update_flow_record_timed_out(current_payload_transfer_ms()));
+            return true;
+        }
+        finish_policy_update(
+            g_pending_request.id,
+            signing::policy_update_flow_record_ui_error());
+        return true;
+    }
+    return false;
 }
 
 void usb_transport_clear_session_scoped_state()
