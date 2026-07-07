@@ -27,10 +27,12 @@ state as signing readiness and must not decide whether signing is safe.
 ## Product State Diagram
 
 This diagram shows the shared product-state flow, not UI state and not a full
-target-internal state machine. Firmware targets use this top-level flow and
-shared state vocabulary at the protocol boundary, but each hardware target
-defines its own internal conditions, stored material, local authentication,
-power behavior, and UI substates before it projects into the shared states.
+target composition diagram. Firmware targets use this top-level flow and shared
+state vocabulary at the protocol boundary. A target may compose the shared
+state flow with target-specific UI, input, power behavior, storage adapters,
+identity adapters, and signing-material adapters before it projects into the
+shared states, but it must not redefine hardware-independent product state or
+transition order for the same shared operation.
 The host process, MCP clients, and Admin Page requests may submit requests, but
 they are not authority. Firmware state transitions occur only as consequences
 of Firmware-owned conditions and validated local input.
@@ -112,14 +114,15 @@ not exposed as a USB, host process, MCP, or host-triggered API.
 
 ## State Layers And Owners
 
-Agent-Q separates protocol-visible product state from target-local runtime
-state. Protocol-visible state names and shared product invariants are common for
-targets that implement the corresponding capability. A target's full state
-composition may differ by hardware or product variant, and target-local runtime
-state must be documented in each target's `SPEC.md`. Common state capability
-modules may be used inside a target composition; they do not by themselves
-define a complete target state machine unless that whole state machine is proven
-as a shared product invariant.
+Agent-Q separates protocol-visible product state from target-local composition
+details. Protocol-visible state names and shared product invariants are common
+for targets that implement the corresponding capability. A target's UI, input,
+power, storage adapter, identity adapter, and signing-material adapter may
+differ by hardware or product variant, and those target-local details must be
+documented in each target's `SPEC.md`. Hardware-independent product state,
+transition order, error precedence, and scratch-wipe rules for a shared
+operation must use common state capability modules once the shared contract is
+proven.
 
 | Layer | Examples | Owner | May gate protocol APIs? |
 |---|---|---|---:|
@@ -161,7 +164,7 @@ Allowed:
 - device-local setup speech bubble, Generate/Import choice, backup phrase
   Cancel/Confirm controls, and mnemonic import word-entry controls
 
-Rejected unless the target-specific exception below applies:
+Rejected unless the material-install bootstrap below applies:
 
 - `connect` in the current StackChan root-material flow until persistent root
   material, active policy, local PIN verifier, and signing authorization mode
@@ -172,12 +175,12 @@ Rejected unless the target-specific exception below applies:
 - `get_approval_history`
 - `sign_transaction`
 - `sign_personal_message`
-- USB provisioning/reset/diagnostic requests
+- unsupported USB provisioning/reset/diagnostic/debug requests
 - policy read/write
 - signing
 - external evidence or price fetch
 
-Target-specific exception:
+Material-install bootstrap:
 
 - A target with completed local setup but missing target-owned account/signing
   material admits a limited `connect`, `disconnect`, `get_capabilities`,
@@ -730,7 +733,7 @@ methods fail closed until the target-local unlock gate succeeds.
 | `identify_device` | O | O* | O | O | O | Firmware |
 | `connect` | B | X | O | X | X | Firmware |
 | `disconnect` | S | S | S | S | S | Firmware |
-| USB provisioning/reset/diagnostic requests | X | X | X | X | X | Firmware |
+| Unsupported USB provisioning/reset/diagnostic/debug requests | X | X | X | X | X | Firmware |
 | `get_capabilities` | B | X | O | X | X | Firmware |
 | `get_accounts` | B | X | O | X | X | Firmware |
 | `policy_get` | X | X | O | X | X | Firmware |
@@ -754,7 +757,7 @@ completed its local setup but still lack the target-owned material required for
 its implemented account/signing capabilities. Bootstrap access is limited to
 installing that material through shared methods and shared schemas; it must not
 grant account readiness, signing readiness, policy access, approval-history
-access, or target-specific protocol behavior.
+access, or alternate protocol behavior.
 
 The `connect` row first recovers an already approved live Firmware session on
 the current USB physical link. That recovery returns the existing session id

@@ -63,14 +63,22 @@ target-specific; for the current target, use the StackChan CoreS3 README.
 
 ## Folder Policy
 
+New hardware targets must start from the tracked templates in
+`firmware/templates/`. A target is not ready for implementation until its
+README, SPEC, and required-test checklist identify the shared product state it
+uses, the target-owned adapters it supplies, the protocol methods it implements
+or rejects, and the hardware smoke evidence required for completion.
+
 ### `src/common/`
 
 Hardware-independent firmware source shared by targets.
 
 Common source may include protocol parsers, chain transaction decoders, pure
-data-format helpers, and test fixtures when they do not depend on a hardware
-runtime. Common modules must not include target UI, USB transport, NVS layout,
-display power, posture, or other hardware-specific integration code.
+data-format helpers, product-state cores, transport-independent request
+lifecycle modules, and test fixtures when they do not depend on a hardware
+runtime. Common modules must not include target UI, board-specific USB driver
+integration, NVS layout adapters, display power, posture, or other
+hardware-specific integration code.
 
 ### `src/<hardware-id>/`
 
@@ -200,8 +208,11 @@ current device state
 
 Firmware may use hardware-specific rendering and controls. Shared protocol
 outcomes and shared product invariants must remain consistent when a target
-implements the corresponding capability. A target may compose a different state
-machine, user experience, transport, power behavior, or capability subset when
-its hardware or product variant requires it. That target-specific behavior must
-be documented in the target `SPEC.md` and must still enforce the shared protocol
-and state gates for every capability it implements.
+implements the corresponding capability. A target may compose common product
+state with a different user experience, transport adapter, power behavior,
+storage adapter, identity adapter, signing-material adapter, or capability
+subset when its hardware or product variant requires it. It must not fork the
+hardware-independent state machine, transition order, error precedence, or
+scratch-wipe rules for the same shared operation. Target-local composition
+details must be documented in the target `SPEC.md` and must still enforce the
+shared protocol and state gates for every capability it implements.

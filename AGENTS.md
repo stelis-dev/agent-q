@@ -89,10 +89,13 @@ Non-negotiable boundaries:
   protocol interface for every Firmware target. The device request envelope,
   device response envelope, method names, enum values, status field names,
   public error codes, and method result schemas are global protocol contracts,
-  not target-specific contracts. Firmware targets may use different internal
-  state machines, storage layouts, UI, input devices, transports, and material
-  types, and they may return different state values, capability values, account
-  values, or shared error codes according to their current target-local state.
+  not target-specific contracts. Firmware targets may use different storage
+  layouts, UI, input devices, transports, identity adapters, signing-material
+  adapters, and capability sets, but they must not fork hardware-independent
+  product state, transition order, error precedence, or scratch-wipe rules for
+  the same shared operation. They may return different state values, capability
+  values, account values, or shared error codes only according to their current
+  product state and implemented capability availability.
   A target may leave a protocol method unimplemented or unavailable, but it must
   express that through the shared method table, shared capability/account
   schemas, and a normal `DeviceResponse` failure using shared error codes such
@@ -126,6 +129,14 @@ Non-negotiable boundaries:
   matching target-owned key material on another. Availability details must be
   exposed through shared method results, capabilities, accounts, and explicit
   error responses, not through target-specific status schemas.
+- Firmware must not expose debug, diagnostic, inspection, dump, or direct
+  internal-state read interfaces in product builds. The only externally visible
+  state is the shared protocol projection and the bounded shared method results
+  defined in `specs/PROTOCOL.md`. Do not add methods, payload fields, logs,
+  UI screens, host tools, or test shortcuts that reveal target-internal state
+  owners, sensitive scratch, storage keys, raw payload buffers, proof internals,
+  private material, PIN/verifier state, policy internals beyond the implemented
+  `policy_get` result, or unprojected state-machine details.
 - Before a public release, do not add automatic backward-compatibility,
   migration, or named handling for previous Firmware storage, protocol, policy,
   or approval-history formats unless the user explicitly approves that product
@@ -262,11 +273,14 @@ policy evaluation, physical input, successful persistence, timeout, or failure
 cleanup. APIs then behave according to the resulting state; they do not create
 authority to force that state from outside.
 
-Do not add convenience APIs, debug protocol messages, host-triggered setup,
-host-triggered reset, diagnostic display commands, or state-changing shortcuts
-for tests or demos. If a hardware test needs special setup, use a development
-firmware build or re-flash workflow for that test. The tested behavior itself
-must still enter through the normal product UX and normal protocol surface.
+Do not add convenience APIs, debug protocol messages, internal-state inspection
+messages, state dumps, host-triggered setup, host-triggered reset, diagnostic
+display commands, or state-changing shortcuts for tests or demos. If a hardware
+test needs special setup or observability, use an ignored evidence capture, a
+development firmware build, or a re-flash workflow for that test. The tested
+behavior itself must still enter through the normal product UX and normal
+protocol surface, and product firmware must not retain the special observation
+interface.
 
 Do not use UI object lifetime as the source of truth for security, provisioning,
 signing, account, policy, session, or sensitive scratch state. UI may display,
@@ -635,9 +649,10 @@ Project-specific rules:
 - `firmware/build/` is ignored and is for build output only.
 - Firmware source is organized by hardware under
   `firmware/src/<hardware-id>/`.
-- Firmware target directories own hardware-specific state composition, UI
-  composition, display/touch/button/haptic/power behavior, board runtime, and
-  hardware-specific storage or identity adapters.
+- Firmware target directories own target composition, UI composition,
+  display/touch/button/haptic/power behavior, board runtime, and
+  hardware-specific storage or identity adapters. They do not own a separate
+  product-state contract merely because the target hardware is different.
 - Firmware common source owns hardware-independent product contracts and proven
   reusable capability modules, not whole hardware product flows by default.
   Examples include protocol envelopes, method/error tables, request/session id
@@ -645,14 +660,21 @@ Project-specific rules:
   state cores, local-authentication cores, policy parsers, signing validators,
   and sensitive scratch cleanup helpers when their contract is independent of
   display, input, power, and board runtime.
+- Firmware common source owns hardware-independent product state and state
+  transitions once their contract is proven. Target directories may compose
+  those common state modules with target-specific UI, power behavior, storage
+  adapters, identity adapters, and signing-material adapters, but must not keep
+  a forked internal state machine for the same product operation.
 - Firmware common source names must describe the owned responsibility, not the
   first target or transport that happened to use it. Do not use target,
   transport, display, touch, button, haptic, power, or board-specific names in
   common source unless that dependency is part of the common contract itself.
-- A full Firmware state machine may differ by hardware or product variant.
-  Common code should therefore be promoted as state capability modules used
-  inside target-specific state composition, unless the complete state machine is
-  itself proven as a shared product invariant.
+- A target may differ in UI/input/power composition, storage adapters, identity
+  adapters, signing-material adapters, and the availability of shared
+  capabilities. It may not redefine hardware-independent product state,
+  transition order, error precedence, or scratch-wipe rules for a shared
+  operation. Promote the shared state core instead, then keep only the real
+  target adapter at the target boundary.
 - Do not move code to `firmware/src/common/` merely because another target is
   expected to need it. Promote it only when it owns a tested current product
   invariant or when at least two completed target slices prove the same
