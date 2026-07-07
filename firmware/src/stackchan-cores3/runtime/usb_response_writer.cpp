@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "protocol/protocol_constants.h"
+#include "protocol/usb_json_response.h"
 
 #include "driver/usb_serial_jtag.h"
 #include "esp_err.h"
@@ -18,12 +19,6 @@ constexpr const char* kTag = "UsbResponseWriter";
 constexpr size_t kUsbSerialWriteChunkBytes = 512;
 constexpr uint32_t kUsbSerialWriteChunkTimeoutMs = 100;
 constexpr uint32_t kUsbSerialTxDoneTimeoutMs = 100;
-// Right after the device wakes from idle, the host USB link may be mid-resume
-// (selective-suspend) and not yet draining, so the first response write times out
-// and the response is dropped while a subsequent log line still gets through.
-// Retry the whole response a few times to survive that resume window.
-constexpr uint32_t kUsbResponseWriteAttempts = 6;
-constexpr uint32_t kUsbResponseWriteRetryDelayMs = 150;
 
 bool write_usb_serial_bytes(const char* data, size_t length)
 {
@@ -55,33 +50,25 @@ bool write_usb_serial_bytes(const char* data, size_t length)
     return true;
 }
 
-class UsbSerialJsonWriter {
-public:
-    size_t write(uint8_t value)
-    {
-        return write(&value, 1);
-    }
+bool write_usb_serial_response_bytes(const char* data, size_t length, void*)
+{
+    return write_usb_serial_bytes(data, length);
+}
 
-    size_t write(const uint8_t* data, size_t length)
-    {
-        if (failed_ || data == nullptr || length == 0) {
-            return 0;
-        }
-        if (!write_usb_serial_bytes(reinterpret_cast<const char*>(data), length)) {
-            failed_ = true;
-            return 0;
-        }
-        return length;
-    }
+void delay_usb_response_ms(uint32_t duration_ms, void*)
+{
+    vTaskDelay(pdMS_TO_TICKS(duration_ms));
+}
 
-    bool failed() const
-    {
-        return failed_;
-    }
-
-private:
-    bool failed_ = false;
-};
+const UsbJsonResponseWriteOps& usb_json_response_write_ops()
+{
+    static const UsbJsonResponseWriteOps ops{
+        write_usb_serial_response_bytes,
+        delay_usb_response_ms,
+        nullptr,
+    };
+    return ops;
+}
 
 }  // namespace
 
@@ -97,39 +84,31 @@ bool usb_response_write_json(JsonDocument& response)
                  static_cast<unsigned>(measured));
         return false;
     }
-    for (uint32_t attempt = 0; attempt < kUsbResponseWriteAttempts; ++attempt) {
-        if (attempt > 0) {
-            vTaskDelay(pdMS_TO_TICKS(kUsbResponseWriteRetryDelayMs));
-        }
-        // A leading newline isolates any partial bytes left by a failed earlier
-        // attempt: the host parser sees those as an incomplete non-JSON line and
-        // discards them, then parses the freshly re-serialized response line.
-        if (!write_usb_serial_bytes("\n", 1)) {
-            continue;
-        }
-        UsbSerialJsonWriter writer;
-        const size_t len = serializeJson(response, writer);
-        if (writer.failed() || len != measured) {
-            continue;
-        }
-        if (!write_usb_serial_bytes("\n", 1)) {
-            continue;
-        }
-        if (attempt > 0) {
-            ESP_LOGW(kTag, "USB JSON response delivered on attempt %u",
-                     static_cast<unsigned>(attempt + 1));
-        }
-        return true;
+    const bool ok = usb_json_response_write(response, usb_json_response_write_ops());
+    if (!ok) {
+        ESP_LOGW(kTag, "USB JSON response write failed");
     }
-    ESP_LOGW(kTag, "USB JSON response write failed after %u attempts",
-             static_cast<unsigned>(kUsbResponseWriteAttempts));
-    return false;
+    return ok;
+}
+
+const UsbJsonResponseWriteOps& usb_response_json_write_ops()
+{
+    return usb_json_response_write_ops();
 }
 
 bool usb_response_write_success_result(const char* id, const char* method, JsonObjectConst result)
 {
     JsonDocument response;
     if (!device_response_prepare_success_result(response, id, method, result)) {
+        return false;
+    }
+    return usb_response_write_json(response);
+}
+
+bool usb_response_write_transport_success_result(const char* id, JsonObjectConst result)
+{
+    JsonDocument response;
+    if (!device_response_prepare_transport_success_result(response, id, result)) {
         return false;
     }
     return usb_response_write_json(response);

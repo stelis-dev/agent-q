@@ -24,11 +24,13 @@ DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackCha
 ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
-  "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${COMMON_ROOT}/protocol/device_contract.cpp" \
-  "${COMMON_ROOT}/protocol/device_contract.h" \
-  "${RUNTIME_DIR}/signing_retry_response.cpp" \
-  "${RUNTIME_DIR}/signing_retry_response.h"; do
+	  "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
+	  "${COMMON_ROOT}/protocol/device_contract.cpp" \
+	  "${COMMON_ROOT}/protocol/device_contract.h" \
+	  "${COMMON_ROOT}/protocol/device_response.cpp" \
+	  "${COMMON_ROOT}/protocol/device_response.h" \
+	  "${COMMON_ROOT}/signing/signing_retry_response.cpp" \
+	  "${COMMON_ROOT}/signing/signing_retry_response.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -49,7 +51,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 
 #include <string>
 
-#include "signing_retry_response.h"
+#include "signing/signing_retry_response.h"
 
 namespace {
 
@@ -248,9 +250,10 @@ CPP
   -I"${ARDUINOJSON_ROOT}" \
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
-  "${TMP_DIR}/test.cpp" \
-  "${COMMON_ROOT}/protocol/device_contract.cpp" \
-  "${RUNTIME_DIR}/signing_retry_response.cpp" \
-  -o "${TMP_DIR}/test"
+	  "${TMP_DIR}/test.cpp" \
+	  "${COMMON_ROOT}/protocol/device_contract.cpp" \
+	  "${COMMON_ROOT}/protocol/device_response.cpp" \
+	  "${COMMON_ROOT}/signing/signing_retry_response.cpp" \
+	  -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

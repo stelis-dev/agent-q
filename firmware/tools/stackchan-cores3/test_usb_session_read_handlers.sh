@@ -20,6 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
+COMMON_PROTOCOL_DIR="${COMMON_ROOT}/protocol"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
 ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
@@ -28,8 +29,8 @@ for required in \
   "${COMMON_ROOT}/protocol/sign_route.h" \
   "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
   "${COMMON_ROOT}/protocol/usb_active_session_request_guard.h" \
-  "${RUNTIME_DIR}/usb_session_read_handlers.cpp" \
-  "${RUNTIME_DIR}/usb_session_read_handlers.h" \
+  "${COMMON_PROTOCOL_DIR}/usb_session_read_handlers.cpp" \
+  "${COMMON_PROTOCOL_DIR}/usb_session_read_handlers.h" \
   "${COMMON_ROOT}/protocol/usb_operation_response_writer.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -82,7 +83,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "usb_session_read_handlers.h"
+#include "protocol/usb_session_read_handlers.h"
 
 namespace {
 
@@ -111,6 +112,8 @@ signing::SuiActiveIdentityKind g_active_identity_kind =
 signing::SuiActiveIdentityError g_active_identity_error =
     signing::SuiActiveIdentityError::none;
 bool g_write_json_ok = true;
+constexpr size_t kTestEd25519PublicKeyBytes = 32;
+constexpr size_t kTestSchemePrefixedEd25519PublicKeyBytes = 1 + kTestEd25519PublicKeyBytes;
 const char* g_last_id = nullptr;
 const char* g_last_session = nullptr;
 const char* g_last_error_code = nullptr;
@@ -358,8 +361,8 @@ signing::SuiActiveIdentity resolve_active_identity()
             sizeof(identity.address),
             "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
         identity.public_key[0] = signing::kSuiSignatureSchemeFlagEd25519;
-        memset(identity.public_key + 1, 7, signing::kSuiEd25519PublicKeyBytes);
-        identity.public_key_size = signing::kSuiSchemePrefixedEd25519PublicKeyBytes;
+        memset(identity.public_key + 1, 7, kTestEd25519PublicKeyBytes);
+        identity.public_key_size = kTestSchemePrefixedEd25519PublicKeyBytes;
     } else if (identity.kind == signing::SuiActiveIdentityKind::zklogin) {
         snprintf(
             identity.address,
@@ -381,6 +384,7 @@ signing::UsbOperationResponseWriter make_writer()
 {
     return signing::UsbOperationResponseWriter{
         write_error,
+        signing::usb_response_write_success_result,
         log_write_failure,
     };
 }
@@ -541,6 +545,24 @@ int main()
 
     {
         reset_state();
+        g_active_identity_kind = signing::SuiActiveIdentityKind::none;
+        g_sui_zklogin_credential_available = true;
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_capabilities\",\"sessionId\":\"session\"}");
+        signing::handle_usb_get_capabilities_request("req", request, make_writer(), make_ops());
+        assert(g_write_error_calls == 0);
+        assert(g_resolve_active_identity_calls == 1);
+        assert(g_sui_zklogin_credential_available_calls == 1);
+        assert(g_write_json_calls == 1);
+        assert(strcmp(g_last_json_capability_key_scheme, "") == 0);
+        assert(strcmp(g_last_json_auth, "") == 0);
+        assert(g_last_json_signing_method_count == 0);
+        assert(g_last_json_credentials_array_present);
+        assert(g_last_json_credential_count == 1);
+        assert(g_last_json_credential_operation_count == 2);
+    }
+
+    {
+        reset_state();
         g_active_identity_kind = signing::SuiActiveIdentityKind::error;
         g_active_identity_error = signing::SuiActiveIdentityError::proof_storage_error;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_capabilities\",\"sessionId\":\"session\"}");
@@ -603,6 +625,20 @@ int main()
 
     {
         reset_state();
+        g_active_identity_kind = signing::SuiActiveIdentityKind::none;
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_accounts\",\"sessionId\":\"session\"}");
+        signing::handle_usb_get_accounts_request("req", request, make_writer(), make_ops());
+        assert(g_write_error_calls == 0);
+        assert(g_resolve_active_identity_calls == 1);
+        assert(g_read_sui_account_settings_calls == 0);
+        assert(g_write_json_calls == 1);
+        assert(strcmp(g_last_json_account_address, "") == 0);
+        assert(strcmp(g_last_json_account_public_key, "") == 0);
+        assert(strcmp(g_last_json_account_key_scheme, "") == 0);
+    }
+
+    {
+        reset_state();
         g_active_identity_kind = signing::SuiActiveIdentityKind::error;
         g_active_identity_error = signing::SuiActiveIdentityError::proof_storage_error;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_accounts\",\"sessionId\":\"session\"}");
@@ -661,7 +697,7 @@ CPP
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
   "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
-  "${RUNTIME_DIR}/usb_session_read_handlers.cpp" \
+  "${COMMON_PROTOCOL_DIR}/usb_session_read_handlers.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

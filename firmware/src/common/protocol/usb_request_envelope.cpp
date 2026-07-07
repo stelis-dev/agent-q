@@ -1,4 +1,4 @@
-#include "usb_request_envelope.h"
+#include "protocol/usb_request_envelope.h"
 
 #include <ArduinoJson.h>
 

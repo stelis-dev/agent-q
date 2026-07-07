@@ -55,14 +55,17 @@ for required in \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${COMMON_ROOT}/protocol/session_state.cpp" \
   "${COMMON_ROOT}/protocol/sign_request_identity.cpp" \
+  "${COMMON_ROOT}/protocol/usb_json_response.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_admission.h" \
   "${COMMON_ROOT}/transport/payload_delivery_operation_kind.h" \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_store.cpp" \
-  "${RUNTIME_DIR}/usb_signing_outcome_writer.cpp" \
-  "${COMMON_ROOT}/signing/signing_preflight.cpp" \
-  "${RUNTIME_DIR}/signing_retry_response.cpp" \
+	  "${COMMON_ROOT}/signing/usb_signing_outcome_writer.cpp" \
+	  "${COMMON_ROOT}/signing/usb_signing_outcome_writer.h" \
+	  "${COMMON_ROOT}/signing/signing_preflight.cpp" \
+	  "${COMMON_ROOT}/signing/signing_retry_response.cpp" \
+	  "${COMMON_ROOT}/signing/signing_retry_response.h" \
   "${COMMON_ROOT}/signing/sign_personal_message_user_ingress.cpp" \
   "${COMMON_ROOT}/signing/sign_personal_message_user_validation.cpp" \
   "${COMMON_ROOT}/signing/signing_retry_delivery.cpp" \
@@ -121,11 +124,11 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include "signing/sign_transaction_user_ingress.h"
 #include "signing/signing_preflight.h"
 #include "protocol/sign_request_identity.h"
-#include "signing_retry_response.h"
+#include "signing/signing_retry_response.h"
 #include "protocol/signing_response_store.h"
 #include "protocol/device_contract.h"
 #include "protocol/protocol_constants.h"
-#include "usb_signing_outcome_writer.h"
+#include "signing/usb_signing_outcome_writer.h"
 #include "sui_account_store.h"
 #include "sui_signing_authority.h"
 #include "sui_signing_preparation.h"
@@ -974,12 +977,13 @@ CPP
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${COMMON_ROOT}/protocol/session_state.cpp" \
   "${COMMON_ROOT}/protocol/sign_request_identity.cpp" \
+  "${COMMON_ROOT}/protocol/usb_json_response.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
-  "${COMMON_ROOT}/transport/payload_delivery_store.cpp" \
-  "${RUNTIME_DIR}/usb_signing_outcome_writer.cpp" \
-  "${COMMON_ROOT}/signing/signing_preflight.cpp" \
-  "${RUNTIME_DIR}/signing_retry_response.cpp" \
+	  "${COMMON_ROOT}/transport/payload_delivery_store.cpp" \
+	  "${COMMON_ROOT}/signing/usb_signing_outcome_writer.cpp" \
+	  "${COMMON_ROOT}/signing/signing_preflight.cpp" \
+	  "${COMMON_ROOT}/signing/signing_retry_response.cpp" \
   "${COMMON_ROOT}/signing/sign_personal_message_user_ingress.cpp" \
   "${COMMON_ROOT}/signing/sign_personal_message_user_validation.cpp" \
   "${COMMON_ROOT}/signing/signing_retry_delivery.cpp" \

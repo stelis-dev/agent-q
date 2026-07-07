@@ -1,30 +1,33 @@
-#include "usb_device_handlers.h"
+#include "protocol/usb_device_handlers.h"
 
 #include "protocol/json_input.h"
 #include "protocol/protocol_constants.h"
-#include "usb_response_writer.h"
 
 namespace signing {
 
 namespace {
 
-bool write_status_response(const char* id, const UsbDeviceStatusInfo& info)
+bool write_status_response(
+    const char* id,
+    const UsbDeviceStatusInfo& info,
+    const UsbOperationResponseWriter& writer)
 {
     JsonDocument result;
     device_response_write_device_fields(result["device"].to<JsonObject>(), info.device);
     result["provisioning"]["state"] = info.provisioning_state;
-    return usb_response_write_success_result(id, "get_status", result.as<JsonObjectConst>());
+    return writer.write_success_result(id, "get_status", result.as<JsonObjectConst>());
 }
 
 bool write_identify_device_method_result(
     const char* id,
     const char* code,
-    const UsbDeviceStatusInfo& info)
+    const UsbDeviceStatusInfo& info,
+    const UsbOperationResponseWriter& writer)
 {
     JsonDocument result;
     result["code"] = code;
     device_response_write_device_fields(result["device"].to<JsonObject>(), info.device);
-    return usb_response_write_success_result(id, "identify_device", result.as<JsonObjectConst>());
+    return writer.write_success_result(id, "identify_device", result.as<JsonObjectConst>());
 }
 
 }  // namespace
@@ -53,9 +56,10 @@ void handle_usb_get_status_request(
     if (ops.refresh_persistent_material_consistency != nullptr) {
         (void)ops.refresh_persistent_material_consistency();
     }
-    if (ops.device_status_info != nullptr &&
-        write_status_response(id, ops.device_status_info())) {
-        return;
+    if (ops.device_status_info != nullptr) {
+        if (write_status_response(id, ops.device_status_info(), writer)) {
+            return;
+        }
     }
     {
         writer.log_write_failure("get_status", id);
@@ -103,9 +107,10 @@ void handle_usb_identify_device_request(
     if (ops.show_identification_code != nullptr) {
         ops.show_identification_code(code, ops.identify_display_ms);
     }
-    if (ops.device_status_info != nullptr &&
-        write_identify_device_method_result(id, code, ops.device_status_info())) {
-        return;
+    if (ops.device_status_info != nullptr) {
+        if (write_identify_device_method_result(id, code, ops.device_status_info(), writer)) {
+            return;
+        }
     }
     writer.log_write_failure("identify_device", id);
 }

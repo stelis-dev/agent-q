@@ -21,6 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
+COMMON_TRANSPORT_DIR="${COMMON_ROOT}/transport"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
 ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
@@ -40,8 +41,8 @@ for required in \
   "${MBEDTLS_LIBRARY_DIR}/platform_util.c" \
   "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
   "${COMMON_ROOT}/protocol/usb_active_session_request_guard.h" \
-  "${RUNTIME_DIR}/usb_payload_transfer_handlers.cpp" \
-  "${RUNTIME_DIR}/usb_payload_transfer_handlers.h" \
+  "${COMMON_TRANSPORT_DIR}/usb_payload_transfer_handlers.cpp" \
+  "${COMMON_TRANSPORT_DIR}/usb_payload_transfer_handlers.h" \
   "${COMMON_ROOT}/transport/payload_delivery_admission.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_admission.h" \
   "${COMMON_ROOT}/transport/payload_delivery_operation_kind.h" \
@@ -182,6 +183,16 @@ bool usb_response_write_success_result(const char* id, const char* method, JsonO
     return usb_response_write_json(response);
 }
 
+bool usb_response_write_transport_success_result(const char* id, JsonObjectConst result)
+{
+    JsonDocument response;
+    response["id"] = id;
+    response["version"] = kProtocolVersion;
+    response["success"] = true;
+    response["result"].set(result);
+    return usb_response_write_json(response);
+}
+
 }  // namespace signing
 
 const char* response_transfer_id() { return g_response_transfer_id; }
@@ -215,7 +226,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <string>
 
 #include "transport/payload_delivery_store.h"
-#include "usb_payload_transfer_handlers.h"
+#include "transport/usb_payload_transfer_handlers.h"
 
 extern const char* response_transfer_id();
 extern const char* response_payload_ref();
@@ -226,6 +237,11 @@ extern const char* response_status();
 extern const char* response_json();
 extern void set_decode_should_fail_after_write(bool value);
 extern bool last_decode_output_wiped();
+
+namespace signing {
+bool usb_response_write_success_result(const char* id, const char* method, JsonObjectConst result);
+bool usb_response_write_transport_success_result(const char* id, JsonObjectConst result);
+}
 
 namespace {
 
@@ -288,7 +304,7 @@ void reset_state()
     signing::payload_delivery_store_reset();
 }
 
-bool write_error(const char*, const char* code)
+bool write_method_error(const char*, const char*, const char* code)
 {
     ++g_error_calls;
     g_last_error_code = code;
@@ -342,7 +358,11 @@ signing::TimeoutTick current_tick()
 
 signing::UsbOperationResponseWriter make_writer()
 {
-    return signing::UsbOperationResponseWriter{write_error, log_write_failure};
+    return signing::UsbOperationResponseWriter{
+        write_method_error,
+        signing::usb_response_write_success_result,
+        signing::usb_response_write_transport_success_result,
+        log_write_failure};
 }
 
 signing::UsbPayloadTransferHandlerOps make_ops()
@@ -892,7 +912,7 @@ CPP
   -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   -I"${MBEDTLS_INCLUDE_DIR}" \
-  -c "${RUNTIME_DIR}/usb_payload_transfer_handlers.cpp" \
+  -c "${COMMON_TRANSPORT_DIR}/usb_payload_transfer_handlers.cpp" \
   -o "${TMP_DIR}/usb_payload_transfer_handlers.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \

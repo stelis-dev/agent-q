@@ -20,14 +20,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_DIR="${REPO_ROOT}/firmware/src/common"
+COMMON_TRANSPORT_DIR="${COMMON_DIR}/transport"
 USB_RESPONSE_WRITER_SOURCE="${RUNTIME_DIR}/usb_response_writer.cpp"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
 ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${RUNTIME_DIR}/usb_disconnect_handler.cpp" \
-  "${RUNTIME_DIR}/usb_disconnect_handler.h" \
+  "${COMMON_TRANSPORT_DIR}/usb_disconnect_handler.cpp" \
+  "${COMMON_TRANSPORT_DIR}/usb_disconnect_handler.h" \
   "${USB_RESPONSE_WRITER_SOURCE}" \
   "${COMMON_DIR}/protocol/usb_operation_response_writer.h"; do
   if [[ ! -f "${required}" ]]; then
@@ -65,7 +66,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "usb_disconnect_handler.h"
+#include "transport/usb_disconnect_handler.h"
 
 namespace {
 
@@ -198,23 +199,22 @@ void clear_session()
 
 }  // namespace
 
-namespace signing {
+namespace {
 
-bool usb_response_write_disconnect_success(const char* id)
+bool write_success_result(const char* id, const char* method, JsonObjectConst result)
 {
+    (void)method;
+    (void)result;
     g_write_disconnect_calls += 1;
     g_last_id = id;
     return g_write_disconnect_ok;
 }
 
-}  // namespace signing
-
-namespace {
-
 signing::UsbOperationResponseWriter make_writer()
 {
     return signing::UsbOperationResponseWriter{
         write_error,
+        write_success_result,
         log_write_failure,
     };
 }
@@ -378,7 +378,7 @@ CPP
   -I"${COMMON_DIR}" \
   -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${RUNTIME_DIR}/usb_disconnect_handler.cpp" \
+  "${COMMON_TRANSPORT_DIR}/usb_disconnect_handler.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

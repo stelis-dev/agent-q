@@ -53,7 +53,6 @@
 #include "user_signing_review_view_model.h"
 #include "user_signing_review_ui_flow.h"
 #include "signing/user_signing_critical_section.h"
-#include "signing_route.h"
 #include "protocol/signing_mode.h"
 #include "sui_account.h"
 #include "sui_account_settings.h"
@@ -65,30 +64,29 @@
 #include "transport/timeout_window.h"
 #include "transient_ui_flow.h"
 #include "transport/usb_link_state.h"
-#include "usb_approval_history_handler.h"
-#include "usb_connect_handler.h"
-#include "usb_device_handlers.h"
-#include "usb_disconnect_handler.h"
-#include "usb_operation_dispatch.h"
-#include "usb_operation_manifest.h"
+#include "protocol/usb_approval_history_handler.h"
+#include "transport/usb_connect_handler.h"
+#include "protocol/usb_device_handlers.h"
+#include "transport/usb_disconnect_handler.h"
+#include "protocol/usb_operation_dispatch.h"
+#include "protocol/usb_operation_manifest.h"
 #include "protocol/usb_operation_response_writer.h"
 #include "policy/usb_policy_handlers.h"
-#include "usb_payload_transfer_handlers.h"
+#include "transport/usb_payload_transfer_handlers.h"
 #include "ui_panel_cleanup.h"
 #include "protocol/usb_operation_type.h"
 #include "usb_line_receiver.h"
-#include "usb_request_envelope.h"
-#include "usb_request_line_handler.h"
-#include "usb_retained_response_handlers.h"
-#include "usb_session_read_handlers.h"
+#include "protocol/usb_request_envelope.h"
+#include "protocol/usb_request_line_handler.h"
+#include "transport/usb_retained_response_handlers.h"
+#include "protocol/usb_session_read_handlers.h"
+#include "protocol/usb_sui_zklogin_credential_handlers.h"
 #include "signing/usb_signing_handlers.h"
-#include "usb_signing_outcome_writer.h"
-#include "usb_sui_zklogin_credential_handlers.h"
-#include "usb_sui_zklogin_credential_outcome_writer.h"
+#include "signing/usb_signing_outcome_writer.h"
 #include "usb_response_writer.h"
 #include "ui_event_bridge.h"
 #include "signing/signing_retry_delivery.h"
-#include "signing_retry_response.h"
+#include "signing/signing_retry_response.h"
 #include "signing/signing_preflight.h"
 #include "protocol/signing_response_store.h"
 #include "transport/usb_session_grace.h"
@@ -377,16 +375,6 @@ signing::TimeoutTick current_timeout_tick()
     return static_cast<signing::TimeoutTick>(xTaskGetTickCount());
 }
 
-void wipe_and_free_owned_payload(signing::PayloadDeliveryOwnedPayload& payload)
-{
-    if (payload.bytes != nullptr) {
-        signing::wipe_sensitive_buffer(payload.bytes, payload.size_bytes);
-        free(payload.bytes);
-    }
-    payload.bytes = nullptr;
-    payload.size_bytes = 0;
-}
-
 bool resolve_request_payload_ref(
     JsonDocument& request,
     JsonDocument& resolved_payload,
@@ -394,38 +382,12 @@ bool resolve_request_payload_ref(
     const signing::UsbRequestEnvelope& envelope,
     const signing::UsbOperationResponseWriter& writer)
 {
-    const char* payload_ref = nullptr;
-    if (!signing::payload_delivery_payload_ref_wrapper(request, &payload_ref)) {
-        return true;
-    }
-
-    const char* session_id = nullptr;
-    if (!signing::json_value_c_string(request["sessionId"], &session_id)) {
-        writer.write_error(envelope.id, "invalid_session");
-        return false;
-    }
-
-    signing::PayloadDeliveryOwnedPayload owned_payload = {};
-    const signing::PayloadDeliveryResult take_result =
-        signing::payload_delivery_take_finalized(
-            now_tick,
-            session_id,
-            payload_ref,
-            &owned_payload);
-    if (take_result != signing::PayloadDeliveryResult::ok) {
-        writer.write_error(envelope.id, signing::payload_delivery_resolve_error_code(take_result));
-        return false;
-    }
-
-    const DeserializationError parse_error =
-        deserializeJson(resolved_payload, owned_payload.bytes, owned_payload.size_bytes);
-    wipe_and_free_owned_payload(owned_payload);
-    if (parse_error || resolved_payload.as<JsonObjectConst>().isNull()) {
-        writer.write_error(envelope.id, "invalid_params");
-        return false;
-    }
-    request["payload"].set(resolved_payload.as<JsonObjectConst>());
-    return true;
+    return signing::payload_delivery_resolve_request_payload_ref(
+        request,
+        resolved_payload,
+        now_tick,
+        envelope,
+        writer);
 }
 
 signing::DeviceActivityProjection current_device_activity()
@@ -463,6 +425,7 @@ const UsbOperationResponseWriter& usb_operation_response_writer()
     static const UsbOperationResponseWriter writer = {
         signing::usb_response_write_method_error,
         signing::usb_response_write_success_result,
+        signing::usb_response_write_transport_success_result,
         signing::usb_response_log_write_failure,
     };
     return writer;
@@ -552,6 +515,25 @@ bool read_signing_mode_for_preflight(
     return signing::read_signing_authorization_mode(mode);
 }
 
+bool write_method_error_for_signing_outcome(
+    const char* id,
+    const char* method,
+    const char* code,
+    void*)
+{
+    return signing::usb_response_write_method_error(id, method, code);
+}
+
+const signing::UsbSigningOutcomeWriterOps& signing_outcome_writer_ops()
+{
+    static const signing::UsbSigningOutcomeWriterOps ops{
+        signing::usb_response_json_write_ops(),
+        write_method_error_for_signing_outcome,
+        nullptr,
+    };
+    return ops;
+}
+
 bool write_policy_execution_response(
     const char* id,
     const uint8_t* request_identity,
@@ -561,7 +543,8 @@ bool write_policy_execution_response(
         id,
         signing::session_id(),
         request_identity,
-        result);
+        result,
+        signing_outcome_writer_ops());
 }
 
 bool write_policy_propose_outcome_with_current_policy(
@@ -807,25 +790,41 @@ void finish_user_signing_terminal(
                 signing::session_id(),
                 "user",
                 snapshot,
-                *signing_output);
+                *signing_output,
+                signing_outcome_writer_ops());
         display_message = wrote_response ? "Signed" : "Signed; USB failed";
         delivery_failed_message = "Signed; USB failed";
         display_kind = wrote_response ? MessageKind::success : MessageKind::error;
     } else if (result == signing::UserSigningTerminalResult::rejected) {
         wrote_response = signing::usb_signing_outcome_write_user_terminal(
-            request_id, signing::session_id(), snapshot.request_identity, snapshot.method, result);
+            request_id,
+            signing::session_id(),
+            snapshot.request_identity,
+            snapshot.method,
+            result,
+            signing_outcome_writer_ops());
         display_message = wrote_response ? "Signing rejected" : "Rejected; USB failed";
         delivery_failed_message = "Rejected; USB failed";
         display_kind = wrote_response ? MessageKind::rejected : MessageKind::error;
     } else if (result == signing::UserSigningTerminalResult::timed_out) {
         wrote_response = signing::usb_signing_outcome_write_user_terminal(
-            request_id, signing::session_id(), snapshot.request_identity, snapshot.method, result);
+            request_id,
+            signing::session_id(),
+            snapshot.request_identity,
+            snapshot.method,
+            result,
+            signing_outcome_writer_ops());
         display_message = wrote_response ? "Signing timed out" : "Timeout; USB failed";
         delivery_failed_message = "Timeout; USB failed";
         display_kind = wrote_response ? MessageKind::timeout : MessageKind::error;
     } else if (result == signing::UserSigningTerminalResult::signing_failed) {
         wrote_response = signing::usb_signing_outcome_write_user_terminal(
-            request_id, signing::session_id(), snapshot.request_identity, snapshot.method, result);
+            request_id,
+            signing::session_id(),
+            snapshot.request_identity,
+            snapshot.method,
+            result,
+            signing_outcome_writer_ops());
         display_message = wrote_response ? "Signing failed" : "Failure; USB failed";
         delivery_failed_message = "Failure; USB failed";
     } else if (request_id != nullptr && request_id[0] != '\0') {
@@ -2339,6 +2338,8 @@ const char* sui_proof_status_label(signing::SuiZkLoginProofRecordStatus status)
 const char* sui_active_identity_kind_label(signing::SuiActiveIdentityKind kind)
 {
     switch (kind) {
+        case signing::SuiActiveIdentityKind::none:
+            return "none";
         case signing::SuiActiveIdentityKind::native:
             return "native";
         case signing::SuiActiveIdentityKind::zklogin:
@@ -3016,8 +3017,9 @@ void finish_sui_zklogin_proposal_outcome_terminal(
 {
     const bool session_ended =
         signing::sui_zklogin_proposal_terminal_ends_session(result);
-    if (!signing::usb_sui_zklogin_credential_proposal_outcome_write(
+    if (!signing::write_usb_credential_proposal_outcome_response(
             request_id,
+            usb_operation_response_writer(),
             result,
             session_ended)) {
         signing::usb_response_log_write_failure("credential_propose", request_id);
@@ -4217,19 +4219,85 @@ void handle_policy_propose_request(
     signing::handle_usb_policy_propose_request(id, request, writer, policy_handler_ops());
 }
 
+signing::UsbSuiZkLoginCredentialPrepareResult prepare_sui_zklogin_credential_for_common(
+    const char*,
+    signing::UsbSuiZkLoginCredentialPreparation* output)
+{
+    if (output == nullptr) {
+        return signing::UsbSuiZkLoginCredentialPrepareResult::internal_output_error;
+    }
+    memset(output, 0, sizeof(*output));
+    const signing::SuiActiveIdentity identity = signing::resolve_active_sui_identity();
+    if (identity.kind != signing::SuiActiveIdentityKind::native ||
+        identity.address[0] == '\0' ||
+        identity.public_key_size != signing::kSuiSchemePrefixedEd25519PublicKeyBytes) {
+        return signing::UsbSuiZkLoginCredentialPrepareResult::invalid_state;
+    }
+    strlcpy(output->address, identity.address, sizeof(output->address));
+    memcpy(output->public_key, identity.public_key, identity.public_key_size);
+    output->public_key_size = identity.public_key_size;
+    return signing::UsbSuiZkLoginCredentialPrepareResult::ok;
+}
+
+signing::UsbSuiZkLoginCredentialProposalBeginResult begin_sui_zklogin_proposal_for_common(
+    JsonVariantConst params,
+    const char* request_id,
+    const char* session_id,
+    signing::TimeoutTick now,
+    signing::TimeoutWindow request_window)
+{
+    const signing::SuiZkLoginProposalBeginResult result =
+        signing::sui_zklogin_proposal_flow_begin(
+            params,
+            request_id,
+            session_id,
+            now,
+            request_window);
+    return result == signing::SuiZkLoginProposalBeginResult::ok
+               ? signing::UsbSuiZkLoginCredentialProposalBeginResult::ok
+               : signing::UsbSuiZkLoginCredentialProposalBeginResult::invalid_proof;
+}
+
+bool write_sui_zklogin_credential_propose_state_error(
+    const char* id,
+    const signing::UsbOperationResponseWriter& writer)
+{
+    const signing::SuiActiveIdentity identity = signing::resolve_active_sui_identity();
+    if (identity.kind == signing::SuiActiveIdentityKind::native) {
+        return false;
+    }
+    writer.write_error(id, "invalid_state");
+    return true;
+}
+
 const signing::UsbSuiZkLoginCredentialHandlerOps& sui_zklogin_credential_handler_ops()
 {
-    static const signing::UsbSuiZkLoginCredentialHandlerOps ops = {
+    static const signing::UsbActiveSessionRequestGuardOps prepare_guard_ops = {
         provisioned_material_ready,
-        write_busy_if_pending_or_local_flow_active_allow_settings,
-        write_payload_delivery_credential_propose_busy,
+        nullptr,
         write_payload_delivery_safe_read_admission_error,
         require_active_matching_session,
-        signing::resolve_active_sui_identity,
+    };
+    static const signing::UsbActiveSessionRequestGuardOps propose_guard_ops = {
+        provisioned_material_ready,
+        nullptr,
+        nullptr,
+        require_active_matching_session,
+    };
+    static const signing::UsbSuiZkLoginCredentialHandlerOps ops = {
+        write_busy_if_pending_or_local_flow_active_allow_settings,
+        write_payload_delivery_credential_propose_busy,
+        nullptr,
+        write_sui_zklogin_credential_propose_state_error,
+        prepare_guard_ops,
+        propose_guard_ops,
+        signing::UsbSessionIdMode::optional_default_empty,
+        signing::UsbSessionIdMode::optional_default_empty,
+        prepare_sui_zklogin_credential_for_common,
         current_timeout_tick,
         make_sui_zklogin_proposal_window,
-        signing::sui_zklogin_proposal_flow_begin,
-        signing::sui_zklogin_proposal_begin_result_reason,
+        begin_sui_zklogin_proposal_for_common,
+        nullptr,
         show_sui_zklogin_proposal_review,
     };
     return ops;

@@ -5,10 +5,9 @@
 #include "protocol/json_input.h"
 #include "transport/payload_delivery_store.h"
 #include "protocol/protocol_constants.h"
-#include "signing_route.h"
+#include "protocol/sign_route.h"
 #include "sui/signing_limits.h"
 #include "protocol/usb_active_session_request_guard.h"
-#include "usb_response_writer.h"
 
 extern "C" {
 #include "byte_conversions.h"
@@ -55,6 +54,7 @@ const char* active_identity_key_scheme(SuiActiveIdentityKind kind)
             return "ed25519";
         case SuiActiveIdentityKind::zklogin:
             return "zklogin";
+        case SuiActiveIdentityKind::none:
         case SuiActiveIdentityKind::error:
         default:
             return nullptr;
@@ -76,6 +76,7 @@ bool write_capability_account(JsonObject account, SuiActiveIdentityKind kind)
 
 bool write_capabilities_response(
     const char* id,
+    const UsbOperationResponseWriter& writer,
     AuthorizationMode signing_mode,
     const SuiActiveIdentity& active_identity,
     bool sui_zklogin_credential_available)
@@ -85,29 +86,33 @@ bool write_capabilities_response(
     JsonObject sui = chains.add<JsonObject>();
     sui["id"] = "sui";
     JsonArray accounts = sui["accounts"].to<JsonArray>();
-    JsonObject account = accounts.add<JsonObject>();
-    if (!write_capability_account(account, active_identity.kind)) {
-        return false;
+    if (active_identity.kind != SuiActiveIdentityKind::none) {
+        JsonObject account = accounts.add<JsonObject>();
+        if (!write_capability_account(account, active_identity.kind)) {
+            return false;
+        }
     }
     sui["methods"].to<JsonArray>();
-    JsonObject signing = result["signing"].to<JsonObject>();
-    signing["authorization"] = authorization_mode_name(signing_mode);
-    JsonArray signing_routes = signing["methods"].to<JsonArray>();
-    if (signing_route_allowed_for_authorization_mode(
-            Route::sui_sign_transaction,
-            signing_mode)) {
-        JsonObject route_entry = signing_routes.add<JsonObject>();
-        route_entry["chain"] = "sui";
-        route_entry["method"] = signing_route_wire_method(
-            Route::sui_sign_transaction);
-    }
-    if (signing_route_allowed_for_authorization_mode(
-            Route::sui_sign_personal_message,
-            signing_mode)) {
-        JsonObject personal_message_entry = signing_routes.add<JsonObject>();
-        personal_message_entry["chain"] = "sui";
-        personal_message_entry["method"] = signing_route_wire_method(
-            Route::sui_sign_personal_message);
+    if (active_identity.kind != SuiActiveIdentityKind::none) {
+        JsonObject signing = result["signing"].to<JsonObject>();
+        signing["authorization"] = authorization_mode_name(signing_mode);
+        JsonArray signing_routes = signing["methods"].to<JsonArray>();
+        if (sign_route_allowed_for_authorization_mode(
+                SupportedSignRoute::sui_sign_transaction,
+                signing_mode)) {
+            JsonObject route_entry = signing_routes.add<JsonObject>();
+            route_entry["chain"] = "sui";
+            route_entry["method"] = sign_route_wire_method(
+                SupportedSignRoute::sui_sign_transaction);
+        }
+        if (sign_route_allowed_for_authorization_mode(
+                SupportedSignRoute::sui_sign_personal_message,
+                signing_mode)) {
+            JsonObject personal_message_entry = signing_routes.add<JsonObject>();
+            personal_message_entry["chain"] = "sui";
+            personal_message_entry["method"] = sign_route_wire_method(
+                SupportedSignRoute::sui_sign_personal_message);
+        }
     }
     JsonArray credentials = result["credentials"].to<JsonArray>();
     if (sui_zklogin_credential_available) {
@@ -118,11 +123,15 @@ bool write_capabilities_response(
         operations.add("credential_prepare");
         operations.add("credential_propose");
     }
-    return usb_response_write_success_result(id, "get_capabilities", result.as<JsonObjectConst>());
+    return writer.write_success_result(
+        id,
+        "get_capabilities",
+        result.as<JsonObjectConst>());
 }
 
 bool write_accounts_response(
     const char* id,
+    const UsbOperationResponseWriter& writer,
     const UsbSessionReadHandlerOps& ops,
     SuiActiveIdentityError* active_identity_error)
 {
@@ -140,6 +149,16 @@ bool write_accounts_response(
         }
         return false;
     }
+
+    JsonDocument result;
+    JsonArray accounts = result["accounts"].to<JsonArray>();
+    if (active_identity.kind == SuiActiveIdentityKind::none) {
+        return writer.write_success_result(
+            id,
+            "get_accounts",
+            result.as<JsonObjectConst>());
+    }
+
     const char* key_scheme = active_identity_key_scheme(active_identity.kind);
     if (key_scheme == nullptr ||
         active_identity.public_key_size == 0 ||
@@ -163,8 +182,6 @@ bool write_accounts_response(
         return false;
     }
 
-    JsonDocument result;
-    JsonArray accounts = result["accounts"].to<JsonArray>();
     JsonObject account = accounts.add<JsonObject>();
     account["chain"] = "sui";
     account["address"] = active_identity.address;
@@ -175,7 +192,7 @@ bool write_accounts_response(
     }
     JsonObject sponsored_transactions = account["sponsoredTransactions"].to<JsonObject>();
     sponsored_transactions["acceptGasSponsor"] = account_settings.accept_gas_sponsor;
-    return usb_response_write_success_result(id, "get_accounts", result.as<JsonObjectConst>());
+    return writer.write_success_result(id, "get_accounts", result.as<JsonObjectConst>());
 }
 
 }  // namespace
@@ -221,6 +238,7 @@ void handle_usb_get_capabilities_request(
         ops.sui_zklogin_credential_available();
     if (write_capabilities_response(
             id,
+            writer,
             signing_mode,
             active_identity,
             sui_zklogin_credential_available)) {
@@ -248,7 +266,7 @@ void handle_usb_get_accounts_request(
     (void)session_id;
 
     SuiActiveIdentityError active_identity_error = SuiActiveIdentityError::none;
-    if (write_accounts_response(id, ops, &active_identity_error)) {
+    if (write_accounts_response(id, writer, ops, &active_identity_error)) {
         return;
     }
     if (active_identity_error == SuiActiveIdentityError::native_account_unavailable &&

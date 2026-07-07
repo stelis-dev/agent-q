@@ -1,10 +1,9 @@
-#include "usb_approval_history_handler.h"
+#include "protocol/usb_approval_history_handler.h"
 
 #include "protocol/approval_history_json_writer.h"
 #include "protocol/json_input.h"
 #include "protocol/protocol_constants.h"
 #include "protocol/usb_active_session_request_guard.h"
-#include "usb_response_writer.h"
 
 namespace signing {
 
@@ -94,7 +93,7 @@ void handle_usb_get_approval_history_request(
         ops.read_approval_history_page(before_sequence, limit, &page) == ApprovalHistoryReadResult::ok) {
         JsonDocument result;
         if (approval_history_write_page_json(result.to<JsonObject>(), page) &&
-            usb_response_write_success_result(id, "get_approval_history", result.as<JsonObjectConst>())) {
+            writer.write_success_result(id, "get_approval_history", result.as<JsonObjectConst>())) {
             return;
         }
     }

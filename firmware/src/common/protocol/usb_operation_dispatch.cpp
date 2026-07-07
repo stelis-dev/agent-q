@@ -1,6 +1,6 @@
-#include "usb_operation_dispatch.h"
+#include "protocol/usb_operation_dispatch.h"
 
-#include "usb_operation_manifest.h"
+#include "protocol/usb_operation_manifest.h"
 
 namespace signing {
 

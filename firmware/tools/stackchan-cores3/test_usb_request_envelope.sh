@@ -19,6 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
+COMMON_PROTOCOL_DIR="${COMMON_ROOT}/protocol"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
 ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
@@ -26,8 +27,8 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.h" \
-  "${RUNTIME_DIR}/usb_request_envelope.cpp" \
-  "${RUNTIME_DIR}/usb_request_envelope.h" \
+  "${COMMON_PROTOCOL_DIR}/usb_request_envelope.cpp" \
+  "${COMMON_PROTOCOL_DIR}/usb_request_envelope.h" \
   "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
   "${COMMON_ROOT}/protocol/usb_operation_type.h" \
   "${COMMON_ROOT}/protocol/request_id.cpp"; do
@@ -57,7 +58,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "usb_request_envelope.h"
+#include "protocol/usb_request_envelope.h"
 
 namespace signing {
 
@@ -276,7 +277,7 @@ CPP
   "${TMP_DIR}/test.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${COMMON_ROOT}/protocol/session_state.cpp" \
-  "${RUNTIME_DIR}/usb_request_envelope.cpp" \
+  "${COMMON_PROTOCOL_DIR}/usb_request_envelope.cpp" \
   "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   -o "${TMP_DIR}/test"

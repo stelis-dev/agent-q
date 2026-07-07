@@ -1,11 +1,15 @@
 #pragma once
 
+#include <stddef.h>
+
 #include <ArduinoJson.h>
 
 #include "transport/timeout_window.h"
 #include "protocol/usb_operation_response_writer.h"
 
 namespace signing {
+
+constexpr size_t kUsbConnectClientNameMaxBytes = 64;
 
 struct UsbConnectHandlerOps {
     bool (*material_ready)();

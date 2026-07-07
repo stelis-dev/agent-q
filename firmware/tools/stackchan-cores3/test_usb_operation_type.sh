@@ -20,12 +20,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
+COMMON_PROTOCOL_DIR="${COMMON_ROOT}/protocol"
 
 for required in \
   "${COMMON_ROOT}/protocol/usb_operation_type.h" \
   "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
-  "${RUNTIME_DIR}/usb_operation_manifest.h" \
-  "${RUNTIME_DIR}/usb_operation_manifest.cpp"; do
+  "${COMMON_PROTOCOL_DIR}/usb_operation_manifest.h" \
+  "${COMMON_PROTOCOL_DIR}/usb_operation_manifest.cpp"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
@@ -49,7 +50,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "usb_operation_manifest.h"
+#include "protocol/usb_operation_manifest.h"
 #include "protocol/usb_operation_type.h"
 
 namespace {
@@ -164,7 +165,7 @@ CPP
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
   "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
-  "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
+  "${COMMON_PROTOCOL_DIR}/usb_operation_manifest.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

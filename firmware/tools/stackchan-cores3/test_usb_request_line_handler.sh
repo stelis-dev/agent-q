@@ -19,21 +19,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
+COMMON_PROTOCOL_DIR="${COMMON_ROOT}/protocol"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
 ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${RUNTIME_DIR}/usb_request_line_handler.cpp" \
-  "${RUNTIME_DIR}/usb_request_line_handler.h" \
-  "${RUNTIME_DIR}/usb_request_envelope.cpp" \
-  "${RUNTIME_DIR}/usb_request_envelope.h" \
+  "${COMMON_PROTOCOL_DIR}/usb_request_line_handler.cpp" \
+  "${COMMON_PROTOCOL_DIR}/usb_request_line_handler.h" \
+  "${COMMON_PROTOCOL_DIR}/usb_request_envelope.cpp" \
+  "${COMMON_PROTOCOL_DIR}/usb_request_envelope.h" \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.h" \
-  "${RUNTIME_DIR}/usb_operation_dispatch.cpp" \
-  "${RUNTIME_DIR}/usb_operation_dispatch.h" \
-  "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
-  "${RUNTIME_DIR}/usb_operation_manifest.h" \
+  "${COMMON_PROTOCOL_DIR}/usb_operation_dispatch.cpp" \
+  "${COMMON_PROTOCOL_DIR}/usb_operation_dispatch.h" \
+  "${COMMON_PROTOCOL_DIR}/usb_operation_manifest.cpp" \
+  "${COMMON_PROTOCOL_DIR}/usb_operation_manifest.h" \
   "${COMMON_ROOT}/protocol/usb_operation_response_writer.h" \
   "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
   "${COMMON_ROOT}/protocol/usb_operation_type.h" \
@@ -65,7 +66,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "usb_request_line_handler.h"
+#include "protocol/usb_request_line_handler.h"
 
 namespace {
 
@@ -342,11 +343,11 @@ CPP
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
-  "${RUNTIME_DIR}/usb_request_line_handler.cpp" \
-  "${RUNTIME_DIR}/usb_request_envelope.cpp" \
+  "${COMMON_PROTOCOL_DIR}/usb_request_line_handler.cpp" \
+  "${COMMON_PROTOCOL_DIR}/usb_request_envelope.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
-  "${RUNTIME_DIR}/usb_operation_dispatch.cpp" \
-  "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
+  "${COMMON_PROTOCOL_DIR}/usb_operation_dispatch.cpp" \
+  "${COMMON_PROTOCOL_DIR}/usb_operation_manifest.cpp" \
   "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
   "${COMMON_ROOT}/protocol/session_state.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \

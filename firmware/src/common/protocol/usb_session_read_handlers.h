@@ -2,9 +2,9 @@
 
 #include <ArduinoJson.h>
 
+#include "sui/account_settings_types.h"
+#include "sui/active_identity.h"
 #include "protocol/signing_mode.h"
-#include "sui_account_settings.h"
-#include "sui_zklogin_proof_store.h"
 #include "protocol/usb_operation_type.h"
 #include "protocol/usb_operation_response_writer.h"
 

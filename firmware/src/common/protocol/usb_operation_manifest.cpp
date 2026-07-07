@@ -1,4 +1,4 @@
-#include "usb_operation_manifest.h"
+#include "protocol/usb_operation_manifest.h"
 
 #include <stddef.h>
 

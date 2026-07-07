@@ -1,6 +1,6 @@
-#include "signing_retry_response.h"
+#include "signing/signing_retry_response.h"
 
-#include "protocol/device_contract.h"
+#include "protocol/device_response.h"
 #include "protocol/protocol_constants.h"
 
 namespace signing {
@@ -16,25 +16,10 @@ bool write_error(
     if (write_response == nullptr) {
         return false;
     }
-    const DeviceErrorRow* error = device_error_row(code);
-    if (error == nullptr) {
-        error = device_error_row("unknown_error");
-    }
-    if (error == nullptr) {
+    JsonDocument response;
+    if (!device_response_prepare_method_error(response, request_id, method, code)) {
         return false;
     }
-    JsonDocument response;
-    if (request_id != nullptr && request_id[0] != '\0') {
-        response["id"] = request_id;
-    }
-    response["version"] = kProtocolVersion;
-    response["success"] = false;
-    if (method != nullptr && method[0] != '\0') {
-        response["method"] = method;
-    }
-    response["error"]["code"] = error->code;
-    response["error"]["message"] = error->message;
-    response["error"]["retryable"] = error->retryable;
     return write_response(response, context);
 }
 

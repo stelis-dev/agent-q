@@ -20,14 +20,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
+DEVICE_HANDLER_SOURCE="${COMMON_ROOT}/protocol/usb_device_handlers.cpp"
+DEVICE_HANDLER_HEADER="${COMMON_ROOT}/protocol/usb_device_handlers.h"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
 ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${COMMON_ROOT}/protocol/device_response.h" \
-  "${RUNTIME_DIR}/usb_device_handlers.cpp" \
-  "${RUNTIME_DIR}/usb_device_handlers.h" \
+  "${DEVICE_HANDLER_SOURCE}" \
+  "${DEVICE_HANDLER_HEADER}" \
   "${COMMON_ROOT}/protocol/usb_operation_response_writer.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -47,7 +49,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "usb_device_handlers.h"
+#include "protocol/usb_device_handlers.h"
 
 namespace {
 
@@ -227,6 +229,7 @@ signing::UsbOperationResponseWriter make_writer()
 {
     return signing::UsbOperationResponseWriter{
         write_error,
+        signing::usb_response_write_success_result,
         log_write_failure,
     };
 }
@@ -372,7 +375,7 @@ CPP
   -I"${COMMON_ROOT}" \
   -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${RUNTIME_DIR}/usb_device_handlers.cpp" \
+  "${DEVICE_HANDLER_SOURCE}" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

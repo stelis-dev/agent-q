@@ -1,14 +1,8 @@
 #pragma once
 
+#include "sui/account_settings_types.h"
+
 namespace signing {
-
-struct SuiAccountSettings {
-    bool accept_gas_sponsor;
-};
-
-constexpr SuiAccountSettings kDefaultSuiAccountSettings = {
-    false,
-};
 
 enum class SuiAccountSettingsStatus {
     missing,

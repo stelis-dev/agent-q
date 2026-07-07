@@ -27,8 +27,8 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
   "${COMMON_ROOT}/protocol/usb_active_session_request_guard.h" \
-  "${RUNTIME_DIR}/usb_approval_history_handler.cpp" \
-  "${RUNTIME_DIR}/usb_approval_history_handler.h" \
+  "${COMMON_ROOT}/protocol/usb_approval_history_handler.cpp" \
+  "${COMMON_ROOT}/protocol/usb_approval_history_handler.h" \
   "${COMMON_ROOT}/protocol/usb_operation_response_writer.h" \
   "${RUNTIME_DIR}/usb_response_writer.h" \
   "${COMMON_ROOT}/numeric/u64_decimal.h" \
@@ -57,7 +57,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdlib.h>
 #include <string.h>
 
-#include "usb_approval_history_handler.h"
+#include "protocol/usb_approval_history_handler.h"
 
 namespace signing {
 
@@ -93,6 +93,10 @@ const char* approval_history_signing_terminal_result_to_string(
 }
 
 }  // namespace signing
+
+namespace signing {
+bool usb_response_write_success_result(const char* id, const char* method, JsonObjectConst result);
+}
 
 namespace {
 
@@ -250,6 +254,7 @@ signing::UsbOperationResponseWriter make_writer()
 {
     return signing::UsbOperationResponseWriter{
         write_error,
+        signing::usb_response_write_success_result,
         log_write_failure,
     };
 }
@@ -478,7 +483,7 @@ CPP
   -I"${TMP_DIR}" \
   "${TMP_DIR}/test.cpp" \
   "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
-  "${RUNTIME_DIR}/usb_approval_history_handler.cpp" \
+  "${COMMON_ROOT}/protocol/usb_approval_history_handler.cpp" \
   "${REPO_ROOT}/firmware/src/common/protocol/approval_history_json_writer.cpp" \
   -o "${TMP_DIR}/test"
 

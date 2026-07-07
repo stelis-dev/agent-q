@@ -1,17 +1,15 @@
-#include "usb_signing_outcome_writer.h"
+#include "signing/usb_signing_outcome_writer.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-#include <ArduinoJson.h>
-
-#include "protocol/protocol_constants.h"
-#include "sui/signing_limits.h"
+#include "protocol/device_response.h"
+#include "protocol/sign_request_identity.h"
 #include "protocol/signing_mode.h"
 #include "protocol/signing_response_store.h"
-#include "sui_signing_service.h"
-#include "sui_zklogin_proof_store.h"
-#include "usb_response_writer.h"
+#include "sui/signature_scheme.h"
+#include "sui/signing_limits.h"
+#include "sui/zklogin_signature.h"
 
 extern "C" {
 #include "byte_conversions.h"
@@ -27,12 +25,6 @@ void clear_heap_buffer(char* buffer, size_t size)
         *cursor++ = 0;
         --size;
     }
-}
-
-bool signing_response_fits(const JsonDocument& response)
-{
-    const size_t measured_len = measureJson(response);
-    return measured_len != 0 && measured_len < kResponseMaxSize;
 }
 
 const char* user_terminal_device_error_code(UserSigningTerminalResult result)
@@ -53,7 +45,24 @@ const char* user_terminal_device_error_code(UserSigningTerminalResult result)
     }
 }
 
-bool buffer_signing_response_for_retry(
+bool method_error_response_write(
+    const char* id,
+    const char* method,
+    const char* code,
+    const UsbSigningOutcomeWriterOps& ops)
+{
+    if (ops.write_method_error == nullptr) {
+        return false;
+    }
+    const char* safe_code = code != nullptr && code[0] != '\0' ? code : "internal_output_error";
+    return ops.write_method_error(
+        id,
+        method,
+        safe_code,
+        ops.write_method_error_context);
+}
+
+bool signing_response_buffer_store(
     const char* session_id,
     const char* request_id,
     const uint8_t* request_identity,
@@ -63,7 +72,7 @@ bool buffer_signing_response_for_retry(
         return false;
     }
     const size_t measured_len = measureJson(response);
-    if (!signing_response_fits(response)) {
+    if (!usb_signing_outcome_response_fits(response)) {
         return false;
     }
     const size_t serialized_capacity = measured_len + 1;
@@ -95,15 +104,90 @@ bool buffer_and_write_response(
     const char* session_id,
     const char* request_id,
     const uint8_t* request_identity,
-    JsonDocument& response)
+    JsonDocument& response,
+    const UsbSigningOutcomeWriterOps& ops)
 {
-    if (!buffer_signing_response_for_retry(session_id, request_id, request_identity, response)) {
+    if (!signing_response_buffer_store(session_id, request_id, request_identity, response)) {
         return false;
     }
-    return usb_response_write_json(response);
+    return usb_json_response_write(response, ops.response_write_ops);
 }
 
-bool prepare_signed_signing_response(
+bool write_signed_signing_response(
+    const char* id,
+    const char* session_id,
+    const uint8_t* request_identity,
+    const char* authorization,
+    Route signing_route,
+    const uint8_t* signature,
+    size_t signature_size,
+    const uint8_t* message_bytes,
+    size_t message_bytes_size,
+    const UsbSigningOutcomeWriterOps& ops)
+{
+    JsonDocument response;
+    if (!usb_signing_outcome_prepare_signed_response(
+            response,
+            id,
+            authorization,
+            signing_route,
+            signature,
+            signature_size,
+            message_bytes,
+            message_bytes_size)) {
+        return false;
+    }
+    return buffer_and_write_response(session_id, id, request_identity, response, ops);
+}
+
+bool write_policy_rejected_signing_response(
+    const char* id,
+    const char* session_id,
+    const uint8_t* request_identity,
+    const char* policy_hash,
+    const char* rule_ref,
+    const UsbSigningOutcomeWriterOps& ops)
+{
+    if (policy_hash == nullptr || policy_hash[0] == '\0' ||
+        rule_ref == nullptr || rule_ref[0] == '\0') {
+        return false;
+    }
+    JsonDocument response;
+    if (!device_response_prepare_method_error(response, id, "sign_transaction", "policy_rejected")) {
+        return false;
+    }
+    return buffer_and_write_response(session_id, id, request_identity, response, ops);
+}
+
+bool write_failed_signing_response(
+    const char* id,
+    const char* session_id,
+    const uint8_t* request_identity,
+    const char* authorization,
+    const char* code,
+    const UsbSigningOutcomeWriterOps& ops)
+{
+    if (authorization == nullptr ||
+        (strcmp(authorization, "user") != 0 && strcmp(authorization, "policy") != 0)) {
+        return false;
+    }
+    const char* safe_code = code != nullptr && code[0] != '\0' ? code : "signing_failed";
+    JsonDocument response;
+    if (!device_response_prepare_method_error(response, id, "sign_transaction", safe_code)) {
+        return false;
+    }
+    return buffer_and_write_response(session_id, id, request_identity, response, ops);
+}
+
+}  // namespace
+
+bool usb_signing_outcome_response_fits(const JsonDocument& response)
+{
+    const size_t measured_len = measureJson(response);
+    return measured_len != 0 && measured_len < kResponseMaxSize;
+}
+
+bool usb_signing_outcome_prepare_signed_response(
     JsonDocument& response,
     const char* id,
     const char* authorization,
@@ -188,75 +272,13 @@ bool prepare_signed_signing_response(
     return true;
 }
 
-bool write_signed_signing_response(
-    const char* id,
-    const char* session_id,
-    const uint8_t* request_identity,
-    const char* authorization,
-    Route signing_route,
-    const uint8_t* signature,
-    size_t signature_size,
-    const uint8_t* message_bytes,
-    size_t message_bytes_size)
-{
-    JsonDocument response;
-    if (!prepare_signed_signing_response(
-            response,
-            id,
-            authorization,
-            signing_route,
-            signature,
-            signature_size,
-            message_bytes,
-            message_bytes_size)) {
-        return false;
-    }
-    return buffer_and_write_response(session_id, id, request_identity, response);
-}
-
-bool write_policy_rejected_signing_response(
-    const char* id,
-    const char* session_id,
-    const uint8_t* request_identity,
-    const char* policy_hash,
-    const char* rule_ref)
-{
-    if (policy_hash == nullptr || policy_hash[0] == '\0' ||
-        rule_ref == nullptr || rule_ref[0] == '\0') {
-        return false;
-    }
-    JsonDocument response;
-    if (!device_response_prepare_method_error(response, id, "sign_transaction", "policy_rejected")) {
-        return false;
-    }
-    return buffer_and_write_response(session_id, id, request_identity, response);
-}
-
-bool write_failed_signing_response(
-    const char* id,
-    const char* session_id,
-    const uint8_t* request_identity,
-    const char* authorization)
-{
-    if (authorization == nullptr ||
-        (strcmp(authorization, "user") != 0 && strcmp(authorization, "policy") != 0)) {
-        return false;
-    }
-    JsonDocument response;
-    if (!device_response_prepare_method_error(response, id, "sign_transaction", "signing_failed")) {
-        return false;
-    }
-    return buffer_and_write_response(session_id, id, request_identity, response);
-}
-
-}  // namespace
-
 bool usb_signing_outcome_write_user_signed(
     const char* id,
     const char* session_id,
     const char* authorization,
     const UserSigningFlowCoreSnapshot& snapshot,
-    const UserSigningOutput& signing_output)
+    const UserSigningOutput& signing_output,
+    const UsbSigningOutcomeWriterOps& ops)
 {
     if (snapshot.signing_route == Route::unsupported ||
         signing_output.signing_route != snapshot.signing_route) {
@@ -271,7 +293,8 @@ bool usb_signing_outcome_write_user_signed(
         signing_output.signature,
         signing_output.signature_size,
         signing_output.message_bytes_size > 0 ? signing_output.message_bytes : nullptr,
-        signing_output.message_bytes_size);
+        signing_output.message_bytes_size,
+        ops);
 }
 
 bool usb_signing_outcome_user_signed_response_fits(
@@ -285,7 +308,7 @@ bool usb_signing_outcome_user_signed_response_fits(
         return false;
     }
     JsonDocument response;
-    if (!prepare_signed_signing_response(
+    if (!usb_signing_outcome_prepare_signed_response(
             response,
             id,
             authorization,
@@ -296,7 +319,7 @@ bool usb_signing_outcome_user_signed_response_fits(
             signing_output.message_bytes_size)) {
         return false;
     }
-    return signing_response_fits(response);
+    return usb_signing_outcome_response_fits(response);
 }
 
 bool usb_signing_outcome_write_user_terminal(
@@ -304,7 +327,8 @@ bool usb_signing_outcome_write_user_terminal(
     const char* session_id,
     const uint8_t* request_identity,
     const char* method,
-    UserSigningTerminalResult result)
+    UserSigningTerminalResult result,
+    const UsbSigningOutcomeWriterOps& ops)
 {
     const char* error_code = user_terminal_device_error_code(result);
     if (method == nullptr || method[0] == '\0' ||
@@ -316,29 +340,37 @@ bool usb_signing_outcome_write_user_terminal(
     if (!device_response_prepare_method_error(response, id, method, error_code)) {
         return false;
     }
-    return buffer_and_write_response(session_id, id, request_identity, response);
+    return buffer_and_write_response(session_id, id, request_identity, response, ops);
 }
 
 bool usb_signing_outcome_write_policy_execution(
     const char* id,
     const char* session_id,
     const uint8_t* request_identity,
-    const PolicySigningExecutionResult& result)
+    const PolicySigningExecutionResult& result,
+    const UsbSigningOutcomeWriterOps& ops)
 {
     switch (result.status) {
         case PolicySigningExecutionStatus::request_error:
         case PolicySigningExecutionStatus::history_error:
         case PolicySigningExecutionStatus::account_error:
-            return usb_response_write_method_error(id, "sign_transaction", result.code);
+            return method_error_response_write(id, "sign_transaction", result.code, ops);
         case PolicySigningExecutionStatus::policy_rejected:
             return write_policy_rejected_signing_response(
                 id,
                 session_id,
                 request_identity,
                 result.policy_hash,
-                result.rule_ref);
+                result.rule_ref,
+                ops);
         case PolicySigningExecutionStatus::signing_failed:
-            return write_failed_signing_response(id, session_id, request_identity, "policy");
+            return write_failed_signing_response(
+                id,
+                session_id,
+                request_identity,
+                "policy",
+                result.code,
+                ops);
         case PolicySigningExecutionStatus::signed_success:
             return write_signed_signing_response(
                 id,
@@ -349,12 +381,14 @@ bool usb_signing_outcome_write_policy_execution(
                 result.signature,
                 result.signature_size,
                 nullptr,
-                0);
+                0,
+                ops);
         default:
-            return usb_response_write_method_error(
+            return method_error_response_write(
                 id,
                 "sign_transaction",
-                "internal_output_error");
+                "internal_output_error",
+                ops);
     }
 }
 

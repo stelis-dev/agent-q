@@ -10,10 +10,13 @@ struct UsbOperationResponseWriter {
         bool (*)(const char* id, const char* method, const char* code);
     using WriteSuccessResultFn =
         bool (*)(const char* id, const char* method, JsonObjectConst result);
+    using WriteTransportSuccessResultFn =
+        bool (*)(const char* id, JsonObjectConst result);
 
     WriteErrorFn write_error_fn = nullptr;
     WriteMethodErrorFn write_method_error_fn = nullptr;
     WriteSuccessResultFn write_success_result_fn = nullptr;
+    WriteTransportSuccessResultFn write_transport_success_result_fn = nullptr;
     void (*log_write_failure)(const char* response_type, const char* id);
 
     const char* method = nullptr;
@@ -58,6 +61,18 @@ struct UsbOperationResponseWriter {
     {
     }
 
+    constexpr UsbOperationResponseWriter(
+        WriteMethodErrorFn write_error,
+        WriteSuccessResultFn write_success_result,
+        WriteTransportSuccessResultFn write_transport_success_result,
+        void (*log_failure)(const char* response_type, const char* id))
+        : write_method_error_fn(write_error),
+          write_success_result_fn(write_success_result),
+          write_transport_success_result_fn(write_transport_success_result),
+          log_write_failure(log_failure)
+    {
+    }
+
     bool can_write_error() const
     {
         return write_error_fn != nullptr || write_method_error_fn != nullptr;
@@ -75,6 +90,13 @@ struct UsbOperationResponseWriter {
     {
         return write_success_result_fn != nullptr
                    ? write_success_result_fn(id, next_method, result)
+                   : false;
+    }
+
+    bool write_transport_success_result(const char* id, JsonObjectConst result) const
+    {
+        return write_transport_success_result_fn != nullptr
+                   ? write_transport_success_result_fn(id, result)
                    : false;
     }
 

@@ -29,6 +29,8 @@ for required in \
   "${COMMON_ROOT}/protocol/device_response.cpp" \
   "${COMMON_ROOT}/protocol/device_response.h" \
   "${COMMON_ROOT}/protocol/protocol_constants.h" \
+  "${COMMON_ROOT}/protocol/usb_json_response.cpp" \
+  "${COMMON_ROOT}/protocol/usb_json_response.h" \
   "${RUNTIME_DIR}/usb_response_writer.cpp" \
   "${RUNTIME_DIR}/usb_response_writer.h"; do
   if [[ ! -f "${required}" ]]; then
@@ -195,6 +197,7 @@ CPP
   "${RUNTIME_DIR}/usb_response_writer.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${COMMON_ROOT}/protocol/device_response.cpp" \
+  "${COMMON_ROOT}/protocol/usb_json_response.cpp" \
   -o "${TMP_DIR}/test_usb_response_writer"
 
 "${TMP_DIR}/test_usb_response_writer"

@@ -32,6 +32,24 @@ bool device_response_prepare_success_result(
     return true;
 }
 
+bool device_response_prepare_transport_success_result(
+    JsonDocument& response,
+    const char* id,
+    JsonObjectConst result)
+{
+    if (result.isNull()) {
+        return false;
+    }
+    response.clear();
+    if (id != nullptr && id[0] != '\0') {
+        response["id"] = id;
+    }
+    response["version"] = kProtocolVersion;
+    response["success"] = true;
+    response["result"].set(result);
+    return true;
+}
+
 bool device_response_prepare_method_error(
     JsonDocument& response,
     const char* id,

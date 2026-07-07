@@ -19,6 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
+COMMON_TRANSPORT_DIR="${COMMON_ROOT}/transport"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
 ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
@@ -26,8 +27,8 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
   "${COMMON_ROOT}/protocol/usb_active_session_request_guard.h" \
-  "${RUNTIME_DIR}/usb_retained_response_handlers.cpp" \
-  "${RUNTIME_DIR}/usb_retained_response_handlers.h" \
+  "${COMMON_TRANSPORT_DIR}/usb_retained_response_handlers.cpp" \
+  "${COMMON_TRANSPORT_DIR}/usb_retained_response_handlers.h" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${COMMON_ROOT}/protocol/request_id.h" \
   "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
@@ -52,7 +53,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <string.h>
 
 #include "protocol/signing_response_store.h"
-#include "usb_retained_response_handlers.h"
+#include "transport/usb_retained_response_handlers.h"
 
 namespace {
 
@@ -110,10 +111,16 @@ bool write_method_error(const char* id, const char* method, const char* code)
 
 }  // namespace
 
-namespace signing {
+namespace {
 
-bool usb_response_write_success_result(const char* id, const char* method, JsonObjectConst result)
+bool write_success_result(const char* id, const char* method, JsonObjectConst result)
 {
+    if (method != nullptr && strcmp(method, "ack_result") == 0) {
+        g_ack_result_calls += 1;
+        g_last_id = id;
+        g_last_method = method;
+        return g_ack_write_ok;
+    }
     g_write_json_calls += 1;
     g_last_id = id;
     g_last_method = method;
@@ -121,25 +128,6 @@ bool usb_response_write_success_result(const char* id, const char* method, JsonO
     snprintf(g_last_json_signature, sizeof(g_last_json_signature), "%s", result["signature"] | "");
     return true;
 }
-
-bool usb_response_write_method_error(
-    const char* id,
-    const char* method,
-    const char* code)
-{
-    return write_method_error(id, method, code);
-}
-
-bool usb_response_write_ack_result(const char* id)
-{
-    g_ack_result_calls += 1;
-    g_last_id = id;
-    return g_ack_write_ok;
-}
-
-}  // namespace signing
-
-namespace {
 
 void log_write_failure(const char* response_type, const char* id)
 {
@@ -186,6 +174,7 @@ signing::UsbOperationResponseWriter make_writer()
 {
     return signing::UsbOperationResponseWriter{
         write_method_error,
+        write_success_result,
         log_write_failure,
     };
 }
@@ -398,7 +387,7 @@ CPP
   -I"${RUNTIME_DIR}/../../common" \
   "${TMP_DIR}/test.cpp" \
   "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
-  "${RUNTIME_DIR}/usb_retained_response_handlers.cpp" \
+  "${COMMON_TRANSPORT_DIR}/usb_retained_response_handlers.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
   -o "${TMP_DIR}/test"

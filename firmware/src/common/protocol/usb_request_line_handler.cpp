@@ -1,8 +1,8 @@
-#include "usb_request_line_handler.h"
+#include "protocol/usb_request_line_handler.h"
 
 #include <ArduinoJson.h>
 
-#include "usb_request_envelope.h"
+#include "protocol/usb_request_envelope.h"
 
 namespace signing {
 

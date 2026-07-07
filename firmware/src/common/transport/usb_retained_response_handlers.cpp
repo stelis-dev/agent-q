@@ -1,10 +1,9 @@
-#include "usb_retained_response_handlers.h"
+#include "transport/usb_retained_response_handlers.h"
 
 #include "protocol/json_input.h"
 #include "protocol/request_id.h"
 #include "protocol/signing_response_store.h"
 #include "protocol/usb_active_session_request_guard.h"
-#include "usb_response_writer.h"
 
 namespace signing {
 
@@ -53,7 +52,8 @@ bool retained_request_id_from_payload(JsonDocument& request, const char** retain
 bool deliver_stored_response_by_id(
     const char* response_id,
     const char* session_id,
-    const char* retained_request_id)
+    const char* retained_request_id,
+    const UsbOperationResponseWriter& writer)
 {
     static char stored_response[kResponseMaxSize];
     size_t stored_len = 0;
@@ -72,14 +72,14 @@ bool deliver_stored_response_by_id(
     if (response["success"] == true) {
         JsonObjectConst result = response["result"].as<JsonObjectConst>();
         return !result.isNull() &&
-               usb_response_write_success_result(response_id, "get_result", result);
+               writer.write_success_result(response_id, "get_result", result);
     }
     if (response["success"] == false) {
         const char* code = nullptr;
         if (!json_value_c_string(response["error"]["code"], &code)) {
             return false;
         }
-        return usb_response_write_method_error(response_id, "get_result", code);
+        return writer.write_error(response_id, code);
     }
     return false;
 }
@@ -107,7 +107,7 @@ void handle_usb_get_result_request(
         writer.write_error(id, "invalid_params");
         return;
     }
-    if (deliver_stored_response_by_id(id, session_id, retained_request_id)) {
+    if (deliver_stored_response_by_id(id, session_id, retained_request_id, writer)) {
         return;
     }
     writer.write_error(id, "unknown_request");
@@ -135,7 +135,9 @@ void handle_usb_ack_result_request(
         return;
     }
     signing_response_ack(session_id, retained_request_id);
-    if (!usb_response_write_ack_result(id)) {
+    JsonDocument result_doc;
+    JsonObject result = result_doc.to<JsonObject>();
+    if (!writer.write_success_result(id, "ack_result", result)) {
         writer.log_write_failure("ack_result", id);
     }
 }

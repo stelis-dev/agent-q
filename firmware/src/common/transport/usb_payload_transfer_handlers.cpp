@@ -1,4 +1,4 @@
-#include "usb_payload_transfer_handlers.h"
+#include "transport/usb_payload_transfer_handlers.h"
 
 #include <stddef.h>
 #include <stdio.h>
@@ -6,15 +6,13 @@
 
 #include "protocol/base64.h"
 #include "protocol/approval_history.h"
-#include "bip39.h"
 #include "protocol/json_input.h"
 #include "transport/payload_delivery_admission.h"
 #include "transport/payload_delivery_store.h"
 #include "protocol/protocol_constants.h"
+#include "protocol/request_line.h"
 #include "numeric/u64_decimal.h"
 #include "protocol/usb_active_session_request_guard.h"
-#include "usb_line_receiver.h"
-#include "usb_response_writer.h"
 
 extern "C" {
 int base64_to_bytes(const char* input, size_t input_size, uint8_t* output, size_t output_size);
@@ -24,6 +22,17 @@ namespace signing {
 namespace {
 
 uint8_t g_chunk_decode_buffer[kPayloadDeliveryDefaultChunkMaxBytes];
+
+void wipe_payload_transfer_buffer(void* buffer, size_t size)
+{
+    if (buffer == nullptr) {
+        return;
+    }
+    volatile uint8_t* cursor = static_cast<volatile uint8_t*>(buffer);
+    while (size-- > 0) {
+        *cursor++ = 0;
+    }
+}
 
 bool parse_size_string(const char* value, size_t* output)
 {
@@ -167,14 +176,7 @@ void write_payload_transfer_success(
     const char* log_label,
     const UsbOperationResponseWriter& writer)
 {
-    JsonDocument response;
-    if (id != nullptr && id[0] != '\0') {
-        response["id"] = id;
-    }
-    response["version"] = kProtocolVersion;
-    response["success"] = true;
-    response["result"].set(result);
-    if (!usb_response_write_json(response)) {
+    if (!writer.write_transport_success_result(id, result)) {
         writer.log_write_failure(log_label, id);
     }
 }
@@ -352,7 +354,7 @@ void handle_usb_payload_transfer_chunk_request(
             strlen(chunk_base64),
             g_chunk_decode_buffer,
             sizeof(g_chunk_decode_buffer)) != 0) {
-        wipe_sensitive_buffer(g_chunk_decode_buffer, sizeof(g_chunk_decode_buffer));
+        wipe_payload_transfer_buffer(g_chunk_decode_buffer, sizeof(g_chunk_decode_buffer));
         writer.write_error(id, "invalid_params");
         return;
     }
@@ -368,7 +370,7 @@ void handle_usb_payload_transfer_chunk_request(
             decoded_size,
         },
         &received_bytes);
-    wipe_sensitive_buffer(g_chunk_decode_buffer, sizeof(g_chunk_decode_buffer));
+    wipe_payload_transfer_buffer(g_chunk_decode_buffer, sizeof(g_chunk_decode_buffer));
     if (result != PayloadDeliveryResult::ok) {
         write_store_error(id, writer, result);
         return;

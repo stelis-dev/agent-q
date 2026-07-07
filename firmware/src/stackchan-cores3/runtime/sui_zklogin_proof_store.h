@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "sui/active_identity.h"
 #include "sui/zklogin_proof_record.h"
 #include "sui_account.h"
 
@@ -23,27 +24,6 @@ enum class SuiZkLoginProofRecordWriteResult {
     invalid_record,
     storage_error,
     consistency_error,
-};
-
-enum class SuiActiveIdentityKind {
-    native,
-    zklogin,
-    error,
-};
-
-enum class SuiActiveIdentityError {
-    none,
-    proof_storage_error,
-    native_account_unavailable,
-};
-
-struct SuiActiveIdentity {
-    SuiActiveIdentityKind kind;
-    SuiActiveIdentityError error;
-    char address[kSuiAddressBufferSize];
-    uint8_t public_key[kSuiZkLoginPublicKeyMaxBytes];
-    size_t public_key_size;
-    SuiZkLoginProofRecord zklogin;
 };
 
 SuiZkLoginProofRecordStatus sui_zklogin_proof_record_status();

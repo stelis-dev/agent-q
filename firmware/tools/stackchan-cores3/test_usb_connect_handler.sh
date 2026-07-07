@@ -20,13 +20,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
+COMMON_TRANSPORT_DIR="${COMMON_ROOT}/transport"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
 ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${RUNTIME_DIR}/usb_connect_handler.cpp" \
-  "${RUNTIME_DIR}/usb_connect_handler.h" \
+  "${COMMON_TRANSPORT_DIR}/usb_connect_handler.cpp" \
+  "${COMMON_TRANSPORT_DIR}/usb_connect_handler.h" \
   "${COMMON_ROOT}/protocol/usb_operation_response_writer.h" \
   "${RUNTIME_DIR}/connect_approval.h" \
   "${COMMON_ROOT}/transport/timeout_window.h" \
@@ -59,7 +60,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "usb_connect_handler.h"
+#include "transport/usb_connect_handler.h"
 
 namespace {
 
@@ -70,7 +71,6 @@ int g_busy_calls = 0;
 int g_make_window_calls = 0;
 int g_begin_calls = 0;
 int g_existing_session_calls = 0;
-int g_write_rejected_calls = 0;
 int g_show_unavailable_calls = 0;
 int g_reset_queue_calls = 0;
 int g_show_review_calls = 0;
@@ -85,7 +85,6 @@ bool g_existing_session = false;
 const char* g_last_id = nullptr;
 const char* g_last_client_name = nullptr;
 const char* g_last_error_code = nullptr;
-const char* g_last_rejected_code = nullptr;
 signing::TimeoutWindow g_last_window = {};
 
 void reset_state()
@@ -97,7 +96,6 @@ void reset_state()
     g_make_window_calls = 0;
     g_begin_calls = 0;
     g_existing_session_calls = 0;
-    g_write_rejected_calls = 0;
     g_show_unavailable_calls = 0;
     g_reset_queue_calls = 0;
     g_show_review_calls = 0;
@@ -112,7 +110,6 @@ void reset_state()
     g_last_id = nullptr;
     g_last_client_name = nullptr;
     g_last_error_code = nullptr;
-    g_last_rejected_code = nullptr;
     g_last_window = signing::TimeoutWindow{0, 0};
 }
 
@@ -181,18 +178,6 @@ bool begin_connect(
 }
 
 }  // namespace
-
-namespace signing {
-
-bool usb_response_write_connect_rejected(const char* id, const char* code)
-{
-    g_write_rejected_calls += 1;
-    g_last_id = id;
-    g_last_rejected_code = code;
-    return true;
-}
-
-}  // namespace signing
 
 namespace {
 
@@ -388,8 +373,8 @@ int main()
         assert(g_last_begin_now == g_current_tick);
         assert(g_last_window.started_at == g_current_tick);
         assert(g_last_window.deadline == g_current_tick + 18);
-        assert(g_write_rejected_calls == 1);
-        assert(strcmp(g_last_rejected_code, "invalid_state") == 0);
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "invalid_state") == 0);
         assert(g_show_unavailable_calls == 1);
         assert(g_reset_queue_calls == 0);
         assert(g_show_review_calls == 0);
@@ -411,7 +396,6 @@ int main()
         assert(g_show_review_calls == 1);
         assert(g_record_waiting_calls == 1);
         assert(g_write_error_calls == 0);
-        assert(g_write_rejected_calls == 0);
     }
 
     printf("USB connect handler tests passed\n");
@@ -425,7 +409,7 @@ CPP
   -I"${COMMON_ROOT}" \
   -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${RUNTIME_DIR}/usb_connect_handler.cpp" \
+  "${COMMON_TRANSPORT_DIR}/usb_connect_handler.cpp" \
   -o "${TMP_DIR}/test_usb_connect_handler"
 
 "${TMP_DIR}/test_usb_connect_handler"

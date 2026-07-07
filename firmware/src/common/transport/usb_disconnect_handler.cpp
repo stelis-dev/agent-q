@@ -1,7 +1,6 @@
-#include "usb_disconnect_handler.h"
+#include "transport/usb_disconnect_handler.h"
 
 #include "protocol/json_input.h"
-#include "usb_response_writer.h"
 
 namespace signing {
 
@@ -55,7 +54,9 @@ void handle_usb_disconnect_request(
     if (ops.clear_active_session != nullptr) {
         ops.clear_active_session();
     }
-    if (usb_response_write_disconnect_success(id)) {
+    JsonDocument result_doc;
+    JsonObject result = result_doc.to<JsonObject>();
+    if (writer.write_success_result(id, "disconnect", result)) {
         return;
     }
     writer.log_write_failure("disconnect", id);

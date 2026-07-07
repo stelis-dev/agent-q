@@ -1,8 +1,6 @@
-#include "usb_connect_handler.h"
+#include "transport/usb_connect_handler.h"
 
-#include "connect_approval.h"
 #include "protocol/json_input.h"
-#include "usb_response_writer.h"
 
 namespace signing {
 
@@ -15,7 +13,7 @@ bool is_printable_ascii_client_name(const char* value)
     }
     size_t length = 0;
     for (const char* cursor = value; *cursor != '\0'; ++cursor) {
-        if (++length >= kConnectApprovalClientNameSize) {
+        if (++length > kUsbConnectClientNameMaxBytes) {
             return false;
         }
         const unsigned char c = static_cast<unsigned char>(*cursor);
@@ -84,7 +82,7 @@ void handle_usb_connect_request(
     const TimeoutTick now = ops.current_tick();
     const TimeoutWindow approval_window = ops.make_approval_window(now);
     if (!ops.begin_connect_approval(id, client_name, now, approval_window)) {
-        usb_response_write_connect_rejected(id, "invalid_state");
+        writer.write_error(id, "invalid_state");
         ops.show_connect_unavailable();
         return;
     }

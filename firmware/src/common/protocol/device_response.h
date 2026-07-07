@@ -18,6 +18,10 @@ bool device_response_prepare_success_result(
     const char* id,
     const char* method,
     JsonObjectConst result);
+bool device_response_prepare_transport_success_result(
+    JsonDocument& response,
+    const char* id,
+    JsonObjectConst result);
 bool device_response_prepare_method_error(
     JsonDocument& response,
     const char* id,

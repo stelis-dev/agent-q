@@ -13,11 +13,12 @@ for required in \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.h" \
   "${COMMON_ROOT}/protocol/device_response.h" \
-  "${RUNTIME_DIR}/usb_signing_outcome_writer.cpp" \
-  "${RUNTIME_DIR}/usb_signing_outcome_writer.h" \
+  "${COMMON_ROOT}/protocol/usb_json_response.cpp" \
   "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
   "${COMMON_ROOT}/protocol/signing_response_store.h" \
-  "${COMMON_ROOT}/protocol/sign_route.h"; do
+  "${COMMON_ROOT}/protocol/sign_route.h" \
+  "${COMMON_ROOT}/signing/usb_signing_outcome_writer.cpp" \
+  "${COMMON_ROOT}/signing/usb_signing_outcome_writer.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -88,11 +89,13 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 
 #include <string>
 
-#include "usb_signing_outcome_writer.h"
+#include "signing/usb_signing_outcome_writer.h"
 #include "protocol/device_contract.h"
+#include "protocol/device_response.h"
 #include "protocol/protocol_constants.h"
 #include "protocol/signing_response_store.h"
-#include "sui_zklogin_proof_store.h"
+#include "sui/signature_scheme.h"
+#include "sui/zklogin_signature.h"
 
 namespace {
 
@@ -126,6 +129,48 @@ JsonDocument stored_json(const char* session_id, const char* request_id)
     JsonDocument document;
     assert(!deserializeJson(document, stored, stored_len));
     return document;
+}
+
+bool capture_response_bytes(const char* data, size_t length, void*)
+{
+    if (data == nullptr || length == 0) {
+        return false;
+    }
+    if (!(length == 1 && data[0] == '\n')) {
+        g_json_writes += 1;
+    }
+    g_last_json.append(data, length);
+    return true;
+}
+
+bool write_method_error_for_test(
+    const char* id,
+    const char* method,
+    const char* code,
+    void*)
+{
+    JsonDocument response;
+    if (!signing::device_response_prepare_method_error(response, id, method, code)) {
+        return false;
+    }
+    g_json_writes += 1;
+    g_last_json.clear();
+    serializeJson(response, g_last_json);
+    return true;
+}
+
+const signing::UsbSigningOutcomeWriterOps& outcome_writer_ops()
+{
+    static const signing::UsbSigningOutcomeWriterOps ops{
+        signing::UsbJsonResponseWriteOps{
+            capture_response_bytes,
+            nullptr,
+            nullptr,
+        },
+        write_method_error_for_test,
+        nullptr,
+    };
+    return ops;
 }
 
 void fill_native_signature(uint8_t* signature, size_t signature_size)
@@ -284,7 +329,8 @@ int main()
             "req-policy-signed",
             "session-a",
             identity,
-            result));
+            result,
+            outcome_writer_ops()));
         assert(g_json_writes == 1);
         JsonDocument response = parse_json(g_last_json);
         assert(response["success"] == true);
@@ -310,7 +356,8 @@ int main()
             "req-policy-zklogin-signed",
             "session-a",
             identity,
-            result));
+            result,
+            outcome_writer_ops()));
         JsonDocument response = parse_json(g_last_json);
         assert(strcmp(response["method"], "sign_transaction") == 0);
         assert(strcmp(response["result"]["authorization"], "policy") == 0);
@@ -342,7 +389,8 @@ int main()
             "session-a",
             "user",
             snapshot,
-            output));
+            output,
+            outcome_writer_ops()));
         JsonDocument response = parse_json(g_last_json);
         assert(response["success"] == true);
         assert(strcmp(response["method"], "sign_personal_message") == 0);
@@ -371,7 +419,8 @@ int main()
             "session-a",
             "user",
             snapshot,
-            output));
+            output,
+            outcome_writer_ops()));
         JsonDocument response = parse_json(g_last_json);
         assert(strcmp(response["method"], "sign_personal_message") == 0);
         assert(strcmp(response["result"]["authorization"], "user") == 0);
@@ -405,7 +454,8 @@ int main()
             "session-a",
             "user",
             snapshot,
-            output));
+            output,
+            outcome_writer_ops()));
         assert(g_json_writes == 1);
         assert(g_last_json.size() < signing::kResponseMaxSize);
         JsonDocument response = parse_json(g_last_json);
@@ -443,7 +493,8 @@ int main()
             "session-too-large",
             "user",
             snapshot,
-            output));
+            output,
+            outcome_writer_ops()));
         assert(g_json_writes == 0);
     }
 
@@ -477,7 +528,8 @@ int main()
             "session-conflict",
             "user",
             snapshot,
-            output));
+            output,
+            outcome_writer_ops()));
         assert(g_json_writes == 0);
     }
 
@@ -488,7 +540,8 @@ int main()
             "session-b",
             identity,
             "sign_personal_message",
-            signing::UserSigningTerminalResult::rejected));
+            signing::UserSigningTerminalResult::rejected,
+            outcome_writer_ops()));
         JsonDocument response = parse_json(g_last_json);
         assert(response["success"] == false);
         assert(strcmp(response["method"], "sign_personal_message") == 0);
@@ -510,7 +563,8 @@ int main()
             "req-policy-error",
             "session-c",
             identity,
-            result));
+            result,
+            outcome_writer_ops()));
         assert(g_json_writes == 1);
         assert(g_error_writes == 0);
         JsonDocument response = parse_json(g_last_json);
@@ -531,8 +585,9 @@ CPP
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
-  "${RUNTIME_DIR}/usb_signing_outcome_writer.cpp" \
+  "${COMMON_ROOT}/protocol/usb_json_response.cpp" \
   "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
+  "${COMMON_ROOT}/signing/usb_signing_outcome_writer.cpp" \
   -o "${TMP_DIR}/test_usb_signing_outcome_writer"
 
 "${TMP_DIR}/test_usb_signing_outcome_writer"
