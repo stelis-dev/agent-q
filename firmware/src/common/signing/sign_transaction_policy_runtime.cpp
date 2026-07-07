@@ -1,8 +1,7 @@
-#include "sign_transaction_policy_runtime.h"
+#include "signing/sign_transaction_policy_runtime.h"
 
 #include <string.h>
 
-#include "bip39.h"
 #include "policy/policy_store.h"
 #include "protocol/sign_route.h"
 #include "policy/evaluator.h"

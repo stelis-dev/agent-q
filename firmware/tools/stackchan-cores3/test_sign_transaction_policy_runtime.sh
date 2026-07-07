@@ -21,13 +21,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
+COMMON_SIGNING_DIR="${COMMON_ROOT}/signing"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
 ARDUINOJSON_ROOT="${ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${RUNTIME_DIR}/sign_transaction_policy_runtime.cpp" \
-  "${RUNTIME_DIR}/sign_transaction_policy_runtime.h" \
+  "${COMMON_SIGNING_DIR}/sign_transaction_policy_runtime.cpp" \
+  "${COMMON_SIGNING_DIR}/sign_transaction_policy_runtime.h" \
   "${REPO_ROOT}/firmware/src/common/policy/policy_store.h" \
   "${COMMON_ROOT}/protocol/sign_route.h" \
   "${COMMON_ROOT}/policy/document.h" \
@@ -51,6 +52,7 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 
 mkdir -p "${TMP_DIR}/firmware_common" "${TMP_DIR}/stubs"
 ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
+ln -s "${COMMON_ROOT}/signing" "${TMP_DIR}/firmware_common/signing"
 ln -s "${COMMON_ROOT}/sui" "${TMP_DIR}/firmware_common/sui"
 
 cat >"${TMP_DIR}/stubs/esp_log.h" <<'H'
@@ -66,7 +68,7 @@ cat >"${TMP_DIR}/sign_transaction_policy_runtime_test.cpp" <<'CPP'
 #include <string.h>
 
 #include "policy/policy_store.h"
-#include "sign_transaction_policy_runtime.h"
+#include "firmware_common/signing/sign_transaction_policy_runtime.h"
 #include "firmware_common/policy/evaluator.h"
 #include "firmware_common/sui/offline_policy_facts.h"
 
@@ -721,7 +723,7 @@ CPP
   -I"${COMMON_ROOT}/sui" \
   -I"${ARDUINOJSON_ROOT}" \
   "${TMP_DIR}/sign_transaction_policy_runtime_test.cpp" \
-  "${RUNTIME_DIR}/sign_transaction_policy_runtime.cpp" \
+  "${COMMON_SIGNING_DIR}/sign_transaction_policy_runtime.cpp" \
   "${COMMON_ROOT}/policy/document.cpp" \
   "${COMMON_ROOT}/policy/evaluator.cpp" \
   -o "${TMP_DIR}/sign_transaction_policy_runtime_test"

@@ -77,6 +77,11 @@ bool g_signing_status_ok = true;
 size_t g_signature_size_override = 0;
 bool g_response_ready = true;
 int g_response_ready_calls = 0;
+int g_finish_terminal_calls = 0;
+bool g_finish_terminal_saw_output = false;
+bool g_finish_terminal_return = true;
+signing::Route g_finish_terminal_route = signing::Route::unsupported;
+size_t g_finish_terminal_signature_size = 0;
 std::vector<uint8_t> g_last_signed_payload;
 
 signing::SuiAccountDerivationResult g_account_result =
@@ -292,6 +297,11 @@ void reset_state()
     g_signature_size_override = 0;
     g_response_ready = true;
     g_response_ready_calls = 0;
+    g_finish_terminal_calls = 0;
+    g_finish_terminal_saw_output = false;
+    g_finish_terminal_return = true;
+    g_finish_terminal_route = signing::Route::unsupported;
+    g_finish_terminal_signature_size = 0;
     g_last_signed_payload.clear();
     g_account_result = signing::SuiAccountDerivationResult::ok;
     snprintf(
@@ -432,6 +442,19 @@ bool response_ready(
         return false;
     }
     return g_response_ready;
+}
+
+bool finish_terminal(
+    const signing::UserSigningOutput* output,
+    void*)
+{
+    ++g_finish_terminal_calls;
+    g_finish_terminal_saw_output = output != nullptr;
+    if (output != nullptr) {
+        g_finish_terminal_route = output->signing_route;
+        g_finish_terminal_signature_size = output->signature_size;
+    }
+    return g_finish_terminal_return;
 }
 
 }  // namespace
@@ -727,6 +750,53 @@ int main()
     expect(aq::user_signing_flow_snapshot().terminal_result ==
                aq::UserSigningTerminalResult::signed_success,
            "post-history session loss stays signed after service success");
+
+    reset_state();
+    enter_critical_section("req_finish_success");
+    aq::UserSigningHandoffFinishReport finish_report =
+        aq::user_signing_execute_critical_section_and_finish(
+            response_ready,
+            nullptr,
+            finish_terminal,
+            nullptr,
+            critical_ops);
+    expect(finish_report.handoff.result == aq::UserSigningHandoffResult::ok,
+           "finish wrapper returns successful handoff");
+    expect(finish_report.terminal_written,
+           "finish wrapper reports terminal response written");
+    expect(g_finish_terminal_calls == 1,
+           "finish wrapper calls terminal writer once on success");
+    expect(g_finish_terminal_saw_output,
+           "finish wrapper passes signed output to terminal writer on success");
+    expect(g_finish_terminal_route == aq::Route::sui_sign_transaction,
+           "finish wrapper preserves signed route for terminal writer");
+    expect(g_finish_terminal_signature_size == aq::kSuiEd25519SignatureBytes,
+           "finish wrapper preserves signature size for terminal writer");
+    expect(aq::user_signing_flow_snapshot().terminal_result ==
+               aq::UserSigningTerminalResult::signed_success,
+           "finish wrapper records signed terminal");
+
+    reset_state();
+    enter_critical_section("req_finish_failure");
+    g_signing_status_ok = false;
+    finish_report =
+        aq::user_signing_execute_critical_section_and_finish(
+            response_ready,
+            nullptr,
+            finish_terminal,
+            nullptr,
+            critical_ops);
+    expect(finish_report.handoff.result == aq::UserSigningHandoffResult::signing_failed,
+           "finish wrapper returns failed handoff");
+    expect(finish_report.terminal_written,
+           "finish wrapper writes failure terminal response");
+    expect(g_finish_terminal_calls == 1,
+           "finish wrapper calls terminal writer once on failure");
+    expect(!g_finish_terminal_saw_output,
+           "finish wrapper withholds signed output on failure");
+    expect(aq::user_signing_flow_snapshot().terminal_result ==
+               aq::UserSigningTerminalResult::signing_failed,
+           "finish wrapper records failed terminal");
 
     expect(strcmp(
                aq::user_signing_handoff_result_name(

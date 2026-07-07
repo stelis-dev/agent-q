@@ -91,13 +91,27 @@ SuiSigningPreparationResult check_stackchan_personal_message_account(
     return SuiSigningPreparationResult::ok;
 }
 
+SuiSigningPreparationResult check_stackchan_active_network(
+    const char* network,
+    void*)
+{
+    return active_identity_network_result_to_preparation_result(
+        verify_sui_signing_active_identity_network(network));
+}
+
 constexpr SuiSigningPreparationOps kStackChanSigningPreparationOps{
     check_stackchan_transaction_account,
     check_stackchan_personal_message_account,
+    check_stackchan_active_network,
     nullptr,
 };
 
 }  // namespace
+
+const SuiSigningPreparationOps& stackchan_sui_signing_preparation_ops()
+{
+    return kStackChanSigningPreparationOps;
+}
 
 SuiSigningPreparationResult prepare_sui_sign_transaction(
     SupportedSignRoute route,

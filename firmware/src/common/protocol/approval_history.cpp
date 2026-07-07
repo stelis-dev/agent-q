@@ -126,6 +126,21 @@ bool stored_terminal_result_allowed_for_confirmation(uint8_t confirmation_kind, 
     return false;
 }
 
+bool history_chain_or_method_char(char value, bool first);
+bool history_reason_char(char value, bool first);
+bool history_rule_ref_char(char value, bool first);
+bool history_policy_result_char(char value, bool first);
+bool history_highest_action_char(char value, bool first);
+bool policy_update_result_supported(const char* value);
+bool highest_action_supported(const char* value);
+bool materialize_record(const StoredApprovalHistoryRecord& stored, ApprovalHistoryRecord* output);
+
+bool stored_history_token_valid(
+    const char* value,
+    size_t value_size,
+    bool required,
+    bool (*valid_char)(char, bool));
+
 bool stored_has_policy_metadata(const StoredApprovalHistoryRecord& record)
 {
     return (record.flags & kStoredDigestPolicy) != 0 &&
@@ -135,27 +150,67 @@ bool stored_has_policy_metadata(const StoredApprovalHistoryRecord& record)
 bool stored_record_metadata_valid(const StoredApprovalHistoryRecord& record)
 {
     if (!stored_event_kind_valid(record.event_kind) ||
+        (record.flags & ~(kStoredDigestPayload | kStoredDigestPolicy)) != 0 ||
         record.policy_count > kCurrentPolicyMaxTotalPolicies) {
         return false;
     }
     if (record.event_kind == kStoredEventPolicyUpdate) {
         return record.confirmation_kind == kStoredConfirmationPolicy &&
                record.signing_record_kind == kStoredSigningRecordNone &&
-               record.signing_terminal_result == kStoredSigningTerminalNone;
+               record.signing_terminal_result == kStoredSigningTerminalNone &&
+               (record.flags & kStoredDigestPolicy) != 0 &&
+               stored_history_token_valid(
+                   record.reason_code,
+                   sizeof(record.reason_code),
+                   true,
+                   history_reason_char) &&
+               stored_history_token_valid(
+                   record.policy_result,
+                   sizeof(record.policy_result),
+                   true,
+                   history_policy_result_char) &&
+               stored_history_token_valid(
+                   record.highest_action,
+                   sizeof(record.highest_action),
+                   true,
+                   history_highest_action_char) &&
+               policy_update_result_supported(record.policy_result) &&
+               highest_action_supported(record.highest_action);
     }
     if (!stored_signing_record_kind_valid(record.signing_record_kind) ||
-        (record.flags & kStoredDigestPayload) == 0) {
+        (record.flags & kStoredDigestPayload) == 0 ||
+        !stored_history_token_valid(
+            record.chain,
+            sizeof(record.chain),
+            true,
+            history_chain_or_method_char) ||
+        !stored_history_token_valid(
+            record.method,
+            sizeof(record.method),
+            true,
+            history_chain_or_method_char) ||
+        !stored_history_token_valid(
+            record.reason_code,
+            sizeof(record.reason_code),
+            true,
+            history_reason_char)) {
         return false;
     }
     if (record.signing_record_kind == kStoredSigningRecordConfirmation) {
         if (record.confirmation_kind == kStoredConfirmationLocalPin ||
             record.confirmation_kind == kStoredConfirmationPhysicalConfirm) {
             return record.signing_terminal_result == kStoredSigningTerminalNone &&
-                   !stored_has_policy_metadata(record);
+                   (record.flags & kStoredDigestPolicy) == 0 &&
+                   record.rule_ref[0] == '\0';
         }
         if (record.confirmation_kind == kStoredConfirmationPolicy) {
             return record.signing_terminal_result == kStoredSigningTerminalNone &&
-                   stored_has_policy_metadata(record);
+                   stored_has_policy_metadata(record) &&
+                   stored_history_token_valid(
+                       record.rule_ref,
+                       sizeof(record.rule_ref),
+                       true,
+                       history_rule_ref_char);
         }
         return false;
     }
@@ -163,9 +218,16 @@ bool stored_record_metadata_valid(const StoredApprovalHistoryRecord& record)
         !stored_terminal_result_allowed_for_confirmation(record.confirmation_kind, record.signing_terminal_result)) {
         return false;
     }
-    return record.confirmation_kind == kStoredConfirmationPolicy
-               ? stored_has_policy_metadata(record)
-               : !stored_has_policy_metadata(record);
+    if (record.confirmation_kind == kStoredConfirmationPolicy) {
+        return stored_has_policy_metadata(record) &&
+               stored_history_token_valid(
+                   record.rule_ref,
+                   sizeof(record.rule_ref),
+                   true,
+                   history_rule_ref_char);
+    }
+    return (record.flags & kStoredDigestPolicy) == 0 &&
+           record.rule_ref[0] == '\0';
 }
 
 bool valid_history_header(const StoredApprovalHistory& history)
@@ -185,6 +247,20 @@ bool valid_history_header(const StoredApprovalHistory& history)
         if (!stored_record_metadata_valid(history.records[index])) {
             return false;
         }
+    }
+    return true;
+}
+
+bool stored_history_records_materialize(const StoredApprovalHistory& history)
+{
+    ApprovalHistoryRecord scratch = {};
+    for (size_t offset = 0; offset < history.count; ++offset) {
+        const size_t index = (history.start + offset) % kApprovalHistoryCapacity;
+        if (!materialize_record(history.records[index], &scratch)) {
+            memset(&scratch, 0, sizeof(scratch));
+            return false;
+        }
+        memset(&scratch, 0, sizeof(scratch));
     }
     return true;
 }
@@ -278,6 +354,29 @@ bool history_policy_result_char(char value, bool first)
 bool history_highest_action_char(char value, bool first)
 {
     return history_reason_char(value, first);
+}
+
+bool stored_history_token_valid(
+    const char* value,
+    size_t value_size,
+    bool required,
+    bool (*valid_char)(char, bool))
+{
+    if (value == nullptr || value_size == 0 || valid_char == nullptr) {
+        return false;
+    }
+
+    size_t index = 0;
+    while (index < value_size && value[index] != '\0') {
+        if (!valid_char(value[index], index == 0)) {
+            return false;
+        }
+        ++index;
+    }
+    if (index == value_size) {
+        return false;
+    }
+    return !required || index != 0;
 }
 
 bool policy_update_result_supported(const char* value)
@@ -934,7 +1033,8 @@ ApprovalHistoryStorageStatus approval_history_status()
                  static_cast<unsigned>(history_size));
         return ApprovalHistoryStorageStatus::storage_error;
     }
-    if (!valid_history_header(history)) {
+    if (!valid_history_header(history) ||
+        !stored_history_records_materialize(history)) {
         memset(&history, 0, sizeof(history));
         return ApprovalHistoryStorageStatus::invalid;
     }

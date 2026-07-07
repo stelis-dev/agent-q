@@ -2,12 +2,12 @@
 
 #include <ArduinoJson.h>
 
-#include "sign_personal_message_user_ingress.h"
+#include "signing/sign_personal_message_user_ingress.h"
 #include "protocol/sign_request_identity.h"
-#include "sign_transaction_user_ingress.h"
+#include "signing/sign_transaction_user_ingress.h"
 #include "protocol/signing_mode.h"
-#include "signing_retry_delivery.h"
-#include "sui_signing_preparation.h"
+#include "signing/signing_retry_delivery.h"
+#include "sui/signing_preparation.h"
 #include "transport/timeout_window.h"
 
 namespace signing {
@@ -51,6 +51,7 @@ struct PreflightRuntime {
     void* retry_responder_context;
     char* retry_stored_response;
     size_t retry_stored_response_size;
+    SuiSigningPreparationOps preparation_ops;
 };
 
 struct SignTransactionPreflightOutput {

@@ -25,10 +25,10 @@ ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${RUNTIME_DIR}/usb_signing_handlers.cpp" \
-  "${RUNTIME_DIR}/usb_signing_handlers.h" \
-  "${RUNTIME_DIR}/usb_operation_response_writer.h" \
-  "${RUNTIME_DIR}/signing_preflight.h" \
+  "${COMMON_ROOT}/signing/usb_signing_handlers.cpp" \
+  "${COMMON_ROOT}/signing/usb_signing_handlers.h" \
+  "${COMMON_ROOT}/protocol/usb_operation_response_writer.h" \
+  "${COMMON_ROOT}/signing/signing_preflight.h" \
     "${COMMON_ROOT}/protocol/signing_response_store.h" \
   "${RUNTIME_DIR}/sui_signing_service.h" \
   "${RUNTIME_DIR}/policy_signing_execution.h" \
@@ -69,7 +69,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include "sui/signing_limits.h"
 #include "protocol/signing_response_store.h"
 #include "sui_signing_service.h"
-#include "usb_signing_handlers.h"
+#include "signing/usb_signing_handlers.h"
 
 namespace {
 
@@ -250,6 +250,38 @@ signing::PreflightRetryDisposition retry_responder(
 {
     g_retry_calls += 1;
     return signing::PreflightRetryDisposition::continue_preflight;
+}
+
+signing::SuiSigningPreparationResult check_tx_account(
+    const signing::SuiPolicySubjectFacts&,
+    const char*,
+    void*)
+{
+    return g_preparation_result;
+}
+
+signing::SuiSigningPreparationResult check_pm_account(
+    const char*,
+    char*,
+    void*)
+{
+    return g_preparation_result;
+}
+
+signing::SuiSigningPreparationResult check_active_network(const char*, void*)
+{
+    return g_preparation_result;
+}
+
+const signing::SuiSigningPreparationOps& preparation_ops()
+{
+    static const signing::SuiSigningPreparationOps ops = {
+        check_tx_account,
+        check_pm_account,
+        check_active_network,
+        nullptr,
+    };
+    return ops;
 }
 
 void fill_tx_preflight_output(signing::SignTransactionPreflightOutput* output)
@@ -476,6 +508,7 @@ signing::UsbSigningHandlerOps make_ops()
         nullptr,
         g_retry_buffer,
         sizeof(g_retry_buffer),
+        preparation_ops(),
         evaluate_tx_preflight,
         evaluate_pm_preflight,
         record_runtime_failure,
@@ -911,7 +944,7 @@ CPP
   -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${RUNTIME_DIR}/usb_signing_handlers.cpp" \
+  "${COMMON_ROOT}/signing/usb_signing_handlers.cpp" \
   -o "${TMP_DIR}/test_usb_signing_handlers"
 
 "${TMP_DIR}/test_usb_signing_handlers"

@@ -32,7 +32,7 @@ for required in \
   "${COMMON_ROOT}/protocol/request_id.h" \
   "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
   "${COMMON_ROOT}/protocol/signing_response_store.h" \
-  "${RUNTIME_DIR}/usb_operation_response_writer.h"; do
+  "${COMMON_ROOT}/protocol/usb_operation_response_writer.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2

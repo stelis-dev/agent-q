@@ -44,12 +44,12 @@
 #include "request_backed_local_pin_context.h"
 #include "protocol/request_id.h"
 #include "protocol/session_state.h"
-#include "sign_personal_message_user_ingress.h"
-#include "sign_transaction_policy_runtime.h"
+#include "signing/sign_personal_message_user_ingress.h"
+#include "signing/sign_transaction_policy_runtime.h"
 #include "policy_signing_execution.h"
 #include "user_signing_confirmation.h"
 #include "signing/user_signing_flow.h"
-#include "sign_transaction_user_ingress.h"
+#include "signing/sign_transaction_user_ingress.h"
 #include "user_signing_review_view_model.h"
 #include "user_signing_review_ui_flow.h"
 #include "signing/user_signing_critical_section.h"
@@ -71,7 +71,7 @@
 #include "usb_disconnect_handler.h"
 #include "usb_operation_dispatch.h"
 #include "usb_operation_manifest.h"
-#include "usb_operation_response_writer.h"
+#include "protocol/usb_operation_response_writer.h"
 #include "usb_policy_propose_handler.h"
 #include "usb_payload_transfer_handlers.h"
 #include "usb_policy_propose_outcome_writer.h"
@@ -82,15 +82,15 @@
 #include "usb_request_line_handler.h"
 #include "usb_retained_response_handlers.h"
 #include "usb_session_read_handlers.h"
-#include "usb_signing_handlers.h"
+#include "signing/usb_signing_handlers.h"
 #include "usb_signing_outcome_writer.h"
 #include "usb_sui_zklogin_credential_handlers.h"
 #include "usb_sui_zklogin_credential_outcome_writer.h"
 #include "usb_response_writer.h"
 #include "ui_event_bridge.h"
-#include "signing_retry_delivery.h"
+#include "signing/signing_retry_delivery.h"
 #include "signing_retry_response.h"
-#include "signing_preflight.h"
+#include "signing/signing_preflight.h"
 #include "protocol/signing_response_store.h"
 #include "transport/usb_session_grace.h"
 #include "usb_session_loss.h"
@@ -849,6 +849,10 @@ struct UserSigningOutputReadyContext {
     const char* request_id = nullptr;
 };
 
+struct UserSigningTerminalFinishContext {
+    const char* request_id = nullptr;
+};
+
 bool user_signing_signed_response_fits(
     const signing::UserSigningFlowCoreSnapshot& snapshot,
     const signing::UserSigningOutput& signing_output,
@@ -867,6 +871,19 @@ bool user_signing_signed_response_fits(
         "user",
         snapshot,
         signing_output);
+}
+
+bool finish_user_signing_from_common(
+    const signing::UserSigningOutput* signing_output,
+    void* context)
+{
+    const UserSigningTerminalFinishContext* finish_context =
+        static_cast<const UserSigningTerminalFinishContext*>(context);
+    if (finish_context == nullptr) {
+        return false;
+    }
+    finish_user_signing_terminal(finish_context->request_id, signing_output);
+    return true;
 }
 
 void execute_user_signing_critical_section_and_finish(const char* request_id)
@@ -888,29 +905,25 @@ void execute_user_signing_critical_section_and_finish(const char* request_id)
             kResultDisplayMs);
         return;
     }
-    signing::UserSigningOutput signing_output = {};
     UserSigningOutputReadyContext ready_context{request_id};
+    UserSigningTerminalFinishContext finish_context{request_id};
     const signing::UserSigningCriticalSectionOps critical_ops{
         signing::sign_user_signing_payload_from_active_identity,
     };
-    const signing::UserSigningHandoffReport signing_report =
-        signing::user_signing_execute_critical_section(
-            &signing_output,
+    const signing::UserSigningHandoffFinishReport signing_report =
+        signing::user_signing_execute_critical_section_and_finish(
             user_signing_signed_response_fits,
             &ready_context,
+            finish_user_signing_from_common,
+            &finish_context,
             critical_ops);
-    if (signing_report.result != signing::UserSigningHandoffResult::ok) {
+    if (signing_report.handoff.result != signing::UserSigningHandoffResult::ok) {
         ESP_LOGW(kTag,
                  "user_signing signing failed: id=%s handoff=%s signing=%s",
                  request_id,
-                 signing::user_signing_handoff_result_name(signing_report.result),
-                 signing::user_signing_sign_status_name(signing_report.signing_status));
-        finish_user_signing_terminal(request_id);
-        signing::user_signing_output_wipe(&signing_output);
-        return;
+                 signing::user_signing_handoff_result_name(signing_report.handoff.result),
+                 signing::user_signing_sign_status_name(signing_report.handoff.signing_status));
     }
-    finish_user_signing_terminal(request_id, &signing_output);
-    signing::user_signing_output_wipe(&signing_output);
 }
 
 bool fill_protocol_random(void* output, size_t size, const char* purpose)
@@ -4644,6 +4657,7 @@ const signing::UsbSigningHandlerOps& usb_signing_handler_ops()
         nullptr,
         g_signing_preflight_retry_stored_response,
         sizeof(g_signing_preflight_retry_stored_response),
+        signing::stackchan_sui_signing_preparation_ops(),
         signing::evaluate_sign_transaction_preflight,
         signing::evaluate_sign_personal_message_preflight,
         record_signing_account_unavailable_runtime_failure,
@@ -4655,8 +4669,8 @@ const signing::UsbSigningHandlerOps& usb_signing_handler_ops()
         make_user_signing_window,
         signing::user_signing_flow_begin,
         signing::user_signing_flow_begin_personal_message,
-        signing::clear_prepared_sui_sign_transaction,
-        signing::clear_prepared_sui_sign_personal_message,
+        signing::clear_sui_prepared_sign_transaction,
+        signing::clear_sui_prepared_personal_message,
         show_user_signing_review,
         clear_user_signing_flow_for_usb,
         show_user_signing_display_error,

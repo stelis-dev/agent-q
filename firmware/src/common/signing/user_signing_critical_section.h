@@ -40,6 +40,11 @@ struct UserSigningHandoffReport {
     UserSigningSignStatus signing_status;
 };
 
+struct UserSigningHandoffFinishReport {
+    UserSigningHandoffReport handoff;
+    bool terminal_written;
+};
+
 using UserSigningSignPayloadFn =
     UserSigningSignStatus (*)(
         Route route,
@@ -60,6 +65,11 @@ using UserSigningOutputReadyFn =
         const UserSigningOutput& output,
         void* context);
 
+using UserSigningTerminalFinishFn =
+    bool (*)(
+        const UserSigningOutput* output,
+        void* context);
+
 void user_signing_output_wipe(
     UserSigningOutput* output);
 
@@ -68,6 +78,14 @@ user_signing_execute_critical_section(
     UserSigningOutput* output,
     UserSigningOutputReadyFn output_ready,
     void* context,
+    const UserSigningCriticalSectionOps& ops);
+
+UserSigningHandoffFinishReport
+user_signing_execute_critical_section_and_finish(
+    UserSigningOutputReadyFn output_ready,
+    void* output_ready_context,
+    UserSigningTerminalFinishFn finish_terminal,
+    void* finish_terminal_context,
     const UserSigningCriticalSectionOps& ops);
 
 const char* user_signing_handoff_result_name(

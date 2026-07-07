@@ -34,7 +34,7 @@ for required in \
   "${RUNTIME_DIR}/usb_active_session_request_guard.h" \
   "${RUNTIME_DIR}/usb_session_read_handlers.cpp" \
   "${RUNTIME_DIR}/usb_session_read_handlers.h" \
-  "${RUNTIME_DIR}/usb_operation_response_writer.h"; do
+  "${COMMON_ROOT}/protocol/usb_operation_response_writer.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2

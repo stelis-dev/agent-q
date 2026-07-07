@@ -4,7 +4,7 @@
 
 #include "transport/payload_delivery_admission.h"
 #include "protocol/session_state.h"
-#include "sign_transaction_user_validation.h"
+#include "signing/sign_transaction_user_validation.h"
 
 namespace signing {
 

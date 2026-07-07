@@ -6,7 +6,7 @@
 
 #include "protocol/device_response.h"
 #include "usb_operation_type.h"
-#include "usb_operation_response_writer.h"
+#include "protocol/usb_operation_response_writer.h"
 #include "usb_response_writer.h"
 
 namespace signing {

@@ -27,7 +27,7 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${RUNTIME_DIR}/usb_connect_handler.cpp" \
   "${RUNTIME_DIR}/usb_connect_handler.h" \
-  "${RUNTIME_DIR}/usb_operation_response_writer.h" \
+  "${COMMON_ROOT}/protocol/usb_operation_response_writer.h" \
   "${RUNTIME_DIR}/connect_approval.h" \
   "${COMMON_ROOT}/transport/timeout_window.h" \
   "${COMMON_ROOT}/protocol/request_id.h"; do

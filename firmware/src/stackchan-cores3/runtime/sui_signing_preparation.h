@@ -1,9 +1,12 @@
 #pragma once
 
 #include "protocol/sign_route.h"
+#include "sui/signing_preparation.h"
 #include "sui/signing_preparation_types.h"
 
 namespace signing {
+
+const SuiSigningPreparationOps& stackchan_sui_signing_preparation_ops();
 
 SuiSigningPreparationResult prepare_sui_sign_transaction(
     SupportedSignRoute route,

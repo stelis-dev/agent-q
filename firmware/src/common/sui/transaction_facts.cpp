@@ -2246,32 +2246,44 @@ bool transaction_kind_only_parse_ok(const uint8_t* tx_bytes, size_t tx_len)
     if (!read_variant(reader, &kind_variant) || kind_variant != 0) {
         return false;
     }
-    SuiParsedTransactionFacts scratch = {};
+    SuiParsedTransactionFacts* scratch =
+        static_cast<SuiParsedTransactionFacts*>(malloc(sizeof(SuiParsedTransactionFacts)));
+    if (scratch == nullptr) {
+        return false;
+    }
+    memset(scratch, 0, sizeof(*scratch));
     uint32_t input_count = 0;
     if (!reader.read_vector_length(kSuiPolicyFactMaxInputs, &input_count)) {
+        free(scratch);
         return false;
     }
     for (uint32_t index = 0; index < input_count; ++index) {
-        if (!read_call_arg(reader, &scratch.inputs[index])) {
+        if (!read_call_arg(reader, &scratch->inputs[index])) {
+            free(scratch);
             return false;
         }
     }
     uint32_t command_count = 0;
     if (!reader.read_vector_length(kSuiPolicyFactMaxCommands, &command_count)) {
+        free(scratch);
         return false;
     }
     for (uint32_t index = 0; index < command_count; ++index) {
-        if (!read_command(reader, &scratch.commands[index])) {
+        if (!read_command(reader, &scratch->commands[index])) {
+            free(scratch);
             return false;
         }
         if (!command_argument_refs_in_range(
-                scratch.commands[index],
+                scratch->commands[index],
                 static_cast<uint16_t>(input_count),
                 static_cast<uint16_t>(index))) {
+            free(scratch);
             return false;
         }
     }
-    return reader.expect_eof();
+    const bool ok = reader.expect_eof();
+    free(scratch);
+    return ok;
 }
 
 }  // namespace

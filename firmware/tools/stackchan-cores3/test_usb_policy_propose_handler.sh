@@ -54,7 +54,7 @@ for required in \
   "${RUNTIME_DIR}/usb_policy_propose_handler.h" \
   "${RUNTIME_DIR}/usb_policy_propose_outcome_writer.cpp" \
   "${RUNTIME_DIR}/usb_policy_propose_outcome_writer.h" \
-  "${RUNTIME_DIR}/usb_operation_response_writer.h" \
+  "${COMMON_ROOT}/protocol/usb_operation_response_writer.h" \
   "${RUNTIME_DIR}/usb_response_writer.h" \
   "${REPO_ROOT}/firmware/src/common/policy/policy_update_flow.h" \
   "${COMMON_ROOT}/transport/timeout_window.h" \

@@ -1,10 +1,9 @@
-#include "signing_preflight.h"
+#include "signing/signing_preflight.h"
 
 #include <string.h>
 
 #include "protocol/json_input.h"
 #include "transport/payload_delivery_admission.h"
-#include "sui_signing_authority.h"
 
 namespace signing {
 namespace {
@@ -156,27 +155,16 @@ SignTransactionUserIngressResult admit_transaction_payload_after_network_guard(
     return map_payload_delivery_admission_result(admission);
 }
 
-SuiSigningPreparationResult active_identity_network_result_to_preparation_result(
-    SuiSigningActiveIdentityNetworkResult result)
-{
-    switch (result) {
-        case SuiSigningActiveIdentityNetworkResult::ok:
-            return SuiSigningPreparationResult::ok;
-        case SuiSigningActiveIdentityNetworkResult::account_unavailable:
-            return SuiSigningPreparationResult::account_unavailable;
-        case SuiSigningActiveIdentityNetworkResult::active_identity_unavailable:
-            return SuiSigningPreparationResult::active_identity_unavailable;
-        case SuiSigningActiveIdentityNetworkResult::network_mismatch:
-        default:
-            return SuiSigningPreparationResult::invalid_network;
-    }
-}
-
 SuiSigningPreparationResult validate_active_identity_network_before_preparation(
+    const PreflightRuntime& runtime,
     const char* network)
 {
-    return active_identity_network_result_to_preparation_result(
-        verify_sui_signing_active_identity_network(network));
+    if (runtime.preparation_ops.check_active_network == nullptr) {
+        return SuiSigningPreparationResult::active_identity_unavailable;
+    }
+    return runtime.preparation_ops.check_active_network(
+        network,
+        runtime.preparation_ops.context);
 }
 
 }  // namespace
@@ -234,7 +222,9 @@ PreflightResult evaluate_sign_transaction_preflight(
     }
 
     output->preparation_result =
-        validate_active_identity_network_before_preparation(output->ingress.params.network);
+        validate_active_identity_network_before_preparation(
+            runtime,
+            output->ingress.params.network);
     if (output->preparation_result != SuiSigningPreparationResult::ok) {
         return PreflightResult::transaction_preparation_error;
     }
@@ -246,14 +236,15 @@ PreflightResult evaluate_sign_transaction_preflight(
     }
 
     output->preparation_result =
-        prepare_sui_sign_transaction(
+        prepare_sui_sign_transaction_base64(
             classification.route,
             output->ingress.params.network,
             output->ingress.params.tx_bytes_base64,
             output->ingress.params.tx_bytes_decoded_size,
+            runtime.preparation_ops,
             &output->prepared);
     if (output->preparation_result != SuiSigningPreparationResult::ok) {
-        clear_prepared_sui_sign_transaction(&output->prepared);
+        clear_sui_prepared_sign_transaction(&output->prepared);
         return PreflightResult::transaction_preparation_error;
     }
 
@@ -316,20 +307,23 @@ PreflightResult evaluate_sign_personal_message_preflight(
     }
 
     output->preparation_result =
-        validate_active_identity_network_before_preparation(output->ingress.params.network);
+        validate_active_identity_network_before_preparation(
+            runtime,
+            output->ingress.params.network);
     if (output->preparation_result != SuiSigningPreparationResult::ok) {
         return PreflightResult::personal_message_preparation_error;
     }
 
     output->preparation_result =
-        prepare_sui_sign_personal_message(
+        prepare_sui_sign_personal_message_base64(
             classification.route,
             output->ingress.params.network,
             output->ingress.params.message_base64,
             output->ingress.params.message_decoded_size,
+            runtime.preparation_ops,
             &output->prepared);
     if (output->preparation_result != SuiSigningPreparationResult::ok) {
-        clear_prepared_sui_sign_personal_message(&output->prepared);
+        clear_sui_prepared_personal_message(&output->prepared);
         return PreflightResult::personal_message_preparation_error;
     }
 

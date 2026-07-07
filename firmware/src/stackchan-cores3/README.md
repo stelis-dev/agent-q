@@ -404,8 +404,8 @@ read/cleanup route class for `get_result` and `ack_result`. It is not a
 hardware smoke test.
 
 The StackChan sign_transaction policy runtime test is target-specific. It compiles the tracked
-`sign_transaction_policy_runtime.cpp` runtime boundary with ArduinoJson, the common Sui
-facts parser, current policy document support, and pinned MicroSui base64 helpers,
+common `firmware/src/common/signing/sign_transaction_policy_runtime.cpp` runtime
+boundary with ArduinoJson, the common Sui facts parser, current policy document support, and pinned MicroSui base64 helpers,
 then verifies unsupported method rejection, invalid Sui params, approval-history
 metadata exposure, current fail-closed policy behavior, and scratch cleanup.
 

@@ -29,7 +29,7 @@ for required in \
   "${RUNTIME_DIR}/usb_active_session_request_guard.h" \
   "${RUNTIME_DIR}/usb_approval_history_handler.cpp" \
   "${RUNTIME_DIR}/usb_approval_history_handler.h" \
-  "${RUNTIME_DIR}/usb_operation_response_writer.h" \
+  "${COMMON_ROOT}/protocol/usb_operation_response_writer.h" \
   "${RUNTIME_DIR}/usb_response_writer.h" \
   "${COMMON_ROOT}/numeric/u64_decimal.h" \
   "${REPO_ROOT}/firmware/src/common/protocol/approval_history_json_writer.cpp" \

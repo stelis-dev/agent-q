@@ -2,12 +2,12 @@
 
 #include <ArduinoJson.h>
 
-#include "policy_signing_execution.h"
+#include "protocol/usb_operation_response_writer.h"
 #include "transport/payload_delivery_admission.h"
-#include "sign_transaction_policy_runtime.h"
-#include "signing_preflight.h"
+#include "signing/policy_signing_execution_result.h"
+#include "signing/sign_transaction_policy_runtime.h"
+#include "signing/signing_preflight.h"
 #include "transport/timeout_window.h"
-#include "usb_operation_response_writer.h"
 #include "signing/user_signing_flow.h"
 
 namespace signing {
@@ -47,6 +47,7 @@ struct UsbSigningHandlerOps {
     void* retry_responder_context;
     char* retry_stored_response;
     size_t retry_stored_response_size;
+    SuiSigningPreparationOps preparation_ops;
     EvaluateSignTransactionPreflightFn evaluate_transaction_preflight;
     EvaluateSignPersonalMessagePreflightFn evaluate_personal_message_preflight;
     void (*record_account_unavailable_runtime_failure)();

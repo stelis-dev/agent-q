@@ -15,7 +15,7 @@ cat >"${TMP_DIR}/signing_response_store_test.cpp" <<'CPP'
 #include <string.h>
 
 #include "protocol/signing_response_store.h"
-#include "signing_retry_delivery.h"
+#include "signing/signing_retry_delivery.h"
 
 using namespace signing;
 
@@ -214,7 +214,7 @@ CPP
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/signing_response_store_test.cpp" \
   "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
-  "${RUNTIME_DIR}/signing_retry_delivery.cpp" \
+  "${COMMON_ROOT}/signing/signing_retry_delivery.cpp" \
   -o "${TMP_DIR}/signing_response_store_test"
 
 "${TMP_DIR}/signing_response_store_test"

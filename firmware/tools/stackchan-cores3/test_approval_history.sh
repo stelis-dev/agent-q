@@ -348,6 +348,8 @@ int main()
            "approval history status reports storage error on NVS open failure");
     g_open_fails = false;
     expect(mutate_first_method_record_byte(16, 0xFF), "mutate stored confirmation enum");
+    expect(signing::approval_history_status() == signing::ApprovalHistoryStorageStatus::invalid,
+           "stored unsupported confirmation enum status is invalid");
     expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::invalid,
            "stored unsupported confirmation enum fails closed");
     g_blob = valid_enum_blob;
@@ -376,6 +378,8 @@ int main()
             break;
         }
     }
+    expect(signing::approval_history_status() == signing::ApprovalHistoryStorageStatus::invalid,
+           "corrupt stored token status is invalid");
     expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::invalid,
            "corrupt stored token fails closed instead of being sanitized");
     g_blob = valid_blob;
@@ -515,12 +519,16 @@ int main()
     expect(signing::approval_history_append_required_policy_update(policy_update_input(), 1501),
            "append policy-update result before corruption");
     expect(replace_blob_token("applied", "approve"), "mutate stored policy-update result token");
+    expect(signing::approval_history_status() == signing::ApprovalHistoryStorageStatus::invalid,
+           "stored unsupported policy-update result status is invalid");
     expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::invalid,
            "stored unsupported policy-update result fails closed");
     expect(signing::approval_history_wipe(), "wipe before stored highest-action corruption test");
     expect(signing::approval_history_append_required_policy_update(policy_update_input(), 1502),
            "append policy-update highest action before corruption");
     expect(replace_blob_token("reject", "accept"), "mutate stored highest-action token");
+    expect(signing::approval_history_status() == signing::ApprovalHistoryStorageStatus::invalid,
+           "stored unsupported highest-action status is invalid");
     expect(signing::approval_history_read_page(0, 4, &page) == signing::ApprovalHistoryReadResult::invalid,
            "stored unsupported highest action fails closed");
     expect(signing::approval_history_wipe(), "wipe after policy-update corruption tests");

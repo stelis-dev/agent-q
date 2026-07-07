@@ -18,6 +18,16 @@ UserSigningHandoffReport make_report(
     };
 }
 
+UserSigningHandoffFinishReport make_finish_report(
+    UserSigningHandoffReport handoff,
+    bool terminal_written)
+{
+    return UserSigningHandoffFinishReport{
+        handoff,
+        terminal_written,
+    };
+}
+
 UserSigningHandoffResult map_consume_failure(
     UserSigningTransitionResult result)
 {
@@ -62,6 +72,15 @@ void wipe_user_signing_critical_buffer(void* data, size_t size)
     }
 }
 
+void wipe_and_free_user_signing_critical_buffer(uint8_t* data, size_t size)
+{
+    if (data == nullptr) {
+        return;
+    }
+    wipe_user_signing_critical_buffer(data, size);
+    free(data);
+}
+
 }  // namespace
 
 void user_signing_output_wipe(
@@ -95,7 +114,16 @@ user_signing_execute_critical_section(
     const UserSigningFlowCoreSnapshot snapshot =
         user_signing_flow_core_snapshot();
     uint8_t* payload = nullptr;
-    uint8_t signature[kSuiSignatureEnvelopeMaxBytes] = {};
+    uint8_t* signature = static_cast<uint8_t*>(malloc(kSuiSignatureEnvelopeMaxBytes));
+    if (signature == nullptr) {
+        const UserSigningTransitionResult terminal_result =
+            user_signing_flow_record_signing_failed();
+        return make_report(
+            UserSigningHandoffResult::signing_failed,
+            terminal_result,
+            UserSigningSignStatus::signature_output_too_small);
+    }
+    memset(signature, 0, kSuiSignatureEnvelopeMaxBytes);
     size_t signature_size = 0;
     size_t payload_size = 0;
 
@@ -105,13 +133,13 @@ user_signing_execute_critical_section(
         if (should_terminalize_signing_failure(consume_result)) {
             const UserSigningTransitionResult terminal_result =
                 user_signing_flow_record_signing_failed();
-            wipe_user_signing_critical_buffer(signature, sizeof(signature));
+            wipe_and_free_user_signing_critical_buffer(signature, kSuiSignatureEnvelopeMaxBytes);
             return make_report(
                 map_consume_failure(consume_result),
                 terminal_result,
                 UserSigningSignStatus::invalid_input);
         }
-        wipe_user_signing_critical_buffer(signature, sizeof(signature));
+        wipe_and_free_user_signing_critical_buffer(signature, kSuiSignatureEnvelopeMaxBytes);
         return make_report(
             map_consume_failure(consume_result),
             consume_result,
@@ -122,7 +150,7 @@ user_signing_execute_critical_section(
     if (route == Route::unsupported) {
         wipe_user_signing_critical_buffer(payload, payload_size);
         free(payload);
-        wipe_user_signing_critical_buffer(signature, sizeof(signature));
+        wipe_and_free_user_signing_critical_buffer(signature, kSuiSignatureEnvelopeMaxBytes);
         const UserSigningTransitionResult terminal_result =
             user_signing_flow_record_signing_failed();
         return make_report(
@@ -143,7 +171,7 @@ user_signing_execute_critical_section(
     if (signing_status != UserSigningSignStatus::ok) {
         wipe_user_signing_critical_buffer(payload, payload_size);
         free(payload);
-        wipe_user_signing_critical_buffer(signature, sizeof(signature));
+        wipe_and_free_user_signing_critical_buffer(signature, kSuiSignatureEnvelopeMaxBytes);
         const UserSigningTransitionResult terminal_result =
             user_signing_flow_record_signing_failed();
         return make_report(
@@ -155,7 +183,7 @@ user_signing_execute_critical_section(
     if (signature_size == 0 || signature_size > sizeof(output->signature)) {
         wipe_user_signing_critical_buffer(payload, payload_size);
         free(payload);
-        wipe_user_signing_critical_buffer(signature, sizeof(signature));
+        wipe_and_free_user_signing_critical_buffer(signature, kSuiSignatureEnvelopeMaxBytes);
         const UserSigningTransitionResult failed_terminal_result =
             user_signing_flow_record_signing_failed();
         return make_report(
@@ -176,7 +204,7 @@ user_signing_execute_critical_section(
         user_signing_output_wipe(output);
         wipe_user_signing_critical_buffer(payload, payload_size);
         free(payload);
-        wipe_user_signing_critical_buffer(signature, sizeof(signature));
+        wipe_and_free_user_signing_critical_buffer(signature, kSuiSignatureEnvelopeMaxBytes);
         const UserSigningTransitionResult failed_terminal_result =
             user_signing_flow_record_signing_failed();
         return make_report(
@@ -191,19 +219,67 @@ user_signing_execute_critical_section(
         user_signing_output_wipe(output);
         wipe_user_signing_critical_buffer(payload, payload_size);
         free(payload);
-        wipe_user_signing_critical_buffer(signature, sizeof(signature));
+        wipe_and_free_user_signing_critical_buffer(signature, kSuiSignatureEnvelopeMaxBytes);
         return make_report(
             UserSigningHandoffResult::terminal_error,
             terminal_result,
             signing_status);
     }
-    wipe_user_signing_critical_buffer(signature, sizeof(signature));
+    wipe_and_free_user_signing_critical_buffer(signature, kSuiSignatureEnvelopeMaxBytes);
     wipe_user_signing_critical_buffer(payload, payload_size);
     free(payload);
     return make_report(
         UserSigningHandoffResult::ok,
         terminal_result,
         signing_status);
+}
+
+UserSigningHandoffFinishReport
+user_signing_execute_critical_section_and_finish(
+    UserSigningOutputReadyFn output_ready,
+    void* output_ready_context,
+    UserSigningTerminalFinishFn finish_terminal,
+    void* finish_terminal_context,
+    const UserSigningCriticalSectionOps& ops)
+{
+    if (output_ready == nullptr || finish_terminal == nullptr) {
+        return make_finish_report(
+            make_report(
+                UserSigningHandoffResult::invalid_output,
+                UserSigningTransitionResult::invalid_argument,
+                UserSigningSignStatus::invalid_input),
+            false);
+    }
+
+    UserSigningOutput* output =
+        static_cast<UserSigningOutput*>(malloc(sizeof(UserSigningOutput)));
+    if (output == nullptr) {
+        const UserSigningTransitionResult terminal_result =
+            user_signing_flow_record_signing_failed();
+        const bool terminal_written =
+            finish_terminal(nullptr, finish_terminal_context);
+        return make_finish_report(
+            make_report(
+                UserSigningHandoffResult::signing_failed,
+                terminal_result,
+                UserSigningSignStatus::signature_output_too_small),
+            terminal_written);
+    }
+    memset(output, 0, sizeof(*output));
+
+    const UserSigningHandoffReport handoff =
+        user_signing_execute_critical_section(
+            output,
+            output_ready,
+            output_ready_context,
+            ops);
+    const bool terminal_written =
+        finish_terminal(
+            handoff.result == UserSigningHandoffResult::ok ? output : nullptr,
+            finish_terminal_context);
+    user_signing_output_wipe(output);
+    free(output);
+    return make_finish_report(handoff, terminal_written);
 }
 
 const char* user_signing_handoff_result_name(

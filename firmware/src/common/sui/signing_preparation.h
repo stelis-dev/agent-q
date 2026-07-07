@@ -17,9 +17,15 @@ using SuiSignPersonalMessageAccountCheckFn =
         char account_address[kSuiAddressStringBufferSize],
         void* context);
 
+using SuiSignNetworkCheckFn =
+    SuiSigningPreparationResult (*)(
+        const char* network,
+        void* context);
+
 struct SuiSigningPreparationOps {
     SuiSignTransactionAccountCheckFn check_transaction_account;
     SuiSignPersonalMessageAccountCheckFn check_personal_message_account;
+    SuiSignNetworkCheckFn check_active_network;
     void* context;
 };
 

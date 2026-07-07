@@ -127,6 +127,7 @@ python3 - "${FIRMWARE_DIR}/main/CMakeLists.txt" "${FIRMWARE_DIR}/main/main.cpp" 
 from __future__ import annotations
 
 import sys
+import shutil
 from pathlib import Path
 
 
@@ -213,6 +214,13 @@ def assert_no_symlink_ancestors(path: Path, root: Path, label: str) -> None:
         current = current / part
         if current.is_symlink():
             raise SystemExit(f"Could not patch {label}; symlink ancestor in generated firmware path: {current}")
+
+
+def remove_path(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
 
 
 def write_text_if_changed(path: Path, text: str) -> None:
@@ -303,6 +311,16 @@ def patch_partition_table(text: str) -> str:
 cmake_path = Path(sys.argv[1])
 main_path = Path(sys.argv[2])
 firmware_dir = main_path.parents[1]
+
+for stale_root in [
+    firmware_dir / "main/signing",
+    firmware_dir / "main/signing_common",
+    firmware_dir / "main/agent_q",
+    firmware_dir / "main/agent_q_common",
+]:
+    assert_no_symlink_ancestors(stale_root, firmware_dir, str(stale_root))
+    if stale_root.exists() or stale_root.is_symlink():
+        remove_path(stale_root)
 
 partitions_path = firmware_dir / "partitions.csv"
 partitions = read_text_file(partitions_path, "partitions.csv")

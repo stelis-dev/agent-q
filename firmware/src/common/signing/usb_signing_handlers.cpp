@@ -1,4 +1,4 @@
-#include "usb_signing_handlers.h"
+#include "signing/usb_signing_handlers.h"
 
 #include <string.h>
 
@@ -361,6 +361,9 @@ bool common_signing_handler_available(
         ops.retry_responder == nullptr ||
         ops.retry_stored_response == nullptr ||
         ops.retry_stored_response_size == 0 ||
+        ops.preparation_ops.check_transaction_account == nullptr ||
+        ops.preparation_ops.check_personal_message_account == nullptr ||
+        ops.preparation_ops.check_active_network == nullptr ||
         ops.record_account_unavailable_runtime_failure == nullptr ||
         ops.make_user_signing_window == nullptr ||
         ops.show_user_signing_review == nullptr ||
@@ -415,6 +418,7 @@ PreflightRuntime make_preflight_runtime(
         ops.retry_responder_context,
         ops.retry_stored_response,
         ops.retry_stored_response_size,
+        ops.preparation_ops,
     };
 }
 

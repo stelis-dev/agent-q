@@ -34,7 +34,7 @@ for required in \
   "${RUNTIME_DIR}/usb_operation_dispatch.h" \
   "${RUNTIME_DIR}/usb_operation_manifest.cpp" \
   "${RUNTIME_DIR}/usb_operation_manifest.h" \
-  "${RUNTIME_DIR}/usb_operation_response_writer.h" \
+  "${COMMON_ROOT}/protocol/usb_operation_response_writer.h" \
   "${RUNTIME_DIR}/usb_operation_type.h" \
   "${COMMON_ROOT}/protocol/session_state.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp"; do

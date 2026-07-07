@@ -29,7 +29,7 @@ for required in \
   "${RUNTIME_DIR}/usb_disconnect_handler.cpp" \
   "${RUNTIME_DIR}/usb_disconnect_handler.h" \
   "${USB_RESPONSE_WRITER_SOURCE}" \
-  "${RUNTIME_DIR}/usb_operation_response_writer.h"; do
+  "${COMMON_DIR}/protocol/usb_operation_response_writer.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2

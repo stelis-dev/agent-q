@@ -5,7 +5,7 @@
 #include "transport/timeout_window.h"
 #include "usb_request_envelope.h"
 #include "usb_operation_dispatch.h"
-#include "usb_operation_response_writer.h"
+#include "protocol/usb_operation_response_writer.h"
 
 namespace signing {
 

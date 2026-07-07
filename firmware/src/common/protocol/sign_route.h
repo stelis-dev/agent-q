@@ -2,6 +2,8 @@
 
 #include <stddef.h>
 
+#include "protocol/signing_mode.h"
+
 namespace signing {
 
 enum class SignOperation {
@@ -50,6 +52,22 @@ inline const char* sign_route_wire_method(SupportedSignRoute route)
         default:
             return "";
     }
+}
+
+inline bool sign_route_allowed_for_authorization_mode(
+    SupportedSignRoute route,
+    AuthorizationMode mode)
+{
+    if (route == SupportedSignRoute::sui_sign_transaction) {
+        return true;
+    }
+    return route == SupportedSignRoute::sui_sign_personal_message &&
+           mode == AuthorizationMode::user;
+}
+
+inline bool sign_route_requires_message_bytes(SupportedSignRoute route)
+{
+    return route == SupportedSignRoute::sui_sign_personal_message;
 }
 
 inline bool sign_route_identifier_valid(const char* value, size_t max_length)

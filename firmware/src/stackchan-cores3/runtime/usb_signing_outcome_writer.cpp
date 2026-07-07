@@ -132,8 +132,8 @@ bool prepare_signed_signing_response(
     if (!ed25519_signature && !zklogin_signature) {
         return false;
     }
-    const char* chain = signing_route_wire_chain(signing_route);
-    const char* method = signing_route_wire_method(signing_route);
+    const char* chain = sign_route_wire_chain(signing_route);
+    const char* method = sign_route_wire_method(signing_route);
     if (chain == nullptr || chain[0] == '\0' ||
         method == nullptr || method[0] == '\0') {
         return false;
@@ -142,7 +142,7 @@ bool prepare_signed_signing_response(
         strcmp(authorization, "policy") == 0
             ? AuthorizationMode::policy
             : AuthorizationMode::user;
-    if (!signing_route_allowed_for_authorization_mode(
+    if (!sign_route_allowed_for_authorization_mode(
             signing_route,
             authorization_mode)) {
         return false;
@@ -156,7 +156,7 @@ bool prepare_signed_signing_response(
         return false;
     }
     char message_base64[kSuiSignPersonalMessageMaxBase64Size + 1] = {};
-    if (signing_route_requires_message_bytes(signing_route)) {
+    if (sign_route_requires_message_bytes(signing_route)) {
         if (message_bytes == nullptr ||
             message_bytes_size == 0 ||
             message_bytes_size > kSuiSignPersonalMessageMaxBytes ||
@@ -177,7 +177,7 @@ bool prepare_signed_signing_response(
     result["chain"] = chain;
     result["method"] = method;
     result["signature"] = signature_base64;
-    if (signing_route_requires_message_bytes(signing_route)) {
+    if (sign_route_requires_message_bytes(signing_route)) {
         result["messageBytes"] = message_base64;
     }
 

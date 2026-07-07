@@ -34,8 +34,8 @@ for required in \
   "${COMMON_ROOT}/protocol/request_id.h" \
   "${COMMON_ROOT}/protocol/session_state.cpp" \
   "${COMMON_ROOT}/protocol/session_state.h" \
-  "${RUNTIME_DIR}/sign_personal_message_user_validation.cpp" \
-  "${RUNTIME_DIR}/sign_personal_message_user_validation.h"; do
+  "${COMMON_ROOT}/signing/sign_personal_message_user_validation.cpp" \
+  "${COMMON_ROOT}/signing/sign_personal_message_user_validation.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first, or set FIRMWARE_ARDUINOJSON_ROOT." >&2
@@ -55,7 +55,7 @@ cat >"${TMP_DIR}/sign_personal_message_user_validation_test.cpp" <<'CPP'
 
 #include <string>
 
-#include "sign_personal_message_user_validation.h"
+#include "signing/sign_personal_message_user_validation.h"
 
 namespace {
 
@@ -258,7 +258,7 @@ CPP
   -I"${RUNTIME_DIR}" \
   -I"${RUNTIME_DIR}/../../common" \
   "${TMP_DIR}/sign_personal_message_user_validation_test.cpp" \
-  "${RUNTIME_DIR}/sign_personal_message_user_validation.cpp" \
+  "${COMMON_ROOT}/signing/sign_personal_message_user_validation.cpp" \
   "${COMMON_ROOT}/protocol/base64.cpp" \
   "${COMMON_ROOT}/sui/signing_payload.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \

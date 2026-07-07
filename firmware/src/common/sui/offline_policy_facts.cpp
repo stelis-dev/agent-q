@@ -724,18 +724,40 @@ bool build_sui_offline_policy_condition_facts(
         !format_u64_text(parsed.command_count, out->command_count, sizeof(out->command_count))) {
         return false;
     }
-    TokenTypePool token_types = {};
-    if (!add_funds_withdrawal_inputs(parsed, &token_types, out)) {
+    TokenTypePool* token_types = static_cast<TokenTypePool*>(malloc(sizeof(TokenTypePool)));
+    TokenState (*states)[kSuiPolicyFactMaxCommandArguments] =
+        static_cast<TokenState (*)[kSuiPolicyFactMaxCommandArguments]>(
+            malloc(sizeof(TokenState) * kSuiPolicyFactMaxCommands * kSuiPolicyFactMaxCommandArguments));
+    if (token_types == nullptr || states == nullptr) {
+        free(token_types);
+        free(states);
+        return set_reason(
+            out,
+            SuiOfflinePolicyFactsCompleteness::capacity_exceeded,
+            SuiOfflinePolicyFactsReason::fact_capacity_exceeded);
+    }
+    memset(token_types, 0, sizeof(*token_types));
+    memset(
+        states,
+        0,
+        sizeof(TokenState) * kSuiPolicyFactMaxCommands * kSuiPolicyFactMaxCommandArguments);
+
+    bool ok = add_funds_withdrawal_inputs(parsed, token_types, out);
+    if (!ok) {
+        free(token_types);
+        free(states);
         return false;
     }
 
-    TokenState states[kSuiPolicyFactMaxCommands][kSuiPolicyFactMaxCommandArguments] = {};
     for (uint16_t index = 0; index < parsed.command_count; ++index) {
-        if (!process_command(parsed, index, parsed.commands[index], states, &token_types, out)) {
-            return false;
+        if (!process_command(parsed, index, parsed.commands[index], states, token_types, out)) {
+            ok = false;
+            break;
         }
     }
-    return true;
+    free(token_types);
+    free(states);
+    return ok;
 }
 
 SuiTransactionFactsResult parse_sui_offline_policy_condition_facts(

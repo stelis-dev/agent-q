@@ -61,13 +61,13 @@ for required in \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_store.cpp" \
   "${RUNTIME_DIR}/usb_signing_outcome_writer.cpp" \
-  "${RUNTIME_DIR}/signing_preflight.cpp" \
+  "${COMMON_ROOT}/signing/signing_preflight.cpp" \
   "${RUNTIME_DIR}/signing_retry_response.cpp" \
-  "${RUNTIME_DIR}/sign_personal_message_user_ingress.cpp" \
-  "${RUNTIME_DIR}/sign_personal_message_user_validation.cpp" \
-  "${RUNTIME_DIR}/signing_retry_delivery.cpp" \
-  "${RUNTIME_DIR}/sign_transaction_user_ingress.cpp" \
-  "${RUNTIME_DIR}/sign_transaction_user_validation.cpp" \
+  "${COMMON_ROOT}/signing/sign_personal_message_user_ingress.cpp" \
+  "${COMMON_ROOT}/signing/sign_personal_message_user_validation.cpp" \
+  "${COMMON_ROOT}/signing/signing_retry_delivery.cpp" \
+  "${COMMON_ROOT}/signing/sign_transaction_user_ingress.cpp" \
+  "${COMMON_ROOT}/signing/sign_transaction_user_validation.cpp" \
   "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
   "${RUNTIME_DIR}/sui_signing_preparation.cpp" \
   "${COMMON_SUI_DIR}/signing_preparation.cpp" \
@@ -118,8 +118,8 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <vector>
 
 #include "protocol/sign_route.h"
-#include "sign_transaction_user_ingress.h"
-#include "signing_preflight.h"
+#include "signing/sign_transaction_user_ingress.h"
+#include "signing/signing_preflight.h"
 #include "protocol/sign_request_identity.h"
 #include "signing_retry_response.h"
 #include "protocol/signing_response_store.h"
@@ -395,6 +395,7 @@ PreflightOutcome run_transaction_preflight(
                 nullptr,
                 retry_stored_response,
                 sizeof(retry_stored_response),
+                signing::stackchan_sui_signing_preparation_ops(),
             },
             &output);
     g_last_preparation_result = output.preparation_result;
@@ -977,13 +978,13 @@ CPP
   "${COMMON_ROOT}/transport/payload_delivery_primitives.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_store.cpp" \
   "${RUNTIME_DIR}/usb_signing_outcome_writer.cpp" \
-  "${RUNTIME_DIR}/signing_preflight.cpp" \
+  "${COMMON_ROOT}/signing/signing_preflight.cpp" \
   "${RUNTIME_DIR}/signing_retry_response.cpp" \
-  "${RUNTIME_DIR}/sign_personal_message_user_ingress.cpp" \
-  "${RUNTIME_DIR}/sign_personal_message_user_validation.cpp" \
-  "${RUNTIME_DIR}/signing_retry_delivery.cpp" \
-  "${RUNTIME_DIR}/sign_transaction_user_ingress.cpp" \
-  "${RUNTIME_DIR}/sign_transaction_user_validation.cpp" \
+  "${COMMON_ROOT}/signing/sign_personal_message_user_ingress.cpp" \
+  "${COMMON_ROOT}/signing/sign_personal_message_user_validation.cpp" \
+  "${COMMON_ROOT}/signing/signing_retry_delivery.cpp" \
+  "${COMMON_ROOT}/signing/sign_transaction_user_ingress.cpp" \
+  "${COMMON_ROOT}/signing/sign_transaction_user_validation.cpp" \
   "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
   "${RUNTIME_DIR}/sui_signing_preparation.cpp" \
   "${COMMON_SUI_DIR}/signing_preparation.cpp" \

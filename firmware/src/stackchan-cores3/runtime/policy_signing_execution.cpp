@@ -275,13 +275,4 @@ PolicySigningExecutionResult execute_policy_sign_transaction(
     return result;
 }
 
-void clear_policy_signing_execution_result(PolicySigningExecutionResult* result)
-{
-    if (result == nullptr) {
-        return;
-    }
-    wipe_sensitive_buffer(result->signature, sizeof(result->signature));
-    memset(result, 0, sizeof(*result));
-}
-
 }  // namespace signing

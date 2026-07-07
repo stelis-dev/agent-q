@@ -37,7 +37,7 @@ for required in \
   "${RUNTIME_DIR}/usb_sui_zklogin_credential_handlers.h" \
   "${RUNTIME_DIR}/usb_sui_zklogin_credential_outcome_writer.cpp" \
   "${RUNTIME_DIR}/usb_sui_zklogin_credential_outcome_writer.h" \
-  "${RUNTIME_DIR}/usb_operation_response_writer.h"; do
+  "${COMMON_ROOT}/protocol/usb_operation_response_writer.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
