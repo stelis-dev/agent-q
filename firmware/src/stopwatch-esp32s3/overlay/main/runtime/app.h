@@ -84,7 +84,9 @@ private:
     void record_feedback(uint16_t vibration_ms, uint8_t strength, bool lvgl_locked);
     void enter_mode(ScreenMode mode);
     void refresh_auth_mode();
+    void refresh_auth_mode(const LocalAuthSnapshot& snapshot);
     void sync_usb_runtime_state();
+    void sync_usb_runtime_state(const LocalAuthSnapshot& snapshot);
     void relock();
     void clear_entry();
     void clear_auth_scratch();

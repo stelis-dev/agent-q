@@ -289,6 +289,10 @@ const char* g_policy_reason_code = "policy_authorized";
 const char* g_policy_rule_ref = "rule-1";
 bool g_policy_facts_complete = true;
 bool g_large_history_response = false;
+int g_authorization_mode_status_calls = 0;
+int g_policy_status_calls = 0;
+int g_approval_history_status_calls = 0;
+int g_policy_update_marker_status_calls = 0;
 
 const char* authorization_mode_name(AuthorizationMode mode)
 {
@@ -314,6 +318,7 @@ bool wipe_signing_authorization_mode()
 
 AuthorizationModeStatus authorization_mode_status()
 {
+    ++g_authorization_mode_status_calls;
     return g_signing_mode_status;
 }
 
@@ -347,6 +352,7 @@ bool read_active_policy_summary(StoredPolicySummary* output)
 
 PolicyStoreStatus active_policy_status()
 {
+    ++g_policy_status_calls;
     return g_policy_status;
 }
 
@@ -483,6 +489,7 @@ bool approval_history_wipe()
 
 ApprovalHistoryStorageStatus approval_history_status()
 {
+    ++g_approval_history_status_calls;
     return g_approval_history_status;
 }
 
@@ -501,6 +508,7 @@ bool policy_update_marker_clear()
 
 PolicyUpdateMarkerStatus policy_update_marker_status()
 {
+    ++g_policy_update_marker_status_calls;
     return g_policy_update_marker_status;
 }
 
@@ -879,6 +887,22 @@ void configure_current_setup_for_usb_test()
     });
 }
 
+void reset_projection_status_counters()
+{
+    signing::g_authorization_mode_status_calls = 0;
+    signing::g_policy_status_calls = 0;
+    signing::g_approval_history_status_calls = 0;
+    signing::g_policy_update_marker_status_calls = 0;
+}
+
+void expect_projection_status_counters(int expected)
+{
+    assert(signing::g_authorization_mode_status_calls == expected);
+    assert(signing::g_policy_status_calls == expected);
+    assert(signing::g_approval_history_status_calls == expected);
+    assert(signing::g_policy_update_marker_status_calls == expected);
+}
+
 }  // namespace
 
 int main()
@@ -895,6 +919,14 @@ int main()
     assert(signing::session_replace(fill_session_random, nullptr) == signing::SessionStartResult::ok);
     assert(strcmp(signing::session_id(), "session_0001020304050607") == 0);
     configure_current_setup_for_usb_test();
+
+    reset_projection_status_counters();
+    assert(!usb_transport_projected_device_state_is_error());
+    assert(!usb_transport_projected_device_state_is_error());
+    expect_projection_status_counters(1);
+    usb_transport_invalidate_projected_state_cache();
+    assert(!usb_transport_projected_device_state_is_error());
+    expect_projection_status_counters(2);
 
     reset_written();
     send_line(

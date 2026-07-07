@@ -47,6 +47,10 @@ void local_auth_test_reset_store();
 void local_auth_test_corrupt_record();
 bool local_auth_test_record_contains(const char* text);
 void local_auth_test_set_write_failure(bool enabled);
+void local_auth_test_reset_io_counters();
+uint32_t local_auth_test_read_count();
+uint32_t local_auth_test_write_count();
+uint32_t local_auth_test_erase_count();
 #endif
 
 }  // namespace stopwatch_target

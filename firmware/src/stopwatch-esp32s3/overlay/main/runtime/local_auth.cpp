@@ -52,7 +52,21 @@ static_assert(sizeof(StoredLocalAuthRecord) == 104, "Local auth record must stay
 #ifdef STOPWATCH_LOCAL_AUTH_HOST_TEST
 std::vector<uint8_t> g_test_store;
 bool g_test_write_failure = false;
+uint32_t g_test_read_count = 0;
+uint32_t g_test_write_count = 0;
+uint32_t g_test_erase_count = 0;
 #endif
+
+struct LocalAuthRuntimeSnapshotCache {
+    bool loaded;
+    LocalAuthStoreStatus status;
+    uint8_t code_length;
+    uint32_t failed_attempts;
+    uint8_t lock_tier;
+    uint64_t lock_deadline_ms;
+};
+
+LocalAuthRuntimeSnapshotCache g_snapshot_cache = {};
 
 uint64_t lock_duration_for_tier(uint8_t tier);
 
@@ -188,6 +202,58 @@ void clear_lock(StoredLocalAuthRecord* record)
     record->lock_duration_ms = 0;
 }
 
+void clear_snapshot_fields()
+{
+    g_snapshot_cache.code_length = 0;
+    g_snapshot_cache.failed_attempts = 0;
+    g_snapshot_cache.lock_tier = 0;
+    g_snapshot_cache.lock_deadline_ms = 0;
+}
+
+void cache_storage_status(LocalAuthStoreStatus status)
+{
+    g_snapshot_cache.loaded = true;
+    g_snapshot_cache.status = status;
+    clear_snapshot_fields();
+}
+
+void cache_active_record(const StoredLocalAuthRecord& record)
+{
+    g_snapshot_cache.loaded = true;
+    g_snapshot_cache.status = LocalAuthStoreStatus::active;
+    g_snapshot_cache.code_length = record.code_length;
+    g_snapshot_cache.failed_attempts = record.failed_attempts;
+    g_snapshot_cache.lock_tier = record.lock_tier;
+    g_snapshot_cache.lock_deadline_ms = record.lock_deadline_ms;
+}
+
+LocalAuthSnapshot snapshot_from_cache(uint64_t now_ms)
+{
+    LocalAuthSnapshot snapshot{
+        g_snapshot_cache.status,
+        0,
+        0,
+        0,
+        false,
+        0,
+    };
+    if (!g_snapshot_cache.loaded) {
+        snapshot.status = LocalAuthStoreStatus::storage_error;
+        return snapshot;
+    }
+    if (g_snapshot_cache.status != LocalAuthStoreStatus::active) {
+        return snapshot;
+    }
+    snapshot.code_length = g_snapshot_cache.code_length;
+    snapshot.failed_attempts = g_snapshot_cache.failed_attempts;
+    snapshot.lock_tier = g_snapshot_cache.lock_tier;
+    if (g_snapshot_cache.lock_tier != 0 && g_snapshot_cache.lock_deadline_ms > now_ms) {
+        snapshot.locked = true;
+        snapshot.lock_remaining_ms = g_snapshot_cache.lock_deadline_ms - now_ms;
+    }
+    return snapshot;
+}
+
 void fill_random(uint8_t* output, size_t size)
 {
 #ifdef STOPWATCH_LOCAL_AUTH_HOST_TEST
@@ -279,6 +345,7 @@ LocalAuthStoreStatus read_record(StoredLocalAuthRecord* out)
     memset(out, 0, sizeof(*out));
 
 #ifdef STOPWATCH_LOCAL_AUTH_HOST_TEST
+    ++g_test_read_count;
     if (g_test_store.empty()) {
         return LocalAuthStoreStatus::missing;
     }
@@ -327,6 +394,7 @@ bool write_record(const StoredLocalAuthRecord& record)
         return false;
     }
 #ifdef STOPWATCH_LOCAL_AUTH_HOST_TEST
+    ++g_test_write_count;
     if (g_test_write_failure) {
         return false;
     }
@@ -353,9 +421,21 @@ bool write_record(const StoredLocalAuthRecord& record)
 #endif
 }
 
+bool persist_active_record(const StoredLocalAuthRecord& record)
+{
+    const bool stored = write_record(record);
+    if (stored) {
+        cache_active_record(record);
+    } else {
+        cache_storage_status(LocalAuthStoreStatus::storage_error);
+    }
+    return stored;
+}
+
 bool erase_record()
 {
 #ifdef STOPWATCH_LOCAL_AUTH_HOST_TEST
+    ++g_test_erase_count;
     if (g_test_write_failure) {
         return false;
     }
@@ -387,6 +467,13 @@ bool erase_record()
 #endif
 }
 
+bool erase_record_and_cache()
+{
+    const bool erased = erase_record();
+    cache_storage_status(erased ? LocalAuthStoreStatus::missing : LocalAuthStoreStatus::storage_error);
+    return erased;
+}
+
 enum class LockRefreshResult {
     unlocked,
     locked,
@@ -403,29 +490,32 @@ LockRefreshResult refresh_record_lock(StoredLocalAuthRecord* record, uint64_t no
     }
     if (record->lock_tier != 0 || record->lock_deadline_ms != 0 || record->lock_duration_ms != 0) {
         clear_lock(record);
-        if (!write_record(*record)) {
+        if (!persist_active_record(*record)) {
             return LockRefreshResult::storage_error;
         }
     }
     return LockRefreshResult::unlocked;
 }
 
-bool reanchor_persistent_lock(uint64_t now_ms)
+LocalAuthSnapshot refresh_snapshot_cache_from_storage(uint64_t now_ms)
 {
     StoredLocalAuthRecord record = {};
     const LocalAuthStoreStatus status = read_record(&record);
     if (status != LocalAuthStoreStatus::active) {
+        cache_storage_status(status);
         wipe_sensitive_buffer(&record, sizeof(record));
-        return status != LocalAuthStoreStatus::storage_error;
+        return snapshot_from_cache(now_ms);
     }
-    if (record.lock_tier == 0) {
+
+    const LockRefreshResult lock_result = refresh_record_lock(&record, now_ms);
+    if (lock_result == LockRefreshResult::storage_error) {
+        cache_storage_status(LocalAuthStoreStatus::storage_error);
         wipe_sensitive_buffer(&record, sizeof(record));
-        return true;
+        return snapshot_from_cache(now_ms);
     }
-    arm_lock_from_duration(&record, now_ms);
-    const bool stored = write_record(record);
+    cache_active_record(record);
     wipe_sensitive_buffer(&record, sizeof(record));
-    return stored;
+    return snapshot_from_cache(now_ms);
 }
 
 }  // namespace
@@ -434,17 +524,27 @@ void local_auth_init(uint64_t now_ms)
 {
     StoredLocalAuthRecord record = {};
     const LocalAuthStoreStatus status = read_record(&record);
-    wipe_sensitive_buffer(&record, sizeof(record));
     if (status == LocalAuthStoreStatus::invalid) {
 #ifndef STOPWATCH_LOCAL_AUTH_HOST_TEST
         ESP_LOGW(kTag, "Local auth record is invalid; failing closed");
 #endif
     }
-    if (status == LocalAuthStoreStatus::active && !reanchor_persistent_lock(now_ms)) {
+    if (status == LocalAuthStoreStatus::active && record.lock_tier != 0) {
+        arm_lock_from_duration(&record, now_ms);
+        if (!persist_active_record(record)) {
 #ifndef STOPWATCH_LOCAL_AUTH_HOST_TEST
-        ESP_LOGW(kTag, "Local auth lock re-anchor failed; failing closed until storage recovers");
+            ESP_LOGW(kTag, "Local auth lock re-anchor failed; failing closed until storage recovers");
 #endif
+            wipe_sensitive_buffer(&record, sizeof(record));
+            return;
+        }
     }
+    if (status == LocalAuthStoreStatus::active) {
+        cache_active_record(record);
+    } else {
+        cache_storage_status(status);
+    }
+    wipe_sensitive_buffer(&record, sizeof(record));
 }
 
 bool local_auth_code_shape_valid(const char* code, size_t length)
@@ -473,7 +573,7 @@ bool local_auth_store_new_code(const char* code, size_t length)
         wipe_sensitive_buffer(&record, sizeof(record));
         return false;
     }
-    const bool stored = write_record(record);
+    const bool stored = persist_active_record(record);
     wipe_sensitive_buffer(&record, sizeof(record));
     return stored;
 }
@@ -483,6 +583,7 @@ LocalAuthVerifyResult local_auth_verify_code(const char* code, size_t length, ui
     StoredLocalAuthRecord record = {};
     const LocalAuthStoreStatus status = read_record(&record);
     if (status != LocalAuthStoreStatus::active) {
+        cache_storage_status(status);
         wipe_sensitive_buffer(&record, sizeof(record));
         switch (status) {
             case LocalAuthStoreStatus::missing:
@@ -498,10 +599,12 @@ LocalAuthVerifyResult local_auth_verify_code(const char* code, size_t length, ui
 
     const LockRefreshResult lock_result = refresh_record_lock(&record, now_ms);
     if (lock_result == LockRefreshResult::storage_error) {
+        cache_storage_status(LocalAuthStoreStatus::storage_error);
         wipe_sensitive_buffer(&record, sizeof(record));
         return LocalAuthVerifyResult::storage_error;
     }
     if (lock_result == LockRefreshResult::locked) {
+        cache_active_record(record);
         wipe_sensitive_buffer(&record, sizeof(record));
         return LocalAuthVerifyResult::locked;
     }
@@ -515,7 +618,7 @@ LocalAuthVerifyResult local_auth_verify_code(const char* code, size_t length, ui
     if (verified) {
         record.failed_attempts = 0;
         clear_lock(&record);
-        const bool stored = write_record(record);
+        const bool stored = persist_active_record(record);
         wipe_sensitive_buffer(&record, sizeof(record));
         return stored ? LocalAuthVerifyResult::verified : LocalAuthVerifyResult::storage_error;
     }
@@ -529,7 +632,7 @@ LocalAuthVerifyResult local_auth_verify_code(const char* code, size_t length, ui
         record.lock_duration_ms = lock_duration_for_tier(next_tier);
         record.lock_deadline_ms = now_ms + record.lock_duration_ms;
     }
-    const bool stored = write_record(record);
+    const bool stored = persist_active_record(record);
     wipe_sensitive_buffer(&record, sizeof(record));
     if (!stored) {
         return LocalAuthVerifyResult::storage_error;
@@ -539,48 +642,41 @@ LocalAuthVerifyResult local_auth_verify_code(const char* code, size_t length, ui
 
 LocalAuthSnapshot local_auth_snapshot(uint64_t now_ms)
 {
-    StoredLocalAuthRecord record = {};
-    const LocalAuthStoreStatus status = read_record(&record);
-    LocalAuthSnapshot snapshot{
-        status,
-        0,
-        0,
-        0,
-        false,
-        0,
-    };
-    if (status == LocalAuthStoreStatus::active) {
-        const LockRefreshResult lock_result = refresh_record_lock(&record, now_ms);
-        if (lock_result == LockRefreshResult::storage_error) {
-            wipe_sensitive_buffer(&record, sizeof(record));
-            snapshot.status = LocalAuthStoreStatus::storage_error;
-            return snapshot;
-        }
-        snapshot.code_length = record.code_length;
-        snapshot.failed_attempts = record.failed_attempts;
-        snapshot.lock_tier = record.lock_tier;
-        snapshot.lock_remaining_ms = remaining_lock_ms(record, now_ms);
-        snapshot.locked = lock_result == LockRefreshResult::locked;
+    if (!g_snapshot_cache.loaded) {
+        return refresh_snapshot_cache_from_storage(now_ms);
     }
-    wipe_sensitive_buffer(&record, sizeof(record));
-    return snapshot;
+    if (g_snapshot_cache.status == LocalAuthStoreStatus::active &&
+        g_snapshot_cache.lock_tier != 0 &&
+        g_snapshot_cache.lock_deadline_ms != 0 &&
+        now_ms >= g_snapshot_cache.lock_deadline_ms) {
+        return refresh_snapshot_cache_from_storage(now_ms);
+    }
+    return snapshot_from_cache(now_ms);
 }
 
 bool local_auth_clear()
 {
-    return erase_record();
+    return erase_record_and_cache();
 }
 
 #ifdef STOPWATCH_LOCAL_AUTH_HOST_TEST
+void invalidate_snapshot_cache()
+{
+    g_snapshot_cache = {};
+}
+
 void local_auth_test_reset_store()
 {
     g_test_store.clear();
     g_test_write_failure = false;
+    invalidate_snapshot_cache();
+    local_auth_test_reset_io_counters();
 }
 
 void local_auth_test_corrupt_record()
 {
     g_test_store.assign(sizeof(StoredLocalAuthRecord), 0xA5);
+    invalidate_snapshot_cache();
 }
 
 bool local_auth_test_record_contains(const char* text)
@@ -603,6 +699,28 @@ bool local_auth_test_record_contains(const char* text)
 void local_auth_test_set_write_failure(bool enabled)
 {
     g_test_write_failure = enabled;
+}
+
+void local_auth_test_reset_io_counters()
+{
+    g_test_read_count = 0;
+    g_test_write_count = 0;
+    g_test_erase_count = 0;
+}
+
+uint32_t local_auth_test_read_count()
+{
+    return g_test_read_count;
+}
+
+uint32_t local_auth_test_write_count()
+{
+    return g_test_write_count;
+}
+
+uint32_t local_auth_test_erase_count()
+{
+    return g_test_erase_count;
 }
 #endif
 

@@ -118,6 +118,16 @@ bool g_discarding_line = false;
 UsbStatus g_status = {};
 char g_device_id[40] = {};
 UsbRuntimeState g_runtime_state{LocalAuthProjectionStatus::missing, false, false};
+struct ProjectedStorageStateCache {
+    bool valid;
+    CredentialProjectionStatus credential;
+    SettingsProjectionStatus settings;
+};
+ProjectedStorageStateCache g_projected_storage_cache{
+    false,
+    CredentialProjectionStatus::missing,
+    SettingsProjectionStatus::missing,
+};
 UsbPendingRequest g_pending_request{
     UsbPendingRequestKind::none,
     {},
@@ -149,6 +159,9 @@ bool reject_if_payload_transfer_blocks_safe_read(const char* id, const char* met
 CredentialProjectionStatus credential_projection_status();
 SettingsProjectionStatus settings_projection_status();
 StateProjectionInput state_projection_input();
+StateProjectionInput cached_state_projection_input();
+void invalidate_projected_storage_cache();
+void refresh_projected_storage_cache();
 bool finish_user_signing_terminal(
     const char* id,
     const uint8_t* signature = nullptr,
@@ -448,6 +461,32 @@ StateProjectionInput state_projection_input()
         g_runtime_state.auth_status,
         credential_projection_status(),
         settings_projection_status(),
+        g_runtime_state.locally_unlocked,
+        g_runtime_state.ui_busy,
+    };
+}
+
+void invalidate_projected_storage_cache()
+{
+    g_projected_storage_cache.valid = false;
+}
+
+void refresh_projected_storage_cache()
+{
+    g_projected_storage_cache.credential = credential_projection_status();
+    g_projected_storage_cache.settings = settings_projection_status();
+    g_projected_storage_cache.valid = true;
+}
+
+StateProjectionInput cached_state_projection_input()
+{
+    if (!g_projected_storage_cache.valid) {
+        refresh_projected_storage_cache();
+    }
+    return StateProjectionInput{
+        g_runtime_state.auth_status,
+        g_projected_storage_cache.credential,
+        g_projected_storage_cache.settings,
         g_runtime_state.locally_unlocked,
         g_runtime_state.ui_busy,
     };
@@ -3173,12 +3212,18 @@ void feed_byte(char value)
 
 bool usb_transport_projected_device_state_is_error()
 {
-    return strcmp(device_state(), "error") == 0;
+    return strcmp(stopwatch_device_state(cached_state_projection_input()), "error") == 0;
+}
+
+void usb_transport_invalidate_projected_state_cache()
+{
+    invalidate_projected_storage_cache();
 }
 
 bool usb_transport_init()
 {
     format_device_id();
+    invalidate_projected_storage_cache();
     signing::usb_link_state_clear();
     signing::user_signing_flow_set_session_validator(
         validate_session_for_user_signing,
@@ -3291,6 +3336,7 @@ bool usb_transport_approve_pending_request()
         }
         const SuiZkLoginProposalTerminalResult result =
             sui_zklogin_proposal_commit();
+        invalidate_projected_storage_cache();
         finish_credential_proposal(g_pending_request.id, result);
         return result == SuiZkLoginProposalTerminalResult::activated;
     }
@@ -3343,6 +3389,7 @@ bool usb_transport_approve_pending_request()
         }
         const signing::PolicyUpdateFlowTerminalResult result =
             signing::policy_update_flow_commit(current_payload_transfer_ms());
+        invalidate_projected_storage_cache();
         finish_policy_update(g_pending_request.id, result);
         return result == signing::PolicyUpdateFlowTerminalResult::applied;
     }

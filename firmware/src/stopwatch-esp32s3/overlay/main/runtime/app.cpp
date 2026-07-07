@@ -112,18 +112,22 @@ bool store_new_auth_and_default_settings(const char* code, size_t length)
     }
     if (!signing::store_signing_authorization_mode(signing::AuthorizationMode::user)) {
         wipe_setup_settings();
+        usb_transport_invalidate_projected_state_cache();
         return false;
     }
     if (!signing::approval_history_wipe() ||
         !signing::policy_update_marker_clear()) {
         wipe_setup_settings();
+        usb_transport_invalidate_projected_state_cache();
         return false;
     }
     if (!local_auth_store_new_code(code, length)) {
         local_auth_clear();
         wipe_setup_settings();
+        usb_transport_invalidate_projected_state_cache();
         return false;
     }
+    usb_transport_invalidate_projected_state_cache();
     return true;
 }
 
@@ -183,8 +187,6 @@ void RuntimeApp::onOpen()
 
 void RuntimeApp::onRunning()
 {
-    sync_usb_runtime_state();
-
     const bool external_power_present = GetHAL().isExternalPowerPresent();
     if (previous_external_power_present_ != external_power_present) {
         relock();
@@ -206,12 +208,13 @@ void RuntimeApp::onRunning()
     handle_touch_poll(now);
     animate_dial_return(now);
 
-    sync_usb_runtime_state();
+    const LocalAuthSnapshot snapshot = local_auth_snapshot(now);
+    sync_usb_runtime_state(snapshot);
     usb_transport_poll();
     if (usb_transport_identification_display().active && !display_on_) {
         set_display_on(true, false, false);
     }
-    refresh_auth_mode();
+    refresh_auth_mode(snapshot);
     const UsbPendingRequest pending = usb_transport_pending_request();
     if (pending.kind == UsbPendingRequestKind::connect) {
         if (!display_on_) {
@@ -266,7 +269,7 @@ void RuntimeApp::onRunning()
         record_feedback(45, 80, false);
     }
 
-    sync_usb_runtime_state();
+    sync_usb_runtime_state(snapshot);
     if (display_on_ && now - last_update_ms_ >= kUiRefreshMs) {
         LvglLockGuard lock;
         update_ui(false);
@@ -758,8 +761,13 @@ void RuntimeApp::enter_mode(ScreenMode mode)
 
 void RuntimeApp::refresh_auth_mode()
 {
-    sync_usb_runtime_state();
     const LocalAuthSnapshot snapshot = local_auth_snapshot(GetHAL().millis());
+    refresh_auth_mode(snapshot);
+}
+
+void RuntimeApp::refresh_auth_mode(const LocalAuthSnapshot& snapshot)
+{
+    sync_usb_runtime_state(snapshot);
     if (usb_transport_projected_device_state_is_error()) {
         locally_unlocked_ = false;
         enter_mode(ScreenMode::error);
@@ -803,6 +811,11 @@ void RuntimeApp::refresh_auth_mode()
 void RuntimeApp::sync_usb_runtime_state()
 {
     const LocalAuthSnapshot snapshot = local_auth_snapshot(GetHAL().millis());
+    sync_usb_runtime_state(snapshot);
+}
+
+void RuntimeApp::sync_usb_runtime_state(const LocalAuthSnapshot& snapshot)
+{
     LocalAuthProjectionStatus auth_status = LocalAuthProjectionStatus::missing;
     switch (snapshot.status) {
         case LocalAuthStoreStatus::active:
@@ -1064,10 +1077,12 @@ void RuntimeApp::submit_entry(uint32_t now_ms)
         switch (result) {
             case LocalAuthVerifyResult::verified:
                 if (signing::store_signing_authorization_mode(pending_signing_mode_)) {
+                    usb_transport_invalidate_projected_state_cache();
                     locally_unlocked_ = true;
                     enter_mode(ScreenMode::idle);
                     record_feedback(45, 75, false);
                 } else {
+                    usb_transport_invalidate_projected_state_cache();
                     enter_mode(ScreenMode::signing_mode_review);
                     record_feedback(80, 100, false);
                 }
@@ -1136,7 +1151,9 @@ void RuntimeApp::submit_entry(uint32_t now_ms)
 bool RuntimeApp::complete_device_reset()
 {
     clear_auth_scratch();
-    return device_reset_all();
+    const bool reset = device_reset_all();
+    usb_transport_invalidate_projected_state_cache();
+    return reset;
 }
 
 bool RuntimeApp::auth_entry_mode() const

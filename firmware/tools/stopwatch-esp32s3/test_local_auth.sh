@@ -72,6 +72,10 @@ int main()
     local_auth_test_reset_store();
     local_auth_init(0);
     expect_status(local_auth_snapshot(0).status, LocalAuthStoreStatus::missing, "missing store starts missing");
+    expect(local_auth_test_read_count() == 1, "init reads missing store once");
+    local_auth_snapshot(1);
+    local_auth_snapshot(2);
+    expect(local_auth_test_read_count() == 1, "missing snapshot is cached without repeated storage reads");
 
     expect(!local_auth_code_shape_valid("", 0), "rejects empty code");
     expect(!local_auth_code_shape_valid("12345", 5), "rejects too long");
@@ -87,6 +91,10 @@ int main()
     expect(snapshot.code_length == 3, "stored length is 3");
     expect(!snapshot.locked, "new record unlocked");
     expect(!local_auth_test_record_contains("119"), "raw code not stored");
+    const uint32_t reads_after_store = local_auth_test_read_count();
+    local_auth_snapshot(1001);
+    local_auth_snapshot(1002);
+    expect(local_auth_test_read_count() == reads_after_store, "active snapshot is cached without repeated storage reads");
 
     for (int attempt = 1; attempt <= 4; ++attempt) {
         expect_verify(

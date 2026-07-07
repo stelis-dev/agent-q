@@ -65,6 +65,7 @@ void usb_transport_poll();
 UsbStatus usb_transport_status();
 void usb_transport_set_runtime_state(UsbRuntimeState state);
 bool usb_transport_projected_device_state_is_error();
+void usb_transport_invalidate_projected_state_cache();
 UsbPendingRequest usb_transport_pending_request();
 UsbIdentificationDisplay usb_transport_identification_display();
 UsbSigningNotice usb_transport_signing_notice();
