@@ -225,6 +225,19 @@ bool local_transport_pairing_established()
     return local_transport_pairing_session_established();
 }
 
+bool local_transport_pairing_connected()
+{
+    return local_transport_ble_connected();
+}
+
+bool local_transport_pairing_write_line(const char* line, size_t line_len)
+{
+    return local_transport_pairing_session_write_line(
+        session_ops(),
+        line,
+        line_len);
+}
+
 bool local_transport_pairing_write_response(
     LocalTransportPairingResponseCallback callback,
     void* context)

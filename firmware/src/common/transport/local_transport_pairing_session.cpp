@@ -597,6 +597,7 @@ void local_transport_pairing_session_poll(
             draw_pairing_panel(ops);
         } else if (g_pairing.stage == PairingStage::established) {
             close_established_session(ops);
+            return;
         }
     }
 
@@ -638,6 +639,18 @@ bool local_transport_pairing_session_active()
 bool local_transport_pairing_session_established()
 {
     return g_pairing.stage == PairingStage::established;
+}
+
+bool local_transport_pairing_session_write_line(
+    const LocalTransportPairingSessionOps& ops,
+    const char* line,
+    size_t line_len)
+{
+    if (!ops_valid(ops) ||
+        g_pairing.stage != PairingStage::established) {
+        return false;
+    }
+    return send_protocol_line(ops, line, line_len);
 }
 
 bool local_transport_pairing_session_write_response(
