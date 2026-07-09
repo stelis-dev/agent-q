@@ -635,4 +635,27 @@ bool local_transport_pairing_session_active()
     return stage_is_pairing_open(g_pairing.stage);
 }
 
+bool local_transport_pairing_session_established()
+{
+    return g_pairing.stage == PairingStage::established;
+}
+
+bool local_transport_pairing_session_write_response(
+    const LocalTransportPairingSessionOps& ops,
+    LocalTransportPairingResponseCallback callback,
+    void* context)
+{
+    if (!ops_valid(ops) ||
+        callback == nullptr ||
+        g_pairing.stage != PairingStage::established) {
+        return false;
+    }
+    g_writer_ops = ops;
+    g_writer_ops_active = true;
+    const bool written = callback(local_transport_response_writer(), context);
+    g_writer_ops_active = false;
+    g_writer_ops = {};
+    return written;
+}
+
 }  // namespace signing

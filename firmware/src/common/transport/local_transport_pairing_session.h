@@ -87,6 +87,9 @@ struct LocalTransportPairingSessionOps {
     void* context;
 };
 
+using LocalTransportPairingResponseCallback =
+    bool (*)(const UsbOperationResponseWriter& writer, void* context);
+
 bool local_transport_pairing_session_begin(
     TickType_t now,
     const LocalTransportPairingSessionOps& ops);
@@ -97,5 +100,10 @@ void local_transport_pairing_session_poll(
 bool local_transport_pairing_session_expired(TickType_t now);
 LocalTransportPairingSnapshot local_transport_pairing_session_snapshot();
 bool local_transport_pairing_session_active();
+bool local_transport_pairing_session_established();
+bool local_transport_pairing_session_write_response(
+    const LocalTransportPairingSessionOps& ops,
+    LocalTransportPairingResponseCallback callback,
+    void* context);
 
 }  // namespace signing

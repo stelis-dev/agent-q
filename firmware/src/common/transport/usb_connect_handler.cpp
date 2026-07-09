@@ -64,7 +64,7 @@ void handle_usb_connect_request(
     }
 
     if (ops.write_existing_session_connect_response != nullptr &&
-        ops.write_existing_session_connect_response(id)) {
+        ops.write_existing_session_connect_response(id, writer)) {
         return;
     }
 

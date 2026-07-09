@@ -14,5 +14,9 @@ void local_transport_pairing_poll(
 bool local_transport_pairing_expired(TickType_t now);
 LocalTransportPairingSnapshot local_transport_pairing_snapshot();
 bool local_transport_pairing_active();
+bool local_transport_pairing_established();
+bool local_transport_pairing_write_response(
+    LocalTransportPairingResponseCallback callback,
+    void* context);
 
 }  // namespace signing

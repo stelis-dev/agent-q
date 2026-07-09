@@ -174,6 +174,16 @@ static_assert(
 bool g_usb_ready = false;
 TaskHandle_t g_usb_task = nullptr;
 
+enum class ProtocolTransport {
+    none,
+    usb,
+    local_transport,
+};
+
+ProtocolTransport g_current_request_transport = ProtocolTransport::usb;
+ProtocolTransport g_pending_connect_transport = ProtocolTransport::none;
+ProtocolTransport g_active_session_transport = ProtocolTransport::none;
+
 bool refresh_persistent_material_consistency();
 bool provisioned_material_ready();
 bool ui_idle_for_local_settings();
@@ -234,6 +244,10 @@ void show_sui_settings_from_chain_settings();
 void show_chain_settings_menu_from_sui_settings();
 void start_sui_gas_sponsor_from_sui_settings();
 void start_sui_zklogin_clear_from_sui_settings();
+void handle_connect_request(
+    const char* id,
+    JsonDocument& request,
+    const UsbOperationResponseWriter& writer);
 
 void wipe_setup_scratch(const char* reason)
 {
@@ -434,6 +448,21 @@ const UsbOperationResponseWriter& usb_operation_response_writer()
     return writer;
 }
 
+struct ScopedRequestTransport {
+    explicit ScopedRequestTransport(ProtocolTransport next)
+        : previous(g_current_request_transport)
+    {
+        g_current_request_transport = next;
+    }
+
+    ~ScopedRequestTransport()
+    {
+        g_current_request_transport = previous;
+    }
+
+    ProtocolTransport previous;
+};
+
 bool write_operation_error(
     const char* id,
     signing::UsbOperationType operation,
@@ -474,6 +503,91 @@ bool write_connect_approved_response(const char* id)
         signing::session_id(),
         signing::kSessionAdvertisedTtlMs,
         info);
+}
+
+bool write_connect_approved_with_writer(
+    const signing::UsbOperationResponseWriter& writer,
+    const char* id)
+{
+    const signing::DeviceResponseDeviceFields info{
+        g_device_id,
+        "idle",
+        kFirmwareName,
+        kHardwareId,
+        kFirmwareVersion,
+    };
+    JsonDocument result;
+    result["sessionId"] = signing::session_id();
+    result["sessionTtlMs"] = signing::kSessionAdvertisedTtlMs;
+    signing::device_response_write_device_fields(result["device"].to<JsonObject>(), info);
+    return writer.for_method("connect").write_success_result(
+        id,
+        "connect",
+        result.as<JsonObjectConst>());
+}
+
+struct ConnectErrorResponseContext {
+    const char* id;
+    const char* code;
+};
+
+bool write_connect_error_response_callback(
+    const signing::UsbOperationResponseWriter& writer,
+    void* context)
+{
+    const ConnectErrorResponseContext* response =
+        static_cast<const ConnectErrorResponseContext*>(context);
+    return response != nullptr &&
+           writer.for_method("connect").write_error(response->id, response->code);
+}
+
+bool write_connect_approved_response_callback(
+    const signing::UsbOperationResponseWriter& writer,
+    void* context)
+{
+    return write_connect_approved_with_writer(
+        writer,
+        static_cast<const char*>(context));
+}
+
+bool write_local_transport_connect_error_response(const char* id, const char* code)
+{
+    ConnectErrorResponseContext context{id, code};
+    return signing::local_transport_pairing_write_response(
+        write_connect_error_response_callback,
+        &context);
+}
+
+bool write_local_transport_connect_approved_response(const char* id)
+{
+    return signing::local_transport_pairing_write_response(
+        write_connect_approved_response_callback,
+        const_cast<char*>(id));
+}
+
+bool write_connect_error_response(const char* id, const char* code)
+{
+    const bool written =
+        g_pending_connect_transport == ProtocolTransport::local_transport
+            ? write_local_transport_connect_error_response(id, code)
+            : signing::usb_response_write_error(id, code);
+    g_pending_connect_transport = ProtocolTransport::none;
+    return written;
+}
+
+bool write_connect_rejected_response(const char* id, const char* code)
+{
+    return write_connect_error_response(id, code);
+}
+
+bool write_connect_approved_response_for_pending_transport(const char* id)
+{
+    const bool written =
+        g_pending_connect_transport == ProtocolTransport::local_transport
+            ? write_local_transport_connect_approved_response(id)
+            : write_connect_approved_response(id);
+    g_pending_connect_transport = ProtocolTransport::none;
+    return written;
 }
 
 bool write_retry_response_json(JsonDocument& response, void*)
@@ -572,6 +686,7 @@ void clear_active_session()
     // ends so a new session never sees a prior session's results.
     signing::signing_response_clear_all();
     signing::payload_delivery_clear_all();
+    g_active_session_transport = ProtocolTransport::none;
 }
 
 bool persist_persistent_material_state(signing::ProvisioningPersistedState state)
@@ -954,8 +1069,15 @@ bool replace_active_session()
     // signing responses, so drop them before the session id changes.
     signing::signing_response_clear_all();
     signing::payload_delivery_clear_all();
-    return signing::session_replace(fill_session_random, nullptr) ==
-           signing::SessionStartResult::ok;
+    if (signing::session_replace(fill_session_random, nullptr) !=
+        signing::SessionStartResult::ok) {
+        return false;
+    }
+    g_active_session_transport =
+        g_pending_connect_transport == ProtocolTransport::local_transport
+            ? ProtocolTransport::local_transport
+            : ProtocolTransport::usb;
+    return true;
 }
 
 signing::UsbSessionLossProtocolPinPurpose protocol_pin_loss_purpose(
@@ -1012,11 +1134,18 @@ signing::UsbSessionLossPlan current_usb_session_loss_plan(TickType_t now)
         signing::local_pin_auth_snapshot(now);
     const signing::UserSigningFlowCoreSnapshot user_signing =
         signing::user_signing_flow_core_snapshot();
+    const bool usb_connect_approval =
+        signing::connect_approval_active() &&
+        g_pending_connect_transport != ProtocolTransport::local_transport;
+    const bool usb_session_active =
+        signing::session_active() &&
+        g_active_session_transport != ProtocolTransport::local_transport;
     return signing::usb_session_loss_plan(signing::UsbSessionLossInput{
-        signing::session_active(),
-        signing::connect_approval_active(),
+        usb_session_active,
+        usb_connect_approval,
         protocol_pin_loss_purpose(protocol_pin),
-        local_pin_loss_purpose(pin_auth),
+        usb_connect_approval ? local_pin_loss_purpose(pin_auth)
+                             : signing::UsbSessionLossLocalPinPurpose::none,
         signing::policy_update_flow_active(),
         signing::sui_zklogin_proposal_flow_active(),
         user_signing.active,
@@ -1358,12 +1487,19 @@ bool write_connect_admission_error(
     return write_payload_delivery_connect_busy(id, writer);
 }
 
-bool write_existing_session_connect_response(const char* id)
+bool write_existing_session_connect_response(
+    const char* id,
+    const UsbOperationResponseWriter& writer)
 {
     if (!signing::session_active()) {
         return false;
     }
-    if (!write_connect_approved_response(id)) {
+    if (g_active_session_transport != ProtocolTransport::none &&
+        g_active_session_transport != g_current_request_transport) {
+        writer.write_error(id, "invalid_state");
+        return true;
+    }
+    if (!write_connect_approved_with_writer(writer, id)) {
         signing::usb_response_log_write_failure("connect", id);
     }
     return true;
@@ -2056,6 +2192,7 @@ void clear_connect_review_state()
 {
     signing::ui_event_bridge_reset_connect_choices();
     signing::connect_approval_clear();
+    g_pending_connect_transport = ProtocolTransport::none;
     signing::identification_display_clear();
 }
 
@@ -2485,7 +2622,7 @@ void write_connect_rejected_from_pin_for_local_pin_auth(
     const char* request_id,
     signing::LocalPinAuthConnectRejectReason reason)
 {
-    signing::usb_response_write_connect_rejected(
+    write_connect_rejected_response(
         request_id,
         local_pin_connect_rejection_code(reason));
 }
@@ -2493,6 +2630,7 @@ void write_connect_rejected_from_pin_for_local_pin_auth(
 void finish_connect_rejection_cleanup_for_local_pin_auth(bool clear_protocol_pin)
 {
     signing::connect_approval_clear();
+    g_pending_connect_transport = ProtocolTransport::none;
     if (clear_protocol_pin) {
         signing::protocol_pin_approval_clear();
     }
@@ -2511,7 +2649,7 @@ bool return_connect_review_from_pin_for_local_pin_auth(
     if (signing::connect_approval_return_to_review(now, approval_window)) {
         return true;
     }
-    signing::usb_response_write_connect_rejected(request_id, "invalid_state");
+    write_connect_rejected_response(request_id, "invalid_state");
     signing::connect_approval_clear();
     return false;
 }
@@ -2523,7 +2661,7 @@ replace_connect_session_from_pin_for_local_pin_auth(const char* request_id)
         return signing::LocalPinAuthConnectSessionResult::connected;
     }
     if (request_id != nullptr && request_id[0] != '\0') {
-        signing::usb_response_write_error(request_id, "rng_unavailable");
+        write_connect_error_response(request_id, "rng_unavailable");
     }
     ESP_LOGE(
         kTag,
@@ -2535,6 +2673,7 @@ replace_connect_session_from_pin_for_local_pin_auth(const char* request_id)
 void finish_connect_session_error_for_local_pin_auth(const char*)
 {
     signing::connect_approval_clear();
+    g_pending_connect_transport = ProtocolTransport::none;
     signing::protocol_pin_approval_clear();
 }
 
@@ -2542,7 +2681,7 @@ void finish_connect_approved_for_local_pin_auth(const char* request_id)
 {
     signing::connect_approval_clear();
     if (request_id != nullptr && request_id[0] != '\0') {
-        const bool written = write_connect_approved_response(request_id);
+        const bool written = write_connect_approved_response_for_pending_transport(request_id);
         if (!written) {
             signing::usb_response_log_write_failure("connect", request_id);
         }
@@ -3535,6 +3674,40 @@ bool connect_local_pin_flow_active()
            snapshot.purpose == LocalPinAuthPurpose::connect;
 }
 
+void clear_local_transport_protocol_state_if_disconnected()
+{
+    if (signing::local_transport_pairing_established()) {
+        return;
+    }
+
+    bool cleared = false;
+    if (g_pending_connect_transport == ProtocolTransport::local_transport) {
+        signing::ui_event_bridge_reset_connect_choices();
+        signing::connect_approval_clear();
+        signing::protocol_pin_approval_clear();
+        g_pending_connect_transport = ProtocolTransport::none;
+        if (connect_local_pin_flow_active()) {
+            clear_local_pin_auth_scratch("local transport disconnected during connect");
+        }
+        clear_signing_panel_if_kind(UiPanelKind::connect_review, SensitiveUiClearPolicy::preserve);
+        clear_signing_panel_if_kind(UiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
+        cleared = true;
+    }
+
+    if (g_active_session_transport == ProtocolTransport::local_transport) {
+        clear_active_session();
+        cleared = true;
+    }
+
+    if (cleared) {
+        signing::avatar_overlay_show_message(
+            "Local transport disconnected",
+            MessageKind::usb_disconnected,
+            UiMode::result,
+            kResultDisplayMs);
+    }
+}
+
 bool begin_connect_pin_auth_from_review(signing::TimeoutTick now)
 {
     if (!signing::connect_approval_review_action_available(now)) {
@@ -3589,9 +3762,9 @@ const signing::ConnectReviewResponseFlowOps& connect_review_response_flow_ops()
         signing::connect_approval_request_id,
         signing::connect_approval_clear,
         replace_active_session,
-        signing::usb_response_write_error,
-        write_connect_approved_response,
-        signing::usb_response_write_connect_rejected,
+        write_connect_error_response,
+        write_connect_approved_response_for_pending_transport,
+        write_connect_rejected_response,
         log_connect_review_flow_info,
         log_connect_review_flow_error,
         signing::usb_response_log_write_failure,
@@ -3981,12 +4154,12 @@ void handle_local_transport_unsupported_request(
     }
 }
 
-const signing::UsbOperationHandlers& local_transport_lt3_operation_handlers()
+const signing::UsbOperationHandlers& local_transport_lt4_operation_handlers()
 {
     static const signing::UsbOperationHandlers handlers = {
         handle_get_status_request,
         handle_local_transport_unsupported_request,
-        handle_local_transport_unsupported_request,
+        handle_connect_request,
         handle_local_transport_unsupported_request,
         handle_local_transport_unsupported_request,
         handle_local_transport_unsupported_request,
@@ -4011,11 +4184,12 @@ void handle_local_transport_request_line(
     const char* line,
     const UsbOperationResponseWriter& writer)
 {
+    ScopedRequestTransport scoped_transport(ProtocolTransport::local_transport);
     signing::handle_usb_request_line(
         line,
         current_timeout_tick(),
         writer,
-        local_transport_lt3_operation_handlers(),
+        local_transport_lt4_operation_handlers(),
         nullptr);
 }
 
@@ -4069,6 +4243,19 @@ void record_connect_waiting_for_review(const char* id, const char* client_name)
     ESP_LOGI(kTag, "connect waiting for review: id=%s client=%s", id, client_name);
 }
 
+bool begin_connect_approval(
+    const char* id,
+    const char* client_name,
+    signing::TimeoutTick now,
+    signing::TimeoutWindow approval_window)
+{
+    if (!signing::connect_approval_begin(id, client_name, now, approval_window)) {
+        return false;
+    }
+    g_pending_connect_transport = g_current_request_transport;
+    return true;
+}
+
 const signing::UsbConnectHandlerOps& connect_handler_ops()
 {
     static const signing::UsbConnectHandlerOps ops = {
@@ -4077,7 +4264,7 @@ const signing::UsbConnectHandlerOps& connect_handler_ops()
         write_existing_session_connect_response,
         current_timeout_tick,
         make_connect_approval_window,
-        signing::connect_approval_begin,
+        begin_connect_approval,
         show_connect_unavailable,
         reset_connect_review_choice_queue,
         show_connect_review,
@@ -4885,6 +5072,7 @@ const signing::UsbOperationHandlers& usb_operation_handlers()
 
 void handle_line(const char* line)
 {
+    ScopedRequestTransport scoped_transport(ProtocolTransport::usb);
     signing::handle_usb_request_line(
         line,
         current_timeout_tick(),
@@ -4938,6 +5126,7 @@ void run_usb_request_server_local_ui_phase()
     signing::local_transport_pairing_poll(
         xTaskGetTickCount(),
         handle_local_transport_request_line);
+    clear_local_transport_protocol_state_if_disconnected();
     sync_local_transport_pairing_panel();
     poll_local_settings_touch_entry();
     show_persistent_error_recovery_if_needed();

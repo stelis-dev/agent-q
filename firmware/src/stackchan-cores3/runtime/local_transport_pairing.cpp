@@ -220,4 +220,19 @@ bool local_transport_pairing_active()
     return local_transport_pairing_session_active();
 }
 
+bool local_transport_pairing_established()
+{
+    return local_transport_pairing_session_established();
+}
+
+bool local_transport_pairing_write_response(
+    LocalTransportPairingResponseCallback callback,
+    void* context)
+{
+    return local_transport_pairing_session_write_response(
+        session_ops(),
+        callback,
+        context);
+}
+
 }  // namespace signing
