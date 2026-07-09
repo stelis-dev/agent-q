@@ -24,6 +24,8 @@ enum class UiEventKind {
     settings_policy_reset_requested,
     settings_change_pin_requested,
     settings_wallet_erase_requested,
+    settings_local_transport_pairing_requested,
+    local_transport_pairing_cancel_requested,
     sui_settings_back_requested,
     sui_settings_gas_sponsor_requested,
     sui_settings_clear_requested,

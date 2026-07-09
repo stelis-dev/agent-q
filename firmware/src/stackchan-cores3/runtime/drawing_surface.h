@@ -14,6 +14,7 @@ enum class UiPanelKind {
     settings_menu,
     chain_settings_menu,
     sui_settings,
+    local_transport_pairing,
     action_pin_entry,
     error_recovery,
     local_pin_auth,

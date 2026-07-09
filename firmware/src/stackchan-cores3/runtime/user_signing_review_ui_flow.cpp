@@ -3,12 +3,14 @@
 #include "modal_transition.h"
 #include "transport/timeout_window.h"
 
+#include "esp_attr.h"
+
 #include <string.h>
 
 namespace signing {
 namespace {
 
-UserSigningFlowSnapshot g_review_snapshot_scratch;
+EXT_RAM_BSS_ATTR UserSigningFlowSnapshot g_review_snapshot_scratch;
 
 TickType_t now_or_zero(const UserSigningReviewUiFlowOps& ops)
 {

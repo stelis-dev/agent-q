@@ -45,6 +45,7 @@ enum class StorageMaintenanceCommitResult {
     approval_history_wipe_error,
     policy_update_marker_wipe_error,
     zklogin_proof_wipe_error,
+    pairing_store_wipe_error,
     material_remaining_error,
     material_incomplete_error,
     action_marker_storage_error,

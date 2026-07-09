@@ -122,6 +122,16 @@ void on_settings_wallet_erase_clicked(lv_event_t*)
     enqueue_ui_event(UiEventKind::settings_wallet_erase_requested);
 }
 
+void on_settings_local_transport_pairing_clicked(lv_event_t*)
+{
+    enqueue_ui_event(UiEventKind::settings_local_transport_pairing_requested);
+}
+
+void on_local_transport_pairing_cancel_clicked(lv_event_t*)
+{
+    enqueue_ui_event(UiEventKind::local_transport_pairing_cancel_requested);
+}
+
 void on_settings_human_approval_input_clicked(lv_event_t*)
 {
     enqueue_ui_event(UiEventKind::settings_human_approval_input_requested);
@@ -342,6 +352,10 @@ void ui_event_bridge_register_callbacks()
     modal_callbacks.on_settings_policy_reset_clicked = on_settings_policy_reset_clicked;
     modal_callbacks.on_settings_change_pin_clicked = on_settings_change_pin_clicked;
     modal_callbacks.on_settings_wallet_erase_clicked = on_settings_wallet_erase_clicked;
+    modal_callbacks.on_settings_local_transport_pairing_clicked =
+        on_settings_local_transport_pairing_clicked;
+    modal_callbacks.on_local_transport_pairing_cancel_clicked =
+        on_local_transport_pairing_cancel_clicked;
     modal_callbacks.on_chain_settings_sui_clicked = on_chain_settings_sui_clicked;
     modal_callbacks.on_sui_settings_back_clicked = on_sui_settings_back_clicked;
     modal_callbacks.on_sui_settings_gas_sponsor_clicked = on_sui_settings_gas_sponsor_clicked;

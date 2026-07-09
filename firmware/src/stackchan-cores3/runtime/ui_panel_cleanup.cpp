@@ -29,6 +29,7 @@ bool provisioning_panel_for_kind(
         case UiPanelKind::settings_menu:
         case UiPanelKind::chain_settings_menu:
         case UiPanelKind::sui_settings:
+        case UiPanelKind::local_transport_pairing:
         case UiPanelKind::action_pin_entry:
         case UiPanelKind::error_recovery:
         case UiPanelKind::local_pin_auth:

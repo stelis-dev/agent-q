@@ -45,6 +45,7 @@ enum class PersistentMaterialRuntimeFailure {
     wallet_erase_approval_history_wipe_failed,
     wallet_erase_policy_update_marker_wipe_failed,
     wallet_erase_zklogin_proof_wipe_failed,
+    wallet_erase_pairing_store_wipe_failed,
     wallet_erase_material_remaining,
     wallet_erase_state_storage_failed,
     wallet_erase_marker_clear_failed,
@@ -87,6 +88,7 @@ enum class PersistentMaterialWalletEraseResult {
     approval_history_wipe_error,
     policy_update_marker_wipe_error,
     zklogin_proof_wipe_error,
+    pairing_store_wipe_error,
     material_remaining_error,
 };
 

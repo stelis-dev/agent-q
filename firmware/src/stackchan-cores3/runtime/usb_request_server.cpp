@@ -23,6 +23,8 @@
 #include "local_auth_worker.h"
 #include "local_pin_auth.h"
 #include "local_pin_auth_ui_flow.h"
+#include "local_transport_ble.h"
+#include "local_transport_pairing.h"
 #include "storage_maintenance_ui_flow.h"
 #include "local_settings_touch_entry.h"
 #include "storage_maintenance.h"
@@ -140,8 +142,9 @@ constexpr uint32_t kSettingsTouchEntryMs = 900;
 constexpr uint32_t kUsbHostLinkCheckMs = 10;
 // This task still combines transport polling, JSON request dispatch, persistent
 // material checks, and immediate target UI effects. Keep explicit headroom for
-// current connect/status paths until those runtime effects have a smaller owner.
-constexpr uint32_t kUsbRequestTaskStackBytes = 32 * 1024;
+// current connect/status paths while staying within the StackChan internal RAM
+// budget after QR and BLE are enabled.
+constexpr uint32_t kUsbRequestTaskStackBytes = 24 * 1024;
 constexpr size_t kPolicyReadbackEnvelopeReserveBytes = 1024;
 constexpr size_t kMaxRequestIdSize = signing::kRequestIdSize;
 constexpr size_t kDeviceIdSize = 37;
@@ -2873,6 +2876,38 @@ void close_local_settings_from_ui()
     signing::storage_maintenance_ui_close_settings_from_ui(storage_maintenance_ui_ops());
 }
 
+void start_local_transport_pairing_from_settings_menu()
+{
+    close_local_settings_from_ui();
+    signing::local_transport_pairing_begin(xTaskGetTickCount());
+}
+
+void clear_local_transport_pairing_panel()
+{
+    clear_signing_panel_if_kind(UiPanelKind::local_transport_pairing, SensitiveUiClearPolicy::preserve);
+}
+
+void sync_local_transport_pairing_panel()
+{
+    if (!ui_panel_active(UiPanelKind::local_transport_pairing)) {
+        return;
+    }
+    if (!signing::local_transport_pairing_snapshot().active) {
+        clear_local_transport_pairing_panel();
+    }
+}
+
+void cancel_local_transport_pairing_from_ui()
+{
+    signing::local_transport_pairing_cancel();
+    clear_local_transport_pairing_panel();
+    signing::avatar_overlay_show_message(
+        "Pairing canceled",
+        MessageKind::rejected,
+        UiMode::result,
+        kResultDisplayMs);
+}
+
 void show_persistent_error_recovery_if_needed()
 {
     signing::storage_maintenance_ui_show_persistent_error_recovery_if_needed(
@@ -3707,6 +3742,16 @@ void drain_ui_events()
             continue;
         }
 
+        if (event.kind == UiEventKind::settings_local_transport_pairing_requested) {
+            start_local_transport_pairing_from_settings_menu();
+            continue;
+        }
+
+        if (event.kind == UiEventKind::local_transport_pairing_cancel_requested) {
+            cancel_local_transport_pairing_from_ui();
+            continue;
+        }
+
         if (event.kind == UiEventKind::sui_settings_back_requested) {
             show_chain_settings_menu_from_sui_settings();
             continue;
@@ -3880,6 +3925,11 @@ void drain_ui_events()
         if (event.kind != UiEventKind::panel_deleted) {
             continue;
         }
+        if (event.panel_kind == UiPanelKind::local_transport_pairing &&
+            signing::local_transport_pairing_active()) {
+            signing::local_transport_pairing_cancel();
+            continue;
+        }
         apply_panel_cleanup_plan(
             panel_cleanup_plan(event.panel_kind, signing::UiPanelCleanupEvent::external_delete),
             "setup panel deleted",
@@ -3919,6 +3969,54 @@ void handle_get_status_request(
         request,
         writer,
         usb_get_status_handler_ops());
+}
+
+void handle_local_transport_unsupported_request(
+    const char* id,
+    JsonDocument&,
+    const UsbOperationResponseWriter& writer)
+{
+    if (writer.can_write_error()) {
+        writer.write_error(id, "unsupported_method");
+    }
+}
+
+const signing::UsbOperationHandlers& local_transport_lt3_operation_handlers()
+{
+    static const signing::UsbOperationHandlers handlers = {
+        handle_get_status_request,
+        handle_local_transport_unsupported_request,
+        handle_local_transport_unsupported_request,
+        handle_local_transport_unsupported_request,
+        handle_local_transport_unsupported_request,
+        handle_local_transport_unsupported_request,
+        handle_local_transport_unsupported_request,
+        handle_local_transport_unsupported_request,
+        handle_local_transport_unsupported_request,
+        handle_local_transport_unsupported_request,
+        handle_local_transport_unsupported_request,
+        handle_local_transport_unsupported_request,
+        handle_local_transport_unsupported_request,
+        handle_local_transport_unsupported_request,
+        handle_local_transport_unsupported_request,
+        handle_local_transport_unsupported_request,
+        handle_local_transport_unsupported_request,
+        handle_local_transport_unsupported_request,
+        handle_local_transport_unsupported_request,
+    };
+    return handlers;
+}
+
+void handle_local_transport_request_line(
+    const char* line,
+    const UsbOperationResponseWriter& writer)
+{
+    signing::handle_usb_request_line(
+        line,
+        current_timeout_tick(),
+        writer,
+        local_transport_lt3_operation_handlers(),
+        nullptr);
 }
 
 const signing::UsbIdentifyDeviceHandlerOps& usb_identify_device_handler_ops()
@@ -4827,6 +4925,20 @@ void run_usb_request_server_local_ui_phase()
     drain_ui_events();
     commit_storage_maintenance_if_ready();
     commit_local_pin_setting_if_ready();
+    signing::local_transport_ble_poll();
+    if (signing::local_transport_pairing_expired(xTaskGetTickCount())) {
+        signing::local_transport_pairing_cancel();
+        clear_local_transport_pairing_panel();
+        signing::avatar_overlay_show_message(
+            "Pairing expired",
+            MessageKind::timeout,
+            UiMode::result,
+            kResultDisplayMs);
+    }
+    signing::local_transport_pairing_poll(
+        xTaskGetTickCount(),
+        handle_local_transport_request_line);
+    sync_local_transport_pairing_panel();
     poll_local_settings_touch_entry();
     show_persistent_error_recovery_if_needed();
 }

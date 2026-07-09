@@ -216,6 +216,9 @@ StorageMaintenanceCommitResult erase_wallet_material(
         case PersistentMaterialWalletEraseResult::zklogin_proof_wipe_error:
             record_material_failure(ops, PersistentMaterialRuntimeFailure::wallet_erase_zklogin_proof_wipe_failed);
             return StorageMaintenanceCommitResult::zklogin_proof_wipe_error;
+        case PersistentMaterialWalletEraseResult::pairing_store_wipe_error:
+            record_material_failure(ops, PersistentMaterialRuntimeFailure::wallet_erase_pairing_store_wipe_failed);
+            return StorageMaintenanceCommitResult::pairing_store_wipe_error;
         case PersistentMaterialWalletEraseResult::material_remaining_error:
         default:
             record_material_failure(ops, PersistentMaterialRuntimeFailure::wallet_erase_material_remaining);

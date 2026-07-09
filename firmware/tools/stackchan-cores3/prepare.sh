@@ -380,6 +380,8 @@ set(FIRMWARE_FORBIDDEN_STACKCHAN_SOURCE_PATTERNS
     "(^|.*/)hal/hal_ezdata\\.cpp$"
     "(^|.*/)hal/hal_mcp\\.cpp$"
     "(^|.*/)hal/hal_ws_avatar\\.cpp$"
+    "(^|.*/)hal/hal_ble\\.cpp$"
+    "(^|.*/)hal/utils/bleprph/.*"
     "(^|.*/)hal/board/stackchan_camera\\.cc$"
 )
 foreach(FIRMWARE_FORBIDDEN_PATTERN IN LISTS FIRMWARE_FORBIDDEN_STACKCHAN_SOURCE_PATTERNS)
@@ -1134,24 +1136,99 @@ import sys
 from pathlib import Path
 
 
-def enable_unscii_8(config_path: Path) -> None:
+REQUIRED_CONFIG = {
+    "CONFIG_LV_FONT_UNSCII_8": "y",
+    "CONFIG_LV_USE_QRCODE": "y",
+    # Agent-Q local transport uses StackChan as a BLE peripheral. Keep the
+    # BLE/NimBLE shape bounded to one central peer for the LT slices; this is
+    # not a general Bluetooth product surface.
+    "CONFIG_BT_ENABLED": "y",
+    "CONFIG_BT_NIMBLE_ENABLED": "y",
+    "CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_INTERNAL": "n",
+    "CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL": "y",
+    "CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_DEFAULT": "n",
+    "CONFIG_BT_NIMBLE_ROLE_CENTRAL": "n",
+    "CONFIG_BT_NIMBLE_ROLE_PERIPHERAL": "y",
+    "CONFIG_BT_NIMBLE_ROLE_BROADCASTER": "y",
+    "CONFIG_BT_NIMBLE_ROLE_OBSERVER": "n",
+    "CONFIG_BT_NIMBLE_GATT_CLIENT": "n",
+    "CONFIG_BT_NIMBLE_GATT_SERVER": "y",
+    "CONFIG_BT_NIMBLE_SECURITY_ENABLE": "n",
+    "CONFIG_BT_NIMBLE_HS_PVCY": "n",
+    "CONFIG_MBEDTLS_HKDF_C": "y",
+    "CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP": "y",
+    "CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY": "y",
+    "CONFIG_BT_NIMBLE_MAX_BONDS": "1",
+    "CONFIG_BT_NIMBLE_MAX_CONNECTIONS": "1",
+    "CONFIG_BT_NIMBLE_MAX_CCCDS": "2",
+    "CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU": "128",
+    "CONFIG_BT_NIMBLE_ATT_MAX_PREP_ENTRIES": "4",
+    "CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT": "8",
+    "CONFIG_BT_NIMBLE_MSYS_1_BLOCK_SIZE": "256",
+    "CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT": "8",
+    "CONFIG_BT_NIMBLE_MSYS_2_BLOCK_SIZE": "320",
+    "CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT": "8",
+    "CONFIG_BT_NIMBLE_TRANSPORT_ACL_SIZE": "255",
+    "CONFIG_BT_NIMBLE_TRANSPORT_EVT_COUNT": "12",
+    "CONFIG_BT_NIMBLE_TRANSPORT_EVT_DISCARD_COUNT": "2",
+    "CONFIG_BT_NIMBLE_50_FEATURE_SUPPORT": "n",
+    "CONFIG_BT_NIMBLE_PROX_SERVICE": "n",
+    "CONFIG_BT_NIMBLE_ANS_SERVICE": "n",
+    "CONFIG_BT_NIMBLE_CTS_SERVICE": "n",
+    "CONFIG_BT_NIMBLE_HTP_SERVICE": "n",
+    "CONFIG_BT_NIMBLE_IPSS_SERVICE": "n",
+    "CONFIG_BT_NIMBLE_TPS_SERVICE": "n",
+    "CONFIG_BT_NIMBLE_IAS_SERVICE": "n",
+    "CONFIG_BT_NIMBLE_LLS_SERVICE": "n",
+    "CONFIG_BT_NIMBLE_SPS_SERVICE": "n",
+    "CONFIG_BT_NIMBLE_HR_SERVICE": "n",
+    "CONFIG_BT_NIMBLE_BAS_SERVICE": "n",
+    "CONFIG_BT_NIMBLE_DIS_SERVICE": "n",
+    "CONFIG_BT_NIMBLE_DTM_MODE_TEST": "n",
+    "CONFIG_BT_CTRL_BLE_MAX_ACT": "2",
+    "CONFIG_BT_CTRL_BLE_SCAN": "n",
+    "CONFIG_BT_CTRL_BLE_SECURITY_ENABLE": "n",
+    "CONFIG_BT_CTRL_DTM_ENABLE": "n",
+}
+
+
+def remove_existing_setting(text: str, key: str) -> str:
+    lines = []
+    for line in text.splitlines():
+        if line == f"# {key} is not set" or line.startswith(f"{key}="):
+            continue
+        lines.append(line)
+    if text.endswith("\n"):
+        return "\n".join(lines) + "\n"
+    return "\n".join(lines)
+
+
+def ensure_required_config(config_path: Path) -> None:
     if not config_path.exists():
         return
     if config_path.is_symlink() or not config_path.is_file():
         raise SystemExit(f"Refusing to write through non-regular config path: {config_path}")
 
     text = config_path.read_text()
-    if "CONFIG_LV_FONT_UNSCII_8=y" in text:
+    changed = False
+    for key, value in REQUIRED_CONFIG.items():
+        desired = f"# {key} is not set\n" if value == "n" else f"{key}={value}\n"
+        if desired in text:
+            continue
+        text = remove_existing_setting(text, key)
+        if not text.endswith("\n"):
+            text += "\n"
+        text += desired
+        changed = True
+    if not changed:
         return
-    text = text.replace("# CONFIG_LV_FONT_UNSCII_8 is not set\n", "")
     if not text.endswith("\n"):
         text += "\n"
-    text += "CONFIG_LV_FONT_UNSCII_8=y\n"
     config_path.write_text(text)
 
 
 for arg in sys.argv[1:]:
-    enable_unscii_8(Path(arg))
+    ensure_required_config(Path(arg))
 PY
 
 echo "Prepared StackChan CoreS3 firmware at ${FIRMWARE_DIR}"

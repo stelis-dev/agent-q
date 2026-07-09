@@ -442,6 +442,7 @@ void storage_maintenance_ui_commit_if_ready(const StorageMaintenanceUiFlowOps& o
         case MaintenanceCommitResult::approval_history_wipe_error:
         case MaintenanceCommitResult::policy_update_marker_wipe_error:
         case MaintenanceCommitResult::zklogin_proof_wipe_error:
+        case MaintenanceCommitResult::pairing_store_wipe_error:
         case MaintenanceCommitResult::material_remaining_error:
         case MaintenanceCommitResult::material_incomplete_error:
         case MaintenanceCommitResult::state_storage_error:

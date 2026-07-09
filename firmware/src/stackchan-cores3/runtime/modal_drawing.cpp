@@ -1723,6 +1723,16 @@ bool modal_draw_settings_menu_panel()
             SetupButtonKind::solid_action,
             lv_color_hex(theme::kError),
             g_callbacks.on_settings_wallet_erase_clicked) ||
+        !make_settings_menu_row(
+            content,
+            "Pair device",
+            "START",
+            5,
+            SetupButtonKind::outlined_keypad,
+            lv_color_hex(theme::kPrimary),
+            g_callbacks.on_settings_local_transport_pairing_clicked == nullptr
+                ? nullptr
+                : g_callbacks.on_settings_local_transport_pairing_clicked) ||
         !make_setup_button(
             panel,
             "Close",
@@ -1954,6 +1964,115 @@ bool modal_draw_sui_settings_panel(const SuiSettingsViewModel& model)
     }
 
     if (!make_screen_bottom_timeout_timer_bar(panel, maintenance.input_window, now)) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+
+    drawing_surface_move_panel_foreground_locked();
+    return true;
+}
+
+bool modal_draw_local_transport_pairing_panel(
+    const char* payload,
+    const char* fingerprint,
+    TimeoutWindow timeout_window)
+{
+    if (payload == nullptr || payload[0] == '\0' ||
+        fingerprint == nullptr || fingerprint[0] == '\0') {
+        return false;
+    }
+
+    avatar_overlay_clear();
+
+    LvglLockGuard lock;
+    request_display_power_wake();
+    drawing_surface_clear_panel_locked();
+
+    lv_obj_t* panel = drawing_surface_create_panel_locked(UiPanelKind::local_transport_pairing);
+    if (panel == nullptr) {
+        return false;
+    }
+    lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_size(panel, kPanelContentWidth, kPanelContentHeight);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_radius(panel, 8, 0);
+    lv_obj_set_style_border_width(panel, 0, 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(theme::kSurface), 0);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(panel, 0, 0);
+
+    lv_obj_t* title = lv_label_create(panel);
+    if (title == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(title, "Pair device");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(theme::kOnSurface), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+
+    lv_obj_t* hint = lv_label_create(panel);
+    if (hint == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(hint, "Scan QR from host");
+    lv_obj_set_style_text_font(hint, &lv_font_unscii_8, 0);
+    lv_obj_set_style_text_color(hint, lv_color_hex(theme::kOnSurfaceVariant), 0);
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 28);
+
+#if LV_USE_QRCODE
+    lv_obj_t* qr = lv_qrcode_create(panel);
+    if (qr == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_qrcode_set_size(qr, 130);
+    lv_qrcode_set_dark_color(qr, lv_color_hex(theme::kOnSurface));
+    lv_qrcode_set_light_color(qr, lv_color_hex(theme::kSurface));
+    if (lv_qrcode_update(qr, payload, strlen(payload)) != LV_RESULT_OK) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_obj_align(qr, LV_ALIGN_TOP_MID, 0, 46);
+#else
+    lv_obj_t* qr = lv_label_create(panel);
+    if (qr == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    lv_label_set_text(qr, payload);
+    lv_label_set_long_mode(qr, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(qr, kInsetPanelWidth - 30);
+    lv_obj_set_style_text_font(qr, &lv_font_unscii_8, 0);
+    lv_obj_set_style_text_color(qr, lv_color_hex(theme::kOnSurface), 0);
+    lv_obj_align(qr, LV_ALIGN_TOP_MID, 0, 48);
+#endif
+
+    lv_obj_t* id_label = lv_label_create(panel);
+    if (id_label == nullptr) {
+        drawing_surface_clear_panel_locked();
+        return false;
+    }
+    char id_text[40] = {};
+    snprintf(id_text, sizeof(id_text), "ID %s", fingerprint);
+    lv_label_set_text(id_label, id_text);
+    lv_obj_set_style_text_font(id_label, &lv_font_unscii_8, 0);
+    lv_obj_set_style_text_color(id_label, lv_color_hex(theme::kOnSurfaceVariant), 0);
+    lv_obj_align(id_label, LV_ALIGN_TOP_MID, 0, 182);
+
+    if (!make_setup_button(
+            panel,
+            "Cancel",
+            (kPanelContentWidth - kBackupPhraseButtonWidth) / 2,
+            kSetupActionButtonY,
+            kBackupPhraseButtonWidth,
+            kBackupPhraseButtonHeight,
+            SetupButtonKind::outlined_keypad,
+            lv_color_hex(theme::kPrimary),
+            g_callbacks.on_local_transport_pairing_cancel_clicked) ||
+        !make_screen_bottom_timeout_timer_bar(panel, timeout_window, xTaskGetTickCount())) {
         drawing_surface_clear_panel_locked();
         return false;
     }

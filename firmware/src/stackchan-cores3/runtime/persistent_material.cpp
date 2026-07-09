@@ -4,6 +4,7 @@
 
 #include "protocol/approval_history.h"
 #include "human_approval_settings.h"
+#include "local_transport_pairing_store.h"
 #include "policy/policy_update_marker.h"
 #include "protocol/signing_mode.h"
 #include "sui_account_settings.h"
@@ -85,6 +86,8 @@ const char* runtime_failure_message(PersistentMaterialRuntimeFailure failure)
             return "Device reset could not wipe policy update marker; failing closed";
         case PersistentMaterialRuntimeFailure::wallet_erase_zklogin_proof_wipe_failed:
             return "Device reset could not wipe Sui zkLogin proof record; failing closed";
+        case PersistentMaterialRuntimeFailure::wallet_erase_pairing_store_wipe_failed:
+            return "Device reset could not wipe local transport pairing store; failing closed";
         case PersistentMaterialRuntimeFailure::wallet_erase_material_remaining:
             return "Device reset reported success but persistent material remains; failing closed";
         case PersistentMaterialRuntimeFailure::wallet_erase_state_storage_failed:
@@ -501,6 +504,7 @@ PersistentMaterialWalletEraseResult persistent_material_wallet_erase()
     const bool approval_history_wiped = approval_history_wipe();
     const bool policy_update_marker_wiped = policy_update_marker_clear();
     const bool zklogin_proof_wiped = wipe_sui_zklogin_proof_record();
+    const bool pairing_store_wiped = local_transport_wipe_pairing_store();
 
     if (!root_wiped) {
         return PersistentMaterialWalletEraseResult::root_wipe_error;
@@ -528,6 +532,9 @@ PersistentMaterialWalletEraseResult persistent_material_wallet_erase()
     }
     if (!zklogin_proof_wiped) {
         return PersistentMaterialWalletEraseResult::zklogin_proof_wipe_error;
+    }
+    if (!pairing_store_wiped) {
+        return PersistentMaterialWalletEraseResult::pairing_store_wipe_error;
     }
     if (persistent_material_exists()) {
         return PersistentMaterialWalletEraseResult::material_remaining_error;

@@ -4,6 +4,7 @@
 
 #include "protocol/request_line.h"
 #include "driver/usb_serial_jtag.h"
+#include "esp_attr.h"
 
 namespace signing {
 namespace {
@@ -12,7 +13,7 @@ constexpr size_t kLineBufferSize = kRequestLineMaxBytes + 1;
 // Drain bounded chunks per poll. The line buffer remains the framing bound.
 constexpr size_t kReadBufferSize = 512;
 
-char g_line_buffer[kLineBufferSize];
+EXT_RAM_BSS_ATTR char g_line_buffer[kLineBufferSize];
 size_t g_line_size = 0;
 bool g_discarding_invalid_line = false;
 
