@@ -83,7 +83,7 @@ private:
     void update_ui(bool force);
     void handle_key_event(input::KeyEvent event, uint32_t now_ms);
     void handle_touch_poll(uint32_t now_ms);
-    void handle_power_button(bool external_power_present);
+    bool handle_power_button(bool external_power_present);
     void sync_power_button_policy(bool external_power_present);
     void set_display_on(bool display_on, bool feedback = true, bool lvgl_locked = false);
     void set_button_feedback_suppressed(bool suppressed);

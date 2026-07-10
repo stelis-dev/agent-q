@@ -37,7 +37,9 @@ Sui zkLogin proof-bootstrap slice, and the Sui signing/policy slice:
 - target-local power-button behavior: while USB power is present, short press
   toggles display backlight off/on; while USB power is absent, short press
   remains the StopWatch PMIC power-on/reset behavior; hardware double-click
-  power-off remains PMIC-owned.
+  power-off remains PMIC-owned. While the display is off, the M5PM1 power
+  button, KEYA, and KEYB wake it and consume that first physical input. Touch
+  does not wake the display or enter a dial digit.
 
 The target does not implement Bluetooth, QR, camera, pairing, host-triggered
 reset, Firmware-local Sui zkLogin proof verification, or a mnemonic/native
@@ -100,11 +102,15 @@ FIRMWARE_IDF_PATH=/path/to/esp-idf-v5.5.4 \
 
 Power-button behavior is target-local. While USB power is present, a short M5PM1
 power-button press toggles the display backlight off and on. While the display
-is off, local input and request feedback turn it back on before updating the
-screen. While USB power is absent, a short press remains the StopWatch PMIC
-power-on/reset behavior. Hardware power-off remains the StopWatch PMIC
-double-click behavior and is not implemented as a Firmware protocol method or
-app-owned product state transition.
+is off, the M5PM1 power button, KEYA, KEYB, or the KEYA+KEYB chord turns it back
+on and consumes that physical input before its normal action. Touch does not
+wake the display and cannot enter a dial digit until a physical or
+Firmware-request wake has completed and the touch surface has been released.
+Firmware-owned identification and request UI may still wake the display so a
+pending review is visible. While USB power is absent, a short power-button
+press remains the StopWatch PMIC power-on/reset behavior. Hardware power-off
+remains the StopWatch PMIC double-click behavior and is not implemented as a
+Firmware protocol method or app-owned product state transition.
 
 ## Boundary
 

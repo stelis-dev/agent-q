@@ -203,8 +203,10 @@ void RuntimeApp::onRunning()
     if (key_manager_) {
         const input::KeyEvent key_event = key_manager_->update();
         sync_power_button_policy(external_power_present);
-        handle_power_button(external_power_present);
-        handle_key_event(key_event, now);
+        const bool power_button_handled = handle_power_button(external_power_present);
+        if (!power_button_handled) {
+            handle_key_event(key_event, now);
+        }
     }
 
     handle_touch_poll(now);
@@ -590,9 +592,6 @@ void RuntimeApp::handle_touch_poll(uint32_t now_ms)
     const Hal::TouchPoint point = GetHAL().getTouchPoint();
     const bool down = point.num > 0 && point.x >= 0 && point.y >= 0;
     if (!display_on_) {
-        if (down) {
-            set_display_on(true, false, false);
-        }
         touch_down_ = down;
         touch_digit_ = -1;
         dial_return_active_ = false;
@@ -677,17 +676,19 @@ void RuntimeApp::handle_touch_poll(uint32_t now_ms)
     }
 }
 
-void RuntimeApp::handle_power_button(bool external_power_present)
+bool RuntimeApp::handle_power_button(bool external_power_present)
 {
     switch (GetHAL().readPowerButtonEvent()) {
         case Hal::PowerButtonEvent::shortClick:
-            if (external_power_present) {
-                set_display_on(!display_on_);
+            if (!external_power_present) {
+                return false;
             }
-            break;
+            set_display_on(!display_on_);
+            return true;
         case Hal::PowerButtonEvent::none:
-            break;
+            return false;
     }
+    return false;
 }
 
 void RuntimeApp::sync_power_button_policy(bool external_power_present)
@@ -713,6 +714,7 @@ void RuntimeApp::set_display_on(bool display_on, bool feedback, bool lvgl_locked
         const int brightness = display_restore_brightness_ > 0 ? display_restore_brightness_ : kDefaultBacklightBrightness;
         GetHAL().setBackLightBrightness(brightness, false);
         refresh_auth_mode();
+        ignore_touch_until_release_ = true;
         if (feedback) {
             GetHAL().vibrate(35, 70);
         }

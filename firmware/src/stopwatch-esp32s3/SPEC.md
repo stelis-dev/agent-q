@@ -62,9 +62,9 @@ Legend:
 | `get_accounts` | O | With a valid session, returns an empty account list while no proof is active and one Sui zkLogin account while a valid proof is active. |
 | Display feedback | O | Shows the rotary dial and center passcode slots for local-authentication input. |
 | Touch feedback | O | Rotary telephone-style digit pull/release appends digits into four fixed center slots. |
-| Physical button feedback | O | KEYA deletes local-authentication input. KEYB submits or confirms local-authentication input. KEYA+KEYB remains local feedback only. |
+| Physical button feedback | O | With the display on, KEYA deletes local-authentication input, KEYB submits or confirms local-authentication input, and KEYA+KEYB remains local feedback only. With the display off, each physical input wakes the display and is consumed before its normal action. |
 | Vibration feedback | O | Target-local user feedback only; it does not authorize protocol behavior. |
-| Power-button behavior | O | USB-power-present short click toggles display backlight off/on. USB-power-absent short click remains the StopWatch PMIC power-on/reset behavior. Hardware double-click power-off remains PMIC-owned. |
+| Power-button behavior | O | USB-power-present short click toggles display backlight off/on. While the display is off, M5PM1, KEYA, KEYB, or KEYA+KEYB wakes it; touch does not. USB-power-absent short click remains the StopWatch PMIC power-on/reset behavior. Hardware double-click power-off remains PMIC-owned. |
 | zkLogin proof storage | O | Stores one current-format Sui zkLogin proof record with the Ed25519 seed prepared in the same credential session. Invalid or unreadable proof storage projects `error` and fails closed. |
 | Firmware-local zkLogin proof verification | X | This ESP32-S3 target does not run the Sui zkLogin proof verifier locally. zkLogin correctness is verified outside Firmware by checking normal zkLogin signatures with the Sui verifier. |
 | zkLogin credential reset | O | StopWatch has no separate proof-clear action. The active zkLogin credential is removed only by Device reset, which also clears local authentication and mutable settings. There is no protocol proof-clear method. |
@@ -258,9 +258,13 @@ Power-button behavior is target-local hardware UX:
 
 - while USB power is present, short M5PM1 power-button click turns the display
   backlight off when it is on and restores the display backlight when it is off;
-- while the display is off in USB-power-present mode, KEYA, KEYB, KEYA+KEYB,
-  touch input, and request feedback restore the display before updating the
-  screen;
+- while the display is off in USB-power-present mode, M5PM1, KEYA, KEYB, or
+  KEYA+KEYB restores it and consumes that first physical input before its
+  normal action;
+- touch input does not restore the display, and a wake keeps touch input
+  blocked until the touch surface has been released;
+- Firmware-owned identification and request UI may restore the display so a
+  pending review is visible;
 - USB request handling continues while the display is off in USB-power-present
   mode;
 - while USB power is absent, short M5PM1 power-button click remains the
