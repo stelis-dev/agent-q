@@ -498,6 +498,10 @@ In the hardware firmware tree:
 - `signing::init_protocol_request_server()` starts the protocol request task.
   The task keeps USB and implemented local-transport handling available even
   when another firmware mode takes over the main app loop.
+- The request task gives a connected USB data link priority over local
+  transport. USB host SOF blocks a new QR/BLE pairing window and closes an
+  existing BLE carrier through the shared transport-loss process. USB removal
+  does not restart BLE; the user must open a fresh QR from local Settings.
 - Call `signing::notify_signing_ui_surface_ready()` after the target attaches
   the default avatar to let Agent-Q draw the current idle UI for the active
   device state.

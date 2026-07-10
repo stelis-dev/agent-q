@@ -67,6 +67,7 @@
 #include "sui_zklogin_review_ui_flow.h"
 #include "transport/timeout_window.h"
 #include "transient_ui_flow.h"
+#include "transport/transport_exclusivity.h"
 #include "transport/usb_link_state.h"
 #include "protocol/approval_history_handler.h"
 #include "transport/connect_handler.h"
@@ -3081,6 +3082,19 @@ void close_local_settings_from_ui()
 void start_local_transport_pairing_from_settings_menu()
 {
     close_local_settings_from_ui();
+    const signing::TransportExclusivityState transport_state{
+        g_usb_ready && usb_serial_jtag_is_connected(),
+        signing::local_transport_pairing_active() ||
+            signing::local_transport_pairing_established(),
+    };
+    if (!signing::secondary_transport_entry_allowed(transport_state)) {
+        signing::avatar_overlay_show_message(
+            "USB connected",
+            MessageKind::usb_connected,
+            UiMode::result,
+            kResultDisplayMs);
+        return;
+    }
     signing::local_transport_pairing_begin(xTaskGetTickCount());
 }
 
@@ -3776,6 +3790,25 @@ void clear_local_transport_protocol_state_if_disconnected()
             UiMode::result,
             kResultDisplayMs);
     }
+}
+
+void enforce_transport_exclusivity()
+{
+    const signing::UsbLinkStateSnapshot usb_link =
+        signing::usb_link_state_snapshot();
+    const signing::TransportExclusivityState state{
+        g_usb_ready && usb_link.known && usb_link.connected,
+        signing::local_transport_pairing_active() ||
+            signing::local_transport_pairing_established(),
+    };
+    if (signing::transport_exclusivity_action(state) !=
+        signing::TransportExclusivityAction::close_secondary_transport) {
+        return;
+    }
+
+    signing::local_transport_pairing_cancel();
+    clear_local_transport_protocol_state_if_disconnected();
+    clear_local_transport_pairing_panel();
 }
 
 bool begin_connect_pin_auth_from_review(signing::TimeoutTick now)
@@ -5216,6 +5249,15 @@ void run_protocol_request_server_maintenance_phase()
     clear_user_signing_review_if_needed();
 }
 
+void run_protocol_request_server_usb_link_phase()
+{
+    if (!g_usb_ready) {
+        return;
+    }
+    poll_usb_host_connection();
+    enforce_transport_exclusivity();
+}
+
 void run_protocol_request_server_local_ui_phase()
 {
     drain_ui_events();
@@ -5235,10 +5277,9 @@ void run_protocol_request_server_connect_response_phase()
     run_connect_review_response_flow();
 }
 
-void run_protocol_request_server_transport_phase()
+void run_protocol_request_server_usb_input_phase()
 {
     if (g_usb_ready) {
-        poll_usb_host_connection();
         poll_usb_input();
     }
 }
@@ -5246,9 +5287,10 @@ void run_protocol_request_server_transport_phase()
 void run_protocol_request_server_tick()
 {
     run_protocol_request_server_maintenance_phase();
+    run_protocol_request_server_usb_link_phase();
     run_protocol_request_server_local_ui_phase();
     run_protocol_request_server_connect_response_phase();
-    run_protocol_request_server_transport_phase();
+    run_protocol_request_server_usb_input_phase();
 }
 
 void protocol_request_task(void*)

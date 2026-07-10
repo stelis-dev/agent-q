@@ -20,7 +20,9 @@ Sui zkLogin proof-bootstrap slice, and the Sui signing/policy slice:
   `disconnect`, `get_capabilities`, and `get_accounts`;
 - a target-local QR scene and BLE peripheral that use the shared optical
   payload, Noise XX, encrypted-frame, pairing-state, and protocol-dispatch
-  owners; KEYA enters from unlocked idle and cancels the pairing window;
+  owners; KEYA enters from unlocked idle and cancels the pairing window. A USB
+  data link blocks entry and closes an existing BLE carrier without migrating
+  its session or response route;
 - `credential_prepare`, `payload_transfer`, and `credential_propose` for
   installing a Sui zkLogin proof after device-local review and local
   authentication;

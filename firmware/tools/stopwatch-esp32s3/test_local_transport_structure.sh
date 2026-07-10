@@ -30,6 +30,7 @@ expect_absent() {
 
 for common_source in \
   protocol/protocol_transport.h \
+  transport/transport_exclusivity.h \
   transport/local_transport_identity_store.cpp \
   transport/local_transport_mbedtls_crypto.cpp \
   transport/local_transport_nimble_peripheral.cpp \
@@ -166,6 +167,24 @@ local_transport_poll_line="$(grep -n 'local_transport_pairing_poll' <<<"${protoc
 usb_return_line="$(grep -n 'if (!usb_connected)' <<<"${protocol_poll_block}" | head -n 1 | cut -d: -f1)"
 if [[ -z "${local_transport_poll_line}" || -z "${usb_return_line}" || "${local_transport_poll_line}" -ge "${usb_return_line}" ]]; then
   echo "Protocol runtime must poll local transport before any USB-unavailable return" >&2
+  exit 1
+fi
+if ! grep -Fq 'enforce_transport_exclusivity(usb_connected);' <<<"${protocol_poll_block}" ||
+   ! awk '/refresh_usb_connection/ { refresh = NR } /enforce_transport_exclusivity/ { enforce = NR } /local_transport_pairing_poll/ { poll = NR } END { exit !(refresh < enforce && enforce < poll) }' <<<"${protocol_poll_block}"; then
+  echo "Protocol runtime must observe USB, enforce exclusivity, then poll local transport" >&2
+  exit 1
+fi
+
+entry_guard="$(sed -n '/bool protocol_runtime_local_transport_entry_allowed/,/^}/p' "${STOPWATCH}/runtime/protocol_runtime.cpp")"
+if ! grep -Fq 'refresh_usb_connection()' <<<"${entry_guard}" ||
+   ! grep -Fq 'secondary_transport_entry_allowed(transport_state)' <<<"${entry_guard}"; then
+  echo "Local transport entry must use a fresh USB observation and the shared exclusivity policy" >&2
+  exit 1
+fi
+
+exclusivity_block="$(sed -n '/void enforce_transport_exclusivity/,/void feed_byte/p' "${STOPWATCH}/runtime/protocol_runtime.cpp")"
+if ! awk '/local_transport_pairing_cancel/ { cancel = NR } /clear_protocol_state_after_transport_loss/ { clear = NR } END { exit !(cancel < clear) }' <<<"${exclusivity_block}"; then
+  echo "Transport exclusivity must close the carrier before protocol loss cleanup" >&2
   exit 1
 fi
 

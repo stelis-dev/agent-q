@@ -66,6 +66,7 @@
 #include "transport/disconnect_handler.h"
 #include "transport/payload_transfer_handlers.h"
 #include "transport/retained_response_handlers.h"
+#include "transport/transport_exclusivity.h"
 #include "transport/usb_session_grace.h"
 
 #include "credential_preparation_state.h"
@@ -3502,6 +3503,23 @@ void clear_local_transport_protocol_state_if_disconnected()
         signing::ProtocolTransport::local_transport);
 }
 
+void enforce_transport_exclusivity(bool usb_connected)
+{
+    const signing::TransportExclusivityState state{
+        usb_connected,
+        local_transport_pairing_active() ||
+            local_transport_pairing_established(),
+    };
+    if (signing::transport_exclusivity_action(state) !=
+        signing::TransportExclusivityAction::close_secondary_transport) {
+        return;
+    }
+
+    local_transport_pairing_cancel();
+    clear_protocol_state_after_transport_loss(
+        signing::ProtocolTransport::local_transport);
+}
+
 void feed_byte(char value)
 {
     switch (signing::request_line_feed(
@@ -3571,6 +3589,7 @@ void protocol_runtime_poll()
     if (g_status.usb_ready) {
         usb_connected = refresh_usb_connection();
     }
+    enforce_transport_exclusivity(usb_connected);
     local_transport_pairing_poll(
         xTaskGetTickCount(),
         handle_local_transport_request_line);
@@ -3825,14 +3844,20 @@ void protocol_runtime_clear_session_scoped_state()
 
 bool protocol_runtime_local_transport_entry_allowed()
 {
+    const bool usb_connected =
+        g_status.usb_ready && refresh_usb_connection();
+    const signing::TransportExclusivityState transport_state{
+        usb_connected,
+        local_transport_pairing_active() ||
+            local_transport_pairing_established(),
+    };
     return g_runtime_state.auth_status == LocalAuthProjectionStatus::active &&
            g_runtime_state.locally_unlocked &&
            !g_runtime_state.ui_busy &&
            !signing::session_active() &&
            !signing::connect_approval_active() &&
            g_pending_request.kind == PendingRequestKind::none &&
-           !local_transport_pairing_active() &&
-           !local_transport_pairing_established();
+           signing::secondary_transport_entry_allowed(transport_state);
 }
 
 }  // namespace stopwatch_target

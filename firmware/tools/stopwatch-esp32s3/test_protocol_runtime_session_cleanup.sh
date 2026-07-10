@@ -186,6 +186,10 @@ size_t g_written_size = 0;
 bool g_usb_connected = true;
 uint32_t g_now_ms = 0;
 int g_local_transport_write_calls = 0;
+bool g_local_transport_active = false;
+bool g_local_transport_established = false;
+bool g_local_transport_connected = false;
+int g_local_transport_cancel_calls = 0;
 stopwatch_target::SuiZkLoginCredentialStatus g_credential_status =
     stopwatch_target::SuiZkLoginCredentialStatus::missing;
 }
@@ -510,7 +514,13 @@ bool local_transport_pairing_begin(TickType_t)
     return false;
 }
 
-void local_transport_pairing_cancel() {}
+void local_transport_pairing_cancel()
+{
+    ++g_local_transport_cancel_calls;
+    g_local_transport_active = false;
+    g_local_transport_established = false;
+    g_local_transport_connected = false;
+}
 void local_transport_pairing_handle_display_loss() {}
 
 void local_transport_pairing_poll(TickType_t, LocalTransportRequestHandler) {}
@@ -522,17 +532,17 @@ signing::LocalTransportPairingSnapshot local_transport_pairing_snapshot()
 
 bool local_transport_pairing_active()
 {
-    return false;
+    return g_local_transport_active;
 }
 
 bool local_transport_pairing_established()
 {
-    return false;
+    return g_local_transport_established;
 }
 
 bool local_transport_pairing_connected()
 {
-    return false;
+    return g_local_transport_connected;
 }
 
 bool local_transport_pairing_wipe_identity()
@@ -881,6 +891,40 @@ int main()
         true,
     });
     protocol_runtime_init();
+
+    assert(!protocol_runtime_local_transport_entry_allowed());
+    signing::session_clear();
+    protocol_runtime_set_state(ProtocolRuntimeState{
+        LocalAuthProjectionStatus::active,
+        true,
+        false,
+    });
+    g_now_ms = 100;
+    g_usb_connected = true;
+    assert(!protocol_runtime_local_transport_entry_allowed());
+    g_now_ms = 120;
+    g_usb_connected = false;
+    assert(protocol_runtime_local_transport_entry_allowed());
+
+    replace_local_transport_session();
+    g_local_transport_active = false;
+    g_local_transport_established = true;
+    g_local_transport_connected = true;
+    g_local_transport_cancel_calls = 0;
+    g_now_ms = 140;
+    g_usb_connected = true;
+    protocol_runtime_poll();
+    assert(g_local_transport_cancel_calls == 1);
+    assert(!g_local_transport_established);
+    assert(!g_local_transport_connected);
+    assert(!signing::session_active());
+
+    replace_usb_session();
+    protocol_runtime_set_state(ProtocolRuntimeState{
+        LocalAuthProjectionStatus::active,
+        true,
+        true,
+    });
 
     ArduinoJson::JsonDocument accounts_while_busy = parse_request(
         "{\"id\":\"req_accounts_busy\",\"version\":1,\"method\":\"get_accounts\",\"sessionId\":\"session_0001020304050607\"}");

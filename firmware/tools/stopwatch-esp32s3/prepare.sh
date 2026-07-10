@@ -217,6 +217,7 @@ for required_common_transport in \
   payload_delivery_store.cpp \
   payload_delivery_store.h \
   timeout_window.h \
+  transport_exclusivity.h \
   usb_link_state.cpp \
   usb_link_state.h \
   usb_session_grace.cpp \

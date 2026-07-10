@@ -541,16 +541,18 @@ awk '
 ' "${PROTOCOL_SERVER}" >"${PROTOCOL_TICK_SNIPPET}"
 expect_order "${PROTOCOL_TICK_SNIPPET}" 'run_protocol_request_server_maintenance_phase' 'run_protocol_request_server_local_ui_phase' \
   "protocol request server tick must run maintenance before local UI events"
+expect_order "${PROTOCOL_TICK_SNIPPET}" 'run_protocol_request_server_usb_link_phase' 'run_protocol_request_server_local_ui_phase' \
+  "protocol request server tick must apply USB-link policy before local UI events"
 expect_order "${PROTOCOL_TICK_SNIPPET}" 'run_protocol_request_server_local_ui_phase' 'run_protocol_request_server_connect_response_phase' \
   "protocol request server tick must process local UI state before connect responses"
-expect_order "${PROTOCOL_TICK_SNIPPET}" 'run_protocol_request_server_connect_response_phase' 'run_protocol_request_server_transport_phase' \
-  "protocol request server tick must resolve connect responses before transport polling"
+expect_order "${PROTOCOL_TICK_SNIPPET}" 'run_protocol_request_server_connect_response_phase' 'run_protocol_request_server_usb_input_phase' \
+  "protocol request server tick must resolve connect responses before USB input"
 
 PROTOCOL_CONNECT_RESPONSE_PHASE_SNIPPET="${TMP_DIR}/usb-connect-response-phase.cpp"
 awk '
   /void run_protocol_request_server_connect_response_phase/ { capture = 1 }
   capture { print }
-  /void run_protocol_request_server_transport_phase/ { capture = 0 }
+  /void run_protocol_request_server_usb_input_phase/ { capture = 0 }
 ' "${PROTOCOL_SERVER}" >"${PROTOCOL_CONNECT_RESPONSE_PHASE_SNIPPET}"
 expect_present "${PROTOCOL_CONNECT_RESPONSE_PHASE_SNIPPET}" 'run_connect_review_response_flow' \
   "protocol connect-response phase must delegate connect review terminal response and recovery"
@@ -567,18 +569,40 @@ expect_present "${CONNECT_REVIEW_RESPONSE_FLOW_SOURCE}" 'ensure_connect_review_u
 expect_order "${CONNECT_REVIEW_RESPONSE_FLOW_SOURCE}" 'send_connect_terminal_response_if_needed' 'ensure_connect_review_ui' \
   "connect review response flow must write terminal response before recovering connect review UI"
 
-USB_TRANSPORT_PHASE_SNIPPET="${TMP_DIR}/usb-transport-phase.cpp"
+USB_LINK_PHASE_SNIPPET="${TMP_DIR}/usb-link-phase.cpp"
 awk '
-  /void run_protocol_request_server_transport_phase/ { capture = 1 }
+  /void run_protocol_request_server_usb_link_phase/ { capture = 1 }
+  capture { print }
+  /void run_protocol_request_server_local_ui_phase/ { capture = 0 }
+' "${PROTOCOL_SERVER}" >"${USB_LINK_PHASE_SNIPPET}"
+expect_present "${USB_LINK_PHASE_SNIPPET}" 'poll_usb_host_connection' \
+  "USB link phase host-link observation"
+expect_present "${USB_LINK_PHASE_SNIPPET}" 'enforce_transport_exclusivity' \
+  "USB link phase transport-exclusivity enforcement"
+expect_order "${USB_LINK_PHASE_SNIPPET}" 'poll_usb_host_connection' 'enforce_transport_exclusivity' \
+  "USB link phase must observe the link before enforcing transport exclusivity"
+
+USB_INPUT_PHASE_SNIPPET="${TMP_DIR}/usb-input-phase.cpp"
+awk '
+  /void run_protocol_request_server_usb_input_phase/ { capture = 1 }
   capture { print }
   /void run_protocol_request_server_tick/ { capture = 0 }
-' "${PROTOCOL_SERVER}" >"${USB_TRANSPORT_PHASE_SNIPPET}"
-expect_present "${USB_TRANSPORT_PHASE_SNIPPET}" 'poll_usb_host_connection' \
-  "USB transport phase must poll host-link state before line input"
-expect_present "${USB_TRANSPORT_PHASE_SNIPPET}" 'poll_usb_input' \
-  "USB transport phase must poll request-line input"
-expect_order "${USB_TRANSPORT_PHASE_SNIPPET}" 'poll_usb_host_connection' 'poll_usb_input' \
-  "USB transport phase must poll host-link state before reading new input"
+' "${PROTOCOL_SERVER}" >"${USB_INPUT_PHASE_SNIPPET}"
+expect_present "${USB_INPUT_PHASE_SNIPPET}" 'poll_usb_input' \
+  "USB input phase request-line poll"
+expect_absent "${USB_INPUT_PHASE_SNIPPET}" 'poll_usb_host_connection' \
+  "late USB host-link observation after local UI"
+
+expect_present "${PROTOCOL_SERVER}" 'secondary_transport_entry_allowed\(transport_state\)' \
+  "shared transport-exclusivity pairing-entry guard"
+TRANSPORT_EXCLUSIVITY_SNIPPET="${TMP_DIR}/transport-exclusivity.cpp"
+awk '
+  /void enforce_transport_exclusivity/ { capture = 1 }
+  capture { print }
+  /bool begin_connect_pin_auth_from_review/ { capture = 0 }
+' "${PROTOCOL_SERVER}" >"${TRANSPORT_EXCLUSIVITY_SNIPPET}"
+expect_order "${TRANSPORT_EXCLUSIVITY_SNIPPET}" 'local_transport_pairing_cancel' 'clear_local_transport_protocol_state_if_disconnected' \
+  "transport exclusivity must close the carrier before protocol loss cleanup"
 
 PROTOCOL_INIT_SNIPPET="${TMP_DIR}/protocol-request-server-init.cpp"
 awk '

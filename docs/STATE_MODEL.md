@@ -133,6 +133,7 @@ proven.
 | Pending policy update state | validated policy proposal summary, policy hash, review/PIN/commit stage, review deadline | Firmware | Yes |
 | Pending Sui zkLogin proposal state | validated bounded proof proposal summary, proof hash, review/PIN/commit stage, review deadline | Firmware | Yes |
 | Runtime session state | active protocol session id and link-bound cleanup state | Firmware; host process mirrors its own client session state in RAM and clears that mirror when Firmware rejects it or live USB scan no longer observes the device | Yes |
+| Physical transport availability | USB data-link state and local encrypted-carrier state; the common policy gives an observed USB host link priority and closes the local carrier without route migration | Firmware common transport policy; target adapters provide link observation and UI | Yes |
 | Target-local display state | screen on/off, brightness, screensaver replacement | Firmware target display module | No |
 | Target-local posture state | servo position, haptics, LEDs, temporary expression feedback | Firmware target UI/motion module | No |
 | UI object lifetime | speech bubble, modal, setup panel, decorator id | Firmware target UI module | No |
@@ -141,6 +142,14 @@ UI objects, display power, avatar expressions, servo movement, LEDs, and sounds
 may represent or notify about product state. They must not be the source of
 truth for provisioning, sessions, accounts, policy, signing, sensitive scratch,
 or pending approval.
+
+An ESP32-S3 USB Serial/JTAG link is connected only while host USB SOF packets
+are observed. A power-only cable is not a data link. While that USB data link is
+connected, Firmware does not admit the lower-priority QR/BLE carrier. If USB
+appears while BLE is advertising, handshaking, or established, Firmware closes
+BLE and applies the existing local-transport loss cleanup. It never moves a BLE
+session, pending request, or response route to USB, and USB removal never starts
+BLE automatically.
 
 ## Product States
 
