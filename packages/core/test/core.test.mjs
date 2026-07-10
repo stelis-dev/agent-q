@@ -311,6 +311,74 @@ async function withStore(callback) {
   }
 }
 
+class FakeLocalTransportSession {
+  requests = [];
+  closed = false;
+
+  async request(request, _deadlineMs, assertResponse) {
+    this.requests.push(request);
+    if (request.method === "get_status") {
+      return assertResponse({
+        id: request.id ?? "status",
+        version: 1,
+        method: "get_status",
+        success: true,
+        result: status,
+      });
+    }
+    if (request.method === "connect") {
+      return assertResponse({
+        id: request.id ?? "connect",
+        version: 1,
+        method: "connect",
+        success: true,
+        result: connectResult(),
+      });
+    }
+    if (request.method === "get_capabilities") {
+      return assertResponse({
+        id: request.id ?? "capabilities",
+        version: 1,
+        method: "get_capabilities",
+        success: true,
+        result: await defaultDriver().getCapabilities(),
+      });
+    }
+    if (request.method === "sign_transaction") {
+      return assertResponse(signedDeviceResult(
+        request.id ?? "sign",
+        "sign_transaction",
+        "sign_transaction",
+        suiEd25519Signature(1),
+      ));
+    }
+    if (request.method === "disconnect") {
+      return assertResponse({
+        id: request.id ?? "disconnect",
+        version: 1,
+        method: "disconnect",
+        success: true,
+        result: {},
+      });
+    }
+    return assertResponse({
+      id: request.id ?? "unsupported",
+      version: 1,
+      method: request.method,
+      success: false,
+      error: {
+        code: "unsupported_method",
+        message: "Operation is unavailable.",
+        retryable: false,
+      },
+    });
+  }
+
+  async close() {
+    this.closed = true;
+  }
+}
+
 test("returns no_active_device when no active device exists", async () => {
   await withStore(async (store) => {
     const core = new DeviceCore(store, defaultDriver({ async listPorts() { return []; } }));
@@ -743,6 +811,116 @@ test("connectDevice approved stores in-memory session and does not persist sessi
 
     const raw = await readFile(join(dir, "config.json"), "utf8");
     assert.equal(raw.includes("session"), false, "config must not persist session state");
+  });
+});
+
+test("connectDevice can open a BLE local transport session from an optical payload", async () => {
+  await withStore(async (store) => {
+    const opticalPayload =
+      "aqlt:1?k=ble&svc=a6e31d1051a14f7a9b0a0a1c00000001&idfp=0011223344556677&non=8899aabbccddeeff&exp=120";
+    const localSession = new FakeLocalTransportSession();
+    const core = new DeviceCore(
+      store,
+      defaultDriver({
+        async listPorts() {
+          throw new Error("BLE session operations must not scan USB ports.");
+        },
+      }),
+      () => new Date("2026-05-28T00:00:00.000Z"),
+      async (payload) => {
+        assert.equal(payload, opticalPayload);
+        return localSession;
+      },
+    );
+
+    const connected = await core.connectDevice({ transport: "ble", opticalPayload });
+    assert.equal(connected.source, "connected");
+    assert.equal(connected.deviceId, device.deviceId);
+    assert.equal("sessionId" in connected, false);
+
+    const listed = await core.listDevices();
+    assert.equal(listed.devices[0].transport, "ble");
+    assert.equal(listed.devices[0].lastPortHint, "ble:0011223344556677");
+
+    const capabilities = await core.getCapabilities();
+    assert.equal(capabilities.source, "live");
+    assert.equal(capabilities.signing?.methods[0]?.method, "sign_transaction");
+
+    const signed = await core.signTransaction({
+      chain: "sui",
+      method: "sign_transaction",
+      network: "devnet",
+      txBytes: CANONICAL_TX_BYTES_BASE64,
+    });
+    assert.equal(signed.source, "live");
+    assert.equal(signed.status, "signed");
+    assert.equal(localSession.requests.map((request) => request.method).join(","), "get_status,connect,get_capabilities,sign_transaction");
+    assert.deepEqual(localSession.requests[3].payload, {
+      chain: "sui",
+      network: "devnet",
+      txBytes: CANONICAL_TX_BYTES_BASE64,
+    });
+
+    const disconnected = await core.disconnectDevice({ deviceId: device.deviceId });
+    assert.equal(disconnected.source, "disconnected");
+    assert.equal(disconnected.reason, "firmware_confirmed");
+    assert.equal(localSession.closed, true);
+    assert.equal(
+      localSession.requests.map((request) => request.method).join(","),
+      "get_status,connect,get_capabilities,sign_transaction,disconnect",
+    );
+  });
+});
+
+test("rejected BLE connect cannot replace an existing USB route or purpose selection", async () => {
+  await withStore(async (store) => {
+    const opticalPayload =
+      "aqlt:1?k=ble&svc=a6e31d1051a14f7a9b0a0a1c00000001&idfp=0011223344556677&non=8899aabbccddeeff&exp=120";
+    const rejectedSession = new FakeLocalTransportSession();
+    rejectedSession.request = async (request, deadlineMs, assertResponse) => {
+      if (request.method === "connect") {
+        rejectedSession.requests.push(request);
+        throw new DeviceRequestError("user_rejected", "Connection rejected.", false);
+      }
+      return FakeLocalTransportSession.prototype.request.call(
+        rejectedSession,
+        request,
+        deadlineMs,
+        assertResponse,
+      );
+    };
+    const core = new DeviceCore(
+      store,
+      defaultDriver(),
+      () => new Date("2026-05-28T00:00:00.000Z"),
+      async () => rejectedSession,
+    );
+    await core.scanDevices();
+    await store.rememberUsbStatus(secondStatus, "/dev/cu.usbmodem2");
+    await core.selectDevice({ deviceId: secondDevice.deviceId });
+    await core.selectDevice({ deviceId: secondDevice.deviceId, purpose: "payment" });
+    await core.connectDevice({ deviceId: device.deviceId });
+
+    await assert.rejects(
+      () => core.connectDevice({
+        deviceId: device.deviceId,
+        purpose: "payment",
+        transport: "ble",
+        opticalPayload,
+      }),
+      { code: "user_rejected" },
+    );
+
+    const config = await store.load();
+    const firstDevice = config.devices.find((record) => record.deviceId === device.deviceId);
+    assert.equal(firstDevice.transport, "usb");
+    assert.equal(firstDevice.lastPortHint, "/dev/cu.usbmodem1");
+    assert.equal(config.activeDeviceId, secondDevice.deviceId);
+    assert.equal(config.activeDeviceIdsByPurpose.payment, secondDevice.deviceId);
+    assert.equal(rejectedSession.closed, true);
+
+    const capabilities = await core.getCapabilities({ deviceId: device.deviceId });
+    assert.equal(capabilities.source, "live");
   });
 });
 

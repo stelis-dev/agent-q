@@ -40,16 +40,14 @@ LocalTransportBleChannel to_ble_channel(LocalTransportPairingChannel channel)
     return LocalTransportBleChannel::data;
 }
 
-bool load_or_create_identity_secret(LocalTransportPairingIdentitySecret* identity, void*)
+bool load_or_create_identity(LocalTransportPairingIdentity* identity, void*)
 {
-    return local_transport_load_or_create_pairing_identity_secret(identity);
+    return local_transport_load_or_create_pairing_identity(identity);
 }
 
-bool store_paired_peer(
-    const uint8_t gateway_static_public[kLocalTransportStaticKeyBytes],
-    void*)
+bool load_identity_secret(LocalTransportPairingIdentitySecret* identity, void*)
 {
-    return local_transport_store_paired_peer(gateway_static_public);
+    return local_transport_load_pairing_identity_secret(identity);
 }
 
 bool start_advertising(
@@ -72,6 +70,11 @@ bool advertising_active(void*)
 bool connected(void*)
 {
     return local_transport_ble_connected();
+}
+
+void disconnect(void*)
+{
+    local_transport_ble_disconnect();
 }
 
 uint16_t current_att_mtu(void*)
@@ -99,7 +102,7 @@ bool receive(LocalTransportPairingInboundFrame* frame, void*)
     return true;
 }
 
-bool send(
+bool send_acknowledged(
     LocalTransportPairingChannel channel,
     const uint8_t* payload,
     size_t payload_len,
@@ -134,8 +137,8 @@ void notify(LocalTransportPairingEvent event, void*)
         case LocalTransportPairingEvent::failed:
             avatar_overlay_show_message("Pairing failed", MessageKind::error, UiMode::result, 1800);
             break;
-        case LocalTransportPairingEvent::store_full:
-            avatar_overlay_show_message("Pairing store full", MessageKind::error, UiMode::result, 1800);
+        case LocalTransportPairingEvent::expired:
+            avatar_overlay_show_message("Pairing expired", MessageKind::timeout, UiMode::result, 1800);
             break;
         case LocalTransportPairingEvent::connected:
             avatar_overlay_show_message("Pairing connected", MessageKind::success, UiMode::result, 1200);
@@ -161,15 +164,16 @@ LocalTransportPairingSessionOps session_ops(
         kLocalTransportKindBle,
         kLocalTransportBleServiceUuidHex,
         kLocalTransportPairingAdvertiseMs / 1000,
-        load_or_create_identity_secret,
-        store_paired_peer,
+        load_or_create_identity,
+        load_identity_secret,
         start_advertising,
         stop_advertising,
         advertising_active,
         connected,
+        disconnect,
         current_att_mtu,
         receive,
-        send,
+        send_acknowledged,
         draw_pairing_panel,
         notify,
         handle_request_line,
@@ -198,16 +202,16 @@ void local_transport_pairing_cancel()
     local_transport_pairing_session_cancel(session_ops());
 }
 
+void local_transport_pairing_handle_display_loss()
+{
+    local_transport_pairing_session_handle_display_loss(session_ops());
+}
+
 void local_transport_pairing_poll(
     TickType_t now,
     void (*handle_request_line)(const char* line, const UsbOperationResponseWriter& writer))
 {
     local_transport_pairing_session_poll(now, session_ops(handle_request_line));
-}
-
-bool local_transport_pairing_expired(TickType_t now)
-{
-    return local_transport_pairing_session_expired(now);
 }
 
 LocalTransportPairingSnapshot local_transport_pairing_snapshot()

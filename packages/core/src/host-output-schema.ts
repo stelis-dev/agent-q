@@ -166,7 +166,7 @@ export const runtimeSessionShape = z.object({
 
 export const deviceListEntryShape = z.object({
   deviceId: safeDeviceIdShape,
-  transport: z.literal("usb"),
+  transport: z.enum(["usb", "ble"]),
   lastPortHint: portHintShape,
   lastSeenAt: isoInstantShape,
   label: safeLabelShape.nullable(),

@@ -57,8 +57,24 @@ The Wallet Standard entrypoint requires an injected provider implementation and
 does not create a default provider internally. The repository's
 `createSuiDeviceProvider()` factory is Node/host-local and uses the device
 client transport. Browser dapps can use the `./browser` subpath for a Web
-Serial-based runtime that implements `SuiDeviceWalletProvider`. Browser
-hardware signing is product-active only when the matching status entry in
+Serial- or Web Bluetooth-based runtime that implements
+`SuiDeviceWalletProvider`. Current browser transport behavior:
+
+| Browser provider transport | Current behavior |
+| --- | --- |
+| `web_serial` | Supported when the browser exposes Web Serial and the user grants a port. |
+| `ble` | Supported when Web Bluetooth is available in a secure context. The app captures the current QR first, then constructs the provider with `{ transport: "ble", getOpticalPayload: () => currentQr }`. Wallet Connect must be invoked from a user action because the browser owns the device chooser. |
+
+The BLE provider filters the chooser by the QR service UUID and identity
+fingerprint and still performs the full Noise identity check after selection.
+QR capture remains app UI; the provider receives only the bounded canonical
+payload string. Browsers without Web Bluetooth report `unsupported_transport`.
+The current support target is Chromium-family Web Bluetooth. Safari and Firefox
+do not provide this transport. HTTPS (or another secure context), a user
+gesture, and the browser chooser are required; the QR cannot bypass browser
+permission or silently select a device.
+
+Hardware signing is product-active only when the matching status entry in
 `docs/IMPLEMENTATION_STATUS.md` says the source, docs, tests, build, hardware,
 and visual evidence are complete.
 

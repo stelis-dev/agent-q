@@ -204,6 +204,12 @@ That low-level command also requires the local `agent-q` server to be running.
 - `sign_personal_message`
 - `policy_propose`
 
+`connect_device` uses USB by default. It can also open the current BLE local
+transport when called with `transport: "ble"` and the `aqlt:1?...k=ble`
+`opticalPayload` shown by Firmware. This opens the same protocol session over a
+different local transport; it is not signing approval and does not expose a
+session id or device key material.
+
 `policy_propose` is a proposal path. MCP does not decide or commit policy.
 Firmware validates the proposal, requires device-local approval, and commits
 only supported policy records.

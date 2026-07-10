@@ -77,6 +77,33 @@ test("loads defaults at current schema and remembers usb status", async () => {
   }
 });
 
+test("serializes concurrent device registry mutations without losing records", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "device-config-test-"));
+  try {
+    const store = new ConfigStore(join(dir, "config.json"));
+    const secondDevice = {
+      ...sampleDevice,
+      deviceId: "b508d833-5c83-4680-88bb-18aee976881e",
+    };
+
+    await Promise.all([
+      store.rememberUsbStatus(sampleStatus, "/dev/cu.usbmodem1"),
+      store.rememberLocalTransportStatus(statusForDevice(secondDevice), "ble:0011223344556677"),
+    ]);
+
+    const config = await store.load();
+    assert.deepEqual(
+      config.devices.map((record) => [record.deviceId, record.transport]).sort(),
+      [
+        [sampleDevice.deviceId, "usb"],
+        [secondDevice.deviceId, "ble"],
+      ],
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("remembers provisioning status in cached usb status", async () => {
   const dir = await mkdtemp(join(tmpdir(), "device-config-test-"));
   try {
@@ -484,10 +511,19 @@ test("load drops a stored record whose cached device identity is unsafe", async 
   assert.equal(config.devices[0].deviceId, "b508d833-5c83-4680-88bb-18aee976881e");
 });
 
-test("load drops a non-usb transport record but keeps the rest of the registry", async () => {
+test("load drops an unknown transport record but keeps current transport records", async () => {
   const config = await loadStored(
     storedConfig([
       storedRecord({ transport: "bluetooth" }),
+      storedRecord({
+        deviceId: "c508d833-5c83-4680-88bb-18aee976881e",
+        transport: "ble",
+        lastPortHint: "ble:0011223344556677",
+        lastStatus: statusForDevice({
+          ...sampleDevice,
+          deviceId: "c508d833-5c83-4680-88bb-18aee976881e",
+        }),
+      }),
       storedRecord({
         deviceId: "b508d833-5c83-4680-88bb-18aee976881e",
         lastStatus: statusForDevice({
@@ -497,8 +533,14 @@ test("load drops a non-usb transport record but keeps the rest of the registry",
       }),
     ]),
   );
-  assert.equal(config.devices.length, 1);
-  assert.equal(config.devices[0].deviceId, "b508d833-5c83-4680-88bb-18aee976881e");
+  assert.equal(config.devices.length, 2);
+  assert.deepEqual(
+    config.devices.map((record) => [record.deviceId, record.transport]).sort(),
+    [
+      ["b508d833-5c83-4680-88bb-18aee976881e", "usb"],
+      ["c508d833-5c83-4680-88bb-18aee976881e", "ble"],
+    ],
+  );
 });
 
 test("load resets an invalid stored label to null but preserves a valid one", async () => {

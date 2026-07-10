@@ -1,4 +1,5 @@
 import { ConfigStore } from "./config.js";
+import type { DeviceTransport } from "./config.js";
 import { DeviceCore } from "./core.js";
 import { SerialPortUsbDriver } from "./usb.js";
 import type {
@@ -46,6 +47,8 @@ export interface DeviceClient {
     deviceId?: string;
     purpose?: string;
     clientName?: string;
+    transport?: DeviceTransport;
+    opticalPayload?: string;
   }): Promise<ConnectDeviceResult>;
   disconnectDevice(input?: {
     deviceId?: string;

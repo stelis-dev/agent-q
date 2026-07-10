@@ -426,6 +426,7 @@ test("package metadata exposes the current core entrypoints", async () => {
     "./adapter-internal",
     "./device",
     "./device-request-internal",
+    "./local-transport-internal",
     "./package.json",
     "./protocol",
     "./provider-protocol",
@@ -442,9 +443,32 @@ test("package metadata exposes the current core entrypoints", async () => {
     types: "./dist/device-request-internal.d.ts",
     import: "./dist/device-request-internal.js",
   });
+  assert.deepEqual(packageJson.exports["./local-transport-internal"], {
+    types: "./dist/local-transport-adapter-internal.d.ts",
+    import: "./dist/local-transport-adapter-internal.js",
+  });
+  assert.equal(packageJson.exports["./local-transport"], undefined);
+  assert.equal(packageJson.exports["./local-transport-session-opener"], undefined);
   assert.equal(packageJson.exports["./usb"], undefined);
   assert.equal(packageJson.exports["./payload-delivery-internal"], undefined);
   assert.equal(packageJson.bin, undefined);
+
+  const coreDeclarations = await readFile(new URL("../dist/core.d.ts", import.meta.url), "utf8");
+  assert.equal(coreDeclarations.includes("gatewayStaticSecret"), false);
+  assert.equal(coreDeclarations.includes("localTransportGatewayFactory"), false);
+  assert.equal(coreDeclarations.includes("LocalTransportBleGateway"), false);
+  const localTransportDeclarations = await readFile(
+    new URL("../dist/local-transport-adapter-internal.d.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(localTransportDeclarations, /openLocalTransportProtocolSession/);
+  assert.match(localTransportDeclarations, /parseLocalTransportOpticalPayload/);
+  assert.doesNotMatch(localTransportDeclarations, /LocalTransportNoiseXxInitiator/);
+  assert.doesNotMatch(localTransportDeclarations, /LocalTransportNoiseKeys/);
+  assert.doesNotMatch(localTransportDeclarations, /encryptLocalTransportFrame/);
+  assert.doesNotMatch(localTransportDeclarations, /decryptLocalTransportFrame/);
+  assert.doesNotMatch(localTransportDeclarations, /randomBytes/);
+  assert.doesNotMatch(localTransportDeclarations, /WithRandomSource/);
   assert.equal(packageJson.exports["./mcp"], undefined);
   assert.equal(packageJson.exports["./provider"], undefined);
 });
@@ -481,7 +505,16 @@ test("package self-reference resolves only core entrypoints", async () => {
   assert.equal(providerProtocol.INTERNAL_SIGN_TRANSACTION_DEADLINE_MS, 185000);
   assert.equal(providerProtocol.INTERNAL_SIGN_PERSONAL_MESSAGE_DEADLINE_MS, 185000);
   assert.equal(typeof root.SerialPortUsbDriver, "function");
-  for (const subpath of ["config", "core", "errors", "signing-output-schema", "public-error", "safe-text", "usb"]) {
+  for (const subpath of [
+    "config",
+    "core",
+    "errors",
+    "local-transport",
+    "signing-output-schema",
+    "public-error",
+    "safe-text",
+    "usb",
+  ]) {
     await assert.rejects(() => import(`@stelis/agent-q-core/${subpath}`), {
       code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
     });

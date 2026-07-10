@@ -395,7 +395,9 @@ test("tool input schemas expose only current request fields", () => {
   assert.deepEqual(inputSchemaKeys(hostToolDefinitions.connectDevice), [
     "clientName",
     "deviceId",
+    "opticalPayload",
     "purpose",
+    "transport",
   ]);
   assert.deepEqual(inputSchemaKeys(hostToolDefinitions.signTransaction), [
     "chain",

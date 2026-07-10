@@ -57,7 +57,7 @@ struct UserSigningReviewUiFlowOps {
     bool (*terminal_pending)();
     void (*cancel_for_pin_loss)();
     bool (*draw_local_pin_auth_panel)();
-    bool (*write_error)(const char* id, const char* code);
+    bool (*write_error)(const char* id, const char* method, const char* code);
     void (*show_display_error)();
     void (*execute_user_signing_from_review)(const char* request_id);
     void (*finish_terminal)(const char* request_id);

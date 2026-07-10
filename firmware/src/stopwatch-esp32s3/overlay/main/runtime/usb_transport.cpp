@@ -989,7 +989,9 @@ bool write_payload_transfer_success_response(const char* id, JsonObjectConst res
     return write_json_response(response, 768);
 }
 
-bool write_connect_response(const char* id)
+bool write_connect_response_with_writer(
+    const char* id,
+    const signing::UsbOperationResponseWriter& writer)
 {
     format_device_id();
 
@@ -1004,7 +1006,12 @@ bool write_connect_response(const char* id)
         kFirmwareVersion,
     };
     signing::device_response_write_device_fields(result["device"].to<JsonObject>(), info);
-    return write_success_response(id, "connect", result.as<JsonObjectConst>());
+    return writer.write_success_result(id, "connect", result.as<JsonObjectConst>());
+}
+
+bool write_connect_response(const char* id)
+{
+    return write_connect_response_with_writer(id, common_method_response_writer());
 }
 
 signing::HistoryTerminalResult history_terminal_result(
@@ -2211,12 +2218,14 @@ const signing::UsbPayloadTransferHandlerOps& payload_transfer_handler_ops()
     return ops;
 }
 
-bool write_existing_session_connect_response(const char* id)
+bool write_existing_session_connect_response(
+    const char* id,
+    const signing::UsbOperationResponseWriter& writer)
 {
     if (!signing::session_active()) {
         return false;
     }
-    if (write_connect_response(id)) {
+    if (write_connect_response_with_writer(id, writer)) {
         record_success(id, "connect");
     } else {
         record_error(id, "connect", "internal_output_error");
@@ -2439,7 +2448,10 @@ bool write_disconnect_success_for_common(const char* id)
     }
 }
 
-bool disconnect_pending_credential_proposal_for_common(const char* id, const char*)
+bool disconnect_pending_credential_proposal_for_common(
+    const char* id,
+    const char*,
+    const signing::UsbOperationResponseWriter&)
 {
     if (g_pending_request.kind != UsbPendingRequestKind::credential_propose) {
         return false;
@@ -2449,7 +2461,10 @@ bool disconnect_pending_credential_proposal_for_common(const char* id, const cha
     return true;
 }
 
-bool disconnect_pending_policy_update_for_common(const char* id, const char*)
+bool disconnect_pending_policy_update_for_common(
+    const char* id,
+    const char*,
+    const signing::UsbOperationResponseWriter&)
 {
     if (g_pending_request.kind != UsbPendingRequestKind::policy_propose) {
         return false;
@@ -2459,7 +2474,10 @@ bool disconnect_pending_policy_update_for_common(const char* id, const char*)
     return true;
 }
 
-bool disconnect_pending_user_signing_for_common(const char* id, const char*)
+bool disconnect_pending_user_signing_for_common(
+    const char* id,
+    const char*,
+    const signing::UsbOperationResponseWriter&)
 {
     if (!pending_kind_is_signing(g_pending_request.kind)) {
         return false;

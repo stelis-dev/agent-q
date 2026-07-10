@@ -8,10 +8,10 @@ namespace signing {
 
 bool local_transport_pairing_begin(TickType_t now);
 void local_transport_pairing_cancel();
+void local_transport_pairing_handle_display_loss();
 void local_transport_pairing_poll(
     TickType_t now,
     void (*handle_request_line)(const char* line, const UsbOperationResponseWriter& writer));
-bool local_transport_pairing_expired(TickType_t now);
 LocalTransportPairingSnapshot local_transport_pairing_snapshot();
 bool local_transport_pairing_active();
 bool local_transport_pairing_established();

@@ -439,6 +439,7 @@ void user_signing_review_ui_clear_if_needed(const UserSigningReviewUiFlowOps& op
             if (ops.write_error != nullptr) {
                 ops.write_error(
                     current.request_id,
+                    current.method,
                     "ui_error");
             }
             if (ops.show_display_error != nullptr) {

@@ -26,6 +26,7 @@ void local_transport_ble_poll();
 bool local_transport_ble_advertising();
 bool local_transport_ble_advertising_active();
 bool local_transport_ble_connected();
+void local_transport_ble_disconnect();
 uint16_t local_transport_ble_current_att_mtu();
 bool local_transport_ble_receive(LocalTransportBleInboundFrame* frame);
 bool local_transport_ble_send_indication(

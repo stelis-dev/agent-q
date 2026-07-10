@@ -51,6 +51,11 @@ import type {
   CredentialProposeInput,
   CredentialProposalOutcome,
 } from "./provider-sui.js";
+import {
+  isBrowserLocalTransportAvailable,
+  openBrowserLocalTransport,
+} from "./browser-local-transport.js";
+import type { LocalTransportProtocolSessionLike } from "@stelis/agent-q-core/local-transport-internal";
 
 const DEFAULT_CLIENT_NAME = "Agent-Q Sui dapp";
 
@@ -75,6 +80,15 @@ type BrowserSerial = {
 
 export interface SuiBrowserDeviceProviderOptions {
   clientName?: string;
+  transport?: SuiBrowserDeviceTransportKind;
+  getOpticalPayload?: () => string;
+}
+
+export const SUI_BROWSER_DEVICE_TRANSPORTS = ["web_serial", "ble"] as const;
+export type SuiBrowserDeviceTransportKind = (typeof SUI_BROWSER_DEVICE_TRANSPORTS)[number];
+
+export interface SuiBrowserDeviceProviderAvailabilityOptions {
+  transport?: SuiBrowserDeviceTransportKind;
 }
 
 type BrowserSession = {
@@ -148,7 +162,10 @@ export class SuiBrowserDeviceProviderError extends Error {
 export class SuiBrowserDeviceProvider implements SuiDeviceWalletProvider {
   readonly #requestPort: () => Promise<BrowserSerialPort>;
   readonly #clientName: string;
+  readonly #transport: SuiBrowserDeviceTransportKind;
+  readonly #getOpticalPayload: (() => string) | null;
   #port: BrowserSerialPort | null;
+  #localTransportSession: LocalTransportProtocolSessionLike | null = null;
   #session: BrowserSession | null = null;
   #nextSessionEpoch = 1;
   #stalePortCleanups = new WeakMap<BrowserSerialPort, BrowserStalePortCleanup>();
@@ -167,8 +184,16 @@ export class SuiBrowserDeviceProvider implements SuiDeviceWalletProvider {
   #disconnectListener: ((event: { target?: unknown }) => void) | null = null;
 
   constructor(options: SuiBrowserDeviceProviderOptions = {}) {
+    this.#transport = normalizeBrowserTransport(options.transport);
+    if (this.#transport === "ble" && typeof options.getOpticalPayload !== "function") {
+      throw new SuiBrowserDeviceProviderError(
+        "invalid_params",
+        "Browser BLE transport requires a synchronous getOpticalPayload callback.",
+      );
+    }
+    this.#getOpticalPayload = options.getOpticalPayload ?? null;
     this.#port = null;
-    this.#requestPort = defaultRequestPort();
+    this.#requestPort = defaultRequestPort(this.#transport);
     this.#clientName = options.clientName ?? DEFAULT_CLIENT_NAME;
     this.#registerDisconnectListener();
   }
@@ -497,7 +522,15 @@ export class SuiBrowserDeviceProvider implements SuiDeviceWalletProvider {
       await this.#waitForStalePortCleanup(this.#port, absoluteDeadlineMs);
       return this.#port;
     }
-    const port = await this.#requestPort();
+    let port: BrowserSerialPort;
+    try {
+      port = await this.#requestPort();
+    } catch (error) {
+      if (error instanceof SuiBrowserDeviceProviderError) {
+        throw error;
+      }
+      throw new SuiBrowserDeviceProviderError("transport_error", "Browser device transport selection failed.");
+    }
     await this.#waitForStalePortCleanup(port, absoluteDeadlineMs);
     this.#port = port;
     return port;
@@ -522,6 +555,15 @@ export class SuiBrowserDeviceProvider implements SuiDeviceWalletProvider {
         staleLease.abandon("port.close cleanup did not complete");
       }
     });
+  }
+
+  #clearTransport(): void {
+    const localTransportSession = this.#localTransportSession;
+    this.#localTransportSession = null;
+    if (localTransportSession !== null) {
+      void localTransportSession.close();
+    }
+    this.#clearPort();
   }
 
   #abandonPort(): BrowserStalePortLease | null {
@@ -599,7 +641,7 @@ export class SuiBrowserDeviceProvider implements SuiDeviceWalletProvider {
       sessionEpoch: session?.epoch,
     };
     this.#session = null;
-    this.#clearPort();
+    this.#clearTransport();
   }
 
   // Observe physical Web Serial disconnects (cable removal or a Firmware reboot
@@ -607,6 +649,9 @@ export class SuiBrowserDeviceProvider implements SuiDeviceWalletProvider {
   // a stale cached port, so the next reconnect reuses the dead port and never
   // re-prompts the browser port-selection menu.
   #registerDisconnectListener(): void {
+    if (this.#transport !== "web_serial") {
+      return;
+    }
     const serial = defaultSerial() as
       | (BrowserSerial & { addEventListener?: (type: string, listener: (event: { target?: unknown }) => void) => void })
       | null;
@@ -689,6 +734,17 @@ export class SuiBrowserDeviceProvider implements SuiDeviceWalletProvider {
     absoluteDeadlineMs: number,
   ): Promise<BrowserSignRecoveryOutcome> {
     this.#assertTransportLive(generation);
+    if (this.#transport === "ble") {
+      const localTransportSession = await this.#getLocalTransportSession(generation);
+      return localTransportSession.requestSigning(
+        request,
+        remainingProviderDeadline(
+          absoluteDeadlineMs,
+          deadlineForProviderSigningTransaction(request),
+        ),
+        assertSigningOutcome,
+      );
+    }
     return requestSigningWithRetainedRecovery({
       request,
       deadlineMs: deadlineForProviderSigningTransaction(request),
@@ -731,6 +787,16 @@ export class SuiBrowserDeviceProvider implements SuiDeviceWalletProvider {
     port?: BrowserSerialPort,
   ): DeviceRequestExecutor {
     return async (requestLine, expectedId, requestLabel, wireDeadlineMs, assertWireResponse) => {
+      if (this.#transport === "ble") {
+        const localTransportSession = await this.#getLocalTransportSession(generation);
+        return localTransportSession.execute(
+          requestLine,
+          expectedId,
+          requestLabel,
+          remainingProviderDeadline(absoluteDeadlineMs, wireDeadlineMs),
+          assertWireResponse,
+        );
+      }
       const activePort = port ?? await this.#getPort(absoluteDeadlineMs);
       if (port === undefined) {
         this.#assertTransportLive(generation);
@@ -754,6 +820,10 @@ export class SuiBrowserDeviceProvider implements SuiDeviceWalletProvider {
     absoluteDeadlineMs: number,
     phaseDeadlineMs: number,
   ): Promise<TResponse> {
+    if (this.#transport === "ble") {
+      const localTransportSession = await this.#getLocalTransportSession(generation);
+      return localTransportSession.request(request, phaseDeadlineMs, assertResponse);
+    }
     return requestDevice({
       request,
       deadlineMs: phaseDeadlineMs,
@@ -765,6 +835,44 @@ export class SuiBrowserDeviceProvider implements SuiDeviceWalletProvider {
       errorCode,
       onAbortInvalidSession: markBrowserFirmwareSessionInvalidated,
     });
+  }
+
+  async #getLocalTransportSession(generation: number): Promise<LocalTransportProtocolSessionLike> {
+    if (this.#localTransportSession !== null) {
+      return this.#localTransportSession;
+    }
+    this.#assertTransportLive(generation);
+    const getOpticalPayload = this.#getOpticalPayload;
+    if (getOpticalPayload === null) {
+      throw new SuiBrowserDeviceProviderError(
+        "invalid_params",
+        "Browser BLE transport has no optical payload source.",
+      );
+    }
+    let opticalPayload: string;
+    try {
+      opticalPayload = getOpticalPayload();
+    } catch {
+      throw new SuiBrowserDeviceProviderError(
+        "invalid_params",
+        "Browser BLE optical payload is unavailable.",
+      );
+    }
+    try {
+      const localTransportSession = await openBrowserLocalTransport(opticalPayload, () => {
+        if (this.#transportGeneration === generation) {
+          this.#clearSessionAndPort("physical_disconnect");
+        }
+      });
+      if (this.#transportGeneration !== generation) {
+        await localTransportSession.close();
+        this.#assertTransportLive(generation);
+      }
+      this.#localTransportSession = localTransportSession;
+      return localTransportSession;
+    } catch (error) {
+      throw toBrowserProviderTransportError(error);
+    }
   }
 
   #canAttemptRecoveryAfterTeardown(generation: number, session: BrowserSession): boolean {
@@ -854,7 +962,7 @@ export class SuiBrowserDeviceProvider implements SuiDeviceWalletProvider {
   }
 
   #inactiveResult(deviceId: string | undefined): { source: "not_connected" | "unavailable"; deviceId: string; reason: string } {
-    if (!isSuiBrowserDeviceProviderAvailable()) {
+    if (!isSuiBrowserDeviceProviderAvailable({ transport: this.#transport })) {
       return { source: "unavailable", deviceId: deviceId ?? "browser", reason: "unsupported_transport" };
     }
     return { source: "not_connected", deviceId: deviceId ?? this.#session?.deviceId ?? "browser", reason: "not_connected" };
@@ -913,8 +1021,14 @@ export class SuiBrowserDeviceProvider implements SuiDeviceWalletProvider {
   }
 }
 
-export function isSuiBrowserDeviceProviderAvailable(): boolean {
-  return defaultSerial() !== null;
+export function isSuiBrowserDeviceProviderAvailable(
+  options: SuiBrowserDeviceProviderAvailabilityOptions = {},
+): boolean {
+  try {
+    return browserTransportAvailable(normalizeBrowserTransport(options.transport));
+  } catch {
+    return false;
+  }
 }
 
 export function createSuiBrowserDeviceProvider(options: SuiBrowserDeviceProviderOptions = {}): SuiBrowserDeviceProvider {
@@ -925,8 +1039,11 @@ function defaultSerial(): BrowserSerial | null {
   return (globalThis as { navigator?: { serial?: BrowserSerial } }).navigator?.serial ?? null;
 }
 
-function defaultRequestPort(): () => Promise<BrowserSerialPort> {
+function defaultRequestPort(transport: SuiBrowserDeviceTransportKind): () => Promise<BrowserSerialPort> {
   return async () => {
+    if (transport !== "web_serial") {
+      throw new SuiBrowserDeviceProviderError("unsupported_transport", "Browser device transport is not supported.");
+    }
     const serial = defaultSerial();
     if (serial === null) {
       throw new SuiBrowserDeviceProviderError("unsupported_transport", "Web Serial is not available in this browser.");
@@ -939,6 +1056,38 @@ function defaultRequestPort(): () => Promise<BrowserSerialPort> {
       filters: [{ usbVendorId: FIRMWARE_USB_VENDOR_ID_NUMBER, usbProductId: FIRMWARE_USB_PRODUCT_ID_NUMBER }],
     });
   };
+}
+
+function normalizeBrowserTransport(
+  transport: SuiBrowserDeviceTransportKind | undefined,
+): SuiBrowserDeviceTransportKind {
+  if (transport === undefined) {
+    return "web_serial";
+  }
+  if (transport === "web_serial" || transport === "ble") {
+    return transport;
+  }
+  throw new SuiBrowserDeviceProviderError("unsupported_transport", "Browser device transport is not supported.");
+}
+
+function browserTransportAvailable(transport: SuiBrowserDeviceTransportKind): boolean {
+  switch (transport) {
+    case "web_serial":
+      return defaultSerial() !== null;
+    case "ble":
+      return isBrowserLocalTransportAvailable();
+  }
+}
+
+function toBrowserProviderTransportError(error: unknown): SuiBrowserDeviceProviderError {
+  const code = errorCode(error);
+  if (code !== null) {
+    return new SuiBrowserDeviceProviderError(
+      code,
+      error instanceof Error ? error.message : "Browser BLE transport failed.",
+    );
+  }
+  return new SuiBrowserDeviceProviderError("transport_error", "Browser BLE transport failed.");
 }
 
 function noop(): void {}

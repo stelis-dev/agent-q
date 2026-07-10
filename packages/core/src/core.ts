@@ -3,10 +3,15 @@ import {
   ConfigStore,
   RESERVED_PURPOSES,
   isValidPurpose,
+  type DeviceTransport,
   type DeviceListing,
   type DeviceRecord,
 } from "./config.js";
 import { DeviceRequestError, toDeviceRequestError } from "./errors.js";
+import {
+  createLocalTransportSessionOpener,
+  type LocalTransportSessionOpener,
+} from "./local-transport-session-opener.js";
 import { isClientName, isSafeDeviceId, sanitizePortHint } from "./safe-text.js";
 import { normalizeErrorCode, toPublicError } from "./public-error.js";
 import {
@@ -24,6 +29,21 @@ import {
 import { SerialPortUsbDriver } from "./usb.js";
 export { SerialPortUsbDriver } from "./usb.js";
 import {
+  parseLocalTransportOpticalPayload,
+  type LocalTransportBleSession,
+} from "./local-transport.js";
+import {
+  assertAccountsResult,
+  assertApprovalHistoryResponse,
+  assertCapabilitiesResult,
+  assertConnectResult,
+  assertCredentialPreparationResponse,
+  assertCredentialProposalOutcomeResponse,
+  assertDisconnectResult,
+  assertPolicyProposalOutcomeResponse,
+  assertPolicyResponse,
+  assertSigningOutcome,
+  assertStatusResponse,
   createIdentificationCode,
   type Account,
   type ApprovalHistoryRecord,
@@ -51,6 +71,8 @@ import {
   validatePolicyProposeInput,
   validatePolicyProposeRequestInput,
 } from "./protocol.js";
+import type { DeviceResponse } from "./device-contract.js";
+import type { DeviceRequestInput } from "./device-request-transport.js";
 import {
   consumeFirmwareSessionInvalidated,
   INTERNAL_USB_DEADLINE_MS,
@@ -137,9 +159,11 @@ export interface SelectDeviceResult {
 
 interface RuntimeSession {
   deviceId: string;
+  transport: DeviceTransport;
   sessionId: string;
   sessionTtlMs: number;
   connectedAt: string;
+  localTransportSession?: LocalTransportBleSession;
 }
 
 export interface RuntimeSessionView {
@@ -179,6 +203,7 @@ export const DISCONNECT_REASONS = [
   "firmware_confirmed",
   "invalid_session",
   "transport_unavailable",
+  "transport_closed",
   "timeout",
   "not_connected",
 ] as const;
@@ -188,6 +213,7 @@ export const DISCONNECT_ENDED_REASONS = [
   "firmware_confirmed",
   "invalid_session",
   "transport_unavailable",
+  "transport_closed",
   "timeout",
 ] as const;
 export type DisconnectEndedReason = (typeof DISCONNECT_ENDED_REASONS)[number];
@@ -336,13 +362,21 @@ export const DEFAULT_CLIENT_NAME = "Agent-Q";
 
 export class DeviceCore {
   private readonly runtimeSessions = new Map<string, RuntimeSession>();
+  private readonly configStore: ConfigStore;
   private readonly usbDriver: UsbSerialDriver;
+  private readonly clock: () => Date;
+  private readonly localTransportSessionOpener: LocalTransportSessionOpener;
 
+  constructor(configStore: ConfigStore, usbDriver: UsbSerialDriver, clock?: () => Date);
   constructor(
-    private readonly configStore: ConfigStore,
+    configStore: ConfigStore,
     usbDriver: UsbSerialDriver,
-    private readonly clock: () => Date = () => new Date(),
+    clock: () => Date = () => new Date(),
+    localTransportSessionOpener: LocalTransportSessionOpener = createLocalTransportSessionOpener(),
   ) {
+    this.configStore = configStore;
+    this.clock = clock;
+    this.localTransportSessionOpener = localTransportSessionOpener;
     // Wrap the driver once so every deadline-bearing transport call is bounded by
     // its internal deadline at a single boundary, regardless of whether the
     // injected driver honors it.
@@ -515,9 +549,15 @@ export class DeviceCore {
     deviceId?: string;
     purpose?: string;
     clientName?: string;
+    transport?: DeviceTransport;
+    opticalPayload?: string;
   } = {}): Promise<ConnectDeviceResult> {
     rejectUnsupportedInputFields(input, CONNECT_DEVICE_INPUT_KEYS, "connectDevice");
     const clientName = validateClientName(input.clientName);
+    const requestedTransport = normalizeConnectTransport(input.transport, input.opticalPayload);
+    if (requestedTransport === "ble") {
+      return this.connectLocalTransportDevice(input, clientName);
+    }
     const target = await this.resolveTargetDevice(input);
     const scanDeadlineMs = INTERNAL_USB_DEADLINE_MS;
 
@@ -581,6 +621,7 @@ export class DeviceCore {
 
     const session = this.recordSession(
       target.deviceId,
+      "usb",
       response.sessionId,
       response.sessionTtlMs,
     );
@@ -591,6 +632,109 @@ export class DeviceCore {
       connectedAt: session.connectedAt,
       device: response.device,
     };
+  }
+
+  private async connectLocalTransportDevice(
+    input: {
+      deviceId?: string;
+      purpose?: string;
+      opticalPayload?: string;
+    },
+    clientName: string,
+  ): Promise<ConnectDeviceResult> {
+    validateDevicePurpose(input.purpose);
+    if (input.opticalPayload === undefined) {
+      const target = await this.resolveTargetDevice(input);
+      const existingSession = this.peekRuntimeSession(target.deviceId);
+      if (existingSession !== null && existingSession.transport === "ble") {
+        try {
+          const capabilities = await this.requestViaRuntimeSession(
+            target.record,
+            existingSession,
+            { method: "get_capabilities", sessionId: existingSession.sessionId },
+            INTERNAL_CONNECT_DEADLINE_MS,
+            assertCapabilitiesResult,
+          );
+          void capabilities;
+          return {
+            source: "connected",
+            deviceId: target.deviceId,
+            sessionTtlMs: existingSession.sessionTtlMs,
+            connectedAt: existingSession.connectedAt,
+            device: target.record.lastStatus.device,
+          };
+        } catch (error) {
+          const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
+          if (reason !== "invalid_session") {
+            throw error;
+          }
+        }
+      }
+      throw new DeviceRequestError(
+        "transport_closed",
+        "BLE local transport requires a fresh optical payload when no runtime session is active.",
+        true,
+      );
+    }
+
+    const payload = parseLocalTransportOpticalPayload(input.opticalPayload);
+    const localSession = await this.localTransportSessionOpener(payload.raw);
+    try {
+      const status = await localSession.request(
+        { method: "get_status" },
+        INTERNAL_USB_DEADLINE_MS,
+        assertStatusResponse,
+      );
+      if (input.deviceId !== undefined && input.deviceId.length > 0 && status.device.deviceId !== input.deviceId) {
+        throw new DeviceRequestError(
+          "handshake_failed",
+          `Local transport status device id did not match. Expected ${input.deviceId}, got ${status.device.deviceId}.`,
+          true,
+        );
+      }
+      const response = await localSession.request(
+        { method: "connect", payload: { clientName } },
+        INTERNAL_CONNECT_DEADLINE_MS,
+        assertConnectResult,
+      );
+      if (response.device.deviceId !== status.device.deviceId) {
+        throw new DeviceRequestError(
+          "handshake_failed",
+          `Connect response device id did not match. Expected ${status.device.deviceId}, got ${response.device.deviceId}.`,
+          true,
+        );
+      }
+      const previousSession = this.peekRuntimeSession(response.device.deviceId);
+      if (previousSession !== null && previousSession.localTransportSession !== localSession) {
+        await this.clearRuntimeSessionMirror(response.device.deviceId);
+      }
+      await this.configStore.rememberLocalTransportStatus(
+        status,
+        `ble:${Buffer.from(payload.identityFingerprint).toString("hex")}`,
+        {
+          observedAt: this.clock(),
+          setActive: input.deviceId === undefined && input.purpose === undefined,
+          activePurpose: input.purpose,
+        },
+      );
+      const session = this.recordSession(
+        response.device.deviceId,
+        "ble",
+        response.sessionId,
+        response.sessionTtlMs,
+        localSession,
+      );
+      return {
+        source: "connected",
+        deviceId: response.device.deviceId,
+        sessionTtlMs: session.sessionTtlMs,
+        connectedAt: session.connectedAt,
+        device: response.device,
+      };
+    } catch (error) {
+      await localSession.close().catch(() => {});
+      throw error;
+    }
   }
 
   async disconnectDevice(input: {
@@ -606,31 +750,25 @@ export class DeviceCore {
     }
     rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "disconnectDevice");
 
-    let matchingPort: UsbStatusResult | undefined;
     try {
-      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
+      await this.requestViaRuntimeSession(
+        target.record,
+        session,
+        { method: "disconnect", sessionId: session.sessionId },
+        scanDeadlineMs,
+        assertDisconnectResult,
+        (portPath) => this.usbDriver.disconnectDevice(portPath, session.sessionId, scanDeadlineMs),
+      );
     } catch (error) {
-      // The device could not be located. clearRuntimeSessionMirrorIfEnded owns the policy
-      // for which disconnect failures end Agent-Q's local session view; clearing
-      // it here prevents reusing a session Agent-Q cannot confirm.
-      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
+      const reason = runtimeSessionMirrorEndReason(error);
       if (reason !== null) {
+        await this.clearRuntimeSessionMirror(target.deviceId);
         return { source: "disconnected", deviceId: target.deviceId, reason };
       }
       throw error;
     }
 
-    try {
-      await this.usbDriver.disconnectDevice(matchingPort.portPath, session.sessionId, scanDeadlineMs);
-    } catch (error) {
-      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
-      if (reason !== null) {
-        return { source: "disconnected", deviceId: target.deviceId, reason };
-      }
-      throw error;
-    }
-
-    this.clearRuntimeSessionMirror(target.deviceId);
+    await this.clearRuntimeSessionMirror(target.deviceId);
     return { source: "disconnected", deviceId: target.deviceId, reason: "firmware_confirmed" };
   }
 
@@ -647,22 +785,14 @@ export class DeviceCore {
     }
     rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "getCapabilities");
 
-    let matchingPort: UsbStatusResult | undefined;
     try {
-      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
-    } catch (error) {
-      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
-      if (reason !== null) {
-        return { source: "session_ended", deviceId: target.deviceId, reason };
-      }
-      throw error;
-    }
-
-    try {
-      const response = await this.usbDriver.getCapabilities(
-        matchingPort.portPath,
-        session.sessionId,
+      const response = await this.requestViaRuntimeSession(
+        target.record,
+        session,
+        { method: "get_capabilities", sessionId: session.sessionId },
         scanDeadlineMs,
+        assertCapabilitiesResult,
+        (portPath) => this.usbDriver.getCapabilities(portPath, session.sessionId, scanDeadlineMs),
       );
       return {
         source: "live",
@@ -693,26 +823,14 @@ export class DeviceCore {
     }
     rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "getAccounts");
 
-    let matchingPort: UsbStatusResult | undefined;
     try {
-      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
-    } catch (error) {
-      // A transport/session failure while locating the device may end Agent-Q's
-      // local session view; clearRuntimeSessionMirrorIfEnded owns that policy. get_accounts
-      // is read-only, so a recognized clearing reason is reported as session_ended
-      // (the firmware session is presumed gone) rather than throwing.
-      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
-      if (reason !== null) {
-        return { source: "session_ended", deviceId: target.deviceId, reason };
-      }
-      throw error;
-    }
-
-    try {
-      const response = await this.usbDriver.getAccounts(
-        matchingPort.portPath,
-        session.sessionId,
+      const response = await this.requestViaRuntimeSession(
+        target.record,
+        session,
+        { method: "get_accounts", sessionId: session.sessionId },
         scanDeadlineMs,
+        assertAccountsResult,
+        (portPath) => this.usbDriver.getAccounts(portPath, session.sessionId, scanDeadlineMs),
       );
       // Read-only: the session is retained on success.
       return { source: "live", deviceId: target.deviceId, accounts: response.accounts };
@@ -738,22 +856,14 @@ export class DeviceCore {
     }
     rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "policyGet");
 
-    let matchingPort: UsbStatusResult | undefined;
     try {
-      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
-    } catch (error) {
-      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
-      if (reason !== null) {
-        return { source: "session_ended", deviceId: target.deviceId, reason };
-      }
-      throw error;
-    }
-
-    try {
-      const response = await this.usbDriver.policyGet(
-        matchingPort.portPath,
-        session.sessionId,
+      const response = await this.requestViaRuntimeSession(
+        target.record,
+        session,
+        { method: "policy_get", sessionId: session.sessionId },
         scanDeadlineMs,
+        assertPolicyResponse,
+        (portPath) => this.usbDriver.policyGet(portPath, session.sessionId, scanDeadlineMs),
       );
       return { source: "live", deviceId: target.deviceId, policy: response.policy };
     } catch (error) {
@@ -784,23 +894,19 @@ export class DeviceCore {
       beforeSeq: input.beforeSeq,
     });
 
-    let matchingPort: UsbStatusResult | undefined;
     try {
-      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
-    } catch (error) {
-      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
-      if (reason !== null) {
-        return { source: "session_ended", deviceId: target.deviceId, reason };
-      }
-      throw error;
-    }
-
-    try {
-      const response = await this.usbDriver.getApprovalHistory(
-        matchingPort.portPath,
-        session.sessionId,
-        params,
+      const response = await this.requestViaRuntimeSession(
+        target.record,
+        session,
+        { method: "get_approval_history", sessionId: session.sessionId, payload: params },
         scanDeadlineMs,
+        assertApprovalHistoryResponse,
+        (portPath) => this.usbDriver.getApprovalHistory(
+          portPath,
+          session.sessionId,
+          params,
+          scanDeadlineMs,
+        ),
       );
       return {
         source: "live",
@@ -823,7 +929,6 @@ export class DeviceCore {
     policy: Record<string, unknown>;
   }): Promise<PolicyProposalOutcome> {
     const target = await this.resolveTargetDevice(input);
-    const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
     const policyUpdateDeadlineMs = INTERNAL_POLICY_UPDATE_DEADLINE_MS;
 
     const session = this.peekRuntimeSession(target.deviceId);
@@ -835,23 +940,19 @@ export class DeviceCore {
     validatePolicyProposeInput(input.policy);
     validatePolicyProposeRequestInput(session.sessionId, input.policy);
 
-    let matchingPort: UsbStatusResult | undefined;
     try {
-      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
-    } catch (error) {
-      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
-      if (reason !== null) {
-        return { source: "session_ended", deviceId: target.deviceId, reason };
-      }
-      throw error;
-    }
-
-    try {
-      const response = await this.usbDriver.policyPropose(
-        matchingPort.portPath,
-        session.sessionId,
-        input.policy,
+      const response = await this.requestViaRuntimeSession(
+        target.record,
+        session,
+        { method: "policy_propose", sessionId: session.sessionId, payload: input.policy },
         policyUpdateDeadlineMs,
+        assertPolicyProposalOutcomeResponse,
+        (portPath) => this.usbDriver.policyPropose(
+          portPath,
+          session.sessionId,
+          input.policy,
+          policyUpdateDeadlineMs,
+        ),
       );
       if (response.status === "consistency_error") {
         this.clearRuntimeSessionMirror(target.deviceId);
@@ -893,22 +994,14 @@ export class DeviceCore {
     });
     validateCredentialPrepareRequestInput(session.sessionId, params);
 
-    let matchingPort: UsbStatusResult | undefined;
     try {
-      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
-    } catch (error) {
-      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
-      if (reason !== null) {
-        return { source: "session_ended", deviceId: target.deviceId, reason };
-      }
-      throw error;
-    }
-
-    try {
-      const response = await this.usbDriver.credentialPrepare(
-        matchingPort.portPath,
-        session.sessionId,
+      const response = await this.requestViaRuntimeSession(
+        target.record,
+        session,
+        { method: "credential_prepare", sessionId: session.sessionId, payload: params },
         scanDeadlineMs,
+        assertCredentialPreparationResponse,
+        (portPath) => this.usbDriver.credentialPrepare(portPath, session.sessionId, scanDeadlineMs),
       );
       return {
         source: "live",
@@ -938,7 +1031,6 @@ export class DeviceCore {
     inputs: unknown;
   }): Promise<CredentialProposalOutcome> {
     const target = await this.resolveTargetDevice(input);
-    const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
     const deadlineMs = INTERNAL_POLICY_UPDATE_DEADLINE_MS;
 
     const session = this.peekRuntimeSession(target.deviceId);
@@ -958,23 +1050,19 @@ export class DeviceCore {
     });
     validateCredentialProposeRequestInput(session.sessionId, params);
 
-    let matchingPort: UsbStatusResult | undefined;
     try {
-      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
-    } catch (error) {
-      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
-      if (reason !== null) {
-        return { source: "session_ended", deviceId: target.deviceId, reason };
-      }
-      throw error;
-    }
-
-    try {
-      const response = await this.usbDriver.credentialPropose(
-        matchingPort.portPath,
-        session.sessionId,
-        params,
+      const response = await this.requestViaRuntimeSession(
+        target.record,
+        session,
+        { method: "credential_propose", sessionId: session.sessionId, payload: params },
         deadlineMs,
+        assertCredentialProposalOutcomeResponse,
+        (portPath) => this.usbDriver.credentialPropose(
+          portPath,
+          session.sessionId,
+          params,
+          deadlineMs,
+        ),
       );
       if (response.sessionEnded) {
         this.clearRuntimeSessionMirror(target.deviceId);
@@ -1005,7 +1093,6 @@ export class DeviceCore {
   }): Promise<SignTransactionResult> {
     const route = identifySignHostRoute("sign_transaction", input.chain, input.method);
     const target = await this.resolveTargetDevice(input);
-    const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
     const deadlineMs = INTERNAL_SIGN_TRANSACTION_DEADLINE_MS;
 
     const session = this.peekRuntimeSession(target.deviceId);
@@ -1020,24 +1107,28 @@ export class DeviceCore {
       txBytes: input.txBytes,
     });
 
-    let matchingPort: UsbStatusResult | undefined;
     try {
-      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
-    } catch (error) {
-      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
-      if (reason !== null) {
-        return { source: "session_ended", deviceId: target.deviceId, reason };
-      }
-      throw error;
-    }
-
-    try {
-      const response = await this.usbDriver.signTransaction(
-        matchingPort.portPath,
-        session.sessionId,
-        route,
-        params,
+      const response = await this.requestViaRuntimeSession(
+        target.record,
+        session,
+        {
+          method: "sign_transaction",
+          sessionId: session.sessionId,
+          payload: {
+            chain: route.chain,
+            network: params.network,
+            txBytes: params.txBytes,
+          },
+        },
         deadlineMs,
+        assertSigningOutcome,
+        (portPath) => this.usbDriver.signTransaction(
+          portPath,
+          session.sessionId,
+          route,
+          params,
+          deadlineMs,
+        ),
       );
       const firmwareInvalidatedSession = consumeFirmwareSessionInvalidated(response);
       const result = toLiveSigningOutcome(target.deviceId, response);
@@ -1065,7 +1156,6 @@ export class DeviceCore {
   }): Promise<SignPersonalMessageResult> {
     const route = identifySignHostRoute("sign_personal_message", input.chain, input.method);
     const target = await this.resolveTargetDevice(input);
-    const scanDeadlineMs = INTERNAL_DISCONNECT_DEADLINE_MS;
     const deadlineMs = INTERNAL_SIGN_PERSONAL_MESSAGE_DEADLINE_MS;
 
     const session = this.peekRuntimeSession(target.deviceId);
@@ -1080,24 +1170,28 @@ export class DeviceCore {
       message: input.message,
     });
 
-    let matchingPort: UsbStatusResult | undefined;
     try {
-      matchingPort = await this.findLivePortForDevice(target.record, scanDeadlineMs);
-    } catch (error) {
-      const reason = this.clearRuntimeSessionMirrorIfEnded(target.deviceId, error);
-      if (reason !== null) {
-        return { source: "session_ended", deviceId: target.deviceId, reason };
-      }
-      throw error;
-    }
-
-    try {
-      const response = await this.usbDriver.signPersonalMessage(
-        matchingPort.portPath,
-        session.sessionId,
-        route,
-        params,
+      const response = await this.requestViaRuntimeSession(
+        target.record,
+        session,
+        {
+          method: "sign_personal_message",
+          sessionId: session.sessionId,
+          payload: {
+            chain: route.chain,
+            network: params.network,
+            message: params.message,
+          },
+        },
         deadlineMs,
+        assertSigningOutcome,
+        (portPath) => this.usbDriver.signPersonalMessage(
+          portPath,
+          session.sessionId,
+          route,
+          params,
+          deadlineMs,
+        ),
       );
       const firmwareInvalidatedSession = consumeFirmwareSessionInvalidated(response);
       const result = toLiveSigningOutcome(target.deviceId, response);
@@ -1123,28 +1217,62 @@ export class DeviceCore {
     return session;
   }
 
-  private recordSession(deviceId: string, sessionId: string, sessionTtlMs: number): RuntimeSession {
+  private recordSession(
+    deviceId: string,
+    transport: DeviceTransport,
+    sessionId: string,
+    sessionTtlMs: number,
+    localTransportSession?: LocalTransportBleSession,
+  ): RuntimeSession {
     const connectedAt = this.clock();
     const session: RuntimeSession = {
       deviceId,
+      transport,
       sessionId,
       sessionTtlMs,
       connectedAt: connectedAt.toISOString(),
+      ...(localTransportSession === undefined ? {} : { localTransportSession }),
     };
     this.runtimeSessions.set(deviceId, session);
     return session;
   }
 
   private clearRuntimeSessionsAbsentFromLiveUsbScan(liveDeviceIds: ReadonlySet<string>): void {
-    for (const deviceId of this.runtimeSessions.keys()) {
-      if (!liveDeviceIds.has(deviceId)) {
+    for (const [deviceId, session] of this.runtimeSessions) {
+      if (session.transport === "usb" && !liveDeviceIds.has(deviceId)) {
         this.clearRuntimeSessionMirror(deviceId);
       }
     }
   }
 
-  private clearRuntimeSessionMirror(deviceId: string): void {
+  private clearRuntimeSessionMirror(deviceId: string): Promise<void> {
+    const session = this.runtimeSessions.get(deviceId);
     this.runtimeSessions.delete(deviceId);
+    return session?.localTransportSession?.close().catch(() => {}) ?? Promise.resolve();
+  }
+
+  private async requestViaRuntimeSession<TResponse>(
+    record: DeviceRecord,
+    session: RuntimeSession,
+    request: DeviceRequestInput,
+    deadlineMs: number,
+    assertResponse: (response: DeviceResponse) => TResponse,
+    requestUsb?: (portPath: string) => Promise<TResponse>,
+  ): Promise<TResponse> {
+    if (session.transport === "ble") {
+      if (session.localTransportSession === undefined) {
+        throw new DeviceRequestError("transport_closed", "Local transport session is unavailable.", true);
+      }
+      return session.localTransportSession.request(request, deadlineMs, assertResponse);
+    }
+    if (requestUsb === undefined) {
+      throw new DeviceRequestError("internal_output_error", "USB runtime request adapter is unavailable.", false);
+    }
+    const matchingPort = await this.findLivePortForDevice(
+      record,
+      Math.min(deadlineMs, INTERNAL_DISCONNECT_DEADLINE_MS),
+    );
+    return requestUsb(matchingPort.portPath);
   }
 
   private clearRuntimeSessionMirrorIfEnded(
@@ -1184,20 +1312,7 @@ export class DeviceCore {
     deviceId?: string;
     purpose?: string;
   }): Promise<{ deviceId: string; record: DeviceRecord }> {
-    if (input.purpose !== undefined && RESERVED_PURPOSES.has(input.purpose)) {
-      throw new DeviceRequestError(
-        "invalid_params",
-        `purpose '${input.purpose}' is reserved. Omit purpose to use the default device.`,
-        false,
-      );
-    }
-    if (input.purpose !== undefined && !isValidPurpose(input.purpose)) {
-      throw new DeviceRequestError(
-        "invalid_params",
-        "purpose must be 1-32 characters of [A-Za-z0-9_.-].",
-        false,
-      );
-    }
+    validateDevicePurpose(input.purpose);
 
     const config = await this.configStore.load();
     let deviceId: string | undefined;
@@ -1227,6 +1342,13 @@ export class DeviceCore {
     record: DeviceRecord,
     deadlineMs: number,
   ): Promise<UsbStatusResult> {
+    if (record.transport !== "usb") {
+      throw new DeviceRequestError(
+        "transport_closed",
+        `Device ${record.deviceId} is not connected over USB.`,
+        true,
+      );
+    }
     const scanResult = await scanUsbDeviceStatuses(this.usbDriver, deadlineMs);
     const matching = scanResult.devices.find(
       (candidate) => candidate.status.device.deviceId === record.deviceId,
@@ -1264,6 +1386,34 @@ export class DeviceCore {
     rejectUnsupportedInputFields(input, DEVICE_SCOPED_INPUT_KEYS, "getDeviceStatus");
     const deadlineMs = INTERNAL_USB_DEADLINE_MS;
     const { record } = await this.resolveTargetDevice(input);
+    if (record.transport === "ble") {
+      const session = this.peekRuntimeSession(record.deviceId);
+      if (session !== null && session.transport === "ble") {
+        try {
+          const status = await this.requestViaRuntimeSession(
+            record,
+            session,
+            { method: "get_status" },
+            deadlineMs,
+            assertStatusResponse,
+          );
+          await this.configStore.rememberLocalTransportStatus(status, record.lastPortHint, {
+            observedAt: this.clock(),
+            setActive: false,
+          });
+          return {
+            source: "live",
+            connected: true,
+            portPath: sanitizePortHint(record.lastPortHint),
+            status,
+          };
+        } catch (error) {
+          this.clearRuntimeSessionMirrorIfEnded(record.deviceId, error);
+          return toCachedStatus(record, mapErrorToUnavailableReason(error));
+        }
+      }
+      return toCachedStatus(record, "transport_closed");
+    }
 
     try {
       const scanResult = await scanUsbDeviceStatuses(this.usbDriver, deadlineMs);
@@ -1336,6 +1486,26 @@ function toScanFailure(failure: UsbStatusFailure): ScanDeviceFailure {
   };
 }
 
+function validateDevicePurpose(purpose: string | undefined): void {
+  if (purpose === undefined) {
+    return;
+  }
+  if (RESERVED_PURPOSES.has(purpose)) {
+    throw new DeviceRequestError(
+      "invalid_params",
+      `purpose '${purpose}' is reserved. Omit purpose to use the default device.`,
+      false,
+    );
+  }
+  if (!isValidPurpose(purpose)) {
+    throw new DeviceRequestError(
+      "invalid_params",
+      "purpose must be 1-32 characters of [A-Za-z0-9_.-].",
+      false,
+    );
+  }
+}
+
 function validateClientName(value: unknown): string {
   if (value === undefined) {
     return DEFAULT_CLIENT_NAME;
@@ -1348,6 +1518,22 @@ function validateClientName(value: unknown): string {
     );
   }
   return value;
+}
+
+function normalizeConnectTransport(transport: unknown, opticalPayload: unknown): DeviceTransport {
+  if (transport === undefined) {
+    return opticalPayload === undefined ? "usb" : "ble";
+  }
+  if (transport === "usb") {
+    if (opticalPayload !== undefined) {
+      throw new DeviceRequestError("invalid_params", "USB connect does not accept opticalPayload.", false);
+    }
+    return "usb";
+  }
+  if (transport === "ble") {
+    return "ble";
+  }
+  throw new DeviceRequestError("invalid_params", "transport must be 'usb' or 'ble'.", false);
 }
 
 function validateSignHostInput(input: {
@@ -1452,7 +1638,7 @@ function toLiveSigningOutcome(deviceId: string, response: SigningOutcome): LiveS
 
 const NO_INPUT_KEYS = new Set<string>();
 const DEVICE_SCOPED_INPUT_KEYS = new Set(["deviceId", "purpose"]);
-const CONNECT_DEVICE_INPUT_KEYS = new Set(["deviceId", "purpose", "clientName"]);
+const CONNECT_DEVICE_INPUT_KEYS = new Set(["deviceId", "purpose", "clientName", "transport", "opticalPayload"]);
 const SET_DEVICE_METADATA_INPUT_KEYS = new Set(["deviceId", "label"]);
 const GET_APPROVAL_HISTORY_INPUT_KEYS = new Set(["deviceId", "purpose", "limit", "beforeSeq"]);
 const POLICY_PROPOSE_INPUT_KEYS = new Set(["deviceId", "purpose", "policy"]);

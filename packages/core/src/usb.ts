@@ -61,6 +61,11 @@ import {
   type DeviceRequestInput,
 } from "./device-request-transport.js";
 import { requestSigningWithRetainedRecovery } from "./retained-signing-recovery-internal.js";
+import {
+  consumeFirmwareSessionInvalidated,
+  markFirmwareSessionInvalidated,
+} from "./session-invalidation-internal.js";
+export { consumeFirmwareSessionInvalidated } from "./session-invalidation-internal.js";
 import { IDENTIFICATION_CODE_PATTERN, isClientName } from "./safe-text.js";
 
 export { FIRMWARE_USB_PRODUCT_ID, FIRMWARE_USB_VENDOR_ID, INTERNAL_USB_DEADLINE_MS };
@@ -147,7 +152,6 @@ type PortQuarantine = {
   release(): void;
 };
 const REQUEST_MAY_HAVE_REACHED_FIRMWARE = Symbol("signing.requestMayHaveReachedFirmware");
-const FIRMWARE_SESSION_INVALIDATED = Symbol("signing.firmwareSessionInvalidated");
 const portTransactions = new Map<string, Promise<void>>();
 const portQuarantines = new Map<string, PortQuarantine>();
 const USB_CLEANUP_STEP_TIMEOUT_MS = 1500;
@@ -536,37 +540,6 @@ function deadlineWithSignTransactionDelivery(deadlineMs: number, txBytes: string
 /** @internal */
 export function markRequestMayHaveReachedFirmware<T>(error: T): T {
   return tagRequestReachability(error, true);
-}
-
-function markFirmwareSessionInvalidated<T>(value: T): T {
-  if ((typeof value === "object" && value !== null) || typeof value === "function") {
-    try {
-      Object.defineProperty(value, FIRMWARE_SESSION_INVALIDATED, {
-        value: true,
-        configurable: true,
-      });
-    } catch {
-      // Some Error-like or response-like objects may be non-extensible.
-    }
-  }
-  return value;
-}
-
-/** @internal Package-private side channel consumed by DeviceCore before projection. */
-export function consumeFirmwareSessionInvalidated(value: unknown): boolean {
-  if (
-    value === null ||
-    (typeof value !== "object" && typeof value !== "function") ||
-    (value as { [FIRMWARE_SESSION_INVALIDATED]?: boolean })[FIRMWARE_SESSION_INVALIDATED] !== true
-  ) {
-    return false;
-  }
-  try {
-    delete (value as { [FIRMWARE_SESSION_INVALIDATED]?: boolean })[FIRMWARE_SESSION_INVALIDATED];
-  } catch {
-    // Metadata is non-public and non-enumerable; failure to delete is harmless.
-  }
-  return true;
 }
 
 function markRequestDidNotReachFirmware<T>(error: T): T {

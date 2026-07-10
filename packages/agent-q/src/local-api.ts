@@ -16,6 +16,7 @@ import {
 export const DEFAULT_LOCAL_API_HOST = "127.0.0.1";
 export const DEFAULT_LOCAL_API_PORT = 8787;
 const MAX_LOCAL_API_JSON_BYTES = 16384;
+const MAX_LOCAL_TRANSPORT_OPTICAL_PAYLOAD_CHARS = 128;
 const MAX_LOCAL_API_SIGN_TRANSACTION_JSON_BYTES =
   MAX_SUI_SIGN_TRANSACTION_TX_BYTES_BASE64_CHARS + MAX_RAW_PROTOCOL_JSON_BYTES;
 const LOCAL_API_LOOPBACK_HOSTS = new Set([DEFAULT_LOCAL_API_HOST, "localhost", "::1"]);
@@ -157,11 +158,11 @@ async function handleLocalApiRequest(
         sendSanitizedSuccess(response, hostSuccessOutputSchemas.scanDevices, await core.scanDevices());
         return;
       case "/api/connect":
-        expectKeys(body, ["deviceId", "purpose"]);
+        expectKeys(body, ["deviceId", "purpose", "transport", "opticalPayload"]);
         sendSanitizedSuccess(
           response,
           hostSuccessOutputSchemas.connectDevice,
-          await core.connectDevice(deviceScopedInput(body)),
+          await core.connectDevice(connectDeviceInput(body)),
         );
         return;
       case "/api/disconnect":
@@ -317,6 +318,36 @@ function deviceScopedInput(body: RequestBody): { deviceId?: string; purpose?: st
       throw new DeviceRequestError("invalid_params", "Local API request purpose is invalid.", false);
     }
     input.purpose = body.purpose;
+  }
+  return input;
+}
+
+function connectDeviceInput(body: RequestBody): {
+  deviceId?: string;
+  purpose?: string;
+  transport?: "usb" | "ble";
+  opticalPayload?: string;
+} {
+  const input: {
+    deviceId?: string;
+    purpose?: string;
+    transport?: "usb" | "ble";
+    opticalPayload?: string;
+  } = deviceScopedInput(body);
+  if (Object.prototype.hasOwnProperty.call(body, "transport")) {
+    if (body.transport !== "usb" && body.transport !== "ble") {
+      throw new DeviceRequestError("invalid_params", "Local API request transport is invalid.", false);
+    }
+    input.transport = body.transport;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "opticalPayload")) {
+    if (
+      typeof body.opticalPayload !== "string" ||
+      body.opticalPayload.length > MAX_LOCAL_TRANSPORT_OPTICAL_PAYLOAD_CHARS
+    ) {
+      throw new DeviceRequestError("invalid_params", "Local API request opticalPayload is invalid.", false);
+    }
+    input.opticalPayload = body.opticalPayload;
   }
   return input;
 }

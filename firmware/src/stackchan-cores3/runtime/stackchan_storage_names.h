@@ -15,6 +15,5 @@ constexpr const char* kStackChanDeviceIdentityNvsNamespace = "device_identity";
 // StackChan's local-transport pairing identity is target-local transport trust
 // state. It is separate from signing material and mutable settings.
 constexpr const char* kStackChanPairingIdentityNvsNamespace = "pairing_id";
-constexpr const char* kStackChanPairingPeersNvsNamespace = "pairing_peers";
 
 }  // namespace signing

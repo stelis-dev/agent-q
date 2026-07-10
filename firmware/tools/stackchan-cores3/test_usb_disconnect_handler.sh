@@ -87,6 +87,7 @@ bool g_user_signing_cleanup_consumed = false;
 bool g_busy = false;
 bool g_payload_admission_blocks = false;
 bool g_write_disconnect_ok = true;
+bool g_cleanup_writer_available = false;
 const char* g_last_id = nullptr;
 const char* g_last_session = nullptr;
 const char* g_last_error_code = nullptr;
@@ -110,6 +111,7 @@ void reset_state()
     g_busy = false;
     g_payload_admission_blocks = false;
     g_write_disconnect_ok = true;
+    g_cleanup_writer_available = false;
     g_last_id = nullptr;
     g_last_session = nullptr;
     g_last_error_code = nullptr;
@@ -144,24 +146,36 @@ bool require_session(
     return g_session_valid;
 }
 
-bool disconnect_policy(const char* id, const char* session_id)
+bool disconnect_policy(
+    const char* id,
+    const char* session_id,
+    const signing::UsbOperationResponseWriter& writer)
 {
+    g_cleanup_writer_available = writer.can_write_error();
     g_policy_cleanup_calls += 1;
     g_last_id = id;
     g_last_session = session_id;
     return g_policy_cleanup_consumed;
 }
 
-bool disconnect_sui_zklogin(const char* id, const char* session_id)
+bool disconnect_sui_zklogin(
+    const char* id,
+    const char* session_id,
+    const signing::UsbOperationResponseWriter& writer)
 {
+    g_cleanup_writer_available = writer.can_write_error();
     g_sui_zklogin_cleanup_calls += 1;
     g_last_id = id;
     g_last_session = session_id;
     return g_sui_zklogin_cleanup_consumed;
 }
 
-bool disconnect_user_signing(const char* id, const char* session_id)
+bool disconnect_user_signing(
+    const char* id,
+    const char* session_id,
+    const signing::UsbOperationResponseWriter& writer)
 {
+    g_cleanup_writer_available = writer.can_write_error();
     g_user_signing_cleanup_calls += 1;
     g_last_id = id;
     g_last_session = session_id;
@@ -284,6 +298,7 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"disconnect\",\"sessionId\":\"session\"}");
         signing::handle_usb_disconnect_request("req", request, make_writer(), make_ops());
         assert(g_policy_cleanup_calls == 1);
+        assert(g_cleanup_writer_available);
         assert(g_sui_zklogin_cleanup_calls == 0);
         assert(g_user_signing_cleanup_calls == 0);
         assert(g_busy_calls == 0);

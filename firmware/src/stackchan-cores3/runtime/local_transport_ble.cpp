@@ -7,6 +7,9 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 #include "host/ble_att.h"
 #include "host/ble_gap.h"
 #include "host/ble_gatt.h"
@@ -19,6 +22,7 @@
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 #include "sdkconfig.h"
+#include "transport/local_transport_profile.h"
 
 namespace signing {
 namespace {
@@ -58,6 +62,12 @@ uint16_t g_pairing_ctrl_val_handle = 0;
 uint16_t g_pairing_data_val_handle = 0;
 bool g_pairing_ctrl_indicate_enabled = false;
 bool g_pairing_data_indicate_enabled = false;
+StaticSemaphore_t g_indication_completion_storage;
+SemaphoreHandle_t g_indication_completion = nullptr;
+bool g_indication_pending = false;
+uint16_t g_indication_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+uint16_t g_indication_attr_handle = 0;
+int g_indication_completion_status = BLE_HS_ETIMEOUT;
 bool g_inbound_pending = false;
 EXT_RAM_BSS_ATTR LocalTransportBleInboundFrame g_inbound_frame;
 
@@ -148,6 +158,94 @@ uint16_t connection_handle()
     const uint16_t handle = g_conn_handle;
     portEXIT_CRITICAL(&g_state_lock);
     return handle;
+}
+
+bool ensure_indication_completion()
+{
+    if (g_indication_completion != nullptr) {
+        return true;
+    }
+    g_indication_completion = xSemaphoreCreateBinaryStatic(&g_indication_completion_storage);
+    return g_indication_completion != nullptr;
+}
+
+bool begin_indication(uint16_t conn_handle, uint16_t attr_handle)
+{
+    if (!ensure_indication_completion()) {
+        return false;
+    }
+    while (xSemaphoreTake(g_indication_completion, 0) == pdTRUE) {
+    }
+
+    portENTER_CRITICAL(&g_state_lock);
+    if (g_indication_pending) {
+        portEXIT_CRITICAL(&g_state_lock);
+        return false;
+    }
+    g_indication_pending = true;
+    g_indication_conn_handle = conn_handle;
+    g_indication_attr_handle = attr_handle;
+    g_indication_completion_status = BLE_HS_ETIMEOUT;
+    portEXIT_CRITICAL(&g_state_lock);
+    return true;
+}
+
+void complete_indication(
+    uint16_t conn_handle,
+    uint16_t attr_handle,
+    int status)
+{
+    if (status == 0) {
+        return;
+    }
+    bool signal = false;
+    portENTER_CRITICAL(&g_state_lock);
+    if (g_indication_pending &&
+        g_indication_conn_handle == conn_handle &&
+        g_indication_attr_handle == attr_handle) {
+        g_indication_pending = false;
+        g_indication_completion_status = status;
+        signal = true;
+    }
+    portEXIT_CRITICAL(&g_state_lock);
+    if (signal && g_indication_completion != nullptr) {
+        xSemaphoreGive(g_indication_completion);
+    }
+}
+
+void fail_indication_for_connection(uint16_t conn_handle, int status)
+{
+    bool signal = false;
+    portENTER_CRITICAL(&g_state_lock);
+    if (g_indication_pending && g_indication_conn_handle == conn_handle) {
+        g_indication_pending = false;
+        g_indication_completion_status = status;
+        signal = true;
+    }
+    portEXIT_CRITICAL(&g_state_lock);
+    if (signal && g_indication_completion != nullptr) {
+        xSemaphoreGive(g_indication_completion);
+    }
+}
+
+void abandon_indication(uint16_t conn_handle, uint16_t attr_handle)
+{
+    portENTER_CRITICAL(&g_state_lock);
+    if (g_indication_pending &&
+        g_indication_conn_handle == conn_handle &&
+        g_indication_attr_handle == attr_handle) {
+        g_indication_pending = false;
+        g_indication_completion_status = BLE_HS_ETIMEOUT;
+    }
+    portEXIT_CRITICAL(&g_state_lock);
+}
+
+int indication_completion_status()
+{
+    portENTER_CRITICAL(&g_state_lock);
+    const int status = g_indication_completion_status;
+    portEXIT_CRITICAL(&g_state_lock);
+    return status;
 }
 
 bool set_advertising_fields()
@@ -342,6 +440,9 @@ bool start_advertising_if_ready()
                     ESP_LOGW(kTag, "disconnected conn=%u reason=%d",
                              (unsigned)event->disconnect.conn.conn_handle,
                              event->disconnect.reason);
+                    fail_indication_for_connection(
+                        event->disconnect.conn.conn_handle,
+                        BLE_HS_ENOTCONN);
                     set_connection_handle(BLE_HS_CONN_HANDLE_NONE);
                     set_advertising_active(false);
                     request_advertising_restart_if_needed();
@@ -372,6 +473,12 @@ bool start_advertising_if_ready()
                     ESP_LOGI(kTag, "indication tx attr=%u status=%d",
                              (unsigned)event->notify_tx.attr_handle,
                              event->notify_tx.status);
+                    if (event->notify_tx.indication) {
+                        complete_indication(
+                            event->notify_tx.conn_handle,
+                            event->notify_tx.attr_handle,
+                            event->notify_tx.status);
+                    }
                     return 0;
                 default:
                     return 0;
@@ -588,6 +695,18 @@ bool local_transport_ble_connected()
     return connection_handle() != BLE_HS_CONN_HANDLE_NONE;
 }
 
+void local_transport_ble_disconnect()
+{
+    const uint16_t conn = connection_handle();
+    if (conn == BLE_HS_CONN_HANDLE_NONE) {
+        return;
+    }
+    const int rc = ble_gap_terminate(conn, BLE_ERR_REM_USER_CONN_TERM);
+    if (rc != 0 && rc != BLE_HS_EALREADY && rc != BLE_HS_ENOTCONN) {
+        ESP_LOGW(kTag, "disconnect failed conn=%u rc=%d", (unsigned)conn, rc);
+    }
+}
+
 uint16_t local_transport_ble_current_att_mtu()
 {
     return current_att_mtu_for_connection(connection_handle());
@@ -625,14 +744,32 @@ bool local_transport_ble_send_indication(
     if (conn == BLE_HS_CONN_HANDLE_NONE || value_handle == 0) {
         return false;
     }
+    if (!begin_indication(conn, value_handle)) {
+        ESP_LOGW(kTag, "indication already pending channel=%u", (unsigned)channel);
+        return false;
+    }
     os_mbuf* om = ble_hs_mbuf_from_flat(payload, static_cast<uint16_t>(payload_len));
     if (om == nullptr) {
+        abandon_indication(conn, value_handle);
         return false;
     }
     const int rc = ble_gatts_indicate_custom(conn, value_handle, om);
     if (rc != 0) {
-        os_mbuf_free_chain(om);
+        abandon_indication(conn, value_handle);
         ESP_LOGW(kTag, "indicate failed channel=%u rc=%d", (unsigned)channel, rc);
+        return false;
+    }
+    if (xSemaphoreTake(
+            g_indication_completion,
+            pdMS_TO_TICKS(kLocalTransportCarrierAckTimeoutMs)) != pdTRUE) {
+        abandon_indication(conn, value_handle);
+        ESP_LOGW(kTag, "indication ack timeout channel=%u", (unsigned)channel);
+        return false;
+    }
+    const int status = indication_completion_status();
+    if (status != BLE_HS_EDONE) {
+        ESP_LOGW(kTag, "indication completion failed channel=%u status=%d",
+                 (unsigned)channel, status);
         return false;
     }
     return true;

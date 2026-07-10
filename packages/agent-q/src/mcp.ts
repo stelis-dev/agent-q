@@ -77,6 +77,8 @@ const purposeSchema = z.string().regex(PURPOSE_PATTERN).refine((value) => isVali
 const signNetworkSchema = z.string().describe(
   "Network identifier for the selected chain and method. Current executable Sui signing accepts mainnet, testnet, devnet, or localnet; Client Core and Firmware validate the value.",
 );
+const deviceTransportSchema = z.enum(["usb", "ble"]);
+const opticalPayloadSchema = z.string().max(128);
 
 const requirePackageJson = createRequire(import.meta.url);
 
@@ -165,11 +167,13 @@ export const hostToolDefinitions = {
     name: "connect_device",
     title: "Connect device",
     description:
-      "Open a communication session with a known Agent-Q Firmware device. Resolves the target device by deviceId, by purpose, or by the default active device. Sends a connect request that requires Firmware-owned device-local approval. Writes a status handshake to candidate USB serial ports while locating the device. Connect is not signing approval and does not authorize signing. Session is held in Agent-Q process memory only.",
+      "Open a communication session with a known Agent-Q Firmware device over USB or BLE local transport. BLE requires an optical pairing payload shown by Firmware. USB discovery writes a status handshake to candidate USB serial ports while locating the device. Resolves the target device by deviceId, by purpose, or by the default active device. Sends a connect request that requires Firmware-owned device-local approval. Connect is not signing approval and does not authorize signing. Session is held in Agent-Q process memory only.",
     inputSchema: strictInputSchema({
       deviceId: z.string().regex(DEVICE_ID_PATTERN).optional(),
       purpose: purposeSchema.optional(),
       clientName: z.string().regex(CLIENT_NAME_PATTERN).optional(),
+      transport: deviceTransportSchema.optional(),
+      opticalPayload: opticalPayloadSchema.optional(),
     }),
     outputSchema: connectDeviceToolOutputShape,
     successOutputSchema: connectDeviceSuccessOutputShape,
@@ -413,9 +417,9 @@ export function createMcpServer(core = createDefaultDeviceCore()): McpServer {
       inputSchema: hostToolDefinitions.connectDevice.inputSchema,
       outputSchema: hostToolDefinitions.connectDevice.successOutputSchema,
     },
-    async ({ deviceId, purpose, clientName }) =>
+    async ({ deviceId, purpose, clientName, transport, opticalPayload }) =>
       run(hostToolDefinitions.connectDevice.successOutputSchema, () =>
-        core.connectDevice({ deviceId, purpose, clientName }),
+        core.connectDevice({ deviceId, purpose, clientName, transport, opticalPayload }),
       ),
   );
 

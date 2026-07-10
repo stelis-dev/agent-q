@@ -142,11 +142,16 @@ bool write_busy(const char* id, const signing::UsbOperationResponseWriter& write
     return g_busy;
 }
 
-bool write_existing_session(const char* id)
+bool write_existing_session(
+    const char* id,
+    const signing::UsbOperationResponseWriter& writer)
 {
     g_existing_session_calls += 1;
     g_last_id = id;
-    return g_existing_session;
+    if (!g_existing_session) {
+        return false;
+    }
+    return writer.write_error(id, "existing_session_writer");
 }
 
 signing::TimeoutTick current_tick()
@@ -345,7 +350,8 @@ int main()
         assert(g_begin_calls == 0);
         assert(g_reset_queue_calls == 0);
         assert(g_show_review_calls == 0);
-        assert(g_write_error_calls == 0);
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "existing_session_writer") == 0);
     }
 
     {

@@ -26,6 +26,7 @@ import {
   createSuiBrowserDeviceProvider,
   isSuiBrowserDeviceProviderAvailable,
 } from "../dist/browser.js";
+import { openBrowserLocalTransport } from "../dist/browser-local-transport.js";
 import {
   FORBIDDEN_SECRET_FIELD_NAMES,
   makeDeviceError,
@@ -769,10 +770,13 @@ test("browser provider runtime defers Web Serial port selection until connectDev
       },
     });
     const provider = createSuiBrowserDeviceProvider({ clientName: "Agent-Q Sui dapp-kit Sample" });
+    const explicitProvider = createSuiBrowserDeviceProvider({ transport: "web_serial" });
     assert.equal(provider instanceof SuiBrowserDeviceProvider, true);
+    assert.equal(explicitProvider instanceof SuiBrowserDeviceProvider, true);
     assert.equal(typeof provider.credentialPrepare, "function");
     assert.equal(typeof provider.credentialPropose, "function");
     assert.equal(isSuiBrowserDeviceProviderAvailable(), true);
+    assert.equal(isSuiBrowserDeviceProviderAvailable({ transport: "web_serial" }), true);
     assert.equal(requestPortCalls, 0);
 
     const notConnected = await provider.getCapabilities();
@@ -843,6 +847,122 @@ test("browser provider runtime defers Web Serial port selection until connectDev
       delete globalThis.navigator;
     } else {
       Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider exposes BLE only with browser support and an optical payload source", async () => {
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const previousSecureContext = Object.getOwnPropertyDescriptor(globalThis, "isSecureContext");
+  let requestDeviceCalls = 0;
+  let opticalPayloadReads = 0;
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        bluetooth: {
+          requestDevice: async () => {
+            requestDeviceCalls += 1;
+            throw new Error("chooser rejected");
+          },
+        },
+      },
+    });
+    Object.defineProperty(globalThis, "isSecureContext", {
+      configurable: true,
+      value: true,
+    });
+    assert.equal(isSuiBrowserDeviceProviderAvailable({ transport: "ble" }), true);
+    assert.throws(
+      () => createSuiBrowserDeviceProvider({ transport: "ble" }),
+      { code: "invalid_params" },
+    );
+    const provider = createSuiBrowserDeviceProvider({
+      transport: "ble",
+      getOpticalPayload: () => {
+        opticalPayloadReads += 1;
+        return "aqlt:1?k=ble&svc=a6e31d1051a14f7a9b0a0a1c00000001&idfp=0011223344556677&non=8899aabbccddeeff&exp=120";
+      },
+    });
+    await assert.rejects(
+      () => provider.connectDevice(),
+      { code: "transport_error" },
+    );
+    assert.equal(opticalPayloadReads, 1);
+    assert.equal(requestDeviceCalls, 1);
+  } finally {
+    if (previousNavigator === undefined) {
+      Reflect.deleteProperty(globalThis, "navigator");
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+    if (previousSecureContext === undefined) {
+      Reflect.deleteProperty(globalThis, "isSecureContext");
+    } else {
+      Object.defineProperty(globalThis, "isSecureContext", previousSecureContext);
+    }
+  }
+});
+
+test("browser local transport bounds a never-settling GATT connection", async () => {
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const previousSecureContext = Object.getOwnPropertyDescriptor(globalThis, "isSecureContext");
+  let disconnected = false;
+  try {
+    const gatt = {
+      connected: false,
+      connect: () => new Promise((resolve) => {
+        setTimeout(() => {
+          gatt.connected = true;
+          resolve(gatt);
+        }, 30);
+      }),
+      getPrimaryService: async () => {
+        throw new Error("unreachable");
+      },
+      disconnect: () => {
+        disconnected = true;
+        gatt.connected = false;
+      },
+    };
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        bluetooth: {
+          requestDevice: async () => ({
+            gatt,
+            addEventListener() {},
+            removeEventListener() {},
+          }),
+        },
+      },
+    });
+    Object.defineProperty(globalThis, "isSecureContext", {
+      configurable: true,
+      value: true,
+    });
+    const started = Date.now();
+    await assert.rejects(
+      () => openBrowserLocalTransport(
+        "aqlt:1?k=ble&svc=a6e31d1051a14f7a9b0a0a1c00000001&idfp=0011223344556677&non=8899aabbccddeeff&exp=120",
+        undefined,
+        { handshakeTimeoutMs: 10, cleanupTimeoutMs: 10 },
+      ),
+      { code: "timeout" },
+    );
+    assert.equal(Date.now() - started < 500, true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(disconnected, true);
+  } finally {
+    if (previousNavigator === undefined) {
+      Reflect.deleteProperty(globalThis, "navigator");
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+    if (previousSecureContext === undefined) {
+      Reflect.deleteProperty(globalThis, "isSecureContext");
+    } else {
+      Object.defineProperty(globalThis, "isSecureContext", previousSecureContext);
     }
   }
 });
@@ -2783,6 +2903,36 @@ test("browser provider connect fails closed when Web Serial is unavailable", asy
       () => provider.connectDevice({ deviceId: "device-1" }),
       { code: "unsupported_transport" },
     );
+  } finally {
+    if (previousNavigator === undefined) {
+      delete globalThis.navigator;
+    } else {
+      Object.defineProperty(globalThis, "navigator", previousNavigator);
+    }
+  }
+});
+
+test("browser provider maps Web Serial chooser failure to transport_error", async () => {
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  let requestPortCalls = 0;
+  try {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        serial: {
+          requestPort: async () => {
+            requestPortCalls += 1;
+            throw new Error("chooser rejected");
+          },
+        },
+      },
+    });
+    const provider = createSuiBrowserDeviceProvider();
+    await assert.rejects(
+      () => provider.connectDevice({ deviceId: "device-1" }),
+      { code: "transport_error" },
+    );
+    assert.equal(requestPortCalls, 1);
   } finally {
     if (previousNavigator === undefined) {
       delete globalThis.navigator;

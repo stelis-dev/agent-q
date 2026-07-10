@@ -29,15 +29,15 @@ void handle_usb_disconnect_request(
         return;
     }
     if (ops.disconnect_pending_policy_update_for_session != nullptr &&
-        ops.disconnect_pending_policy_update_for_session(id, session_id)) {
+        ops.disconnect_pending_policy_update_for_session(id, session_id, writer)) {
         return;
     }
     if (ops.disconnect_pending_sui_zklogin_proposal_for_session != nullptr &&
-        ops.disconnect_pending_sui_zklogin_proposal_for_session(id, session_id)) {
+        ops.disconnect_pending_sui_zklogin_proposal_for_session(id, session_id, writer)) {
         return;
     }
     if (ops.disconnect_pending_user_signing_for_session != nullptr &&
-        ops.disconnect_pending_user_signing_for_session(id, session_id)) {
+        ops.disconnect_pending_user_signing_for_session(id, session_id, writer)) {
         return;
     }
     if (ops.write_busy_if_pending_or_local_flow_active != nullptr &&

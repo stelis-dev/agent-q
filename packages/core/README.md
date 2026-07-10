@@ -91,10 +91,39 @@ proof-clear path.
 - `@stelis/agent-q-core/device-request-internal` exposes the browser-safe
   `DeviceRequest` transport helper used by official Agent-Q adapters. It is an
   internal adapter support entrypoint, not an application API.
+- The full Node core can open the current BLE local transport through
+  `connectDevice({ transport: "ble", opticalPayload })`. The optical payload is
+  the current `aqlt:1?...k=ble` value shown by Firmware. Each QR connection
+  creates fresh gateway Noise key material in memory and wipes it after the
+  handshake; there is no gateway credential file or paired-host record. The
+  device registry, `DeviceCore` constructor, session results, and adapter APIs
+  do not expose private or session key material.
+- `@stelis/agent-q-core/local-transport-internal` is the browser-safe protocol
+  session opener used only by official transport adapters. It owns optical
+  parsing, the complete Noise handshake sequence, encrypted frames, request
+  ordering, deadlines, and key wiping. Its package entrypoint does not expose
+  raw Noise, frame-crypto, private-input, or session-key primitives. It also
+  does not expose camera UI, Web Bluetooth permission UI, Node BLE discovery,
+  device state setters, or signing authority.
 - `@stelis/agent-q-core/adapter-internal` exposes support APIs for official
   Agent-Q adapters, including bounded output schemas, public error mapping, safe
   text validation, and the local host device registry. It is not the
   dapp-facing provider API.
+
+The opt-in local-transport hardware smoke uses the product `DeviceCore` path.
+It requires synthetic or ignored evidence values and never prints the QR,
+transaction bytes, signature, session id, or device id:
+
+```sh
+LOCAL_TRANSPORT_HW_OPTICAL_PAYLOAD='<current aqlt:1 payload>' \
+LOCAL_TRANSPORT_HW_SIGN_NETWORK='<network>' \
+LOCAL_TRANSPORT_HW_SIGN_TX_BYTES='<canonical base64 transaction bytes>' \
+npm --workspace @stelis/agent-q-core run test:hardware:local-transport
+```
+
+After the first signed session closes, the smoke asks for a second fresh QR in
+the same Node process. Live wallet-derived values belong only in environment
+variables or ignored evidence files, never in tracked fixtures or docs.
 
 ## Boundaries
 

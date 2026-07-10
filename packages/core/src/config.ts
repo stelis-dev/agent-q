@@ -18,6 +18,8 @@ import {
 } from "./safe-text.js";
 
 export const CONFIG_SCHEMA_VERSION = 0;
+export const DEVICE_TRANSPORTS = ["usb", "ble"] as const;
+export type DeviceTransport = (typeof DEVICE_TRANSPORTS)[number];
 
 // The label/purpose policy is defined once in safe-text.ts (the single source of
 // truth) and re-exported here so existing importers and tests continue to
@@ -33,7 +35,7 @@ const EPOCH_ISO = "1970-01-01T00:00:00.000Z";
 
 export interface DeviceRecord {
   deviceId: string;
-  transport: "usb";
+  transport: DeviceTransport;
   lastPortHint: string;
   lastSeenAt: string;
   label: string | null;
@@ -49,7 +51,7 @@ export interface DeviceConfig {
 
 export interface DeviceListing {
   deviceId: string;
-  transport: "usb";
+  transport: DeviceTransport;
   lastPortHint: string;
   lastSeenAt: string;
   label: string | null;
@@ -66,6 +68,12 @@ export interface ConfigPathOptions {
 export interface RememberUsbStatusOptions {
   observedAt?: Date;
   setActive?: boolean;
+}
+
+export interface RememberLocalTransportStatusOptions {
+  observedAt?: Date;
+  setActive?: boolean;
+  activePurpose?: string;
 }
 
 export interface SetDeviceMetadataInput {
@@ -107,6 +115,7 @@ export function getConfigPath(options: ConfigPathOptions = {}): string {
 
 export class ConfigStore {
   readonly path: string;
+  private mutationTail: Promise<void> = Promise.resolve();
 
   constructor(path = getConfigPath()) {
     this.path = path;
@@ -196,11 +205,35 @@ export class ConfigStore {
     portPath: string,
     options: RememberUsbStatusOptions = {},
   ): Promise<DeviceConfig> {
-    const config = await this.load();
-    const lastSeenAt = (options.observedAt ?? new Date()).toISOString();
     // portPath is an OS-supplied diagnostic string; sanitize it before it is
     // stored and returned as lastPortHint in MCP output.
-    const lastPortHint = sanitizePortHint(portPath);
+    return this.rememberTransportStatus(status, "usb", portPath, options);
+  }
+
+  async rememberLocalTransportStatus(
+    status: DeviceStatusSnapshot,
+    endpointHint: string,
+    options: RememberLocalTransportStatusOptions = {},
+  ): Promise<DeviceConfig> {
+    return this.rememberTransportStatus(status, "ble", endpointHint, options);
+  }
+
+  private async rememberTransportStatus(
+    status: DeviceStatusSnapshot,
+    transport: DeviceTransport,
+    endpointHint: string,
+    options: RememberUsbStatusOptions | RememberLocalTransportStatusOptions,
+  ): Promise<DeviceConfig> {
+    const activePurpose = "activePurpose" in options ? options.activePurpose : undefined;
+    if (options.setActive === true && activePurpose !== undefined) {
+      throw new ConfigError(
+        "invalid_params",
+        "A transport observation cannot select both the default device and a purpose device.",
+      );
+    }
+    validateOptionalPurpose(activePurpose);
+    const lastSeenAt = (options.observedAt ?? new Date()).toISOString();
+    const lastPortHint = sanitizePortHint(endpointHint);
     // Defensive: callers pass a wire-parsed (already sanitized) status, but the
     // write boundary re-applies the same policy so the stored registry can never
     // hold an unsafe identity, invalid provisioning state, or unsanitized display
@@ -210,35 +243,40 @@ export class ConfigStore {
       throw new ConfigError("invalid_device", "Refusing to store a device with an unsafe identity.");
     }
     const safeDevice = safeStatus.device;
-    const index = config.devices.findIndex((candidate) => candidate.deviceId === safeDevice.deviceId);
+    return this.runMutation(async () => {
+      const config = await this.load();
+      const index = config.devices.findIndex((candidate) => candidate.deviceId === safeDevice.deviceId);
 
-    if (index >= 0) {
-      // Status refresh must not wipe local metadata such as label.
-      const existing = config.devices[index];
-      config.devices[index] = {
-        ...existing,
-        transport: "usb",
-        lastPortHint,
-        lastSeenAt,
-        lastStatus: safeStatus,
-      };
-    } else {
-      config.devices.push({
-        deviceId: safeDevice.deviceId,
-        transport: "usb",
-        lastPortHint,
-        lastSeenAt,
-        label: null,
-        lastStatus: safeStatus,
-      });
-    }
+      if (index >= 0) {
+        // Status refresh must not wipe local metadata such as label.
+        const existing = config.devices[index];
+        config.devices[index] = {
+          ...existing,
+          transport,
+          lastPortHint,
+          lastSeenAt,
+          lastStatus: safeStatus,
+        };
+      } else {
+        config.devices.push({
+          deviceId: safeDevice.deviceId,
+          transport,
+          lastPortHint,
+          lastSeenAt,
+          label: null,
+          lastStatus: safeStatus,
+        });
+      }
 
-    if (options.setActive === true) {
-      config.activeDeviceId = safeDevice.deviceId;
-    }
+      if (options.setActive === true) {
+        config.activeDeviceId = safeDevice.deviceId;
+      } else if (activePurpose !== undefined) {
+        config.activeDeviceIdsByPurpose[activePurpose] = safeDevice.deviceId;
+      }
 
-    await this.writeConfig(config);
-    return config;
+      await this.writeConfig(config);
+      return config;
+    });
   }
 
   async setDeviceMetadata(input: SetDeviceMetadataInput): Promise<DeviceRecord> {
@@ -255,53 +293,44 @@ export class ConfigStore {
       );
     }
 
-    const config = await this.load();
-    const index = config.devices.findIndex((candidate) => candidate.deviceId === input.deviceId);
-    if (index < 0) {
-      throw new ConfigError("device_not_found", "Device is not known to Agent-Q.");
-    }
+    return this.runMutation(async () => {
+      const config = await this.load();
+      const index = config.devices.findIndex((candidate) => candidate.deviceId === input.deviceId);
+      if (index < 0) {
+        throw new ConfigError("device_not_found", "Device is not known to Agent-Q.");
+      }
 
-    const record: DeviceRecord = {
-      ...config.devices[index],
-      label: input.label ?? null,
-    };
-    config.devices[index] = record;
-    await this.writeConfig(config);
-    return record;
+      const record: DeviceRecord = {
+        ...config.devices[index],
+        label: input.label ?? null,
+      };
+      config.devices[index] = record;
+      await this.writeConfig(config);
+      return record;
+    });
   }
 
   async setActiveDevice(deviceId: string, purpose?: string): Promise<DeviceRecord> {
     if (!isSafeDeviceId(deviceId)) {
       throw new ConfigError("invalid_device_id", "deviceId is not a valid device identifier.");
     }
-    if (purpose !== undefined) {
-      if (RESERVED_PURPOSES.has(purpose)) {
-        throw new ConfigError(
-          "invalid_params",
-          `purpose '${purpose}' is reserved. Omit purpose to set the default device.`,
-        );
-      }
-      if (!isValidPurpose(purpose)) {
-        throw new ConfigError(
-          "invalid_params",
-          "purpose must be 1-32 characters of [A-Za-z0-9_.-].",
-        );
-      }
-    }
+    validateOptionalPurpose(purpose);
 
-    const config = await this.load();
-    const record = config.devices.find((candidate) => candidate.deviceId === deviceId);
-    if (record === undefined) {
-      throw new ConfigError("device_not_found", "Device is not known to Agent-Q.");
-    }
+    return this.runMutation(async () => {
+      const config = await this.load();
+      const record = config.devices.find((candidate) => candidate.deviceId === deviceId);
+      if (record === undefined) {
+        throw new ConfigError("device_not_found", "Device is not known to Agent-Q.");
+      }
 
-    if (purpose === undefined) {
-      config.activeDeviceId = deviceId;
-    } else {
-      config.activeDeviceIdsByPurpose[purpose] = deviceId;
-    }
-    await this.writeConfig(config);
-    return record;
+      if (purpose === undefined) {
+        config.activeDeviceId = deviceId;
+      } else {
+        config.activeDeviceIdsByPurpose[purpose] = deviceId;
+      }
+      await this.writeConfig(config);
+      return record;
+    });
   }
 
   async getActiveDevice(purpose?: string): Promise<DeviceRecord | undefined> {
@@ -332,6 +361,31 @@ export class ConfigStore {
       return undefined;
     }
     return config.devices.find((candidate) => candidate.deviceId === deviceId);
+  }
+
+  private runMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.mutationTail;
+    const run = previous.then(operation);
+    this.mutationTail = run.then(noop, noop);
+    return run;
+  }
+}
+
+function validateOptionalPurpose(purpose: string | undefined): void {
+  if (purpose === undefined) {
+    return;
+  }
+  if (RESERVED_PURPOSES.has(purpose)) {
+    throw new ConfigError(
+      "invalid_params",
+      `purpose '${purpose}' is reserved. Omit purpose to set the default device.`,
+    );
+  }
+  if (!isValidPurpose(purpose)) {
+    throw new ConfigError(
+      "invalid_params",
+      "purpose must be 1-32 characters of [A-Za-z0-9_.-].",
+    );
   }
 }
 
@@ -541,7 +595,7 @@ function pruneReferences(config: DeviceConfig, report: NormalizationReport): Dev
 // such change is recorded in `report`, so a silently-altered field cannot escape
 // the operator warning.
 function normalizeDeviceRecord(value: unknown, report: NormalizationReport): DeviceRecord | null {
-  if (!isRecord(value) || !isSafeDeviceId(value.deviceId) || value.transport !== "usb") {
+  if (!isRecord(value) || !isSafeDeviceId(value.deviceId) || !isDeviceTransport(value.transport)) {
     report.droppedRecords += 1;
     return null;
   }
@@ -601,7 +655,7 @@ function normalizeDeviceRecord(value: unknown, report: NormalizationReport): Dev
 
   return {
     deviceId: value.deviceId,
-    transport: "usb",
+    transport: value.transport,
     lastPortHint,
     lastSeenAt,
     label,
@@ -635,6 +689,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isDeviceTransport(value: unknown): value is DeviceTransport {
+  return typeof value === "string" && (DEVICE_TRANSPORTS as readonly string[]).includes(value);
+}
+
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
 }
+
+function noop(): void {}

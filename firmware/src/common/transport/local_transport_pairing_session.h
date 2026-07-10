@@ -9,10 +9,10 @@
 #include "transport/local_transport_frame.h"
 #include "transport/local_transport_identity.h"
 #include "transport/local_transport_optical_payload.h"
+#include "transport/local_transport_profile.h"
 
 namespace signing {
 
-constexpr uint32_t kLocalTransportPairingAdvertiseMs = 600000;
 constexpr size_t kLocalTransportMaxInboundPayloadBytes = 524;
 
 enum class LocalTransportPairingChannel : uint8_t {
@@ -31,7 +31,7 @@ enum class LocalTransportPairingEvent : uint8_t {
     unavailable,
     display_failed,
     failed,
-    store_full,
+    expired,
     connected,
 };
 
@@ -55,19 +55,18 @@ struct LocalTransportPairingSessionOps {
     const char* transport_kind;
     const char* endpoint_descriptor_hex;
     uint32_t optical_payload_exp_seconds;
-    bool (*load_or_create_identity_secret)(LocalTransportPairingIdentitySecret* identity, void* context);
-    bool (*store_paired_peer)(
-        const uint8_t gateway_static_public[kLocalTransportStaticKeyBytes],
-        void* context);
+    bool (*load_or_create_identity)(LocalTransportPairingIdentity* identity, void* context);
+    bool (*load_identity_secret)(LocalTransportPairingIdentitySecret* identity, void* context);
     bool (*start_advertising)(
         const uint8_t fingerprint[kLocalTransportIdentityFingerprintBytes],
         void* context);
     void (*stop_advertising)(void* context);
     bool (*advertising_active)(void* context);
     bool (*connected)(void* context);
+    void (*disconnect)(void* context);
     uint16_t (*current_att_mtu)(void* context);
     bool (*receive)(LocalTransportPairingInboundFrame* frame, void* context);
-    bool (*send)(
+    bool (*send_acknowledged)(
         LocalTransportPairingChannel channel,
         const uint8_t* payload,
         size_t payload_len,
@@ -94,10 +93,11 @@ bool local_transport_pairing_session_begin(
     TickType_t now,
     const LocalTransportPairingSessionOps& ops);
 void local_transport_pairing_session_cancel(const LocalTransportPairingSessionOps& ops);
+void local_transport_pairing_session_handle_display_loss(
+    const LocalTransportPairingSessionOps& ops);
 void local_transport_pairing_session_poll(
     TickType_t now,
     const LocalTransportPairingSessionOps& ops);
-bool local_transport_pairing_session_expired(TickType_t now);
 LocalTransportPairingSnapshot local_transport_pairing_session_snapshot();
 bool local_transport_pairing_session_active();
 bool local_transport_pairing_session_established();

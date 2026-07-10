@@ -300,6 +300,41 @@ test("Local API accepts same-origin JSON requests", async () => {
   });
 });
 
+test("Local API forwards BLE connect transport input to core", async () => {
+  let observedInput = null;
+  await withAdminServer(
+    defaultCore({
+      async connectDevice(input) {
+        observedInput = input;
+        return {
+          source: "connected",
+          deviceId,
+          sessionTtlMs: 4294967295,
+          connectedAt: "2026-05-28T00:00:00.000Z",
+          device: {
+            deviceId,
+            state: "idle",
+            firmwareName: "Agent-Q Firmware",
+            hardware: "stackchan-cores3",
+            firmwareVersion: "0.0.0",
+          },
+        };
+      },
+    }),
+    async (baseUrl) => {
+      const opticalPayload =
+        "aqlt:1?k=ble&svc=a6e31d1051a14f7a9b0a0a1c00000001&idfp=0011223344556677&non=8899aabbccddeeff&exp=120";
+      const response = await postJson(baseUrl, "/api/connect", {
+        transport: "ble",
+        opticalPayload,
+      });
+      assert.equal(response.status, 200);
+      assert.equal(response.body.ok, true);
+      assert.deepEqual(observedInput, { transport: "ble", opticalPayload });
+    },
+  );
+});
+
 test("Local API fails closed when a success result carries unsupported fields", async () => {
   await withAdminServer(
     defaultCore({

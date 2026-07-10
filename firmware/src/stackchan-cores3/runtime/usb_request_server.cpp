@@ -181,11 +181,13 @@ enum class ProtocolTransport {
     local_transport,
 };
 
-ProtocolTransport g_current_request_transport = ProtocolTransport::usb;
+ProtocolTransport g_current_request_transport = ProtocolTransport::none;
 ProtocolTransport g_pending_connect_transport = ProtocolTransport::none;
 ProtocolTransport g_active_session_transport = ProtocolTransport::none;
 ProtocolTransport g_active_user_signing_transport = ProtocolTransport::none;
-ProtocolTransport g_signing_outcome_transport_context = ProtocolTransport::usb;
+ProtocolTransport g_pending_policy_update_transport = ProtocolTransport::none;
+ProtocolTransport g_pending_credential_proposal_transport = ProtocolTransport::none;
+ProtocolTransport g_signing_outcome_transport_context = ProtocolTransport::none;
 
 bool refresh_persistent_material_consistency();
 bool provisioned_material_ready();
@@ -455,6 +457,52 @@ const UsbOperationResponseWriter& usb_operation_response_writer()
     return writer;
 }
 
+bool reject_missing_response_route_method_error(
+    const char*,
+    const char*,
+    const char*)
+{
+    return false;
+}
+
+bool reject_missing_response_route_success(
+    const char*,
+    const char*,
+    JsonObjectConst)
+{
+    return false;
+}
+
+bool reject_missing_response_route_transport_success(
+    const char*,
+    JsonObjectConst)
+{
+    return false;
+}
+
+void log_missing_response_route(const char* method, const char* id)
+{
+    ESP_LOGE(
+        kTag,
+        "Response route missing: method=%s id=%s",
+        method != nullptr ? method : "unknown",
+        id != nullptr ? id : "unknown");
+}
+
+const UsbOperationResponseWriter& missing_operation_response_writer()
+{
+    static const UsbOperationResponseWriter writer = {
+        reject_missing_response_route_method_error,
+        reject_missing_response_route_success,
+        reject_missing_response_route_transport_success,
+        log_missing_response_route,
+    };
+    return writer;
+}
+
+const UsbOperationResponseWriter& operation_response_writer_for_transport(
+    ProtocolTransport transport);
+
 struct ScopedRequestTransport {
     explicit ScopedRequestTransport(ProtocolTransport next)
         : previous(g_current_request_transport)
@@ -469,18 +517,6 @@ struct ScopedRequestTransport {
 
     ProtocolTransport previous;
 };
-
-bool write_operation_error(
-    const char* id,
-    signing::UsbOperationType operation,
-    const char* code,
-    const char* message)
-{
-    return signing::usb_response_write_method_error(
-        id,
-        signing::usb_operation_type_wire_name(operation),
-        code);
-}
 
 signing::UsbDeviceStatusInfo usb_device_status_info()
 {
@@ -574,10 +610,17 @@ bool write_local_transport_connect_approved_response(const char* id)
 
 bool write_connect_error_response(const char* id, const char* code)
 {
-    const bool written =
-        g_pending_connect_transport == ProtocolTransport::local_transport
-            ? write_local_transport_connect_error_response(id, code)
-            : signing::usb_response_write_error(id, code);
+    bool written = false;
+    switch (g_pending_connect_transport) {
+        case ProtocolTransport::usb:
+            written = signing::usb_response_write_error(id, code);
+            break;
+        case ProtocolTransport::local_transport:
+            written = write_local_transport_connect_error_response(id, code);
+            break;
+        case ProtocolTransport::none:
+            break;
+    }
     g_pending_connect_transport = ProtocolTransport::none;
     return written;
 }
@@ -589,10 +632,17 @@ bool write_connect_rejected_response(const char* id, const char* code)
 
 bool write_connect_approved_response_for_pending_transport(const char* id)
 {
-    const bool written =
-        g_pending_connect_transport == ProtocolTransport::local_transport
-            ? write_local_transport_connect_approved_response(id)
-            : write_connect_approved_response(id);
+    bool written = false;
+    switch (g_pending_connect_transport) {
+        case ProtocolTransport::usb:
+            written = write_connect_approved_response(id);
+            break;
+        case ProtocolTransport::local_transport:
+            written = write_local_transport_connect_approved_response(id);
+            break;
+        case ProtocolTransport::none:
+            break;
+    }
     g_pending_connect_transport = ProtocolTransport::none;
     return written;
 }
@@ -620,16 +670,130 @@ const signing::UsbJsonResponseWriteOps& local_transport_json_response_write_ops(
     return ops;
 }
 
+struct LocalTransportMethodErrorContext {
+    const char* id;
+    const char* method;
+    const char* code;
+};
+
+bool write_local_transport_method_error_callback(
+    const UsbOperationResponseWriter& writer,
+    void* context)
+{
+    const LocalTransportMethodErrorContext* response =
+        static_cast<const LocalTransportMethodErrorContext*>(context);
+    return response != nullptr &&
+           writer.for_method(response->method).write_error(response->id, response->code);
+}
+
+bool write_local_transport_method_error(
+    const char* id,
+    const char* method,
+    const char* code)
+{
+    LocalTransportMethodErrorContext context{id, method, code};
+    return signing::local_transport_pairing_write_response(
+        write_local_transport_method_error_callback,
+        &context);
+}
+
+struct LocalTransportSuccessContext {
+    const char* id;
+    const char* method;
+    JsonObjectConst result;
+    bool transport_success;
+};
+
+bool write_local_transport_success_callback(
+    const UsbOperationResponseWriter& writer,
+    void* context)
+{
+    const LocalTransportSuccessContext* response =
+        static_cast<const LocalTransportSuccessContext*>(context);
+    if (response == nullptr) {
+        return false;
+    }
+    return response->transport_success
+               ? writer.write_transport_success_result(response->id, response->result)
+               : writer.write_success_result(response->id, response->method, response->result);
+}
+
+bool write_local_transport_success_result(
+    const char* id,
+    const char* method,
+    JsonObjectConst result)
+{
+    LocalTransportSuccessContext context{id, method, result, false};
+    return signing::local_transport_pairing_write_response(
+        write_local_transport_success_callback,
+        &context);
+}
+
+bool write_local_transport_transport_success_result(
+    const char* id,
+    JsonObjectConst result)
+{
+    LocalTransportSuccessContext context{id, nullptr, result, true};
+    return signing::local_transport_pairing_write_response(
+        write_local_transport_success_callback,
+        &context);
+}
+
+const UsbOperationResponseWriter& local_transport_operation_response_writer()
+{
+    static const UsbOperationResponseWriter writer = {
+        write_local_transport_method_error,
+        write_local_transport_success_result,
+        write_local_transport_transport_success_result,
+        signing::usb_response_log_write_failure,
+    };
+    return writer;
+}
+
+const UsbOperationResponseWriter& operation_response_writer_for_transport(
+    ProtocolTransport transport)
+{
+    switch (transport) {
+        case ProtocolTransport::usb:
+            return usb_operation_response_writer();
+        case ProtocolTransport::local_transport:
+            return local_transport_operation_response_writer();
+        case ProtocolTransport::none:
+        default:
+            return missing_operation_response_writer();
+    }
+}
+
+bool reject_missing_response_route_bytes(const char*, size_t, void*)
+{
+    return false;
+}
+
+const signing::UsbJsonResponseWriteOps& missing_json_response_write_ops()
+{
+    static const signing::UsbJsonResponseWriteOps ops{
+        reject_missing_response_route_bytes,
+        delay_response_ms,
+        nullptr,
+    };
+    return ops;
+}
+
 bool write_json_response_for_transport(
     JsonDocument& response,
     ProtocolTransport transport)
 {
-    if (transport == ProtocolTransport::local_transport) {
-        return signing::usb_json_response_write(
-            response,
-            local_transport_json_response_write_ops());
+    switch (transport) {
+        case ProtocolTransport::usb:
+            return signing::usb_response_write_json(response);
+        case ProtocolTransport::local_transport:
+            return signing::usb_json_response_write(
+                response,
+                local_transport_json_response_write_ops());
+        case ProtocolTransport::none:
+        default:
+            return false;
     }
-    return signing::usb_response_write_json(response);
 }
 
 bool write_method_error_response_for_transport(
@@ -638,6 +802,9 @@ bool write_method_error_response_for_transport(
     const char* code,
     ProtocolTransport transport)
 {
+    if (transport == ProtocolTransport::none) {
+        return false;
+    }
     if (transport == ProtocolTransport::usb) {
         return signing::usb_response_write_method_error(id, method, code);
     }
@@ -646,6 +813,18 @@ bool write_method_error_response_for_transport(
         return false;
     }
     return write_json_response_for_transport(response, transport);
+}
+
+bool write_method_error_response_for_active_user_signing(
+    const char* id,
+    const char* method,
+    const char* code)
+{
+    return write_method_error_response_for_transport(
+        id,
+        method,
+        code,
+        g_active_user_signing_transport);
 }
 
 bool write_retry_response_json(JsonDocument& response, void*)
@@ -699,7 +878,7 @@ bool write_method_error_for_signing_outcome(
     const ProtocolTransport transport =
         context != nullptr
             ? *static_cast<const ProtocolTransport*>(context)
-            : ProtocolTransport::usb;
+            : ProtocolTransport::none;
     return write_method_error_response_for_transport(id, method, code, transport);
 }
 
@@ -707,10 +886,14 @@ signing::UsbSigningOutcomeWriterOps signing_outcome_writer_ops_for_transport(
     ProtocolTransport transport)
 {
     g_signing_outcome_transport_context = transport;
+    const signing::UsbJsonResponseWriteOps response_write_ops =
+        transport == ProtocolTransport::usb
+            ? signing::usb_response_json_write_ops()
+            : transport == ProtocolTransport::local_transport
+                ? local_transport_json_response_write_ops()
+                : missing_json_response_write_ops();
     return signing::UsbSigningOutcomeWriterOps{
-        transport == ProtocolTransport::local_transport
-            ? local_transport_json_response_write_ops()
-            : signing::usb_response_json_write_ops(),
+        response_write_ops,
         write_method_error_for_signing_outcome,
         &g_signing_outcome_transport_context,
     };
@@ -741,7 +924,8 @@ bool write_policy_propose_outcome_with_current_policy(
         status,
         reason_code,
         &snapshot,
-        usb_operation_response_writer());
+        operation_response_writer_for_transport(
+            g_pending_policy_update_transport));
 }
 
 void clear_active_session()
@@ -900,10 +1084,7 @@ void finish_user_signing_error_terminal(
     const char* error_message,
     const char* display_message)
 {
-    const ProtocolTransport response_transport =
-        g_active_user_signing_transport != ProtocolTransport::none
-            ? g_active_user_signing_transport
-            : ProtocolTransport::usb;
+    const ProtocolTransport response_transport = g_active_user_signing_transport;
     if (request_id != nullptr && request_id[0] != '\0') {
         const signing::UserSigningFlowCoreSnapshot snapshot =
             signing::user_signing_flow_core_snapshot();
@@ -927,10 +1108,7 @@ void finish_user_signing_terminal(
     const char* request_id,
     const signing::UserSigningOutput* signing_output)
 {
-    const ProtocolTransport response_transport =
-        g_active_user_signing_transport != ProtocolTransport::none
-            ? g_active_user_signing_transport
-            : ProtocolTransport::usb;
+    const ProtocolTransport response_transport = g_active_user_signing_transport;
     const signing::UserSigningFlowCoreSnapshot snapshot =
         signing::user_signing_flow_core_snapshot();
     const signing::UserSigningTerminalResult result =
@@ -1094,16 +1272,12 @@ void execute_user_signing_critical_section_and_finish(const char* request_id)
     const signing::UserSigningFlowCoreSnapshot snapshot =
         signing::user_signing_flow_core_snapshot();
     if (!provisioned_material_ready()) {
-        const ProtocolTransport response_transport =
-            g_active_user_signing_transport != ProtocolTransport::none
-                ? g_active_user_signing_transport
-                : ProtocolTransport::usb;
         if (request_id != nullptr && request_id[0] != '\0') {
             write_method_error_response_for_transport(
                 request_id,
                 snapshot.method,
                 "invalid_state",
-                response_transport);
+                g_active_user_signing_transport);
         }
         signing::user_signing_flow_clear();
         g_active_user_signing_transport = ProtocolTransport::none;
@@ -1152,6 +1326,9 @@ bool fill_session_random(void* output, size_t size, void*)
 
 bool replace_active_session()
 {
+    if (g_pending_connect_transport == ProtocolTransport::none) {
+        return false;
+    }
     // A newly established session must not inherit the previous session's buffered
     // signing responses, so drop them before the session id changes.
     signing::signing_response_clear_all();
@@ -1160,10 +1337,7 @@ bool replace_active_session()
         signing::SessionStartResult::ok) {
         return false;
     }
-    g_active_session_transport =
-        g_pending_connect_transport == ProtocolTransport::local_transport
-            ? ProtocolTransport::local_transport
-            : ProtocolTransport::usb;
+    g_active_session_transport = g_pending_connect_transport;
     return true;
 }
 
@@ -1297,9 +1471,11 @@ void clear_session_bound_state_for_plan(
     }
     if (plan.clear_policy_update_flow) {
         signing::policy_update_flow_clear();
+        g_pending_policy_update_transport = ProtocolTransport::none;
     }
     if (plan.clear_sui_zklogin_proposal_flow) {
         signing::sui_zklogin_proposal_flow_clear();
+        g_pending_credential_proposal_transport = ProtocolTransport::none;
     }
     if (plan.cancel_user_signing) {
         cancel_user_signing_after_session_loss(user_signing_reason);
@@ -1817,14 +1993,13 @@ bool require_active_matching_session(
 void write_policy_update_invalid_session_and_clear(const char* request_id, const char* log_reason)
 {
     if (request_id != nullptr && request_id[0] != '\0') {
-        write_operation_error(
-            request_id,
-            signing::UsbOperationType::policy_propose,
-            "invalid_session",
-            "Policy update session is unknown or already ended.");
+        operation_response_writer_for_transport(g_pending_policy_update_transport)
+            .for_method("policy_propose")
+            .write_error(request_id, "invalid_session");
     }
     signing::policy_update_flow_clear();
     signing::protocol_pin_approval_clear();
+    g_pending_policy_update_transport = ProtocolTransport::none;
     ESP_LOGW(kTag, "Policy update canceled: %s", log_reason != nullptr ? log_reason : "invalid session");
     signing::avatar_overlay_show_message(
         "Session ended",
@@ -1866,14 +2041,13 @@ void write_sui_zklogin_proposal_invalid_session_and_clear(
     const char* log_reason)
 {
     if (request_id != nullptr && request_id[0] != '\0') {
-        write_operation_error(
-            request_id,
-            signing::UsbOperationType::credential_propose,
-            "invalid_session",
-            "Sui zkLogin proposal session is unknown or already ended.");
+        operation_response_writer_for_transport(g_pending_credential_proposal_transport)
+            .for_method("credential_propose")
+            .write_error(request_id, "invalid_session");
     }
     signing::sui_zklogin_proposal_flow_clear();
     signing::protocol_pin_approval_clear();
+    g_pending_credential_proposal_transport = ProtocolTransport::none;
     ESP_LOGW(kTag, "Sui zkLogin proposal canceled: %s",
              log_reason != nullptr ? log_reason : "invalid session");
     signing::avatar_overlay_show_message(
@@ -1996,7 +2170,21 @@ bool show_sui_zklogin_proposal_review(const char* id)
     return false;
 }
 
-bool disconnect_pending_policy_update_for_session(const char* id, const char* session_id)
+bool write_disconnect_success(
+    const UsbOperationResponseWriter& writer,
+    const char* id)
+{
+    JsonDocument result_doc;
+    return writer.write_success_result(
+        id,
+        "disconnect",
+        result_doc.to<JsonObject>());
+}
+
+bool disconnect_pending_policy_update_for_session(
+    const char* id,
+    const char* session_id,
+    const UsbOperationResponseWriter& writer)
 {
     const signing::PolicyUpdateFlowSnapshot policy_snapshot =
         signing::policy_update_flow_snapshot();
@@ -2011,15 +2199,13 @@ bool disconnect_pending_policy_update_for_session(const char* id, const char* se
         if (policy_snapshot.request_id != nullptr &&
             policy_snapshot.request_id[0] != '\0' &&
             (id == nullptr || strcmp(policy_snapshot.request_id, id) != 0)) {
-            write_operation_error(
-                policy_snapshot.request_id,
-                signing::UsbOperationType::policy_propose,
-                "invalid_session",
-                "Policy update session is unknown or already ended.");
+            writer.for_method("policy_propose")
+                .write_error(policy_snapshot.request_id, "invalid_session");
         }
         signing::policy_update_flow_clear();
+        g_pending_policy_update_transport = ProtocolTransport::none;
         clear_active_session();
-        if (signing::usb_response_write_disconnect_success(id)) {
+        if (write_disconnect_success(writer, id)) {
             ESP_LOGI(kTag, "disconnect canceled pending policy update review: id=%s", id);
         } else {
             signing::usb_response_log_write_failure("disconnect", id);
@@ -2044,16 +2230,14 @@ bool disconnect_pending_policy_update_for_session(const char* id, const char* se
     }
     if (policy_request_id[0] != '\0' &&
         (id == nullptr || strcmp(policy_request_id, id) != 0)) {
-        write_operation_error(
-            policy_request_id,
-            signing::UsbOperationType::policy_propose,
-            "invalid_session",
-            "Policy update session is unknown or already ended.");
+        writer.for_method("policy_propose")
+            .write_error(policy_request_id, "invalid_session");
     }
     signing::policy_update_flow_clear();
     signing::protocol_pin_approval_clear();
+    g_pending_policy_update_transport = ProtocolTransport::none;
     clear_active_session();
-    if (signing::usb_response_write_disconnect_success(id)) {
+    if (write_disconnect_success(writer, id)) {
         ESP_LOGI(kTag, "disconnect canceled pending policy update: id=%s", id);
     } else {
         signing::usb_response_log_write_failure("disconnect", id);
@@ -2061,7 +2245,10 @@ bool disconnect_pending_policy_update_for_session(const char* id, const char* se
     return true;
 }
 
-bool disconnect_pending_sui_zklogin_proposal_for_session(const char* id, const char* session_id)
+bool disconnect_pending_sui_zklogin_proposal_for_session(
+    const char* id,
+    const char* session_id,
+    const UsbOperationResponseWriter& writer)
 {
     const signing::SuiZkLoginProposalSnapshot proposal_snapshot =
         signing::sui_zklogin_proposal_flow_snapshot();
@@ -2082,16 +2269,14 @@ bool disconnect_pending_sui_zklogin_proposal_for_session(const char* id, const c
         if (proposal_snapshot.request_id != nullptr &&
             proposal_snapshot.request_id[0] != '\0' &&
             (id == nullptr || strcmp(proposal_snapshot.request_id, id) != 0)) {
-            write_operation_error(
-                proposal_snapshot.request_id,
-                signing::UsbOperationType::credential_propose,
-                "invalid_session",
-                "Sui zkLogin proposal session is unknown or already ended.");
+            writer.for_method("credential_propose")
+                .write_error(proposal_snapshot.request_id, "invalid_session");
         }
         signing::sui_zklogin_proposal_flow_clear();
         signing::protocol_pin_approval_clear();
+        g_pending_credential_proposal_transport = ProtocolTransport::none;
         clear_active_session();
-        if (signing::usb_response_write_disconnect_success(id)) {
+        if (write_disconnect_success(writer, id)) {
             ESP_LOGI(kTag, "disconnect canceled pending Sui zkLogin proposal: id=%s", id);
         } else {
             signing::usb_response_log_write_failure("disconnect", id);
@@ -2119,16 +2304,14 @@ bool disconnect_pending_sui_zklogin_proposal_for_session(const char* id, const c
         SensitiveUiClearPolicy::preserve);
     if (proposal_request_id[0] != '\0' &&
         (id == nullptr || strcmp(proposal_request_id, id) != 0)) {
-        write_operation_error(
-            proposal_request_id,
-            signing::UsbOperationType::credential_propose,
-            "invalid_session",
-            "Sui zkLogin proposal session is unknown or already ended.");
+        writer.for_method("credential_propose")
+            .write_error(proposal_request_id, "invalid_session");
     }
     signing::sui_zklogin_proposal_flow_clear();
     signing::protocol_pin_approval_clear();
+    g_pending_credential_proposal_transport = ProtocolTransport::none;
     clear_active_session();
-    if (signing::usb_response_write_disconnect_success(id)) {
+    if (write_disconnect_success(writer, id)) {
         ESP_LOGI(kTag, "disconnect canceled pending Sui zkLogin proposal: id=%s", id);
     } else {
         signing::usb_response_log_write_failure("disconnect", id);
@@ -2136,7 +2319,10 @@ bool disconnect_pending_sui_zklogin_proposal_for_session(const char* id, const c
     return true;
 }
 
-bool disconnect_pending_user_signing_for_session(const char* id, const char* session_id)
+bool disconnect_pending_user_signing_for_session(
+    const char* id,
+    const char* session_id,
+    const UsbOperationResponseWriter& writer)
 {
     const signing::UserSigningFlowCoreSnapshot snapshot =
         signing::user_signing_flow_core_snapshot();
@@ -2148,11 +2334,7 @@ bool disconnect_pending_user_signing_for_session(const char* id, const char* ses
     const signing::UserSigningConfirmationResult result =
         signing::user_signing_confirmation_cancel_for_disconnect(session_id);
     if (result == signing::UserSigningConfirmationResult::busy) {
-        write_operation_error(
-            id,
-            signing::UsbOperationType::disconnect,
-            "busy",
-            "Device is signing a request.");
+        writer.for_method("disconnect").write_error(id, "busy");
         return true;
     }
 
@@ -2160,14 +2342,13 @@ bool disconnect_pending_user_signing_for_session(const char* id, const char* ses
     clear_signing_panel_if_kind(UiPanelKind::local_pin_auth, SensitiveUiClearPolicy::preserve);
     if (snapshot.request_id[0] != '\0' &&
         (id == nullptr || strcmp(snapshot.request_id, id) != 0)) {
-        signing::usb_response_write_method_error(
-            snapshot.request_id,
-            snapshot.method,
-            "invalid_session");
+        writer.for_method(snapshot.method)
+            .write_error(snapshot.request_id, "invalid_session");
     }
     consume_user_signing_terminal_if_pending();
+    g_active_user_signing_transport = ProtocolTransport::none;
     clear_active_session();
-    if (signing::usb_response_write_disconnect_success(id)) {
+    if (write_disconnect_success(writer, id)) {
         ESP_LOGI(kTag, "disconnect canceled pending user_signing: id=%s", id);
     } else {
         signing::usb_response_log_write_failure("disconnect", id);
@@ -2867,7 +3048,9 @@ void finish_policy_update_unavailable_from_pin_for_local_pin_auth(
     switch (reason) {
         case signing::LocalPinAuthPolicyUpdateUnavailableReason::material_unavailable:
             if (request_id != nullptr && request_id[0] != '\0') {
-                signing::usb_response_write_error(request_id, "invalid_state");
+                operation_response_writer_for_transport(g_pending_policy_update_transport)
+                    .for_method("policy_propose")
+                    .write_error(request_id, "invalid_state");
             }
             clear_policy_update_terminal_state();
             return;
@@ -3209,6 +3392,7 @@ void clear_policy_update_terminal_state()
 {
     signing::policy_update_flow_clear();
     signing::protocol_pin_approval_clear();
+    g_pending_policy_update_transport = ProtocolTransport::none;
 }
 
 void finish_policy_propose_terminal(
@@ -3241,11 +3425,10 @@ void finish_policy_update_error_terminal(
     const char* error_message,
     const char* display_message)
 {
-    write_operation_error(
-        request_id,
-        signing::UsbOperationType::policy_propose,
-        error_code,
-        error_message);
+    (void)error_message;
+    operation_response_writer_for_transport(g_pending_policy_update_transport)
+        .for_method("policy_propose")
+        .write_error(request_id, error_code);
     clear_policy_update_terminal_state();
     signing::avatar_overlay_show_message(
         display_message,
@@ -3329,6 +3512,7 @@ void clear_sui_zklogin_proposal_terminal_state()
 {
     signing::sui_zklogin_proposal_flow_clear();
     signing::protocol_pin_approval_clear();
+    g_pending_credential_proposal_transport = ProtocolTransport::none;
 }
 
 void finish_sui_zklogin_proposal_outcome_terminal(
@@ -3341,7 +3525,8 @@ void finish_sui_zklogin_proposal_outcome_terminal(
         signing::sui_zklogin_proposal_terminal_ends_session(result);
     if (!signing::write_usb_credential_proposal_outcome_response(
             request_id,
-            usb_operation_response_writer(),
+            operation_response_writer_for_transport(
+                g_pending_credential_proposal_transport),
             result,
             session_ended)) {
         signing::usb_response_log_write_failure("credential_propose", request_id);
@@ -3363,11 +3548,10 @@ void finish_sui_zklogin_proposal_error_terminal(
     const char* error_message,
     const char* display_message)
 {
-    write_operation_error(
-        request_id,
-        signing::UsbOperationType::credential_propose,
-        error_code,
-        error_message);
+    (void)error_message;
+    operation_response_writer_for_transport(g_pending_credential_proposal_transport)
+        .for_method("credential_propose")
+        .write_error(request_id, error_code);
     clear_sui_zklogin_proposal_terminal_state();
     signing::avatar_overlay_show_message(
         display_message,
@@ -4214,9 +4398,8 @@ void drain_ui_events()
         if (event.kind != UiEventKind::panel_deleted) {
             continue;
         }
-        if (event.panel_kind == UiPanelKind::local_transport_pairing &&
-            signing::local_transport_pairing_active()) {
-            signing::local_transport_pairing_cancel();
+        if (event.panel_kind == UiPanelKind::local_transport_pairing) {
+            signing::local_transport_pairing_handle_display_loss();
             continue;
         }
         apply_panel_cleanup_plan(
@@ -4260,53 +4443,30 @@ void handle_get_status_request(
         usb_get_status_handler_ops());
 }
 
-void handle_local_transport_unsupported_request(
-    const char* id,
-    JsonDocument&,
-    const UsbOperationResponseWriter& writer)
-{
-    if (writer.can_write_error()) {
-        writer.write_error(id, "unsupported_method");
-    }
-}
+const signing::UsbOperationHandlers& usb_operation_handlers();
 
-const signing::UsbOperationHandlers& local_transport_lt5_operation_handlers()
+void handle_protocol_request_line(
+    const char* line,
+    const UsbOperationResponseWriter& writer,
+    ProtocolTransport transport)
 {
-    static const signing::UsbOperationHandlers handlers = {
-        handle_get_status_request,
-        handle_local_transport_unsupported_request,
-        handle_connect_request,
-        handle_sign_transaction_request,
-        handle_local_transport_unsupported_request,
-        handle_local_transport_unsupported_request,
-        handle_local_transport_unsupported_request,
-        handle_local_transport_unsupported_request,
-        handle_local_transport_unsupported_request,
-        handle_local_transport_unsupported_request,
-        handle_local_transport_unsupported_request,
-        handle_local_transport_unsupported_request,
-        handle_local_transport_unsupported_request,
-        handle_local_transport_unsupported_request,
-        handle_local_transport_unsupported_request,
-        handle_local_transport_unsupported_request,
-        handle_local_transport_unsupported_request,
-        handle_local_transport_unsupported_request,
-        handle_local_transport_unsupported_request,
-    };
-    return handlers;
+    ScopedRequestTransport scoped_transport(transport);
+    signing::handle_usb_request_line(
+        line,
+        current_timeout_tick(),
+        writer,
+        usb_operation_handlers(),
+        resolve_request_payload_ref);
 }
 
 void handle_local_transport_request_line(
     const char* line,
     const UsbOperationResponseWriter& writer)
 {
-    ScopedRequestTransport scoped_transport(ProtocolTransport::local_transport);
-    signing::handle_usb_request_line(
+    handle_protocol_request_line(
         line,
-        current_timeout_tick(),
         writer,
-        local_transport_lt5_operation_handlers(),
-        nullptr);
+        ProtocolTransport::local_transport);
 }
 
 const signing::UsbIdentifyDeviceHandlerOps& usb_identify_device_handler_ops()
@@ -4613,6 +4773,26 @@ void record_policy_update_waiting_for_review(const char* id)
     ESP_LOGI(kTag, "policy update waiting for local review: id=%s", id);
 }
 
+signing::PolicyUpdateFlowBeginResult begin_policy_update_for_current_transport(
+    JsonVariantConst policy,
+    const char* request_id,
+    const char* session_id,
+    TickType_t now,
+    signing::TimeoutWindow review_window)
+{
+    const signing::PolicyUpdateFlowBeginResult result =
+        signing::policy_update_flow_begin(
+            policy,
+            request_id,
+            session_id,
+            now,
+            review_window);
+    if (result == signing::PolicyUpdateFlowBeginResult::ok) {
+        g_pending_policy_update_transport = g_current_request_transport;
+    }
+    return result;
+}
+
 const signing::UsbPolicyHandlerOps& policy_handler_ops()
 {
     static const signing::UsbPolicyHandlerOps ops = {
@@ -4624,7 +4804,7 @@ const signing::UsbPolicyHandlerOps& policy_handler_ops()
         record_active_policy_unavailable_for_session_read,
         current_timeout_tick,
         make_policy_update_review_window,
-        signing::policy_update_flow_begin,
+        begin_policy_update_for_current_transport,
         signing::policy_update_flow_begin_result_reason,
         show_policy_update_review,
         signing::policy_update_flow_record_ui_error,
@@ -4676,9 +4856,11 @@ signing::UsbSuiZkLoginCredentialProposalBeginResult begin_sui_zklogin_proposal_f
             session_id,
             now,
             request_window);
-    return result == signing::SuiZkLoginProposalBeginResult::ok
-               ? signing::UsbSuiZkLoginCredentialProposalBeginResult::ok
-               : signing::UsbSuiZkLoginCredentialProposalBeginResult::invalid_proof;
+    if (result == signing::SuiZkLoginProposalBeginResult::ok) {
+        g_pending_credential_proposal_transport = g_current_request_transport;
+        return signing::UsbSuiZkLoginCredentialProposalBeginResult::ok;
+    }
+    return signing::UsbSuiZkLoginCredentialProposalBeginResult::invalid_proof;
 }
 
 bool write_sui_zklogin_credential_propose_state_error(
@@ -5031,7 +5213,7 @@ const signing::UserSigningReviewUiFlowOps& user_signing_review_ui_flow_ops()
         signing::user_signing_flow_terminal_pending,
         cancel_user_signing_confirmation_for_pin_loss,
         draw_local_pin_auth_panel_for_review_flow,
-        signing::usb_response_write_error,
+        write_method_error_response_for_active_user_signing,
         show_user_signing_display_error,
         execute_user_signing_critical_section_and_finish,
         finish_user_signing_terminal_for_review,
@@ -5213,13 +5395,10 @@ const signing::UsbOperationHandlers& usb_operation_handlers()
 
 void handle_line(const char* line)
 {
-    ScopedRequestTransport scoped_transport(ProtocolTransport::usb);
-    signing::handle_usb_request_line(
+    handle_protocol_request_line(
         line,
-        current_timeout_tick(),
         usb_operation_response_writer(),
-        usb_operation_handlers(),
-        resolve_request_payload_ref);
+        ProtocolTransport::usb);
 }
 
 void write_usb_line_error(const char* code)
@@ -5255,15 +5434,6 @@ void run_usb_request_server_local_ui_phase()
     commit_storage_maintenance_if_ready();
     commit_local_pin_setting_if_ready();
     signing::local_transport_ble_poll();
-    if (signing::local_transport_pairing_expired(xTaskGetTickCount())) {
-        signing::local_transport_pairing_cancel();
-        clear_local_transport_pairing_panel();
-        signing::avatar_overlay_show_message(
-            "Pairing expired",
-            MessageKind::timeout,
-            UiMode::result,
-            kResultDisplayMs);
-    }
     signing::local_transport_pairing_poll(
         xTaskGetTickCount(),
         handle_local_transport_request_line);

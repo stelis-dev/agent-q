@@ -28,6 +28,10 @@
       "types": "./dist/adapter-internal.d.ts",
       "import": "./dist/adapter-internal.js"
     },
+    "./local-transport-internal": {
+      "types": "./dist/local-transport-adapter-internal.d.ts",
+      "import": "./dist/local-transport-adapter-internal.js"
+    },
     "./protocol": {
       "types": "./dist/protocol.d.ts",
       "import": "./dist/protocol.js"
@@ -46,9 +50,14 @@
     "build": "npm run build:self",
     "build:self": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json",
     "test": "npm run build && npm run test:self",
-    "test:self": "node --test test/*.test.mjs"
+    "test:self": "node --test test/*.test.mjs",
+    "test:hardware:local-transport": "npm run build:self && node test/hardware/local-transport-core-smoke.mjs"
   },
   "dependencies": {
+    "@noble/ciphers": "^2.2.0",
+    "@noble/curves": "^2.2.0",
+    "@noble/hashes": "^2.2.0",
+    "@stoprocent/noble": "^2.5.5",
     "serialport": "13.0.0",
     "zod": "4.4.3"
   },
