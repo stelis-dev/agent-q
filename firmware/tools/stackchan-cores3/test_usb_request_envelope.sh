@@ -27,10 +27,10 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.h" \
-  "${COMMON_PROTOCOL_DIR}/usb_request_envelope.cpp" \
-  "${COMMON_PROTOCOL_DIR}/usb_request_envelope.h" \
-  "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
-  "${COMMON_ROOT}/protocol/usb_operation_type.h" \
+  "${COMMON_PROTOCOL_DIR}/request_envelope.cpp" \
+  "${COMMON_PROTOCOL_DIR}/request_envelope.h" \
+  "${COMMON_ROOT}/protocol/operation_type.cpp" \
+  "${COMMON_ROOT}/protocol/operation_type.h" \
   "${COMMON_ROOT}/protocol/request_id.cpp"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
@@ -58,7 +58,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "protocol/usb_request_envelope.h"
+#include "protocol/request_envelope.h"
 
 namespace signing {
 
@@ -75,24 +75,24 @@ void wipe_sensitive_buffer(void* data, size_t size)
 
 namespace {
 
-const char* status_name(signing::UsbRequestEnvelopeParseStatus status)
+const char* status_name(signing::RequestEnvelopeParseStatus status)
 {
     switch (status) {
-        case signing::UsbRequestEnvelopeParseStatus::ok:
+        case signing::RequestEnvelopeParseStatus::ok:
             return "ok";
-        case signing::UsbRequestEnvelopeParseStatus::invalid_json:
+        case signing::RequestEnvelopeParseStatus::invalid_json:
             return "invalid_json";
-        case signing::UsbRequestEnvelopeParseStatus::invalid_id:
+        case signing::RequestEnvelopeParseStatus::invalid_id:
             return "invalid_id";
-        case signing::UsbRequestEnvelopeParseStatus::invalid_request:
+        case signing::RequestEnvelopeParseStatus::invalid_request:
             return "invalid_request";
-        case signing::UsbRequestEnvelopeParseStatus::invalid_params:
+        case signing::RequestEnvelopeParseStatus::invalid_params:
             return "invalid_params";
-        case signing::UsbRequestEnvelopeParseStatus::invalid_session:
+        case signing::RequestEnvelopeParseStatus::invalid_session:
             return "invalid_session";
-        case signing::UsbRequestEnvelopeParseStatus::unsupported_version:
+        case signing::RequestEnvelopeParseStatus::unsupported_version:
             return "unsupported_version";
-        case signing::UsbRequestEnvelopeParseStatus::unsupported_method:
+        case signing::RequestEnvelopeParseStatus::unsupported_method:
             return "unsupported_method";
     }
     return "unknown";
@@ -100,13 +100,13 @@ const char* status_name(signing::UsbRequestEnvelopeParseStatus status)
 
 void expect_status(
     const char* line,
-    signing::UsbRequestEnvelopeParseStatus expected_status,
+    signing::RequestEnvelopeParseStatus expected_status,
     const char* expected_id,
-    signing::UsbOperationType expected_type)
+    signing::OperationType expected_type)
 {
     JsonDocument request;
-    signing::UsbRequestEnvelope envelope = {};
-    const auto status = signing::parse_usb_request_envelope(line, request, &envelope);
+    signing::RequestEnvelope envelope = {};
+    const auto status = signing::parse_request_envelope(line, request, &envelope);
     if (status != expected_status) {
         fprintf(stderr, "status mismatch for %s: actual=%s expected=%s\n",
                 line,
@@ -127,8 +127,8 @@ void expect_status(
 
 int main()
 {
-    using Status = signing::UsbRequestEnvelopeParseStatus;
-    using Type = signing::UsbOperationType;
+    using Status = signing::RequestEnvelopeParseStatus;
+    using Type = signing::OperationType;
 
     expect_status(
         "{\"id\":\"req_1\",\"version\":1,\"method\":\"get_status\"}",
@@ -261,8 +261,8 @@ int main()
         "req_bad_type",
         Type::unsupported);
 
-    assert(strcmp(signing::usb_request_envelope_error_code(Status::invalid_json), "invalid_request") == 0);
-    assert(signing::usb_request_envelope_error_code(Status::ok) == nullptr);
+    assert(strcmp(signing::request_envelope_error_code(Status::invalid_json), "invalid_request") == 0);
+    assert(signing::request_envelope_error_code(Status::ok) == nullptr);
 
     printf("USB request envelope tests passed\n");
     return 0;
@@ -277,8 +277,8 @@ CPP
   "${TMP_DIR}/test.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${COMMON_ROOT}/protocol/session_state.cpp" \
-  "${COMMON_PROTOCOL_DIR}/usb_request_envelope.cpp" \
-  "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
+  "${COMMON_PROTOCOL_DIR}/request_envelope.cpp" \
+  "${COMMON_ROOT}/protocol/operation_type.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   -o "${TMP_DIR}/test"
 

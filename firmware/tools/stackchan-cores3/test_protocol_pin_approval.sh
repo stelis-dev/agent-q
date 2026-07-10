@@ -23,7 +23,7 @@ COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 LOCAL_PIN_AUTH_UI_HEADER="${RUNTIME_DIR}/local_pin_auth_ui_flow.h"
 LOCAL_PIN_AUTH_UI_SOURCE="${RUNTIME_DIR}/local_pin_auth_ui_flow.cpp"
 MODAL_TRANSITION_SOURCE="${RUNTIME_DIR}/modal_transition.cpp"
-USB_REQUEST_SERVER_SOURCE="${RUNTIME_DIR}/usb_request_server.cpp"
+USB_REQUEST_SERVER_SOURCE="${RUNTIME_DIR}/protocol_request_server.cpp"
 CXX_BIN="${CXX:-c++}"
 
 check_modal_transition_owner_present() {

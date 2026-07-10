@@ -25,9 +25,9 @@ ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${COMMON_TRANSPORT_DIR}/usb_connect_handler.cpp" \
-  "${COMMON_TRANSPORT_DIR}/usb_connect_handler.h" \
-  "${COMMON_ROOT}/protocol/usb_operation_response_writer.h" \
+  "${COMMON_TRANSPORT_DIR}/connect_handler.cpp" \
+  "${COMMON_TRANSPORT_DIR}/connect_handler.h" \
+  "${COMMON_ROOT}/protocol/response_writer.h" \
   "${COMMON_ROOT}/transport/timeout_window.h" \
   "${COMMON_ROOT}/protocol/request_id.h"; do
   if [[ ! -f "${required}" ]]; then
@@ -58,7 +58,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "transport/usb_connect_handler.h"
+#include "transport/connect_handler.h"
 
 namespace {
 
@@ -132,7 +132,7 @@ bool material_ready()
     return g_material_ready;
 }
 
-bool write_busy(const char* id, const signing::UsbOperationResponseWriter& writer)
+bool write_busy(const char* id, const signing::ResponseWriter& writer)
 {
     g_busy_calls += 1;
     g_last_id = id;
@@ -144,7 +144,7 @@ bool write_busy(const char* id, const signing::UsbOperationResponseWriter& write
 
 bool write_existing_session(
     const char* id,
-    const signing::UsbOperationResponseWriter& writer)
+    const signing::ResponseWriter& writer)
 {
     g_existing_session_calls += 1;
     g_last_id = id;
@@ -206,17 +206,17 @@ void record_waiting(const char* id, const char* client_name)
     g_last_client_name = client_name;
 }
 
-signing::UsbOperationResponseWriter make_writer()
+signing::ResponseWriter make_writer()
 {
-    return signing::UsbOperationResponseWriter{
+    return signing::ResponseWriter{
         write_error,
         log_write_failure,
     };
 }
 
-signing::UsbConnectHandlerOps make_ops()
+signing::ConnectHandlerOps make_ops()
 {
-    return signing::UsbConnectHandlerOps{
+    return signing::ConnectHandlerOps{
         material_ready,
         write_busy,
         write_existing_session,
@@ -252,7 +252,7 @@ int main()
         g_material_ready = false;
         g_existing_session = true;
         JsonDocument request = parse_request(valid_request());
-        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_connect_request("req", request, make_writer(), make_ops());
         assert(g_material_calls == 1);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
@@ -265,7 +265,7 @@ int main()
         reset_state();
         g_busy = true;
         JsonDocument request = parse_request(valid_request());
-        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_connect_request("req", request, make_writer(), make_ops());
         assert(g_busy_calls == 1);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "busy") == 0);
@@ -275,7 +275,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":{\"clientName\":\"Agent-Q\"},\"sessionId\":\"bad\"}");
-        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_request") == 0);
         assert(g_begin_calls == 0);
@@ -284,7 +284,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":7}");
-        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
@@ -293,7 +293,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":{\"clientName\":\"Agent-Q\",\"extra\":true}}");
-        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
@@ -302,7 +302,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":{}}");
-        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
@@ -311,7 +311,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":{\"clientName\":\"\"}}");
-        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
@@ -320,7 +320,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":{\"clientName\":\"bad\\nname\"}}");
-        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
@@ -335,7 +335,7 @@ int main()
         request["version"] = 1;
         request["method"] = "connect";
         request["payload"]["clientName"] = long_name;
-        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_connect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_begin_calls == 0);
@@ -345,7 +345,7 @@ int main()
         reset_state();
         g_existing_session = true;
         JsonDocument request = parse_request(valid_request());
-        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_connect_request("req", request, make_writer(), make_ops());
         assert(g_existing_session_calls == 1);
         assert(g_begin_calls == 0);
         assert(g_reset_queue_calls == 0);
@@ -358,7 +358,7 @@ int main()
         reset_state();
         g_existing_session = true;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"connect\",\"payload\":{\"clientName\":\"Agent-Q\",\"extra\":true}}");
-        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_connect_request("req", request, make_writer(), make_ops());
         assert(g_existing_session_calls == 0);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
@@ -369,7 +369,7 @@ int main()
         reset_state();
         g_begin_ok = false;
         JsonDocument request = parse_request(valid_request());
-        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_connect_request("req", request, make_writer(), make_ops());
         assert(g_make_window_calls == 1);
         assert(g_begin_calls == 1);
         assert(strcmp(g_last_client_name, "Agent-Q") == 0);
@@ -388,7 +388,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request(valid_request());
-        signing::handle_usb_connect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_connect_request("req", request, make_writer(), make_ops());
         assert(g_make_window_calls == 1);
         assert(g_begin_calls == 1);
         assert(strcmp(g_last_client_name, "Agent-Q") == 0);
@@ -412,7 +412,7 @@ CPP
   -I"${ARDUINOJSON_ROOT}" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
-  "${COMMON_TRANSPORT_DIR}/usb_connect_handler.cpp" \
+  "${COMMON_TRANSPORT_DIR}/connect_handler.cpp" \
   -o "${TMP_DIR}/test_usb_connect_handler"
 
 "${TMP_DIR}/test_usb_connect_handler"

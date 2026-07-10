@@ -604,7 +604,7 @@ tests.
   check local Settings corner-touch hold state ownership;
 - run `firmware/tools/stackchan-cores3/test_usb_link_state.sh` to check USB
   host SOF polling state ownership and link-edge classification;
-- run `firmware/tools/stackchan-cores3/test_usb_session_loss.sh` to check the
+- run `firmware/tools/common/test_protocol_transport_loss.sh` to check the
   session-bound volatile cleanup plan for USB host SOF loss;
 - run `firmware/tools/stackchan-cores3/test_device_activity_projection.sh` to
   check the host-compiled device activity projection matrix for

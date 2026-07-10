@@ -25,15 +25,15 @@ ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
-  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.h" \
-  "${COMMON_TRANSPORT_DIR}/usb_retained_response_handlers.cpp" \
-  "${COMMON_TRANSPORT_DIR}/usb_retained_response_handlers.h" \
+  "${COMMON_ROOT}/protocol/active_session_request_guard.cpp" \
+  "${COMMON_ROOT}/protocol/active_session_request_guard.h" \
+  "${COMMON_TRANSPORT_DIR}/retained_response_handlers.cpp" \
+  "${COMMON_TRANSPORT_DIR}/retained_response_handlers.h" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${COMMON_ROOT}/protocol/request_id.h" \
   "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
   "${COMMON_ROOT}/protocol/signing_response_store.h" \
-  "${COMMON_ROOT}/protocol/usb_operation_response_writer.h"; do
+  "${COMMON_ROOT}/protocol/response_writer.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -53,7 +53,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <string.h>
 
 #include "protocol/signing_response_store.h"
-#include "transport/usb_retained_response_handlers.h"
+#include "transport/retained_response_handlers.h"
 
 namespace {
 
@@ -143,11 +143,11 @@ bool material_ready()
 
 bool write_payload_admission_error(
     const char* id,
-    signing::UsbOperationType operation,
-    const signing::UsbOperationResponseWriter& writer)
+    signing::OperationType operation,
+    const signing::ResponseWriter& writer)
 {
-    assert(operation == signing::UsbOperationType::get_result ||
-           operation == signing::UsbOperationType::ack_result);
+    assert(operation == signing::OperationType::get_result ||
+           operation == signing::OperationType::ack_result);
     g_payload_admission_calls += 1;
     g_last_id = id;
     if (!g_payload_admission_error) {
@@ -159,7 +159,7 @@ bool write_payload_admission_error(
 bool require_session(
     const char* id,
     const char* session_id,
-    const signing::UsbOperationResponseWriter& writer)
+    const signing::ResponseWriter& writer)
 {
     g_require_session_calls += 1;
     g_last_id = id;
@@ -170,23 +170,23 @@ bool require_session(
     return g_session_valid;
 }
 
-signing::UsbOperationResponseWriter make_writer()
+signing::ResponseWriter make_writer()
 {
-    return signing::UsbOperationResponseWriter{
+    return signing::ResponseWriter{
         write_method_error,
         write_success_result,
         log_write_failure,
     };
 }
 
-signing::UsbOperationResponseWriter make_writer_for(const char* method)
+signing::ResponseWriter make_writer_for(const char* method)
 {
     return make_writer().for_method(method);
 }
 
-signing::UsbRetainedResponseHandlerOps make_ops()
+signing::RetainedResponseHandlerOps make_ops()
 {
-    return signing::UsbRetainedResponseHandlerOps{
+    return signing::RetainedResponseHandlerOps{
         material_ready,
         write_payload_admission_error,
         require_session,
@@ -240,7 +240,7 @@ int main()
         reset_state();
         g_material_ready = false;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"}}");
-        signing::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
+        signing::handle_protocol_get_result_request("req", request, make_writer_for("get_result"), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
         assert(strcmp(g_last_method, "get_result") == 0);
@@ -253,7 +253,7 @@ int main()
         reset_state();
         g_payload_admission_error = true;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"}}");
-        signing::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
+        signing::handle_protocol_get_result_request("req", request, make_writer_for("get_result"), make_ops());
         assert(g_payload_admission_calls == 1);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "busy") == 0);
@@ -264,7 +264,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_result\",\"sessionId\":7,\"payload\":{\"retainedRequestId\":\"req\"}}");
-        signing::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
+        signing::handle_protocol_get_result_request("req", request, make_writer_for("get_result"), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
         assert(g_payload_admission_calls == 1);
@@ -276,7 +276,7 @@ int main()
         reset_state();
         g_session_valid = false;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"}}");
-        signing::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
+        signing::handle_protocol_get_result_request("req", request, make_writer_for("get_result"), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
         assert(strcmp(g_last_method, "get_result") == 0);
@@ -287,7 +287,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"},\"extra\":1}");
-        signing::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
+        signing::handle_protocol_get_result_request("req", request, make_writer_for("get_result"), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_request") == 0);
         assert(g_write_json_calls == 0);
@@ -297,7 +297,7 @@ int main()
         reset_state();
         store_response("session", "req");
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"}}");
-        signing::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
+        signing::handle_protocol_get_result_request("req", request, make_writer_for("get_result"), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_require_session_calls == 1);
         assert(strcmp(g_last_session, "session") == 0);
@@ -310,7 +310,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"}}");
-        signing::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
+        signing::handle_protocol_get_result_request("req", request, make_writer_for("get_result"), make_ops());
         assert(g_write_json_calls == 0);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "unknown_request") == 0);
@@ -320,7 +320,7 @@ int main()
         reset_state();
         store_malformed_result("session", "req");
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"}}");
-        signing::handle_usb_get_result_request("req", request, make_writer_for("get_result"), make_ops());
+        signing::handle_protocol_get_result_request("req", request, make_writer_for("get_result"), make_ops());
         assert(g_write_json_calls == 0);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "unknown_request") == 0);
@@ -329,7 +329,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"ack_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"},\"extra\":1}");
-        signing::handle_usb_ack_result_request("req", request, make_writer_for("ack_result"), make_ops());
+        signing::handle_protocol_ack_result_request("req", request, make_writer_for("ack_result"), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_request") == 0);
         assert(g_payload_admission_calls == 1);
@@ -340,7 +340,7 @@ int main()
         reset_state();
         g_payload_admission_error = true;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"ack_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"}}");
-        signing::handle_usb_ack_result_request("req", request, make_writer_for("ack_result"), make_ops());
+        signing::handle_protocol_ack_result_request("req", request, make_writer_for("ack_result"), make_ops());
         assert(g_payload_admission_calls == 1);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "busy") == 0);
@@ -352,7 +352,7 @@ int main()
         reset_state();
         store_response("session", "req");
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"ack_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"}}");
-        signing::handle_usb_ack_result_request("req", request, make_writer_for("ack_result"), make_ops());
+        signing::handle_protocol_ack_result_request("req", request, make_writer_for("ack_result"), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_ack_result_calls == 1);
         assert(strcmp(g_last_session, "session") == 0);
@@ -367,7 +367,7 @@ int main()
         store_response("session", "req");
         g_ack_write_ok = false;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"ack_result\",\"sessionId\":\"session\",\"payload\":{\"retainedRequestId\":\"req\"}}");
-        signing::handle_usb_ack_result_request("req", request, make_writer_for("ack_result"), make_ops());
+        signing::handle_protocol_ack_result_request("req", request, make_writer_for("ack_result"), make_ops());
         assert(g_ack_result_calls == 1);
         assert(g_log_write_failure_calls == 1);
         assert(strcmp(g_last_id, "req") == 0);
@@ -386,8 +386,8 @@ CPP
   -I"${RUNTIME_DIR}" \
   -I"${RUNTIME_DIR}/../../common" \
   "${TMP_DIR}/test.cpp" \
-  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
-  "${COMMON_TRANSPORT_DIR}/usb_retained_response_handlers.cpp" \
+  "${COMMON_ROOT}/protocol/active_session_request_guard.cpp" \
+  "${COMMON_TRANSPORT_DIR}/retained_response_handlers.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
   -o "${TMP_DIR}/test"

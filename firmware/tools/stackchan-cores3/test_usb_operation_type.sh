@@ -23,10 +23,10 @@ COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 COMMON_PROTOCOL_DIR="${COMMON_ROOT}/protocol"
 
 for required in \
-  "${COMMON_ROOT}/protocol/usb_operation_type.h" \
-  "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
-  "${COMMON_PROTOCOL_DIR}/usb_operation_manifest.h" \
-  "${COMMON_PROTOCOL_DIR}/usb_operation_manifest.cpp"; do
+  "${COMMON_ROOT}/protocol/operation_type.h" \
+  "${COMMON_ROOT}/protocol/operation_type.cpp" \
+  "${COMMON_PROTOCOL_DIR}/operation_manifest.h" \
+  "${COMMON_PROTOCOL_DIR}/operation_manifest.cpp"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     exit 1
@@ -50,35 +50,35 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "protocol/usb_operation_manifest.h"
-#include "protocol/usb_operation_type.h"
+#include "protocol/operation_manifest.h"
+#include "protocol/operation_type.h"
 
 namespace {
 
-void expect_type(const char* value, signing::UsbOperationType expected)
+void expect_type(const char* value, signing::OperationType expected)
 {
-    assert(signing::classify_usb_operation_type(value) == expected);
-    if (expected != signing::UsbOperationType::unsupported) {
-        assert(strcmp(signing::usb_operation_type_wire_name(expected), value) == 0);
+    assert(signing::classify_operation_type(value) == expected);
+    if (expected != signing::OperationType::unsupported) {
+        assert(strcmp(signing::operation_type_wire_name(expected), value) == 0);
     }
 }
 
 void expect_payload_kind(
-    signing::UsbOperationType type,
+    signing::OperationType type,
     signing::PayloadDeliveryOperationKind expected)
 {
-    const signing::UsbOperationManifestEntry* entry =
-        signing::usb_operation_manifest_entry(type);
+    const signing::OperationManifestEntry* entry =
+        signing::operation_manifest_entry(type);
     assert(entry != nullptr);
     assert(entry->payload_delivery_operation == expected);
 }
 
 void expect_terminal_policy(
-    signing::UsbOperationType type,
-    signing::UsbOperationCompletionPolicy expected)
+    signing::OperationType type,
+    signing::OperationCompletionPolicy expected)
 {
-    const signing::UsbOperationManifestEntry* entry =
-        signing::usb_operation_manifest_entry(type);
+    const signing::OperationManifestEntry* entry =
+        signing::operation_manifest_entry(type);
     assert(entry != nullptr);
     assert(entry->completion_policy == expected);
 }
@@ -87,7 +87,7 @@ void expect_terminal_policy(
 
 int main()
 {
-    using Type = signing::UsbOperationType;
+    using Type = signing::OperationType;
 
     expect_type("get_status", Type::get_status);
     expect_type("identify_device", Type::identify_device);
@@ -113,7 +113,7 @@ int main()
     expect_type("sign_transaction_policy", Type::unsupported);
     expect_type("unknown", Type::unsupported);
     expect_type(nullptr, Type::unsupported);
-    assert(signing::usb_operation_type_wire_name(Type::unsupported) == nullptr);
+    assert(signing::operation_type_wire_name(Type::unsupported) == nullptr);
 
     expect_payload_kind(Type::get_status, signing::PayloadDeliveryOperationKind::safe_read);
     expect_payload_kind(Type::get_capabilities, signing::PayloadDeliveryOperationKind::safe_read);
@@ -126,33 +126,33 @@ int main()
 
     expect_terminal_policy(
         Type::get_result,
-        signing::UsbOperationCompletionPolicy::signing_retained_response_read);
+        signing::OperationCompletionPolicy::signing_retained_response_read);
     expect_terminal_policy(
         Type::ack_result,
-        signing::UsbOperationCompletionPolicy::signing_retained_response_ack);
+        signing::OperationCompletionPolicy::signing_retained_response_ack);
     expect_terminal_policy(
         Type::policy_propose,
-        signing::UsbOperationCompletionPolicy::policy_update_history_marker);
+        signing::OperationCompletionPolicy::policy_update_history_marker);
     expect_terminal_policy(
         Type::credential_prepare,
-        signing::UsbOperationCompletionPolicy::immediate_response);
+        signing::OperationCompletionPolicy::immediate_response);
     expect_terminal_policy(
         Type::credential_propose,
-        signing::UsbOperationCompletionPolicy::credential_proposal_outcome);
+        signing::OperationCompletionPolicy::credential_proposal_outcome);
     expect_terminal_policy(
         Type::sign_transaction,
-        signing::UsbOperationCompletionPolicy::signing_retained_response);
+        signing::OperationCompletionPolicy::signing_retained_response);
 
-    const signing::UsbOperationManifestEntry* status_entry =
-        signing::usb_operation_manifest_entry(Type::get_status);
+    const signing::OperationManifestEntry* status_entry =
+        signing::operation_manifest_entry(Type::get_status);
     assert(status_entry != nullptr);
     assert(status_entry->read_side_effect_policy ==
-           signing::UsbOperationReadSideEffectPolicy::persistent_material_consistency_refresh);
+           signing::OperationReadSideEffectPolicy::persistent_material_consistency_refresh);
 
-    assert(signing::usb_operation_is_retained_response_read_cleanup(Type::get_result));
-    assert(signing::usb_operation_is_retained_response_read_cleanup(Type::ack_result));
-    assert(!signing::usb_operation_is_retained_response_read_cleanup(Type::policy_propose));
-    assert(!signing::usb_operation_is_retained_response_read_cleanup(Type::credential_propose));
+    assert(signing::operation_is_retained_response_read_cleanup(Type::get_result));
+    assert(signing::operation_is_retained_response_read_cleanup(Type::ack_result));
+    assert(!signing::operation_is_retained_response_read_cleanup(Type::policy_propose));
+    assert(!signing::operation_is_retained_response_read_cleanup(Type::credential_propose));
 
     printf("USB operation type tests passed\n");
     return 0;
@@ -164,8 +164,8 @@ CPP
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
-  "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
-  "${COMMON_PROTOCOL_DIR}/usb_operation_manifest.cpp" \
+  "${COMMON_ROOT}/protocol/operation_type.cpp" \
+  "${COMMON_PROTOCOL_DIR}/operation_manifest.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

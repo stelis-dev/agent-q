@@ -158,9 +158,9 @@ bool device_activity_allows_local_error_recovery(
     return !local_settings_common_blocked(activity);
 }
 
-DeviceActivityUsbRequestBlock device_activity_usb_request_block(
+DeviceActivityRequestBlock device_activity_request_block(
     const DeviceActivityProjection& activity,
-    DeviceActivityUsbRequestOptions options)
+    DeviceActivityRequestOptions options)
 {
     if (activity.connect_approval_active) {
         return { true, "busy", "Device is awaiting local input." };

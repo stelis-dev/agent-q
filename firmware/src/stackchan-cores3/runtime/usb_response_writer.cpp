@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #include "protocol/protocol_constants.h"
-#include "protocol/usb_json_response.h"
+#include "protocol/json_response.h"
 
 #include "driver/usb_serial_jtag.h"
 #include "esp_err.h"
@@ -60,9 +60,9 @@ void delay_usb_response_ms(uint32_t duration_ms, void*)
     vTaskDelay(pdMS_TO_TICKS(duration_ms));
 }
 
-const UsbJsonResponseWriteOps& usb_json_response_write_ops()
+const JsonResponseWriteOps& usb_json_response_write_ops()
 {
-    static const UsbJsonResponseWriteOps ops{
+    static const JsonResponseWriteOps ops{
         write_usb_serial_response_bytes,
         delay_usb_response_ms,
         nullptr,
@@ -84,14 +84,14 @@ bool usb_response_write_json(JsonDocument& response)
                  static_cast<unsigned>(measured));
         return false;
     }
-    const bool ok = usb_json_response_write(response, usb_json_response_write_ops());
+    const bool ok = json_response_write(response, usb_json_response_write_ops());
     if (!ok) {
         ESP_LOGW(kTag, "USB JSON response write failed");
     }
     return ok;
 }
 
-const UsbJsonResponseWriteOps& usb_response_json_write_ops()
+const JsonResponseWriteOps& usb_response_json_write_ops()
 {
     return usb_json_response_write_ops();
 }

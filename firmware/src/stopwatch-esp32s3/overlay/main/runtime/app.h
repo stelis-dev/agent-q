@@ -9,11 +9,12 @@
 #include "local_auth.h"
 #include "local_auth_entry_state.h"
 #include "local_auth_setup_state.h"
+#include "local_transport_pairing_scene.h"
 #include "clock_scene.h"
 #include "device_reset.h"
 #include "protocol/signing_mode.h"
 #include "rotary_dial_scene.h"
-#include "usb_transport.h"
+#include "protocol_runtime.h"
 
 namespace stopwatch_target {
 
@@ -27,11 +28,15 @@ public:
     void onClose() override;
 
 private:
-    enum class ScreenMode {
+    // Target interaction state. Protocol, approval, signing, and carrier
+    // authority remain in their owning runtime modules; scenes only project it.
+    enum class RuntimeState {
         setup_enter,
         setup_confirm,
         unlock,
         idle,
+        local_transport_pairing,
+        local_transport_result,
         connect_review,
         proof_review,
         policy_review,
@@ -46,6 +51,15 @@ private:
         error,
     };
 
+    enum class LocalTransportResult {
+        none,
+        ready,
+        expired,
+        display_error,
+        unavailable,
+        failed,
+    };
+
     std::unique_ptr<input::KeyManager> key_manager_;
     lv_obj_t* root_ = nullptr;
     lv_obj_t* input_slot_labels_[kLocalAuthMaxDigits] = {};
@@ -53,13 +67,18 @@ private:
     lv_obj_t* detail_label_ = nullptr;
     RotaryDialScene rotary_dial_;
     ClockScene clock_scene_;
+    LocalTransportPairingScene local_transport_pairing_scene_;
     uint32_t last_update_ms_ = 0;
     uint32_t unlock_idle_started_ms_ = 0;
     bool unlock_watch_timer_armed_ = false;
     bool watch_visible_ = false;
     bool ignore_touch_until_release_ = false;
     uint32_t last_seen_rejected_connects_ = 0;
-    ScreenMode screen_mode_ = ScreenMode::setup_enter;
+    uint32_t local_transport_result_deadline_ms_ = 0;
+    bool local_transport_qr_rendered_ = false;
+    bool local_transport_result_rendered_ = false;
+    LocalTransportResult local_transport_result_ = LocalTransportResult::none;
+    RuntimeState runtime_state_ = RuntimeState::setup_enter;
     bool locally_unlocked_ = false;
     bool previous_external_power_present_ = false;
     LocalAuthEntryState auth_entry_;
@@ -88,15 +107,23 @@ private:
     void set_display_on(bool display_on, bool feedback = true, bool lvgl_locked = false);
     void set_button_feedback_suppressed(bool suppressed);
     void record_feedback(uint16_t vibration_ms, uint8_t strength, bool lvgl_locked);
-    void enter_mode(ScreenMode mode);
+    void transition_to(RuntimeState state);
     void reset_unlock_watch();
     void show_unlock_watch();
     bool unlock_watch_allowed() const;
     void refresh_auth_mode();
     void refresh_auth_mode(const LocalAuthSnapshot& snapshot);
     void maybe_enter_watch(uint32_t now_ms);
-    void sync_usb_runtime_state();
-    void sync_usb_runtime_state(const LocalAuthSnapshot& snapshot);
+    void begin_local_transport_pairing(uint32_t now_ms);
+    void sync_local_transport_state(uint32_t now_ms);
+    void project_local_transport_scene();
+    void set_local_transport_result(
+        LocalTransportResult result,
+        uint32_t now_ms,
+        uint32_t duration_ms);
+    void cancel_local_transport_carrier();
+    void sync_protocol_runtime_state();
+    void sync_protocol_runtime_state(const LocalAuthSnapshot& snapshot);
     void relock();
     void clear_entry();
     void clear_auth_scratch();

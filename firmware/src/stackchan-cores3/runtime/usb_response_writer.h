@@ -5,14 +5,14 @@
 #include <stdint.h>
 
 #include "protocol/device_response.h"
-#include "protocol/usb_json_response.h"
+#include "protocol/json_response.h"
 
 namespace signing {
 
-constexpr size_t kUsbResponseLineMaxBytes = kUsbJsonResponseLineMaxBytes;
+constexpr size_t kUsbResponseLineMaxBytes = kJsonResponseLineMaxBytes;
 
 bool usb_response_write_json(JsonDocument& response);
-const UsbJsonResponseWriteOps& usb_response_json_write_ops();
+const JsonResponseWriteOps& usb_response_json_write_ops();
 bool usb_response_write_success_result(const char* id, const char* method, JsonObjectConst result);
 bool usb_response_write_transport_success_result(const char* id, JsonObjectConst result);
 bool usb_response_write_error(const char* id, const char* code);

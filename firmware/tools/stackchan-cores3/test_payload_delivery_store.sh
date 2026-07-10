@@ -21,18 +21,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 TARGET_ROOT="${REPO_ROOT}/firmware/src/stackchan-cores3"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
-USB_REQUEST_SERVER_SOURCE="${TARGET_ROOT}/runtime/usb_request_server.cpp"
-USB_OPERATION_MANIFEST_SOURCE="${REPO_ROOT}/firmware/src/common/protocol/usb_operation_manifest.cpp"
-USB_DEVICE_HANDLER_SOURCE="${COMMON_ROOT}/protocol/usb_device_handlers.cpp"
-USB_SESSION_READ_HANDLER_SOURCE="${COMMON_ROOT}/protocol/usb_session_read_handlers.cpp"
-USB_POLICY_HANDLER_SOURCE="${COMMON_ROOT}/policy/usb_policy_handlers.cpp"
-USB_APPROVAL_HISTORY_HANDLER_SOURCE="${COMMON_ROOT}/protocol/usb_approval_history_handler.cpp"
-USB_RETAINED_RESPONSE_HANDLER_SOURCE="${COMMON_ROOT}/transport/usb_retained_response_handlers.cpp"
-USB_DISCONNECT_HANDLER_SOURCE="${COMMON_ROOT}/transport/usb_disconnect_handler.cpp"
-USB_CONNECT_HANDLER_HEADER="${COMMON_ROOT}/transport/usb_connect_handler.h"
-USB_DEVICE_HANDLER_HEADER="${COMMON_ROOT}/protocol/usb_device_handlers.h"
-USB_POLICY_HANDLER_HEADER="${COMMON_ROOT}/policy/usb_policy_handlers.h"
-USB_SUI_ZKLOGIN_CREDENTIAL_HANDLER_HEADER="${COMMON_ROOT}/protocol/usb_sui_zklogin_credential_handlers.h"
+USB_REQUEST_SERVER_SOURCE="${TARGET_ROOT}/runtime/protocol_request_server.cpp"
+USB_OPERATION_MANIFEST_SOURCE="${REPO_ROOT}/firmware/src/common/protocol/operation_manifest.cpp"
+USB_DEVICE_HANDLER_SOURCE="${COMMON_ROOT}/protocol/device_handlers.cpp"
+USB_SESSION_READ_HANDLER_SOURCE="${COMMON_ROOT}/protocol/session_read_handlers.cpp"
+USB_POLICY_HANDLER_SOURCE="${COMMON_ROOT}/policy/policy_handlers.cpp"
+USB_APPROVAL_HISTORY_HANDLER_SOURCE="${COMMON_ROOT}/protocol/approval_history_handler.cpp"
+USB_RETAINED_RESPONSE_HANDLER_SOURCE="${COMMON_ROOT}/transport/retained_response_handlers.cpp"
+USB_DISCONNECT_HANDLER_SOURCE="${COMMON_ROOT}/transport/disconnect_handler.cpp"
+USB_CONNECT_HANDLER_HEADER="${COMMON_ROOT}/transport/connect_handler.h"
+USB_DEVICE_HANDLER_HEADER="${COMMON_ROOT}/protocol/device_handlers.h"
+USB_POLICY_HANDLER_HEADER="${COMMON_ROOT}/policy/policy_handlers.h"
+USB_SUI_ZKLOGIN_CREDENTIAL_HANDLER_HEADER="${COMMON_ROOT}/protocol/sui_zklogin_credential_handlers.h"
 
 if [[ -z "${IDF_PATH:-}" ]]; then
   echo "IDF_PATH is not set. Source ESP-IDF v5.5.4 export.sh before running this test." >&2
@@ -55,8 +55,8 @@ for required in \
   "${COMMON_ROOT}/transport/payload_delivery_primitives.h" \
   "${COMMON_ROOT}/transport/payload_delivery_store.cpp" \
   "${COMMON_ROOT}/transport/payload_delivery_store.h" \
-  "${REPO_ROOT}/firmware/src/common/protocol/usb_operation_manifest.cpp" \
-  "${REPO_ROOT}/firmware/src/common/protocol/usb_operation_manifest.h" \
+  "${REPO_ROOT}/firmware/src/common/protocol/operation_manifest.cpp" \
+  "${REPO_ROOT}/firmware/src/common/protocol/operation_manifest.h" \
   "${USB_DEVICE_HANDLER_SOURCE}" \
   "${USB_SESSION_READ_HANDLER_SOURCE}" \
   "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" \
@@ -153,14 +153,14 @@ expect_request_server_wiring \
   'write_payload_delivery_identify_device_busy' \
   "identify_device production ops must use payload delivery admission"
 expect_request_server_wiring \
-  'UsbOperationType::identify_device' \
+  'OperationType::identify_device' \
   "identify_device admission must use its named USB operation"
 expect_request_server_wiring \
-  'usb_operation_manifest_entry\(operation\)' \
+  'operation_manifest_entry\(operation\)' \
   "operation-aware busy gate must consume the USB operation manifest"
 expect_manifest_operation_wiring \
-  'UsbOperationType::identify_device' \
-  'UsbOperationHandlerSlot::identify_device' \
+  'OperationType::identify_device' \
+  'OperationHandlerSlot::identify_device' \
   'PayloadDeliveryOperationKind::identify_device' \
   "identify_device manifest entry must bind USB operation to payload admission kind"
 expect_request_server_wiring \
@@ -170,44 +170,44 @@ expect_request_server_wiring \
   'signing::session_active\(\)' \
   "connect admission must detect a live session before payload-delivery busy admission"
 expect_request_server_wiring \
-  'write_connect_approved_response\(id\)' \
-  "connect admission must recover an existing live session on the current USB link"
+  'write_existing_session_connect_response' \
+  "connect admission must recover an existing live session on the originating transport"
 expect_request_server_wiring \
   'write_payload_delivery_connect_busy\(id, writer\)' \
   "connect admission wrapper must still use payload delivery admission"
 expect_request_server_wiring \
-  'UsbOperationType::connect' \
+  'OperationType::connect' \
   "connect admission must use its named USB operation"
 expect_manifest_operation_wiring \
-  'UsbOperationType::connect' \
-  'UsbOperationHandlerSlot::connect' \
+  'OperationType::connect' \
+  'OperationHandlerSlot::connect' \
   'PayloadDeliveryOperationKind::connect' \
   "connect manifest entry must bind USB operation to payload admission kind"
 expect_request_server_wiring \
   'write_payload_delivery_policy_propose_busy' \
   "policy_propose production ops must use payload delivery admission"
 expect_request_server_wiring \
-  'UsbOperationType::policy_propose' \
+  'OperationType::policy_propose' \
   "policy_propose admission must use its named USB operation"
 expect_manifest_operation_wiring \
-  'UsbOperationType::policy_propose' \
-  'UsbOperationHandlerSlot::policy_propose' \
+  'OperationType::policy_propose' \
+  'OperationHandlerSlot::policy_propose' \
   'PayloadDeliveryOperationKind::policy_propose' \
   "policy_propose manifest entry must bind USB operation to payload admission kind"
 expect_request_server_wiring \
   'write_payload_delivery_credential_propose_busy' \
   "credential_propose production ops must use payload delivery admission"
 expect_request_server_wiring \
-  'UsbOperationType::credential_propose' \
+  'OperationType::credential_propose' \
   "credential_propose admission must use its named USB operation"
 expect_manifest_operation_wiring \
-  'UsbOperationType::credential_prepare' \
-  'UsbOperationHandlerSlot::credential_prepare' \
+  'OperationType::credential_prepare' \
+  'OperationHandlerSlot::credential_prepare' \
   'PayloadDeliveryOperationKind::safe_read' \
   "credential_prepare manifest entry must bind USB operation to safe-read payload admission"
 expect_manifest_operation_wiring \
-  'UsbOperationType::credential_propose' \
-  'UsbOperationHandlerSlot::credential_propose' \
+  'OperationType::credential_propose' \
+  'OperationHandlerSlot::credential_propose' \
   'PayloadDeliveryOperationKind::credential_propose' \
   "credential_propose manifest entry must bind USB operation to payload admission kind"
 expect_request_server_wiring \
@@ -217,7 +217,7 @@ expect_request_server_wiring \
   'payload_delivery_admission_allows_safe_read' \
   "session read production ops must consume the payload delivery safe-read predicate"
 expect_request_server_block_wiring \
-  'usb_get_status_handler_ops' \
+  'get_status_handler_ops' \
   'write_payload_delivery_safe_read_admission_error' \
   "get_status production ops must use payload delivery safe-read admission"
 expect_request_server_block_wiring \
@@ -226,47 +226,47 @@ expect_request_server_block_wiring \
   "approval history production ops must use payload delivery safe-read admission"
 expect_source_wiring \
   "${USB_DEVICE_HANDLER_SOURCE}" \
-  'UsbOperationType::get_status' \
+  'OperationType::get_status' \
   "get_status handler must pass its own USB operation to safe-read admission"
 expect_source_wiring \
   "${USB_SESSION_READ_HANDLER_SOURCE}" \
-  'UsbOperationType::get_capabilities' \
+  'OperationType::get_capabilities' \
   "get_capabilities handler must pass its own USB operation to safe-read admission"
 expect_source_wiring \
   "${USB_SESSION_READ_HANDLER_SOURCE}" \
-  'UsbOperationType::get_accounts' \
+  'OperationType::get_accounts' \
   "get_accounts handler must pass its own USB operation to safe-read admission"
 expect_source_wiring \
   "${USB_POLICY_HANDLER_SOURCE}" \
-  'UsbOperationType::policy_get' \
+  'OperationType::policy_get' \
   "policy_get handler must pass its own USB operation to safe-read admission"
 expect_source_wiring \
   "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" \
-  'UsbOperationType::get_approval_history' \
+  'OperationType::get_approval_history' \
   "get_approval_history handler must pass its own USB operation to safe-read admission"
 expect_manifest_operation_wiring \
-  'UsbOperationType::get_status' \
-  'UsbOperationHandlerSlot::get_status' \
+  'OperationType::get_status' \
+  'OperationHandlerSlot::get_status' \
   'PayloadDeliveryOperationKind::safe_read' \
   "get_status manifest entry must bind USB operation to safe-read payload admission"
 expect_manifest_operation_wiring \
-  'UsbOperationType::get_capabilities' \
-  'UsbOperationHandlerSlot::get_capabilities' \
+  'OperationType::get_capabilities' \
+  'OperationHandlerSlot::get_capabilities' \
   'PayloadDeliveryOperationKind::safe_read' \
   "get_capabilities manifest entry must bind USB operation to safe-read payload admission"
 expect_manifest_operation_wiring \
-  'UsbOperationType::get_accounts' \
-  'UsbOperationHandlerSlot::get_accounts' \
+  'OperationType::get_accounts' \
+  'OperationHandlerSlot::get_accounts' \
   'PayloadDeliveryOperationKind::safe_read' \
   "get_accounts manifest entry must bind USB operation to safe-read payload admission"
 expect_manifest_operation_wiring \
-  'UsbOperationType::policy_get' \
-  'UsbOperationHandlerSlot::policy_get' \
+  'OperationType::policy_get' \
+  'OperationHandlerSlot::policy_get' \
   'PayloadDeliveryOperationKind::safe_read' \
   "policy_get manifest entry must bind USB operation to safe-read payload admission"
 expect_manifest_operation_wiring \
-  'UsbOperationType::get_approval_history' \
-  'UsbOperationHandlerSlot::get_approval_history' \
+  'OperationType::get_approval_history' \
+  'OperationHandlerSlot::get_approval_history' \
   'PayloadDeliveryOperationKind::safe_read' \
   "get_approval_history manifest entry must bind USB operation to safe-read payload admission"
 expect_request_server_wiring \
@@ -277,20 +277,20 @@ expect_request_server_wiring \
   "retained response production ops must consume the payload delivery retained-response predicate"
 expect_source_wiring \
   "${USB_RETAINED_RESPONSE_HANDLER_SOURCE}" \
-  'UsbOperationType::get_result' \
+  'OperationType::get_result' \
   "get_result handler must pass its own USB operation to retained-response admission"
 expect_source_wiring \
   "${USB_RETAINED_RESPONSE_HANDLER_SOURCE}" \
-  'UsbOperationType::ack_result' \
+  'OperationType::ack_result' \
   "ack_result handler must pass its own USB operation to retained-response admission"
 expect_manifest_operation_wiring \
-  'UsbOperationType::get_result' \
-  'UsbOperationHandlerSlot::get_result' \
+  'OperationType::get_result' \
+  'OperationHandlerSlot::get_result' \
   'PayloadDeliveryOperationKind::retained_response_read_cleanup' \
   "get_result manifest entry must bind USB operation to retained-response payload admission"
 expect_manifest_operation_wiring \
-  'UsbOperationType::ack_result' \
-  'UsbOperationHandlerSlot::ack_result' \
+  'OperationType::ack_result' \
+  'OperationHandlerSlot::ack_result' \
   'PayloadDeliveryOperationKind::retained_response_read_cleanup' \
   "ack_result manifest entry must bind USB operation to retained-response payload admission"
 expect_request_server_wiring \
@@ -298,14 +298,14 @@ expect_request_server_wiring \
   "disconnect production ops must consume the payload delivery disconnect predicate"
 expect_source_wiring \
   "${USB_DISCONNECT_HANDLER_SOURCE}" \
-  'UsbOperationType::disconnect' \
+  'OperationType::disconnect' \
   "disconnect handler must pass its own USB operation to disconnect admission"
 expect_request_server_wiring \
-  'UsbOperationType::sign_personal_message' \
+  'OperationType::sign_personal_message' \
   "sign_personal_message admission must use its named USB operation"
 expect_manifest_operation_wiring \
-  'UsbOperationType::sign_personal_message' \
-  'UsbOperationHandlerSlot::sign_personal_message' \
+  'OperationType::sign_personal_message' \
+  'OperationHandlerSlot::sign_personal_message' \
   'PayloadDeliveryOperationKind::sign_personal_message' \
   "sign_personal_message manifest entry must bind USB operation to payload admission kind"
 

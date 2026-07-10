@@ -1,44 +1,21 @@
 #include "local_transport_pairing.h"
 
-#include <string.h>
-
 #include "avatar_overlay_drawing.h"
 #include "esp_attr.h"
-#include "local_transport_ble.h"
 #include "local_transport_crypto_adapter.h"
 #include "local_transport_pairing_store.h"
-#include "modal_drawing.h"
-#include "transport/timeout_window.h"
+#include "transport/local_transport_nimble_pairing_session.h"
 
 namespace signing {
 namespace {
 
-void (*g_request_handler)(const char* line, const UsbOperationResponseWriter& writer) = nullptr;
+void (*g_request_handler)(
+    const char* line,
+    const ProtocolTransportRoute& route) = nullptr;
 EXT_RAM_BSS_ATTR uint8_t g_request_line_scratch[kLocalTransportGatewayRequestLineCapBytes + 1];
 EXT_RAM_BSS_ATTR uint8_t g_plain_frame_scratch[kLocalTransportMaximumPlainFrameBytes];
 EXT_RAM_BSS_ATTR char g_response_line_scratch[kLocalTransportFirmwareResponseLineCapBytes + 1];
-
-LocalTransportPairingChannel to_pairing_channel(LocalTransportBleChannel channel)
-{
-    switch (channel) {
-        case LocalTransportBleChannel::control:
-            return LocalTransportPairingChannel::control;
-        case LocalTransportBleChannel::data:
-            return LocalTransportPairingChannel::data;
-    }
-    return LocalTransportPairingChannel::data;
-}
-
-LocalTransportBleChannel to_ble_channel(LocalTransportPairingChannel channel)
-{
-    switch (channel) {
-        case LocalTransportPairingChannel::control:
-            return LocalTransportBleChannel::control;
-        case LocalTransportPairingChannel::data:
-            return LocalTransportBleChannel::data;
-    }
-    return LocalTransportBleChannel::data;
-}
+EXT_RAM_BSS_ATTR LocalTransportBleInboundFrame g_ble_inbound_frame;
 
 bool load_or_create_identity(LocalTransportPairingIdentity* identity, void*)
 {
@@ -48,81 +25,6 @@ bool load_or_create_identity(LocalTransportPairingIdentity* identity, void*)
 bool load_identity_secret(LocalTransportPairingIdentitySecret* identity, void*)
 {
     return local_transport_load_pairing_identity_secret(identity);
-}
-
-bool start_advertising(
-    const uint8_t fingerprint[kLocalTransportIdentityFingerprintBytes],
-    void*)
-{
-    return local_transport_ble_start_pairing_advertising(fingerprint);
-}
-
-void stop_advertising(void*)
-{
-    local_transport_ble_stop_pairing_advertising();
-}
-
-bool advertising_active(void*)
-{
-    return local_transport_ble_advertising_active();
-}
-
-bool connected(void*)
-{
-    return local_transport_ble_connected();
-}
-
-void disconnect(void*)
-{
-    local_transport_ble_disconnect();
-}
-
-uint16_t current_att_mtu(void*)
-{
-    return local_transport_ble_current_att_mtu();
-}
-
-bool receive(LocalTransportPairingInboundFrame* frame, void*)
-{
-    if (frame == nullptr) {
-        return false;
-    }
-    LocalTransportBleInboundFrame ble_frame = {};
-    if (!local_transport_ble_receive(&ble_frame)) {
-        return false;
-    }
-    frame->channel = to_pairing_channel(ble_frame.channel);
-    frame->att_mtu = ble_frame.att_mtu;
-    frame->length = ble_frame.length;
-    if (ble_frame.length > sizeof(frame->payload)) {
-        return false;
-    }
-    memcpy(frame->payload, ble_frame.payload, ble_frame.length);
-    local_transport_wipe_bytes(ble_frame.payload, sizeof(ble_frame.payload));
-    return true;
-}
-
-bool send_acknowledged(
-    LocalTransportPairingChannel channel,
-    const uint8_t* payload,
-    size_t payload_len,
-    void*)
-{
-    return local_transport_ble_send_indication(
-        to_ble_channel(channel),
-        payload,
-        payload_len);
-}
-
-bool draw_pairing_panel(
-    const char* payload,
-    const char* fingerprint_hex,
-    TickType_t deadline,
-    void*)
-{
-    const TimeoutWindow window =
-        timeout_window_from_deadline(xTaskGetTickCount(), deadline);
-    return modal_draw_local_transport_pairing_panel(payload, fingerprint_hex, window);
 }
 
 void notify(LocalTransportPairingEvent event, void*)
@@ -148,33 +50,24 @@ void notify(LocalTransportPairingEvent event, void*)
 
 void handle_request_line(
     const char* line,
-    const UsbOperationResponseWriter& writer,
+    const ProtocolTransportRoute& route,
     void*)
 {
     if (g_request_handler != nullptr) {
-        g_request_handler(line, writer);
+        g_request_handler(line, route);
     }
 }
 
 LocalTransportPairingSessionOps session_ops(
-    void (*handle_line)(const char* line, const UsbOperationResponseWriter& writer) = nullptr)
+    void (*handle_line)(
+        const char* line,
+        const ProtocolTransportRoute& route) = nullptr)
 {
     g_request_handler = handle_line;
-    return {
-        kLocalTransportKindBle,
-        kLocalTransportBleServiceUuidHex,
-        kLocalTransportPairingAdvertiseMs / 1000,
+    return local_transport_nimble_pairing_session_ops({
+        &g_ble_inbound_frame,
         load_or_create_identity,
         load_identity_secret,
-        start_advertising,
-        stop_advertising,
-        advertising_active,
-        connected,
-        disconnect,
-        current_att_mtu,
-        receive,
-        send_acknowledged,
-        draw_pairing_panel,
         notify,
         handle_request_line,
         &stackchan_local_transport_crypto_ops(),
@@ -187,7 +80,7 @@ LocalTransportPairingSessionOps session_ops(
             sizeof(g_response_line_scratch),
         },
         nullptr,
-    };
+    });
 }
 
 }  // namespace
@@ -209,7 +102,9 @@ void local_transport_pairing_handle_display_loss()
 
 void local_transport_pairing_poll(
     TickType_t now,
-    void (*handle_request_line)(const char* line, const UsbOperationResponseWriter& writer))
+    void (*handle_request_line)(
+        const char* line,
+        const ProtocolTransportRoute& route))
 {
     local_transport_pairing_session_poll(now, session_ops(handle_request_line));
 }
@@ -232,24 +127,6 @@ bool local_transport_pairing_established()
 bool local_transport_pairing_connected()
 {
     return local_transport_ble_connected();
-}
-
-bool local_transport_pairing_write_line(const char* line, size_t line_len)
-{
-    return local_transport_pairing_session_write_line(
-        session_ops(),
-        line,
-        line_len);
-}
-
-bool local_transport_pairing_write_response(
-    LocalTransportPairingResponseCallback callback,
-    void* context)
-{
-    return local_transport_pairing_session_write_response(
-        session_ops(),
-        callback,
-        context);
 }
 
 }  // namespace signing

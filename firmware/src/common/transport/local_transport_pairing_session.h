@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #include "freertos/FreeRTOS.h"
-#include "protocol/usb_operation_response_writer.h"
+#include "protocol/protocol_transport.h"
 #include "transport/local_transport_crypto.h"
 #include "transport/local_transport_frame.h"
 #include "transport/local_transport_identity.h"
@@ -61,6 +61,7 @@ struct LocalTransportPairingSessionOps {
         const uint8_t fingerprint[kLocalTransportIdentityFingerprintBytes],
         void* context);
     void (*stop_advertising)(void* context);
+    void (*poll_carrier)(void* context);
     bool (*advertising_active)(void* context);
     bool (*connected)(void* context);
     void (*disconnect)(void* context);
@@ -71,23 +72,15 @@ struct LocalTransportPairingSessionOps {
         const uint8_t* payload,
         size_t payload_len,
         void* context);
-    bool (*draw_pairing_panel)(
-        const char* payload,
-        const char* fingerprint_hex,
-        TickType_t deadline,
-        void* context);
     void (*notify)(LocalTransportPairingEvent event, void* context);
     void (*handle_request_line)(
         const char* line,
-        const UsbOperationResponseWriter& writer,
+        const ProtocolTransportRoute& route,
         void* context);
     const LocalTransportCryptoOps* crypto_ops;
     LocalTransportPairingScratchBuffers scratch;
     void* context;
 };
-
-using LocalTransportPairingResponseCallback =
-    bool (*)(const UsbOperationResponseWriter& writer, void* context);
 
 bool local_transport_pairing_session_begin(
     TickType_t now,
@@ -101,13 +94,5 @@ void local_transport_pairing_session_poll(
 LocalTransportPairingSnapshot local_transport_pairing_session_snapshot();
 bool local_transport_pairing_session_active();
 bool local_transport_pairing_session_established();
-bool local_transport_pairing_session_write_line(
-    const LocalTransportPairingSessionOps& ops,
-    const char* line,
-    size_t line_len);
-bool local_transport_pairing_session_write_response(
-    const LocalTransportPairingSessionOps& ops,
-    LocalTransportPairingResponseCallback callback,
-    void* context);
 
 }  // namespace signing

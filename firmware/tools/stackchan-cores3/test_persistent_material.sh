@@ -48,7 +48,7 @@ require_pattern \
   "kNvsNamespace = kStackChanAuthorityGateNvsNamespace" \
   "local authentication verifier must use the protected authority-gate namespace"
 require_pattern \
-  "${RUNTIME_DIR}/usb_request_server.cpp" \
+  "${RUNTIME_DIR}/protocol_request_server.cpp" \
   "kNvsNamespace = signing::kStackChanDeviceIdentityNvsNamespace" \
   "protocol device id must use the stable device-identity namespace"
 if [[ ! -f "${ARDUINOJSON_ROOT}/ArduinoJson.h" ]]; then
@@ -110,6 +110,7 @@ bool g_human_approval_setting_present = false;
 bool g_approval_history_present = false;
 bool g_policy_update_marker_present = false;
 bool g_zklogin_proof_present = false;
+bool g_pairing_store_present = false;
 bool g_signing_mode_present = false;
 bool g_sui_account_settings_present = false;
 bool g_root_store_fails = false;
@@ -124,6 +125,7 @@ bool g_sui_account_settings_wipe_fails = false;
 bool g_approval_history_wipe_fails = false;
 bool g_policy_update_marker_wipe_fails = false;
 bool g_zklogin_proof_wipe_fails = false;
+bool g_pairing_store_wipe_fails = false;
 bool g_persist_state_fails = false;
 signing::PolicyStoreStatus g_policy_status = signing::PolicyStoreStatus::missing;
 signing::LocalAuthStatus g_auth_status = signing::LocalAuthStatus::missing;
@@ -167,6 +169,7 @@ void reset_stubs()
     g_approval_history_present = false;
     g_policy_update_marker_present = false;
     g_zklogin_proof_present = false;
+    g_pairing_store_present = false;
     g_signing_mode_present = false;
     g_sui_account_settings_present = false;
     g_root_store_fails = false;
@@ -181,6 +184,7 @@ void reset_stubs()
     g_approval_history_wipe_fails = false;
     g_policy_update_marker_wipe_fails = false;
     g_zklogin_proof_wipe_fails = false;
+    g_pairing_store_wipe_fails = false;
     g_persist_state_fails = false;
     g_policy_status = signing::PolicyStoreStatus::missing;
     g_auth_status = signing::LocalAuthStatus::missing;
@@ -253,6 +257,15 @@ bool wipe_root_material()
         return false;
     }
     g_root_present = false;
+    return true;
+}
+
+bool local_transport_wipe_pairing_store()
+{
+    if (g_pairing_store_wipe_fails) {
+        return false;
+    }
+    g_pairing_store_present = false;
     return true;
 }
 
@@ -679,6 +692,7 @@ int main()
     g_policy_update_marker_status = signing::PolicyUpdateMarkerStatus::pending;
     g_zklogin_proof_present = true;
     g_zklogin_proof_status = signing::SuiZkLoginProofRecordStatus::active;
+    g_pairing_store_present = true;
     expect(signing::persistent_material_record_runtime_failure(
                signing::PersistentMaterialRuntimeFailure::wallet_erase_root_wipe_failed, ops()) ==
                Consistency::consistency_error,
@@ -688,8 +702,9 @@ int main()
     expect(!g_root_present && !g_policy_present && !g_auth_present &&
                !g_signing_mode_present && !g_sui_account_settings_present &&
                !g_human_approval_setting_present && !g_approval_history_present &&
-               !g_policy_update_marker_present && !g_zklogin_proof_present,
-           "Device reset removes required, signing-mode, Sui account settings, reset-scoped settings, approval-history, policy-update marker, and zkLogin proof material");
+               !g_policy_update_marker_present && !g_zklogin_proof_present &&
+               !g_pairing_store_present,
+           "Device reset removes required, signing-mode, Sui account settings, reset-scoped settings, approval-history, policy-update marker, zkLogin proof, and local transport identity material");
     expect(!signing::persistent_material_consistency_error_active(),
            "Device reset success clears consistency error latch");
 
@@ -831,6 +846,14 @@ int main()
            "zkLogin proof wipe failure is reported");
     expect(g_zklogin_proof_present,
            "failed zkLogin proof wipe leaves proof for caller-owned fail-closed handling");
+
+    reset_stubs();
+    g_pairing_store_present = true;
+    g_pairing_store_wipe_fails = true;
+    expect(signing::persistent_material_wallet_erase() == Wipe::pairing_store_wipe_error,
+           "local transport identity wipe failure is reported");
+    expect(g_pairing_store_present,
+           "failed local transport identity wipe remains visible to caller-owned fail-closed handling");
 
     reset_stubs();
     g_signing_mode_present = true;

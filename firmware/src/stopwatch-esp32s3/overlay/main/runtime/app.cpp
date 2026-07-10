@@ -11,6 +11,7 @@
 #include "credential_preparation_state.h"
 #include "device_reset.h"
 #include "display_geometry.h"
+#include "local_transport_pairing.h"
 #include "policy/policy_store.h"
 #include "policy/policy_update_flow.h"
 #include "policy/policy_update_marker.h"
@@ -114,22 +115,22 @@ bool store_new_auth_and_default_settings(const char* code, size_t length)
     }
     if (!signing::store_signing_authorization_mode(signing::AuthorizationMode::user)) {
         wipe_setup_settings();
-        usb_transport_invalidate_projected_state_cache();
+        protocol_runtime_invalidate_projected_state_cache();
         return false;
     }
     if (!signing::approval_history_wipe() ||
         !signing::policy_update_marker_clear()) {
         wipe_setup_settings();
-        usb_transport_invalidate_projected_state_cache();
+        protocol_runtime_invalidate_projected_state_cache();
         return false;
     }
     if (!local_auth_store_new_code(code, length)) {
         local_auth_clear();
         wipe_setup_settings();
-        usb_transport_invalidate_projected_state_cache();
+        protocol_runtime_invalidate_projected_state_cache();
         return false;
     }
-    usb_transport_invalidate_projected_state_cache();
+    protocol_runtime_invalidate_projected_state_cache();
     return true;
 }
 
@@ -156,7 +157,7 @@ void RuntimeApp::onOpen()
     signing::payload_delivery_store_reset();
     sui_zklogin_proposal_state_init();
     secure_random_init();
-    usb_transport_init();
+    protocol_runtime_init();
     display_on_ = true;
     locally_unlocked_ = false;
     button_feedback_suppressed_ = false;
@@ -169,17 +170,17 @@ void RuntimeApp::onOpen()
 
     const LocalAuthSnapshot snapshot = local_auth_snapshot(GetHAL().millis());
     if (snapshot.status == LocalAuthStoreStatus::missing) {
-        screen_mode_ = ScreenMode::setup_enter;
+        runtime_state_ = RuntimeState::setup_enter;
     } else if (snapshot.status == LocalAuthStoreStatus::active && snapshot.locked) {
-        screen_mode_ = ScreenMode::lockout;
+        runtime_state_ = RuntimeState::lockout;
     } else if (snapshot.status == LocalAuthStoreStatus::active) {
-        screen_mode_ = ScreenMode::unlock;
+        runtime_state_ = RuntimeState::unlock;
     } else {
-        screen_mode_ = ScreenMode::error;
+        runtime_state_ = RuntimeState::error;
     }
-    sync_usb_runtime_state();
-    if (usb_transport_projected_device_state_is_error()) {
-        screen_mode_ = ScreenMode::error;
+    sync_protocol_runtime_state();
+    if (protocol_runtime_projected_device_state_is_error()) {
+        runtime_state_ = RuntimeState::error;
     }
 
     LvglLockGuard lock;
@@ -213,68 +214,78 @@ void RuntimeApp::onRunning()
     animate_dial_return(now);
 
     const LocalAuthSnapshot snapshot = local_auth_snapshot(now);
-    sync_usb_runtime_state(snapshot);
-    usb_transport_poll();
-    if (usb_transport_identification_display().active && !display_on_) {
-        set_display_on(true, false, false);
+    sync_protocol_runtime_state(snapshot);
+    protocol_runtime_poll();
+    sync_local_transport_state(now);
+    const IdentificationDisplay identification =
+        protocol_runtime_identification_display();
+    if (identification.active) {
+        if (!display_on_) {
+            set_display_on(true, false, false);
+        }
+        if (runtime_state_ == RuntimeState::local_transport_result) {
+            transition_to(RuntimeState::idle);
+        }
     }
     refresh_auth_mode(snapshot);
     maybe_enter_watch(now);
-    const UsbPendingRequest pending = usb_transport_pending_request();
-    if (pending.kind == UsbPendingRequestKind::connect) {
+    const PendingRequest pending = protocol_runtime_pending_request();
+    if (pending.kind == PendingRequestKind::connect) {
         if (!display_on_) {
             set_display_on(true, false, false);
         }
-        if (locally_unlocked_ && screen_mode_ == ScreenMode::idle) {
-            enter_mode(ScreenMode::connect_review);
+        if (locally_unlocked_ &&
+            (runtime_state_ == RuntimeState::idle ||
+             runtime_state_ == RuntimeState::local_transport_result)) {
+            transition_to(RuntimeState::connect_review);
         }
-    } else if (pending.kind == UsbPendingRequestKind::credential_propose) {
+    } else if (pending.kind == PendingRequestKind::credential_propose) {
         if (!display_on_) {
             set_display_on(true, false, false);
         }
-        if (locally_unlocked_ && screen_mode_ == ScreenMode::idle) {
-            enter_mode(ScreenMode::proof_review);
+        if (locally_unlocked_ && runtime_state_ == RuntimeState::idle) {
+            transition_to(RuntimeState::proof_review);
         }
-    } else if (pending.kind == UsbPendingRequestKind::policy_propose) {
+    } else if (pending.kind == PendingRequestKind::policy_propose) {
         if (!display_on_) {
             set_display_on(true, false, false);
         }
-        if (locally_unlocked_ && screen_mode_ == ScreenMode::idle) {
-            enter_mode(ScreenMode::policy_review);
+        if (locally_unlocked_ && runtime_state_ == RuntimeState::idle) {
+            transition_to(RuntimeState::policy_review);
         }
-    } else if (pending.kind == UsbPendingRequestKind::sign_transaction ||
-               pending.kind == UsbPendingRequestKind::sign_personal_message) {
+    } else if (pending.kind == PendingRequestKind::sign_transaction ||
+               pending.kind == PendingRequestKind::sign_personal_message) {
         if (!display_on_) {
             set_display_on(true, false, false);
         }
-        if (locally_unlocked_ && screen_mode_ == ScreenMode::idle) {
-            enter_mode(ScreenMode::signing_review);
+        if (locally_unlocked_ && runtime_state_ == RuntimeState::idle) {
+            transition_to(RuntimeState::signing_review);
         }
-    } else if (screen_mode_ == ScreenMode::connect_review ||
-               screen_mode_ == ScreenMode::proof_review ||
-               screen_mode_ == ScreenMode::signing_review ||
-               screen_mode_ == ScreenMode::policy_review ||
-               screen_mode_ == ScreenMode::proof_auth ||
-               screen_mode_ == ScreenMode::policy_auth) {
-        enter_mode(locally_unlocked_ ? ScreenMode::idle : ScreenMode::unlock);
+    } else if (runtime_state_ == RuntimeState::connect_review ||
+               runtime_state_ == RuntimeState::proof_review ||
+               runtime_state_ == RuntimeState::signing_review ||
+               runtime_state_ == RuntimeState::policy_review ||
+               runtime_state_ == RuntimeState::proof_auth ||
+               runtime_state_ == RuntimeState::policy_auth) {
+        transition_to(locally_unlocked_ ? RuntimeState::idle : RuntimeState::unlock);
     }
 
     const uint32_t timeout_check_ms = GetHAL().millis();
     if (input_timed_out(timeout_check_ms)) {
-        if (screen_mode_ == ScreenMode::setup_confirm) {
+        if (runtime_state_ == RuntimeState::setup_confirm) {
             setup_state_.clear();
-            enter_mode(ScreenMode::setup_enter);
+            transition_to(RuntimeState::setup_enter);
         }
         clear_entry();
     }
 
-    const UsbStatus updated_status = usb_transport_status();
+    const ProtocolStatus updated_status = protocol_runtime_status();
     if (updated_status.rejected_connects != last_seen_rejected_connects_) {
         last_seen_rejected_connects_ = updated_status.rejected_connects;
         record_feedback(45, 80, false);
     }
 
-    sync_usb_runtime_state(snapshot);
+    sync_protocol_runtime_state(snapshot);
     if (display_on_ && now - last_update_ms_ >= kUiRefreshMs) {
         LvglLockGuard lock;
         update_ui(false);
@@ -285,7 +296,7 @@ void RuntimeApp::onClose()
 {
     mclog::tagInfo(kAppName, "on close");
     relock();
-    usb_transport_clear_session_scoped_state();
+    protocol_runtime_clear_session_scoped_state();
     set_button_feedback_suppressed(false);
     key_manager_.reset();
 
@@ -312,6 +323,7 @@ void RuntimeApp::create_ui()
 
     rotary_dial_.create(root_);
     clock_scene_.create(root_);
+    local_transport_pairing_scene_.create(root_);
 
     constexpr int kSlotWidth = 32;
     constexpr int kSlotGap = 2;
@@ -357,6 +369,7 @@ void RuntimeApp::destroy_ui()
 {
     rotary_dial_.destroy();
     clock_scene_.destroy();
+    local_transport_pairing_scene_.destroy();
     if (root_ != nullptr) {
         lv_obj_delete(root_);
     }
@@ -385,9 +398,16 @@ void RuntimeApp::update_ui(bool force)
     update_input_slots();
     update_prompt_label();
     update_detail_label();
-    rotary_dial_.set_visible(auth_entry_mode() && !watch_visible_);
-    clock_scene_.set_visible(watch_visible_);
+    const bool local_transport_scene_visible =
+        runtime_state_ == RuntimeState::local_transport_pairing ||
+        runtime_state_ == RuntimeState::local_transport_result;
+    rotary_dial_.set_visible(
+        auth_entry_mode() && !watch_visible_ && !local_transport_scene_visible);
+    clock_scene_.set_visible(watch_visible_ && !local_transport_scene_visible);
     clock_scene_.update(now);
+    project_local_transport_scene();
+    local_transport_pairing_scene_.set_visible(local_transport_scene_visible);
+    local_transport_pairing_scene_.update(xTaskGetTickCount());
 }
 
 void RuntimeApp::handle_key_event(input::KeyEvent event, uint32_t now_ms)
@@ -410,73 +430,83 @@ void RuntimeApp::handle_key_event(input::KeyEvent event, uint32_t now_ms)
                 set_display_on(true, false, false);
                 return;
             }
-            if (screen_mode_ == ScreenMode::connect_review) {
-                if (usb_transport_reject_pending_request("user_rejected")) {
-                    enter_mode(ScreenMode::idle);
+            if (runtime_state_ == RuntimeState::local_transport_pairing) {
+                cancel_local_transport_carrier();
+                transition_to(RuntimeState::idle);
+                record_feedback(35, 70, false);
+                return;
+            }
+            if (runtime_state_ == RuntimeState::local_transport_result) {
+                transition_to(RuntimeState::idle);
+                record_feedback(20, 45, false);
+                return;
+            }
+            if (runtime_state_ == RuntimeState::connect_review) {
+                if (protocol_runtime_reject_pending_request("user_rejected")) {
+                    transition_to(RuntimeState::idle);
                     record_feedback(35, 70, false);
                 } else {
                     record_feedback(60, 90, false);
                 }
                 return;
             }
-            if (screen_mode_ == ScreenMode::proof_review) {
-                if (usb_transport_reject_pending_request("user_rejected")) {
-                    enter_mode(ScreenMode::idle);
+            if (runtime_state_ == RuntimeState::proof_review) {
+                if (protocol_runtime_reject_pending_request("user_rejected")) {
+                    transition_to(RuntimeState::idle);
                     record_feedback(35, 70, false);
                 } else {
                     record_feedback(60, 90, false);
                 }
                 return;
             }
-            if (screen_mode_ == ScreenMode::policy_review) {
-                if (usb_transport_reject_pending_request("user_rejected")) {
-                    enter_mode(ScreenMode::idle);
+            if (runtime_state_ == RuntimeState::policy_review) {
+                if (protocol_runtime_reject_pending_request("user_rejected")) {
+                    transition_to(RuntimeState::idle);
                     record_feedback(35, 70, false);
                 } else {
                     record_feedback(60, 90, false);
                 }
                 return;
             }
-            if (screen_mode_ == ScreenMode::signing_mode_review) {
-                enter_mode(ScreenMode::idle);
+            if (runtime_state_ == RuntimeState::signing_mode_review) {
+                transition_to(RuntimeState::idle);
                 record_feedback(25, 45, false);
                 return;
             }
-            if (screen_mode_ == ScreenMode::signing_review) {
-                if (usb_transport_reject_pending_request("user_rejected")) {
-                    enter_mode(ScreenMode::idle);
+            if (runtime_state_ == RuntimeState::signing_review) {
+                if (protocol_runtime_reject_pending_request("user_rejected")) {
+                    transition_to(RuntimeState::idle);
                     record_feedback(35, 70, false);
                 } else {
                     record_feedback(60, 90, false);
                 }
                 return;
             }
-            if (screen_mode_ == ScreenMode::device_reset_review) {
-                enter_mode(ScreenMode::idle);
+            if (runtime_state_ == RuntimeState::device_reset_review) {
+                transition_to(RuntimeState::idle);
                 record_feedback(25, 45, false);
                 return;
             }
-            if (screen_mode_ == ScreenMode::device_reset_auth) {
+            if (runtime_state_ == RuntimeState::device_reset_auth) {
                 clear_entry();
-                enter_mode(ScreenMode::device_reset_review);
+                transition_to(RuntimeState::device_reset_review);
                 record_feedback(25, 45, false);
                 return;
             }
-            if (screen_mode_ == ScreenMode::policy_auth) {
+            if (runtime_state_ == RuntimeState::policy_auth) {
                 clear_entry();
-                enter_mode(ScreenMode::policy_review);
+                transition_to(RuntimeState::policy_review);
                 record_feedback(25, 45, false);
                 return;
             }
-            if (screen_mode_ == ScreenMode::signing_mode_auth) {
+            if (runtime_state_ == RuntimeState::signing_mode_auth) {
                 clear_entry();
-                enter_mode(ScreenMode::signing_mode_review);
+                transition_to(RuntimeState::signing_mode_review);
                 record_feedback(25, 45, false);
                 return;
             }
-            if (screen_mode_ == ScreenMode::idle) {
-                enter_mode(ScreenMode::signing_mode_review);
-                record_feedback(25, 45, false);
+            if (runtime_state_ == RuntimeState::idle) {
+                begin_local_transport_pairing(now_ms);
                 return;
             }
             if (auth_entry_mode()) {
@@ -490,21 +520,26 @@ void RuntimeApp::handle_key_event(input::KeyEvent event, uint32_t now_ms)
                 set_display_on(true, false, false);
                 return;
             }
-            if (screen_mode_ == ScreenMode::connect_review) {
-                if (usb_transport_approve_pending_request()) {
-                    enter_mode(ScreenMode::idle);
+            if (runtime_state_ == RuntimeState::local_transport_pairing ||
+                runtime_state_ == RuntimeState::local_transport_result) {
+                record_feedback(35, 70, false);
+                return;
+            }
+            if (runtime_state_ == RuntimeState::connect_review) {
+                if (protocol_runtime_approve_pending_request()) {
+                    transition_to(RuntimeState::idle);
                     record_feedback(45, 75, false);
                 } else {
-                    enter_mode(ScreenMode::idle);
+                    transition_to(RuntimeState::idle);
                     record_feedback(80, 100, false);
                 }
                 return;
             }
-            if (screen_mode_ == ScreenMode::proof_review) {
-                usb_transport_poll();
-                const UsbPendingRequest pending = usb_transport_pending_request();
-                if (pending.kind != UsbPendingRequestKind::credential_propose) {
-                    enter_mode(ScreenMode::idle);
+            if (runtime_state_ == RuntimeState::proof_review) {
+                protocol_runtime_poll();
+                const PendingRequest pending = protocol_runtime_pending_request();
+                if (pending.kind != PendingRequestKind::credential_propose) {
+                    transition_to(RuntimeState::idle);
                     record_feedback(45, 75, false);
                     return;
                 }
@@ -512,18 +547,18 @@ void RuntimeApp::handle_key_event(input::KeyEvent event, uint32_t now_ms)
                     sui_zklogin_proposal_continue_to_auth(now_ms);
                 if (transition == SuiZkLoginProposalTransitionResult::ok) {
                     clear_entry();
-                    enter_mode(ScreenMode::proof_auth);
+                    transition_to(RuntimeState::proof_auth);
                     record_feedback(35, 65, false);
                 } else {
                     record_feedback(80, 100, false);
                 }
                 return;
             }
-            if (screen_mode_ == ScreenMode::policy_review) {
-                usb_transport_poll();
-                const UsbPendingRequest pending = usb_transport_pending_request();
-                if (pending.kind != UsbPendingRequestKind::policy_propose) {
-                    enter_mode(ScreenMode::idle);
+            if (runtime_state_ == RuntimeState::policy_review) {
+                protocol_runtime_poll();
+                const PendingRequest pending = protocol_runtime_pending_request();
+                if (pending.kind != PendingRequestKind::policy_propose) {
+                    transition_to(RuntimeState::idle);
                     record_feedback(45, 75, false);
                     return;
                 }
@@ -531,14 +566,14 @@ void RuntimeApp::handle_key_event(input::KeyEvent event, uint32_t now_ms)
                     signing::policy_update_flow_continue_to_pin(now_ms);
                 if (transition == signing::PolicyUpdateFlowTransitionResult::ok) {
                     clear_entry();
-                    enter_mode(ScreenMode::policy_auth);
+                    transition_to(RuntimeState::policy_auth);
                     record_feedback(35, 65, false);
                 } else {
                     record_feedback(80, 100, false);
                 }
                 return;
             }
-            if (screen_mode_ == ScreenMode::signing_mode_review) {
+            if (runtime_state_ == RuntimeState::signing_mode_review) {
                 signing::AuthorizationMode current_mode = signing::AuthorizationMode::user;
                 if (!signing::read_signing_authorization_mode(&current_mode)) {
                     record_feedback(80, 100, false);
@@ -548,28 +583,28 @@ void RuntimeApp::handle_key_event(input::KeyEvent event, uint32_t now_ms)
                                             ? signing::AuthorizationMode::user
                                             : signing::AuthorizationMode::policy;
                 clear_entry();
-                enter_mode(ScreenMode::signing_mode_auth);
+                transition_to(RuntimeState::signing_mode_auth);
                 record_feedback(35, 65, false);
                 return;
             }
-            if (screen_mode_ == ScreenMode::signing_review) {
-                if (usb_transport_approve_pending_request()) {
-                    enter_mode(ScreenMode::idle);
+            if (runtime_state_ == RuntimeState::signing_review) {
+                if (protocol_runtime_approve_pending_request()) {
+                    transition_to(RuntimeState::idle);
                     record_feedback(45, 75, false);
                 } else {
-                    enter_mode(ScreenMode::idle);
+                    transition_to(RuntimeState::idle);
                     record_feedback(80, 100, false);
                 }
                 return;
             }
-            if (screen_mode_ == ScreenMode::device_reset_review) {
+            if (runtime_state_ == RuntimeState::device_reset_review) {
                 clear_entry();
-                enter_mode(ScreenMode::device_reset_auth);
+                transition_to(RuntimeState::device_reset_auth);
                 record_feedback(35, 65, false);
                 return;
             }
-            if (screen_mode_ == ScreenMode::idle) {
-                enter_mode(ScreenMode::device_reset_review);
+            if (runtime_state_ == RuntimeState::idle) {
+                transition_to(RuntimeState::device_reset_review);
                 record_feedback(25, 45, false);
                 return;
             }
@@ -578,6 +613,11 @@ void RuntimeApp::handle_key_event(input::KeyEvent event, uint32_t now_ms)
         case input::KeyEvent::GoHome:
             if (!display_on_) {
                 set_display_on(true, false, false);
+                return;
+            }
+            if (runtime_state_ == RuntimeState::idle) {
+                transition_to(RuntimeState::signing_mode_review);
+                record_feedback(25, 45, false);
                 return;
             }
             record_feedback(60, 90, false);
@@ -602,6 +642,14 @@ void RuntimeApp::handle_touch_poll(uint32_t now_ms)
         if (down) {
             ignore_touch_until_release_ = true;
         }
+        touch_down_ = down;
+        touch_digit_ = -1;
+        dial_return_active_ = false;
+        return;
+    }
+
+    if (runtime_state_ == RuntimeState::local_transport_pairing ||
+        runtime_state_ == RuntimeState::local_transport_result) {
         touch_down_ = down;
         touch_digit_ = -1;
         dial_return_active_ = false;
@@ -787,15 +835,25 @@ void RuntimeApp::record_feedback(
     }
 }
 
-void RuntimeApp::enter_mode(ScreenMode mode)
+void RuntimeApp::transition_to(RuntimeState state)
 {
-    if (screen_mode_ == mode) {
+    if (runtime_state_ == state) {
         return;
     }
-    if (screen_mode_ == ScreenMode::setup_confirm && mode != ScreenMode::setup_confirm) {
+    if (runtime_state_ == RuntimeState::setup_confirm && state != RuntimeState::setup_confirm) {
         setup_state_.clear();
     }
-    screen_mode_ = mode;
+    if (runtime_state_ == RuntimeState::local_transport_pairing &&
+        state != RuntimeState::local_transport_pairing) {
+        local_transport_qr_rendered_ = false;
+    }
+    if (runtime_state_ == RuntimeState::local_transport_result &&
+        state != RuntimeState::local_transport_result) {
+        local_transport_result_deadline_ms_ = 0;
+        local_transport_result_rendered_ = false;
+        local_transport_result_ = LocalTransportResult::none;
+    }
+    runtime_state_ = state;
     reset_unlock_watch();
     last_update_ms_ = 0;
 }
@@ -821,16 +879,168 @@ void RuntimeApp::show_unlock_watch()
 
 bool RuntimeApp::unlock_watch_allowed() const
 {
-    const UsbPendingRequest pending = usb_transport_pending_request();
-    const UsbIdentificationDisplay identification = usb_transport_identification_display();
-    const bool request_prompt_active = pending.kind != UsbPendingRequestKind::none ||
+    const PendingRequest pending = protocol_runtime_pending_request();
+    const IdentificationDisplay identification = protocol_runtime_identification_display();
+    const bool request_prompt_active = pending.kind != PendingRequestKind::none ||
                                        identification.active;
-    return screen_mode_ == ScreenMode::unlock &&
+    return runtime_state_ == RuntimeState::unlock &&
            display_on_ &&
            !locally_unlocked_ &&
            auth_entry_.length() == 0 &&
            !dial_return_active_ &&
            !request_prompt_active;
+}
+
+void RuntimeApp::begin_local_transport_pairing(uint32_t now_ms)
+{
+    if (!protocol_runtime_local_transport_entry_allowed()) {
+        record_feedback(60, 90, false);
+        return;
+    }
+    local_transport_qr_rendered_ = false;
+    local_transport_result_deadline_ms_ = 0;
+    if (!local_transport_pairing_begin(xTaskGetTickCount())) {
+        signing::LocalTransportPairingEvent ignored_event;
+        local_transport_pairing_take_event(&ignored_event);
+        set_local_transport_result(
+            LocalTransportResult::unavailable,
+            now_ms,
+            1800U);
+        record_feedback(80, 100, false);
+        return;
+    }
+    transition_to(RuntimeState::local_transport_pairing);
+    record_feedback(25, 55, false);
+}
+
+void RuntimeApp::cancel_local_transport_carrier()
+{
+    local_transport_pairing_cancel();
+    local_transport_qr_rendered_ = false;
+    local_transport_result_deadline_ms_ = 0;
+    local_transport_result_rendered_ = false;
+    local_transport_result_ = LocalTransportResult::none;
+}
+
+void RuntimeApp::set_local_transport_result(
+    LocalTransportResult result,
+    uint32_t now_ms,
+    uint32_t duration_ms)
+{
+    local_transport_result_ = result;
+    local_transport_result_rendered_ = false;
+    local_transport_qr_rendered_ = false;
+    local_transport_result_deadline_ms_ = now_ms + duration_ms;
+    transition_to(RuntimeState::local_transport_result);
+}
+
+void RuntimeApp::sync_local_transport_state(uint32_t now_ms)
+{
+    signing::LocalTransportPairingEvent event =
+        signing::LocalTransportPairingEvent::unavailable;
+    if (local_transport_pairing_take_event(&event)) {
+        uint16_t vibration_ms = 65;
+        uint8_t strength = 90;
+        switch (event) {
+            case signing::LocalTransportPairingEvent::connected:
+                vibration_ms = 35;
+                strength = 70;
+                set_local_transport_result(
+                    LocalTransportResult::ready,
+                    now_ms,
+                    1200U);
+                break;
+            case signing::LocalTransportPairingEvent::expired:
+                set_local_transport_result(
+                    LocalTransportResult::expired,
+                    now_ms,
+                    1800U);
+                break;
+            case signing::LocalTransportPairingEvent::display_failed:
+                set_local_transport_result(
+                    LocalTransportResult::display_error,
+                    now_ms,
+                    1800U);
+                break;
+            case signing::LocalTransportPairingEvent::unavailable:
+                set_local_transport_result(
+                    LocalTransportResult::unavailable,
+                    now_ms,
+                    1800U);
+                break;
+            case signing::LocalTransportPairingEvent::failed:
+                set_local_transport_result(
+                    LocalTransportResult::failed,
+                    now_ms,
+                    1800U);
+                break;
+        }
+        record_feedback(vibration_ms, strength, false);
+        return;
+    }
+
+    if (runtime_state_ == RuntimeState::local_transport_pairing) {
+        const signing::LocalTransportPairingSnapshot snapshot =
+            local_transport_pairing_snapshot();
+        if (!snapshot.active && !local_transport_pairing_active()) {
+            local_transport_qr_rendered_ = false;
+            transition_to(RuntimeState::idle);
+        }
+        return;
+    }
+
+    if (runtime_state_ == RuntimeState::local_transport_result &&
+        local_transport_result_deadline_ms_ != 0 &&
+        static_cast<int32_t>(now_ms - local_transport_result_deadline_ms_) >= 0) {
+        local_transport_result_deadline_ms_ = 0;
+        transition_to(RuntimeState::idle);
+    }
+}
+
+void RuntimeApp::project_local_transport_scene()
+{
+    if (runtime_state_ == RuntimeState::local_transport_pairing &&
+        !local_transport_qr_rendered_) {
+        const signing::LocalTransportPairingSnapshot snapshot =
+            local_transport_pairing_snapshot();
+        if (!snapshot.active ||
+            !local_transport_pairing_scene_.show_pairing(
+                snapshot.payload,
+                snapshot.deadline)) {
+            local_transport_pairing_handle_display_loss();
+            return;
+        }
+        local_transport_qr_rendered_ = true;
+        return;
+    }
+
+    if (runtime_state_ != RuntimeState::local_transport_result ||
+        local_transport_result_rendered_) {
+        return;
+    }
+
+    const char* message = "FAILED";
+    bool error = true;
+    switch (local_transport_result_) {
+        case LocalTransportResult::ready:
+            message = "READY";
+            error = false;
+            break;
+        case LocalTransportResult::expired:
+            message = "EXPIRED";
+            break;
+        case LocalTransportResult::display_error:
+            message = "DISPLAY ERR";
+            break;
+        case LocalTransportResult::unavailable:
+            message = "UNAVAILABLE";
+            break;
+        case LocalTransportResult::failed:
+        case LocalTransportResult::none:
+            break;
+    }
+    local_transport_pairing_scene_.show_result(message, error);
+    local_transport_result_rendered_ = true;
 }
 
 void RuntimeApp::refresh_auth_mode()
@@ -841,46 +1051,55 @@ void RuntimeApp::refresh_auth_mode()
 
 void RuntimeApp::refresh_auth_mode(const LocalAuthSnapshot& snapshot)
 {
-    sync_usb_runtime_state(snapshot);
-    if (usb_transport_projected_device_state_is_error()) {
+    sync_protocol_runtime_state(snapshot);
+    const bool auth_allows_local_transport =
+        snapshot.status == LocalAuthStoreStatus::active &&
+        !snapshot.locked &&
+        locally_unlocked_;
+    if (!auth_allows_local_transport &&
+        (local_transport_pairing_active() ||
+         local_transport_pairing_established())) {
+        cancel_local_transport_carrier();
+    }
+    if (protocol_runtime_projected_device_state_is_error()) {
         locally_unlocked_ = false;
-        enter_mode(ScreenMode::error);
+        transition_to(RuntimeState::error);
         return;
     }
     if (snapshot.status == LocalAuthStoreStatus::missing) {
         locally_unlocked_ = false;
-        if (screen_mode_ != ScreenMode::setup_enter && screen_mode_ != ScreenMode::setup_confirm) {
-            enter_mode(ScreenMode::setup_enter);
+        if (runtime_state_ != RuntimeState::setup_enter && runtime_state_ != RuntimeState::setup_confirm) {
+            transition_to(RuntimeState::setup_enter);
         }
         return;
     }
     if (snapshot.status == LocalAuthStoreStatus::invalid ||
         snapshot.status == LocalAuthStoreStatus::storage_error) {
         locally_unlocked_ = false;
-        enter_mode(ScreenMode::error);
+        transition_to(RuntimeState::error);
         return;
     }
     if (snapshot.locked) {
         locally_unlocked_ = false;
         clear_entry();
-        const UsbPendingRequest pending = usb_transport_pending_request();
-        if (pending.kind != UsbPendingRequestKind::credential_propose) {
-            usb_transport_reject_pending_request("auth_unavailable");
+        const PendingRequest pending = protocol_runtime_pending_request();
+        if (pending.kind != PendingRequestKind::credential_propose) {
+            protocol_runtime_reject_pending_request("auth_unavailable");
         }
-        enter_mode(ScreenMode::lockout);
+        transition_to(RuntimeState::lockout);
         return;
     }
     if (!locally_unlocked_) {
-        if (screen_mode_ != ScreenMode::setup_enter &&
-            screen_mode_ != ScreenMode::setup_confirm &&
-            screen_mode_ != ScreenMode::unlock) {
-            enter_mode(ScreenMode::unlock);
+        if (runtime_state_ != RuntimeState::setup_enter &&
+            runtime_state_ != RuntimeState::setup_confirm &&
+            runtime_state_ != RuntimeState::unlock) {
+            transition_to(RuntimeState::unlock);
         }
         return;
     }
-    if (screen_mode_ == ScreenMode::unlock ||
-        screen_mode_ == ScreenMode::lockout) {
-        enter_mode(ScreenMode::idle);
+    if (runtime_state_ == RuntimeState::unlock ||
+        runtime_state_ == RuntimeState::lockout) {
+        transition_to(RuntimeState::idle);
     }
 }
 
@@ -913,13 +1132,13 @@ void RuntimeApp::maybe_enter_watch(uint32_t now_ms)
     }
 }
 
-void RuntimeApp::sync_usb_runtime_state()
+void RuntimeApp::sync_protocol_runtime_state()
 {
     const LocalAuthSnapshot snapshot = local_auth_snapshot(GetHAL().millis());
-    sync_usb_runtime_state(snapshot);
+    sync_protocol_runtime_state(snapshot);
 }
 
-void RuntimeApp::sync_usb_runtime_state(const LocalAuthSnapshot& snapshot)
+void RuntimeApp::sync_protocol_runtime_state(const LocalAuthSnapshot& snapshot)
 {
     LocalAuthProjectionStatus auth_status = LocalAuthProjectionStatus::missing;
     switch (snapshot.status) {
@@ -939,17 +1158,18 @@ void RuntimeApp::sync_usb_runtime_state(const LocalAuthSnapshot& snapshot)
     if (auth_status != LocalAuthProjectionStatus::active) {
         locally_unlocked_ = false;
     }
-    const bool ui_busy = screen_mode_ == ScreenMode::connect_review ||
-                         screen_mode_ == ScreenMode::proof_review ||
-                         screen_mode_ == ScreenMode::policy_review ||
-                         screen_mode_ == ScreenMode::signing_review ||
-                         screen_mode_ == ScreenMode::signing_mode_review ||
-                         screen_mode_ == ScreenMode::proof_auth ||
-                         screen_mode_ == ScreenMode::policy_auth ||
-                         screen_mode_ == ScreenMode::signing_mode_auth ||
-                         screen_mode_ == ScreenMode::device_reset_review ||
-                         screen_mode_ == ScreenMode::device_reset_auth;
-    usb_transport_set_runtime_state(UsbRuntimeState{
+    const bool ui_busy = runtime_state_ == RuntimeState::connect_review ||
+                         runtime_state_ == RuntimeState::local_transport_pairing ||
+                         runtime_state_ == RuntimeState::proof_review ||
+                         runtime_state_ == RuntimeState::policy_review ||
+                         runtime_state_ == RuntimeState::signing_review ||
+                         runtime_state_ == RuntimeState::signing_mode_review ||
+                         runtime_state_ == RuntimeState::proof_auth ||
+                         runtime_state_ == RuntimeState::policy_auth ||
+                         runtime_state_ == RuntimeState::signing_mode_auth ||
+                         runtime_state_ == RuntimeState::device_reset_review ||
+                         runtime_state_ == RuntimeState::device_reset_auth;
+    protocol_runtime_set_state(ProtocolRuntimeState{
         auth_status,
         locally_unlocked_,
         ui_busy,
@@ -961,16 +1181,17 @@ void RuntimeApp::relock()
     locally_unlocked_ = false;
     reset_unlock_watch();
     clear_auth_scratch();
-    usb_transport_reject_pending_request("user_rejected");
+    protocol_runtime_reject_pending_request("user_rejected");
+    cancel_local_transport_carrier();
     const LocalAuthSnapshot snapshot = local_auth_snapshot(GetHAL().millis());
     if (snapshot.status == LocalAuthStoreStatus::missing) {
-        enter_mode(ScreenMode::setup_enter);
+        transition_to(RuntimeState::setup_enter);
     } else if (snapshot.status == LocalAuthStoreStatus::active && snapshot.locked) {
-        enter_mode(ScreenMode::lockout);
+        transition_to(RuntimeState::lockout);
     } else if (snapshot.status == LocalAuthStoreStatus::active) {
-        enter_mode(ScreenMode::unlock);
+        transition_to(RuntimeState::unlock);
     } else {
-        enter_mode(ScreenMode::error);
+        transition_to(RuntimeState::error);
     }
 }
 
@@ -1005,27 +1226,27 @@ void RuntimeApp::delete_digit(uint32_t now_ms)
         record_feedback(20, 45, false);
         return;
     }
-    if (screen_mode_ == ScreenMode::setup_confirm) {
+    if (runtime_state_ == RuntimeState::setup_confirm) {
         setup_state_.clear();
-        enter_mode(ScreenMode::setup_enter);
+        transition_to(RuntimeState::setup_enter);
         record_feedback(25, 45, false);
     }
 }
 
 void RuntimeApp::submit_entry(uint32_t now_ms)
 {
-    if (screen_mode_ == ScreenMode::idle) {
+    if (runtime_state_ == RuntimeState::idle) {
         record_feedback(18, 35, false);
         return;
     }
-    if (screen_mode_ == ScreenMode::lockout) {
+    if (runtime_state_ == RuntimeState::lockout) {
         record_feedback(25, 45, false);
         return;
     }
-    if (screen_mode_ == ScreenMode::error) {
+    if (runtime_state_ == RuntimeState::error) {
         if (complete_device_reset()) {
             locally_unlocked_ = false;
-            enter_mode(ScreenMode::setup_enter);
+            transition_to(RuntimeState::setup_enter);
             record_feedback(45, 75, false);
         } else {
             record_feedback(80, 100, false);
@@ -1039,215 +1260,215 @@ void RuntimeApp::submit_entry(uint32_t now_ms)
         return;
     }
 
-    if (screen_mode_ == ScreenMode::setup_enter) {
+    if (runtime_state_ == RuntimeState::setup_enter) {
         if (!setup_state_.set_first_entry(auth_entry_.code(), auth_entry_.length())) {
             clear_entry();
-            enter_mode(ScreenMode::error);
+            transition_to(RuntimeState::error);
             record_feedback(80, 100, false);
             return;
         }
         clear_entry();
-        enter_mode(ScreenMode::setup_confirm);
+        transition_to(RuntimeState::setup_confirm);
         record_feedback(25, 55, false);
         return;
     }
 
-    if (screen_mode_ == ScreenMode::setup_confirm) {
+    if (runtime_state_ == RuntimeState::setup_confirm) {
         const bool matches = setup_state_.matches(auth_entry_.code(), auth_entry_.length());
         setup_state_.clear();
         if (matches && store_new_auth_and_default_settings(auth_entry_.code(), auth_entry_.length())) {
             clear_entry();
             locally_unlocked_ = true;
-            enter_mode(ScreenMode::idle);
+            transition_to(RuntimeState::idle);
             record_feedback(45, 75, false);
             return;
         }
         clear_entry();
-        enter_mode(matches ? ScreenMode::error : ScreenMode::setup_enter);
+        transition_to(matches ? RuntimeState::error : RuntimeState::setup_enter);
         record_feedback(65, 95, false);
         return;
     }
 
-    if (screen_mode_ == ScreenMode::unlock) {
+    if (runtime_state_ == RuntimeState::unlock) {
         const LocalAuthVerifyResult result = local_auth_verify_code(auth_entry_.code(), auth_entry_.length(), now_ms);
         clear_entry();
         switch (result) {
             case LocalAuthVerifyResult::verified:
                 locally_unlocked_ = true;
-                enter_mode(ScreenMode::idle);
+                transition_to(RuntimeState::idle);
                 record_feedback(45, 75, false);
                 return;
             case LocalAuthVerifyResult::rejected:
                 locally_unlocked_ = false;
-                enter_mode(ScreenMode::unlock);
+                transition_to(RuntimeState::unlock);
                 record_feedback(65, 95, false);
                 return;
             case LocalAuthVerifyResult::locked:
                 locally_unlocked_ = false;
-                enter_mode(ScreenMode::lockout);
+                transition_to(RuntimeState::lockout);
                 record_feedback(80, 100, false);
                 return;
             case LocalAuthVerifyResult::missing:
                 locally_unlocked_ = false;
-                enter_mode(ScreenMode::setup_enter);
+                transition_to(RuntimeState::setup_enter);
                 record_feedback(45, 75, false);
                 return;
             case LocalAuthVerifyResult::invalid:
             case LocalAuthVerifyResult::storage_error:
                 locally_unlocked_ = false;
-                enter_mode(ScreenMode::error);
+                transition_to(RuntimeState::error);
                 record_feedback(80, 100, false);
                 return;
         }
     }
 
-    if (screen_mode_ == ScreenMode::proof_auth) {
+    if (runtime_state_ == RuntimeState::proof_auth) {
         const LocalAuthVerifyResult result = local_auth_verify_code(auth_entry_.code(), auth_entry_.length(), now_ms);
         clear_entry();
         switch (result) {
             case LocalAuthVerifyResult::verified:
-                if (usb_transport_approve_pending_request()) {
-                    enter_mode(ScreenMode::idle);
+                if (protocol_runtime_approve_pending_request()) {
+                    transition_to(RuntimeState::idle);
                     record_feedback(45, 75, false);
                 } else {
-                    enter_mode(ScreenMode::idle);
+                    transition_to(RuntimeState::idle);
                     record_feedback(80, 100, false);
                 }
                 return;
             case LocalAuthVerifyResult::rejected:
-                enter_mode(ScreenMode::proof_auth);
+                transition_to(RuntimeState::proof_auth);
                 record_feedback(65, 95, false);
                 return;
             case LocalAuthVerifyResult::locked:
                 locally_unlocked_ = false;
-                enter_mode(ScreenMode::lockout);
+                transition_to(RuntimeState::lockout);
                 record_feedback(80, 100, false);
                 return;
             case LocalAuthVerifyResult::missing:
                 locally_unlocked_ = false;
-                usb_transport_reject_pending_request("auth_unavailable");
-                enter_mode(ScreenMode::setup_enter);
+                protocol_runtime_reject_pending_request("auth_unavailable");
+                transition_to(RuntimeState::setup_enter);
                 record_feedback(45, 75, false);
                 return;
             case LocalAuthVerifyResult::invalid:
             case LocalAuthVerifyResult::storage_error:
                 locally_unlocked_ = false;
-                usb_transport_reject_pending_request("auth_unavailable");
-                enter_mode(ScreenMode::error);
+                protocol_runtime_reject_pending_request("auth_unavailable");
+                transition_to(RuntimeState::error);
                 record_feedback(80, 100, false);
                 return;
         }
     }
 
-    if (screen_mode_ == ScreenMode::policy_auth) {
+    if (runtime_state_ == RuntimeState::policy_auth) {
         const LocalAuthVerifyResult result = local_auth_verify_code(auth_entry_.code(), auth_entry_.length(), now_ms);
         clear_entry();
         switch (result) {
             case LocalAuthVerifyResult::verified:
-                if (usb_transport_approve_pending_request()) {
-                    enter_mode(ScreenMode::idle);
+                if (protocol_runtime_approve_pending_request()) {
+                    transition_to(RuntimeState::idle);
                     record_feedback(45, 75, false);
                 } else {
-                    enter_mode(ScreenMode::idle);
+                    transition_to(RuntimeState::idle);
                     record_feedback(80, 100, false);
                 }
                 return;
             case LocalAuthVerifyResult::rejected:
-                enter_mode(ScreenMode::policy_auth);
+                transition_to(RuntimeState::policy_auth);
                 record_feedback(65, 95, false);
                 return;
             case LocalAuthVerifyResult::locked:
                 locally_unlocked_ = false;
-                enter_mode(ScreenMode::lockout);
+                transition_to(RuntimeState::lockout);
                 record_feedback(80, 100, false);
                 return;
             case LocalAuthVerifyResult::missing:
                 locally_unlocked_ = false;
-                usb_transport_reject_pending_request("auth_unavailable");
-                enter_mode(ScreenMode::setup_enter);
+                protocol_runtime_reject_pending_request("auth_unavailable");
+                transition_to(RuntimeState::setup_enter);
                 record_feedback(45, 75, false);
                 return;
             case LocalAuthVerifyResult::invalid:
             case LocalAuthVerifyResult::storage_error:
                 locally_unlocked_ = false;
-                usb_transport_reject_pending_request("auth_unavailable");
-                enter_mode(ScreenMode::error);
+                protocol_runtime_reject_pending_request("auth_unavailable");
+                transition_to(RuntimeState::error);
                 record_feedback(80, 100, false);
                 return;
         }
     }
 
-    if (screen_mode_ == ScreenMode::signing_mode_auth) {
+    if (runtime_state_ == RuntimeState::signing_mode_auth) {
         const LocalAuthVerifyResult result = local_auth_verify_code(auth_entry_.code(), auth_entry_.length(), now_ms);
         clear_entry();
         switch (result) {
             case LocalAuthVerifyResult::verified:
                 if (signing::store_signing_authorization_mode(pending_signing_mode_)) {
-                    usb_transport_invalidate_projected_state_cache();
+                    protocol_runtime_invalidate_projected_state_cache();
                     locally_unlocked_ = true;
-                    enter_mode(ScreenMode::idle);
+                    transition_to(RuntimeState::idle);
                     record_feedback(45, 75, false);
                 } else {
-                    usb_transport_invalidate_projected_state_cache();
-                    enter_mode(ScreenMode::signing_mode_review);
+                    protocol_runtime_invalidate_projected_state_cache();
+                    transition_to(RuntimeState::signing_mode_review);
                     record_feedback(80, 100, false);
                 }
                 return;
             case LocalAuthVerifyResult::rejected:
-                enter_mode(ScreenMode::signing_mode_auth);
+                transition_to(RuntimeState::signing_mode_auth);
                 record_feedback(65, 95, false);
                 return;
             case LocalAuthVerifyResult::locked:
                 locally_unlocked_ = false;
-                enter_mode(ScreenMode::lockout);
+                transition_to(RuntimeState::lockout);
                 record_feedback(80, 100, false);
                 return;
             case LocalAuthVerifyResult::missing:
                 locally_unlocked_ = false;
-                enter_mode(ScreenMode::setup_enter);
+                transition_to(RuntimeState::setup_enter);
                 record_feedback(45, 75, false);
                 return;
             case LocalAuthVerifyResult::invalid:
             case LocalAuthVerifyResult::storage_error:
                 locally_unlocked_ = false;
-                enter_mode(ScreenMode::error);
+                transition_to(RuntimeState::error);
                 record_feedback(80, 100, false);
                 return;
         }
     }
 
-    if (screen_mode_ == ScreenMode::device_reset_auth) {
+    if (runtime_state_ == RuntimeState::device_reset_auth) {
         const LocalAuthVerifyResult result = local_auth_verify_code(auth_entry_.code(), auth_entry_.length(), now_ms);
         clear_entry();
         switch (result) {
             case LocalAuthVerifyResult::verified:
                 if (complete_device_reset()) {
                     locally_unlocked_ = false;
-                    enter_mode(ScreenMode::setup_enter);
+                    transition_to(RuntimeState::setup_enter);
                     record_feedback(45, 75, false);
                 } else {
-                    enter_mode(ScreenMode::device_reset_review);
+                    transition_to(RuntimeState::device_reset_review);
                     record_feedback(80, 100, false);
                 }
                 return;
             case LocalAuthVerifyResult::rejected:
-                enter_mode(ScreenMode::device_reset_auth);
+                transition_to(RuntimeState::device_reset_auth);
                 record_feedback(65, 95, false);
                 return;
             case LocalAuthVerifyResult::locked:
                 locally_unlocked_ = false;
-                enter_mode(ScreenMode::lockout);
+                transition_to(RuntimeState::lockout);
                 record_feedback(80, 100, false);
                 return;
             case LocalAuthVerifyResult::missing:
                 locally_unlocked_ = false;
-                enter_mode(ScreenMode::setup_enter);
+                transition_to(RuntimeState::setup_enter);
                 record_feedback(45, 75, false);
                 return;
             case LocalAuthVerifyResult::invalid:
             case LocalAuthVerifyResult::storage_error:
                 locally_unlocked_ = false;
-                enter_mode(ScreenMode::error);
+                transition_to(RuntimeState::error);
                 record_feedback(80, 100, false);
                 return;
         }
@@ -1258,19 +1479,19 @@ bool RuntimeApp::complete_device_reset()
 {
     clear_auth_scratch();
     const bool reset = device_reset_all();
-    usb_transport_invalidate_projected_state_cache();
+    protocol_runtime_invalidate_projected_state_cache();
     return reset;
 }
 
 bool RuntimeApp::auth_entry_mode() const
 {
-    return screen_mode_ == ScreenMode::setup_enter ||
-           screen_mode_ == ScreenMode::setup_confirm ||
-           screen_mode_ == ScreenMode::unlock ||
-           screen_mode_ == ScreenMode::proof_auth ||
-           screen_mode_ == ScreenMode::policy_auth ||
-           screen_mode_ == ScreenMode::signing_mode_auth ||
-           screen_mode_ == ScreenMode::device_reset_auth;
+    return runtime_state_ == RuntimeState::setup_enter ||
+           runtime_state_ == RuntimeState::setup_confirm ||
+           runtime_state_ == RuntimeState::unlock ||
+           runtime_state_ == RuntimeState::proof_auth ||
+           runtime_state_ == RuntimeState::policy_auth ||
+           runtime_state_ == RuntimeState::signing_mode_auth ||
+           runtime_state_ == RuntimeState::device_reset_auth;
 }
 
 bool RuntimeApp::input_timed_out(uint32_t now) const
@@ -1363,7 +1584,7 @@ void RuntimeApp::update_prompt_label()
 
     const char* text = "";
     lv_color_t color = lv_color_hex(0xC9D2D8);
-    const UsbIdentificationDisplay identification = usb_transport_identification_display();
+    const IdentificationDisplay identification = protocol_runtime_identification_display();
     if (identification.active) {
         text = identification.code;
         color = lv_color_hex(0xB8E3FF);
@@ -1375,22 +1596,22 @@ void RuntimeApp::update_prompt_label()
         lv_obj_invalidate(prompt_label_);
         return;
     }
-    const UsbSigningNotice signing_notice = usb_transport_signing_notice();
-    if (screen_mode_ == ScreenMode::idle && signing_notice.active) {
+    const SigningNotice signing_notice = protocol_runtime_signing_notice();
+    if (runtime_state_ == RuntimeState::idle && signing_notice.active) {
         switch (signing_notice.kind) {
-            case UsbSigningNoticeKind::rejected:
+            case SigningNoticeKind::rejected:
                 text = "REJECT";
                 color = lv_color_hex(0xFFCA7A);
                 break;
-            case UsbSigningNoticeKind::error:
+            case SigningNoticeKind::error:
                 text = "ERROR";
                 color = lv_color_hex(0xFF8A8A);
                 break;
-            case UsbSigningNoticeKind::success:
+            case SigningNoticeKind::success:
                 text = "SIGNED";
                 color = lv_color_hex(0x9BE7B5);
                 break;
-            case UsbSigningNoticeKind::info:
+            case SigningNoticeKind::info:
             default:
                 text = "POLICY";
                 color = lv_color_hex(0xB8E3FF);
@@ -1404,69 +1625,77 @@ void RuntimeApp::update_prompt_label()
         lv_obj_invalidate(prompt_label_);
         return;
     }
-    switch (screen_mode_) {
-        case ScreenMode::setup_enter:
+    switch (runtime_state_) {
+        case RuntimeState::setup_enter:
             text = "SET";
             break;
-        case ScreenMode::setup_confirm:
+        case RuntimeState::setup_confirm:
             text = "AGAIN";
             break;
-        case ScreenMode::unlock:
+        case RuntimeState::unlock:
             text = "UNLOCK";
             break;
-        case ScreenMode::idle:
+        case RuntimeState::idle:
             text = "IDLE";
             color = lv_color_hex(0x7D8A95);
             break;
-        case ScreenMode::connect_review:
+        case RuntimeState::local_transport_pairing:
+            text = "PAIR";
+            color = lv_color_hex(0xB8E3FF);
+            break;
+        case RuntimeState::local_transport_result:
+            text = "READY";
+            color = lv_color_hex(0x9BE7B5);
+            break;
+        case RuntimeState::connect_review:
             text = "LINK?";
             color = lv_color_hex(0xB8E3FF);
             break;
-        case ScreenMode::proof_review:
+        case RuntimeState::proof_review:
             text = "PROOF";
             color = lv_color_hex(0xB8E3FF);
             break;
-        case ScreenMode::signing_review:
+        case RuntimeState::signing_review:
             text = "SIGN?";
             color = lv_color_hex(0xB8E3FF);
             break;
-        case ScreenMode::policy_review:
+        case RuntimeState::policy_review:
             text = "POLICY";
             color = lv_color_hex(0xB8E3FF);
             break;
-        case ScreenMode::signing_mode_review:
+        case RuntimeState::signing_mode_review:
             text = "MODE";
             color = lv_color_hex(0xB8E3FF);
             break;
-        case ScreenMode::proof_auth:
-        case ScreenMode::policy_auth:
-        case ScreenMode::signing_mode_auth:
+        case RuntimeState::proof_auth:
+        case RuntimeState::policy_auth:
+        case RuntimeState::signing_mode_auth:
             text = "CHECK";
             color = lv_color_hex(0xB8E3FF);
             break;
-        case ScreenMode::device_reset_review:
+        case RuntimeState::device_reset_review:
             text = "RESET?";
             color = lv_color_hex(0xFFCA7A);
             break;
-        case ScreenMode::device_reset_auth:
+        case RuntimeState::device_reset_auth:
             text = "CHECK";
             color = lv_color_hex(0xFFCA7A);
             break;
-        case ScreenMode::lockout:
+        case RuntimeState::lockout:
             text = "WAIT";
             color = lv_color_hex(0xFFCA7A);
             break;
-        case ScreenMode::error:
+        case RuntimeState::error:
             text = "ERR";
             color = lv_color_hex(0xFF8A8A);
             break;
     }
-    const bool review_mode = screen_mode_ == ScreenMode::connect_review ||
-                             screen_mode_ == ScreenMode::proof_review ||
-                             screen_mode_ == ScreenMode::signing_review ||
-                             screen_mode_ == ScreenMode::policy_review ||
-                             screen_mode_ == ScreenMode::signing_mode_review ||
-                             screen_mode_ == ScreenMode::device_reset_review;
+    const bool review_mode = runtime_state_ == RuntimeState::connect_review ||
+                             runtime_state_ == RuntimeState::proof_review ||
+                             runtime_state_ == RuntimeState::signing_review ||
+                             runtime_state_ == RuntimeState::policy_review ||
+                             runtime_state_ == RuntimeState::signing_mode_review ||
+                             runtime_state_ == RuntimeState::device_reset_review;
     lv_obj_remove_flag(prompt_label_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_align(
         prompt_label_,
@@ -1493,37 +1722,37 @@ void RuntimeApp::update_detail_label()
 
     char text[320] = {};
     lv_color_t color = lv_color_hex(0xC9D2D8);
-    const UsbSigningNotice signing_notice = usb_transport_signing_notice();
-    if (screen_mode_ == ScreenMode::idle && signing_notice.active) {
+    const SigningNotice signing_notice = protocol_runtime_signing_notice();
+    if (runtime_state_ == RuntimeState::idle && signing_notice.active) {
         snprintf(
             text,
             sizeof(text),
             "%s",
             signing_notice.message[0] != '\0' ? signing_notice.message : "Signing result");
         switch (signing_notice.kind) {
-            case UsbSigningNoticeKind::rejected:
+            case SigningNoticeKind::rejected:
                 color = lv_color_hex(0xFFCA7A);
                 break;
-            case UsbSigningNoticeKind::error:
+            case SigningNoticeKind::error:
                 color = lv_color_hex(0xFF8A8A);
                 break;
-            case UsbSigningNoticeKind::success:
+            case SigningNoticeKind::success:
                 color = lv_color_hex(0x9BE7B5);
                 break;
-            case UsbSigningNoticeKind::info:
+            case SigningNoticeKind::info:
             default:
                 color = lv_color_hex(0xB8E3FF);
                 break;
         }
-    } else if (screen_mode_ == ScreenMode::connect_review) {
-        const UsbPendingRequest pending = usb_transport_pending_request();
+    } else if (runtime_state_ == RuntimeState::connect_review) {
+        const PendingRequest pending = protocol_runtime_pending_request();
         snprintf(
             text,
             sizeof(text),
             "Client\n%s\nA reject  B approve",
             pending.label[0] != '\0' ? pending.label : "USB host");
         color = lv_color_hex(0xB8E3FF);
-    } else if (screen_mode_ == ScreenMode::proof_review) {
+    } else if (runtime_state_ == RuntimeState::proof_review) {
         const SuiZkLoginProposalSnapshot snapshot =
             sui_zklogin_proposal_state_snapshot();
         char address_preview[28] = {};
@@ -1540,15 +1769,15 @@ void RuntimeApp::update_detail_label()
             snapshot.max_epoch != nullptr ? snapshot.max_epoch : "",
             proof_preview);
         color = lv_color_hex(0xB8E3FF);
-    } else if (screen_mode_ == ScreenMode::signing_review) {
-        const UsbPendingRequest pending = usb_transport_pending_request();
+    } else if (runtime_state_ == RuntimeState::signing_review) {
+        const PendingRequest pending = protocol_runtime_pending_request();
         snprintf(
             text,
             sizeof(text),
             "%s\nA reject  B sign",
             pending.label[0] != '\0' ? pending.label : "Sui request");
         color = lv_color_hex(0xB8E3FF);
-    } else if (screen_mode_ == ScreenMode::policy_review) {
+    } else if (runtime_state_ == RuntimeState::policy_review) {
         const signing::PolicyUpdateFlowSnapshot snapshot =
             signing::policy_update_flow_snapshot();
         char policy_preview[24] = {};
@@ -1573,7 +1802,7 @@ void RuntimeApp::update_detail_label()
                 : "Action",
             policy_preview);
         color = lv_color_hex(0xB8E3FF);
-    } else if (screen_mode_ == ScreenMode::signing_mode_review) {
+    } else if (runtime_state_ == RuntimeState::signing_mode_review) {
         signing::AuthorizationMode current_mode = signing::AuthorizationMode::user;
         const bool mode_available = signing::read_signing_authorization_mode(&current_mode);
         const signing::AuthorizationMode next_mode =
@@ -1588,7 +1817,7 @@ void RuntimeApp::update_detail_label()
             signing::authorization_mode_name(current_mode),
             signing::authorization_mode_name(next_mode));
         color = lv_color_hex(0xB8E3FF);
-    } else if (screen_mode_ == ScreenMode::device_reset_review) {
+    } else if (runtime_state_ == RuntimeState::device_reset_review) {
         snprintf(text, sizeof(text), "Reset device\nA cancel  B reset");
         color = lv_color_hex(0xFFCA7A);
     } else {

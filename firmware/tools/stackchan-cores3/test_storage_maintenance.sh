@@ -130,11 +130,13 @@ bool g_signing_mode_present = true;
 bool g_approval_history_present = true;
 bool g_policy_update_marker_present = true;
 bool g_zklogin_proof_present = true;
+bool g_pairing_store_present = true;
 bool g_sui_account_settings_present = true;
 bool g_root_wipe_fails = false;
 bool g_approval_history_wipe_fails = false;
 bool g_policy_update_marker_wipe_fails = false;
 bool g_zklogin_proof_wipe_fails = false;
+bool g_pairing_store_wipe_fails = false;
 bool g_sui_account_settings_wipe_fails = false;
 signing::HumanApprovalInputMode g_human_approval_input_mode =
     signing::HumanApprovalInputMode::pin;
@@ -174,11 +176,13 @@ void reset_stubs()
     g_approval_history_present = true;
     g_policy_update_marker_present = true;
     g_zklogin_proof_present = true;
+    g_pairing_store_present = true;
     g_sui_account_settings_present = true;
     g_root_wipe_fails = false;
     g_approval_history_wipe_fails = false;
     g_policy_update_marker_wipe_fails = false;
     g_zklogin_proof_wipe_fails = false;
+    g_pairing_store_wipe_fails = false;
     g_sui_account_settings_wipe_fails = false;
     g_human_approval_input_mode = signing::HumanApprovalInputMode::pin;
     g_last_worker_job_id = 0;
@@ -297,6 +301,15 @@ bool wipe_root_material()
         return false;
     }
     g_root_present = false;
+    return true;
+}
+
+bool local_transport_wipe_pairing_store()
+{
+    if (g_pairing_store_wipe_fails) {
+        return false;
+    }
+    g_pairing_store_present = false;
     return true;
 }
 
@@ -564,8 +577,8 @@ int main()
     expect(!g_root_present && !g_policy_present && !g_auth_present &&
                !g_human_approval_setting_present && !g_approval_history_present &&
                !g_policy_update_marker_present && !g_zklogin_proof_present &&
-               !g_sui_account_settings_present,
-           "error recovery wipes all persistent material, approval history, policy update marker, zkLogin proof, and Sui account settings");
+               !g_sui_account_settings_present && !g_pairing_store_present,
+           "error recovery wipes all persistent material, approval history, policy update marker, zkLogin proof, Sui account settings, and local transport identity");
     expect(!g_marker_present, "error recovery clears storage action marker");
     expect(g_clear_session_count == 1, "error recovery clears active session");
     expect(g_persist_unprovisioned_count == 1, "error recovery persists unprovisioned");
@@ -658,6 +671,20 @@ int main()
     expect(g_zklogin_proof_present, "failed zkLogin proof wipe leaves proof present");
 
     reset_stubs();
+    g_pairing_store_wipe_fails = true;
+    signing::storage_maintenance_begin_error_recovery_confirm(
+        pin_window(1, 100),
+        signing::StorageMaintenanceOperation::wallet_erase);
+    expect(signing::storage_maintenance_begin_error_recovery_wallet_erase(100),
+           "local transport identity failure path enters committing");
+    expect(signing::storage_maintenance_commit_material(ops()) == Commit::pairing_store_wipe_error,
+           "local transport identity wipe failure reports error");
+    expect(g_consistency_error_count == 1,
+           "local transport identity wipe failure enters consistency error");
+    expect(g_pairing_store_present,
+           "failed local transport identity wipe leaves identity present");
+
+    reset_stubs();
     g_sui_account_settings_wipe_fails = true;
     signing::storage_maintenance_begin_error_recovery_confirm(
         pin_window(1, 100),
@@ -678,8 +705,8 @@ int main()
     expect(!g_root_present && !g_policy_present && !g_auth_present &&
                !g_human_approval_setting_present && !g_approval_history_present &&
                !g_policy_update_marker_present && !g_zklogin_proof_present &&
-               !g_sui_account_settings_present,
-           "pending marker resume wipes all material, approval history, policy update marker, zkLogin proof, and Sui account settings");
+               !g_sui_account_settings_present && !g_pairing_store_present,
+           "pending marker resume wipes all material, approval history, policy update marker, zkLogin proof, Sui account settings, and local transport identity");
 
     reset_stubs();
     expect(signing::storage_maintenance_error_recovery_operation() ==

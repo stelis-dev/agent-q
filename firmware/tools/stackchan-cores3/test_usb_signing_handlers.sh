@@ -25,9 +25,9 @@ ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${COMMON_ROOT}/signing/usb_signing_handlers.cpp" \
-  "${COMMON_ROOT}/signing/usb_signing_handlers.h" \
-  "${COMMON_ROOT}/protocol/usb_operation_response_writer.h" \
+  "${COMMON_ROOT}/signing/signing_handlers.cpp" \
+  "${COMMON_ROOT}/signing/signing_handlers.h" \
+  "${COMMON_ROOT}/protocol/response_writer.h" \
   "${COMMON_ROOT}/signing/signing_preflight.h" \
     "${COMMON_ROOT}/protocol/signing_response_store.h" \
   "${RUNTIME_DIR}/sui_signing_service.h" \
@@ -69,7 +69,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include "sui/signing_limits.h"
 #include "protocol/signing_response_store.h"
 #include "sui_signing_service.h"
-#include "signing/usb_signing_handlers.h"
+#include "signing/signing_handlers.h"
 
 namespace {
 
@@ -134,8 +134,8 @@ const char* g_last_policy_response_message = nullptr;
 const char* g_last_notice_message = nullptr;
 signing::Route g_last_waiting_route =
     signing::Route::sui_sign_transaction;
-signing::UsbSigningNoticeKind g_last_notice_kind =
-    signing::UsbSigningNoticeKind::info;
+signing::SigningNoticeKind g_last_notice_kind =
+    signing::SigningNoticeKind::info;
 
 char g_retry_buffer[512] = {};
 
@@ -190,7 +190,7 @@ void reset_state()
     g_last_policy_response_message = nullptr;
     g_last_notice_message = nullptr;
     g_last_waiting_route = signing::Route::sui_sign_transaction;
-    g_last_notice_kind = signing::UsbSigningNoticeKind::info;
+    g_last_notice_kind = signing::SigningNoticeKind::info;
     memset(g_retry_buffer, 0, sizeof(g_retry_buffer));
 }
 
@@ -465,7 +465,7 @@ void record_waiting(const char* id, signing::Route route)
     g_last_waiting_route = route;
 }
 
-void show_notice(const char* message, signing::UsbSigningNoticeKind kind)
+void show_notice(const char* message, signing::SigningNoticeKind kind)
 {
     g_notice_calls += 1;
     g_last_notice_message = message;
@@ -492,9 +492,9 @@ signing::TimeoutTick current_tick()
     return 10;
 }
 
-signing::UsbSigningHandlerOps make_ops()
+signing::SigningHandlerOps make_ops()
 {
-    return signing::UsbSigningHandlerOps{
+    return signing::SigningHandlerOps{
         material_ready,
         busy,
         busy,
@@ -534,9 +534,9 @@ signing::UsbSigningHandlerOps make_ops()
     };
 }
 
-signing::UsbOperationResponseWriter make_writer()
+signing::ResponseWriter make_writer()
 {
-    return signing::UsbOperationResponseWriter{
+    return signing::ResponseWriter{
         write_error,
         log_write_failure,
     };
@@ -546,8 +546,8 @@ void test_unavailable_ops()
 {
     reset_state();
     JsonDocument request;
-    signing::UsbSigningHandlerOps ops = {};
-    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), ops);
+    signing::SigningHandlerOps ops = {};
+    signing::handle_protocol_sign_transaction_request("id-1", request, make_writer(), ops);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "internal_output_error") == 0);
     assert(g_tx_preflight_calls == 0);
@@ -559,7 +559,7 @@ void test_transaction_ingress_error_mapping()
     g_tx_preflight_result = signing::PreflightResult::transaction_ingress_error;
     g_tx_ingress_result = signing::SignTransactionUserIngressResult::invalid_tx_bytes;
     JsonDocument request;
-    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_tx_preflight_calls == 1);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "invalid_params") == 0);
@@ -572,7 +572,7 @@ void test_personal_message_ingress_error_mapping()
     g_pm_preflight_result = signing::PreflightResult::personal_message_ingress_error;
     g_pm_ingress_result = signing::SignPersonalMessageUserIngressResult::invalid_message;
     JsonDocument request;
-    signing::handle_usb_sign_personal_message_request("id-2", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_personal_message_request("id-2", request, make_writer(), make_ops());
     assert(g_pm_preflight_calls == 1);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "invalid_params") == 0);
@@ -585,7 +585,7 @@ void test_personal_message_capacity_ingress_error_mapping()
     g_pm_preflight_result = signing::PreflightResult::personal_message_ingress_error;
     g_pm_ingress_result = signing::SignPersonalMessageUserIngressResult::message_too_large;
     JsonDocument request;
-    signing::handle_usb_sign_personal_message_request("id-2", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_personal_message_request("id-2", request, make_writer(), make_ops());
     assert(g_pm_preflight_calls == 1);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "payload_too_large") == 0);
@@ -619,7 +619,7 @@ void test_preparation_account_failure_mapping()
     g_tx_preflight_result = signing::PreflightResult::transaction_preparation_error;
     g_preparation_result = signing::SuiSigningPreparationResult::account_unavailable;
     JsonDocument request;
-    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_record_runtime_failure_calls == 1);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "account_unavailable") == 0);
@@ -632,7 +632,7 @@ void test_preparation_active_identity_failure_mapping()
     g_tx_preflight_result = signing::PreflightResult::transaction_preparation_error;
     g_preparation_result = signing::SuiSigningPreparationResult::active_identity_unavailable;
     JsonDocument request;
-    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_record_runtime_failure_calls == 0);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "account_unavailable") == 0);
@@ -645,7 +645,7 @@ void test_preparation_invalid_account_mapping()
     g_tx_preflight_result = signing::PreflightResult::transaction_preparation_error;
     g_preparation_result = signing::SuiSigningPreparationResult::invalid_account;
     JsonDocument request;
-    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_record_runtime_failure_calls == 0);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "account_unavailable") == 0);
@@ -659,7 +659,7 @@ void test_personal_message_preparation_account_failure_mapping()
         signing::PreflightResult::personal_message_preparation_error;
     g_preparation_result = signing::SuiSigningPreparationResult::account_unavailable;
     JsonDocument request;
-    signing::handle_usb_sign_personal_message_request("id-2", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_personal_message_request("id-2", request, make_writer(), make_ops());
     assert(g_record_runtime_failure_calls == 1);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "account_unavailable") == 0);
@@ -673,11 +673,11 @@ void test_transaction_preparation_unsupported_notifies()
         signing::PreflightResult::transaction_preparation_error;
     g_preparation_result = signing::SuiSigningPreparationResult::unsupported_transaction;
     JsonDocument request;
-    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "unsupported_transaction") == 0);
     assert(g_notice_calls == 1);
-    assert(g_last_notice_kind == signing::UsbSigningNoticeKind::error);
+    assert(g_last_notice_kind == signing::SigningNoticeKind::error);
     assert(strcmp(g_last_notice_message, "Unsupported transaction") == 0);
     assert(g_begin_tx_calls == 0);
 }
@@ -689,11 +689,11 @@ void test_transaction_preparation_payload_too_large_notifies()
         signing::PreflightResult::transaction_preparation_error;
     g_preparation_result = signing::SuiSigningPreparationResult::payload_too_large;
     JsonDocument request;
-    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "payload_too_large") == 0);
     assert(g_notice_calls == 1);
-    assert(g_last_notice_kind == signing::UsbSigningNoticeKind::error);
+    assert(g_last_notice_kind == signing::SigningNoticeKind::error);
     assert(strcmp(g_last_notice_message, "Payload too large") == 0);
     assert(g_begin_tx_calls == 0);
 }
@@ -703,7 +703,7 @@ void test_retry_consumed_writes_no_error()
     reset_state();
     g_tx_preflight_result = signing::PreflightResult::retry_consumed;
     JsonDocument request;
-    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_tx_preflight_calls == 1);
     assert(g_write_error_calls == 0);
     assert(g_begin_tx_calls == 0);
@@ -715,7 +715,7 @@ void test_policy_transaction_rechecks_material_after_preflight()
     g_mode = signing::AuthorizationMode::policy;
     g_material_ready_after_preflight = false;
     JsonDocument request;
-    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_tx_preflight_calls == 1);
     assert(g_material_calls == 2);
     assert(g_write_error_calls == 1);
@@ -731,7 +731,7 @@ void test_user_transaction_rechecks_material_after_preflight()
     reset_state();
     g_material_ready_after_preflight = false;
     JsonDocument request;
-    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_tx_preflight_calls == 1);
     assert(g_material_calls == 2);
     assert(g_write_error_calls == 1);
@@ -746,7 +746,7 @@ void test_personal_message_rechecks_material_after_preflight()
     reset_state();
     g_material_ready_after_preflight = false;
     JsonDocument request;
-    signing::handle_usb_sign_personal_message_request("id-2", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_personal_message_request("id-2", request, make_writer(), make_ops());
     assert(g_pm_preflight_calls == 1);
     assert(g_material_calls == 2);
     assert(g_write_error_calls == 1);
@@ -762,13 +762,13 @@ void test_policy_signed_path_cleans_outputs()
     g_mode = signing::AuthorizationMode::policy;
     g_execution_status = signing::PolicySigningExecutionStatus::signed_success;
     JsonDocument request;
-    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_policy_eval_calls == 1);
     assert(g_policy_execute_calls == 1);
     assert(g_policy_response_calls == 1);
     assert(g_log_policy_signed_calls == 1);
     assert(g_notice_calls == 2);
-    assert(g_last_notice_kind == signing::UsbSigningNoticeKind::success);
+    assert(g_last_notice_kind == signing::SigningNoticeKind::success);
     assert(g_clear_policy_execution_calls == 1);
     assert(g_clear_policy_runtime_calls == 1);
     assert(g_clear_tx_prepared_calls == 2);
@@ -782,11 +782,11 @@ void test_policy_response_failure_logs_and_cleans()
     g_execution_status = signing::PolicySigningExecutionStatus::policy_rejected;
     g_policy_response_ok = false;
     JsonDocument request;
-    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_policy_response_calls == 1);
     assert(g_log_write_failure_calls == 1);
     assert(g_notice_calls == 2);
-    assert(g_last_notice_kind == signing::UsbSigningNoticeKind::error);
+    assert(g_last_notice_kind == signing::SigningNoticeKind::error);
     assert(g_clear_policy_execution_calls == 1);
     assert(g_clear_policy_runtime_calls == 1);
     assert(g_clear_tx_prepared_calls == 2);
@@ -798,13 +798,13 @@ void test_policy_signing_failed_path_cleans_outputs()
     g_mode = signing::AuthorizationMode::policy;
     g_execution_status = signing::PolicySigningExecutionStatus::signing_failed;
     JsonDocument request;
-    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_policy_eval_calls == 1);
     assert(g_policy_execute_calls == 1);
     assert(g_policy_response_calls == 1);
     assert(g_log_policy_failed_calls == 1);
     assert(g_notice_calls == 2);
-    assert(g_last_notice_kind == signing::UsbSigningNoticeKind::error);
+    assert(g_last_notice_kind == signing::SigningNoticeKind::error);
     assert(g_clear_policy_execution_calls == 1);
     assert(g_clear_policy_runtime_calls == 1);
     assert(g_clear_tx_prepared_calls == 2);
@@ -820,14 +820,14 @@ void test_policy_unsupported_transaction_notifies()
     g_policy_code = "unsupported_transaction";
     g_policy_message = "Policy cannot evaluate this transaction.";
     JsonDocument request;
-    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_policy_eval_calls == 1);
     assert(g_policy_execute_calls == 1);
     assert(g_policy_response_calls == 1);
     assert(strcmp(g_last_policy_response_code, "unsupported_transaction") == 0);
     assert(strcmp(g_last_policy_response_message, "Policy cannot evaluate this transaction.") == 0);
     assert(g_notice_calls == 1);
-    assert(g_last_notice_kind == signing::UsbSigningNoticeKind::error);
+    assert(g_last_notice_kind == signing::SigningNoticeKind::error);
     assert(strcmp(g_last_notice_message, "Policy cannot evaluate") == 0);
     assert(g_clear_policy_execution_calls == 1);
     assert(g_clear_policy_runtime_calls == 1);
@@ -839,7 +839,7 @@ void test_transaction_user_success()
 {
     reset_state();
     JsonDocument request;
-    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_begin_tx_calls == 1);
     assert(g_clear_tx_prepared_calls == 2);
     assert(g_show_review_calls == 1);
@@ -853,14 +853,14 @@ void test_transaction_begin_failure_cleans_prepared()
     reset_state();
     g_begin_result = signing::UserSigningFlowBeginResult::malformed_transaction;
     JsonDocument request;
-    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_begin_tx_calls == 1);
     assert(g_clear_tx_prepared_calls == 2);
     assert(g_show_review_calls == 0);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "malformed_transaction") == 0);
     assert(g_notice_calls == 1);
-    assert(g_last_notice_kind == signing::UsbSigningNoticeKind::error);
+    assert(g_last_notice_kind == signing::SigningNoticeKind::error);
     assert(strcmp(g_last_notice_message, "Malformed transaction") == 0);
 }
 
@@ -869,7 +869,7 @@ void test_transaction_ui_failure_cleans_flow()
     reset_state();
     g_show_review_ok = false;
     JsonDocument request;
-    signing::handle_usb_sign_transaction_request("id-1", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_transaction_request("id-1", request, make_writer(), make_ops());
     assert(g_begin_tx_calls == 1);
     assert(g_clear_tx_prepared_calls == 2);
     assert(g_show_review_calls == 1);
@@ -885,7 +885,7 @@ void test_personal_message_policy_mode_error()
     reset_state();
     g_pm_preflight_result = signing::PreflightResult::personal_message_policy_mode;
     JsonDocument request;
-    signing::handle_usb_sign_personal_message_request("id-2", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_personal_message_request("id-2", request, make_writer(), make_ops());
     assert(g_pm_preflight_calls == 1);
     assert(g_write_error_calls == 1);
     assert(strcmp(g_last_error_code, "unsupported_method") == 0);
@@ -896,7 +896,7 @@ void test_personal_message_user_success()
 {
     reset_state();
     JsonDocument request;
-    signing::handle_usb_sign_personal_message_request("id-2", request, make_writer(), make_ops());
+    signing::handle_protocol_sign_personal_message_request("id-2", request, make_writer(), make_ops());
     assert(g_begin_pm_calls == 1);
     assert(g_clear_pm_prepared_calls == 1);
     assert(g_show_review_calls == 1);
@@ -944,7 +944,7 @@ CPP
   -I"${COMMON_ROOT}" \
   -I"${TMP_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${COMMON_ROOT}/signing/usb_signing_handlers.cpp" \
+  "${COMMON_ROOT}/signing/signing_handlers.cpp" \
   -o "${TMP_DIR}/test_usb_signing_handlers"
 
 "${TMP_DIR}/test_usb_signing_handlers"

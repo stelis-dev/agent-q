@@ -47,8 +47,8 @@ if [[ "${SNAPSHOT_COUNT}" -ne 1 ]]; then
   exit 1
 fi
 
-if printf '%s\n' "${ON_RUNNING_BODY}" | grep -q 'sync_usb_runtime_state();'; then
-  echo "RuntimeApp::onRunning must reuse its LocalAuthSnapshot instead of calling sync_usb_runtime_state()" >&2
+if printf '%s\n' "${ON_RUNNING_BODY}" | grep -q 'sync_protocol_runtime_state();'; then
+  echo "RuntimeApp::onRunning must reuse its LocalAuthSnapshot instead of calling sync_protocol_runtime_state()" >&2
   exit 1
 fi
 

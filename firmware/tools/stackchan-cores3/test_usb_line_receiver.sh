@@ -22,6 +22,12 @@ done
 
 mkdir -p "${TMP_DIR}/driver" "${TMP_DIR}/freertos"
 
+cat >"${TMP_DIR}/esp_attr.h" <<'H'
+#pragma once
+
+#define EXT_RAM_BSS_ATTR
+H
+
 cat >"${TMP_DIR}/freertos/FreeRTOS.h" <<'H'
 #pragma once
 

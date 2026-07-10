@@ -222,9 +222,9 @@ SignTransactionPolicyRuntimeResult evaluate_sign_transaction_policy(
     if (prepared.route == SupportedSignRoute::sui_sign_transaction) {
         return evaluate_sui_sign_transaction(prepared);
     }
-    // Policy runtime is also a direct adapter boundary in host tests and
-    // non-USB callers. Keep this fail-closed assertion even though USB preflight
-    // normally selects the route first.
+    // Policy runtime is also a direct adapter boundary in host tests and other
+    // protocol callers. Keep this fail-closed assertion even though signing
+    // preflight normally selects the route first.
     return make_result(
         SignTransactionPolicyRuntimeStatus::unsupported_method,
         "unsupported_method",

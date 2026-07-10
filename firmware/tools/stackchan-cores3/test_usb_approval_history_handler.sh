@@ -25,11 +25,11 @@ ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
-  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.h" \
-  "${COMMON_ROOT}/protocol/usb_approval_history_handler.cpp" \
-  "${COMMON_ROOT}/protocol/usb_approval_history_handler.h" \
-  "${COMMON_ROOT}/protocol/usb_operation_response_writer.h" \
+  "${COMMON_ROOT}/protocol/active_session_request_guard.cpp" \
+  "${COMMON_ROOT}/protocol/active_session_request_guard.h" \
+  "${COMMON_ROOT}/protocol/approval_history_handler.cpp" \
+  "${COMMON_ROOT}/protocol/approval_history_handler.h" \
+  "${COMMON_ROOT}/protocol/response_writer.h" \
   "${RUNTIME_DIR}/usb_response_writer.h" \
   "${COMMON_ROOT}/numeric/u64_decimal.h" \
   "${REPO_ROOT}/firmware/src/common/protocol/approval_history_json_writer.cpp" \
@@ -57,7 +57,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdlib.h>
 #include <string.h>
 
-#include "protocol/usb_approval_history_handler.h"
+#include "protocol/approval_history_handler.h"
 
 namespace signing {
 
@@ -186,7 +186,7 @@ bool material_ready()
     return g_material_ready;
 }
 
-bool write_busy(const char* id, const signing::UsbOperationResponseWriter& writer)
+bool write_busy(const char* id, const signing::ResponseWriter& writer)
 {
     g_busy_calls += 1;
     g_last_id = id;
@@ -198,10 +198,10 @@ bool write_busy(const char* id, const signing::UsbOperationResponseWriter& write
 
 bool write_payload_admission_error(
     const char* id,
-    signing::UsbOperationType operation,
-    const signing::UsbOperationResponseWriter& writer)
+    signing::OperationType operation,
+    const signing::ResponseWriter& writer)
 {
-    assert(operation == signing::UsbOperationType::get_approval_history);
+    assert(operation == signing::OperationType::get_approval_history);
     g_payload_admission_calls += 1;
     g_last_id = id;
     if (!g_payload_admission_error) {
@@ -213,7 +213,7 @@ bool write_payload_admission_error(
 bool require_session(
     const char* id,
     const char* session_id,
-    const signing::UsbOperationResponseWriter& writer)
+    const signing::ResponseWriter& writer)
 {
     g_require_session_calls += 1;
     g_last_id = id;
@@ -250,18 +250,18 @@ signing::ApprovalHistoryReadResult read_history_page(
     return g_read_history_result;
 }
 
-signing::UsbOperationResponseWriter make_writer()
+signing::ResponseWriter make_writer()
 {
-    return signing::UsbOperationResponseWriter{
+    return signing::ResponseWriter{
         write_error,
         signing::usb_response_write_success_result,
         log_write_failure,
     };
 }
 
-signing::UsbApprovalHistoryHandlerOps make_ops()
+signing::ApprovalHistoryHandlerOps make_ops()
 {
-    return signing::UsbApprovalHistoryHandlerOps{
+    return signing::ApprovalHistoryHandlerOps{
         material_ready,
         write_busy,
         write_payload_admission_error,
@@ -323,7 +323,7 @@ int main()
         reset_state();
         g_material_ready = false;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{}}");
-        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
         assert(g_busy_calls == 0);
@@ -337,7 +337,7 @@ int main()
         reset_state();
         g_busy = true;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{}}");
-        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_material_calls == 1);
         assert(g_busy_calls == 1);
         assert(g_payload_admission_calls == 0);
@@ -352,7 +352,7 @@ int main()
         reset_state();
         g_payload_admission_error = true;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{}}");
-        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_material_calls == 1);
         assert(g_busy_calls == 1);
         assert(g_payload_admission_calls == 1);
@@ -366,7 +366,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":7}");
-        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
         assert(g_payload_admission_calls == 1);
@@ -379,7 +379,7 @@ int main()
         reset_state();
         g_session_valid = false;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{}}");
-        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_require_session_calls == 1);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
@@ -390,7 +390,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"extra\":1}");
-        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_request") == 0);
         assert(g_read_history_calls == 0);
@@ -400,7 +400,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":7}");
-        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_read_history_calls == 0);
@@ -410,7 +410,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{\"limit\":0}}");
-        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_read_history_calls == 0);
@@ -420,7 +420,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{\"beforeSeq\":7}}");
-        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_read_history_calls == 0);
@@ -430,7 +430,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{\"limit\":2,\"beforeSeq\":\"42\"}}");
-        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_read_history_calls == 1);
         assert(g_json_write_calls == 1);
@@ -453,7 +453,7 @@ int main()
         reset_state();
         g_read_history_result = signing::ApprovalHistoryReadResult::storage_error;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{}}");
-        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_read_history_calls == 1);
         assert(g_json_write_calls == 0);
         assert(g_write_error_calls == 1);
@@ -464,7 +464,7 @@ int main()
         reset_state();
         g_json_write_ok = false;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_approval_history\",\"sessionId\":\"session\",\"payload\":{}}");
-        signing::handle_usb_get_approval_history_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_get_approval_history_request("req", request, make_writer(), make_ops());
         assert(g_read_history_calls == 1);
         assert(g_json_write_calls == 1);
         assert(g_write_error_calls == 1);
@@ -482,8 +482,8 @@ CPP
   -I"${RUNTIME_DIR}" \
   -I"${TMP_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
-  "${COMMON_ROOT}/protocol/usb_approval_history_handler.cpp" \
+  "${COMMON_ROOT}/protocol/active_session_request_guard.cpp" \
+  "${COMMON_ROOT}/protocol/approval_history_handler.cpp" \
   "${REPO_ROOT}/firmware/src/common/protocol/approval_history_json_writer.cpp" \
   -o "${TMP_DIR}/test"
 

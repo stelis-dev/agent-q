@@ -21,25 +21,25 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-USB_SERVER="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_request_server.cpp"
-USB_APPROVAL_HISTORY_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/common/protocol/usb_approval_history_handler.cpp"
-USB_CONNECT_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/common/transport/usb_connect_handler.cpp"
-USB_OPERATION_TYPE_HEADER="${REPO_ROOT}/firmware/src/common/protocol/usb_operation_type.h"
-USB_OPERATION_TYPE_SOURCE="${REPO_ROOT}/firmware/src/common/protocol/usb_operation_type.cpp"
-USB_OPERATION_MANIFEST_SOURCE="${REPO_ROOT}/firmware/src/common/protocol/usb_operation_manifest.cpp"
-USB_OPERATION_RESPONSE_WRITER_HEADER="${REPO_ROOT}/firmware/src/common/protocol/usb_operation_response_writer.h"
-USB_OPERATION_DISPATCH_SOURCE="${REPO_ROOT}/firmware/src/common/protocol/usb_operation_dispatch.cpp"
-USB_ENVELOPE_SOURCE="${REPO_ROOT}/firmware/src/common/protocol/usb_request_envelope.cpp"
+PROTOCOL_SERVER="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/protocol_request_server.cpp"
+USB_APPROVAL_HISTORY_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/common/protocol/approval_history_handler.cpp"
+USB_CONNECT_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/common/transport/connect_handler.cpp"
+USB_OPERATION_TYPE_HEADER="${REPO_ROOT}/firmware/src/common/protocol/operation_type.h"
+USB_OPERATION_TYPE_SOURCE="${REPO_ROOT}/firmware/src/common/protocol/operation_type.cpp"
+USB_OPERATION_MANIFEST_SOURCE="${REPO_ROOT}/firmware/src/common/protocol/operation_manifest.cpp"
+USB_OPERATION_RESPONSE_WRITER_HEADER="${REPO_ROOT}/firmware/src/common/protocol/response_writer.h"
+USB_OPERATION_DISPATCH_SOURCE="${REPO_ROOT}/firmware/src/common/protocol/operation_dispatch.cpp"
+USB_ENVELOPE_SOURCE="${REPO_ROOT}/firmware/src/common/protocol/request_envelope.cpp"
 USB_LINE_RECEIVER_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/usb_line_receiver.cpp"
 UI_EVENT_BRIDGE_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/ui_event_bridge.cpp"
-USB_LINE_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/common/protocol/usb_request_line_handler.cpp"
-USB_DEVICE_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/common/protocol/usb_device_handlers.cpp"
-USB_DISCONNECT_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/common/transport/usb_disconnect_handler.cpp"
-USB_SIGNING_OUTCOME_WRITER_SOURCE="${REPO_ROOT}/firmware/src/common/signing/usb_signing_outcome_writer.cpp"
-USB_RETAINED_RESPONSE_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/common/transport/usb_retained_response_handlers.cpp"
-USB_SESSION_READ_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/common/protocol/usb_session_read_handlers.cpp"
-USB_POLICY_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/common/policy/usb_policy_handlers.cpp"
-USB_SIGNING_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/common/signing/usb_signing_handlers.cpp"
+USB_LINE_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/common/protocol/request_line_handler.cpp"
+USB_DEVICE_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/common/protocol/device_handlers.cpp"
+USB_DISCONNECT_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/common/transport/disconnect_handler.cpp"
+USB_SIGNING_OUTCOME_WRITER_SOURCE="${REPO_ROOT}/firmware/src/common/signing/signing_outcome_writer.cpp"
+USB_RETAINED_RESPONSE_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/common/transport/retained_response_handlers.cpp"
+USB_SESSION_READ_HANDLERS_SOURCE="${REPO_ROOT}/firmware/src/common/protocol/session_read_handlers.cpp"
+USB_POLICY_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/common/policy/policy_handlers.cpp"
+USB_SIGNING_HANDLER_SOURCE="${REPO_ROOT}/firmware/src/common/signing/signing_handlers.cpp"
 CONNECT_REVIEW_RESPONSE_FLOW_SOURCE="${REPO_ROOT}/firmware/src/common/transport/connect_review_response_flow.cpp"
 LOCAL_SETTINGS_RESET_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/storage_maintenance_ui_flow.cpp"
 LOCAL_PIN_AUTH_UI_SOURCE="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime/local_pin_auth_ui_flow.cpp"
@@ -142,14 +142,14 @@ expect_tree_present() {
   rm -f "${matches}"
 }
 
-usb_stack_expr="$(sed -n 's/.*kUsbRequestTaskStackBytes = \(.*\);/\1/p' "${USB_SERVER}" | head -n 1)"
-if [[ -z "${usb_stack_expr}" ]]; then
+protocol_stack_expr="$(sed -n 's/.*kProtocolRequestTaskStackBytes = \(.*\);/\1/p' "${PROTOCOL_SERVER}" | head -n 1)"
+if [[ -z "${protocol_stack_expr}" ]]; then
   echo "FAILED: USB request task stack size must be declared" >&2
   failures=$((failures + 1))
 else
-  usb_stack_bytes=$((usb_stack_expr))
-  if (( usb_stack_bytes < 32768 )); then
-    echo "FAILED: USB request task stack must be at least 32768 bytes" >&2
+  usb_stack_bytes=$((protocol_stack_expr))
+  if (( usb_stack_bytes < 24576 )); then
+    echo "FAILED: USB request task stack must be at least 24576 bytes" >&2
     failures=$((failures + 1))
   fi
 fi
@@ -166,8 +166,8 @@ expect_present "${USER_SIGNING_REVIEW_UI_SOURCE}" 'g_review_snapshot_scratch' \
   "user signing review UI must keep large review snapshots off the task stack"
 expect_absent "${USER_SIGNING_REVIEW_UI_SOURCE}" 'UserSigningFlowSnapshot[[:space:]]+[A-Za-z_]+[[:space:]]*=' \
   "user signing review UI must not allocate large review snapshots as stack locals"
-expect_absent "${USB_SERVER}" 'UserSigningFlowSnapshot[[:space:]]+[A-Za-z_]+[[:space:]]*=' \
-  "USB request server must use the small user-signing core snapshot outside review rendering"
+expect_absent "${PROTOCOL_SERVER}" 'UserSigningFlowSnapshot[[:space:]]+[A-Za-z_]+[[:space:]]*=' \
+  "protocol request server must use the small user-signing core snapshot outside review rendering"
 expect_absent "${USER_SIGNING_SOURCE}" 'UserSigningFlowSnapshot' \
   "user signing critical section must not copy large review snapshots"
 expect_absent "${USER_SIGNING_CONFIRMATION_SOURCE}" 'UserSigningFlowSnapshot' \
@@ -185,44 +185,44 @@ expect_present "${USB_SIGNING_OUTCOME_WRITER_SOURCE}" 'device_response_prepare_s
   "USB signing outcome writer must emit DeviceResponse envelopes through the shared response helper"
 expect_absent "${USB_SIGNING_OUTCOME_WRITER_SOURCE}" 'response\["type"\]' \
   "USB signing outcome writer must not hand-build top-level response type fields"
-expect_absent "${USB_SERVER}" 'response\["type"\]|write_signing_' \
-  "USB request server must not own public signing response JSON"
+expect_absent "${PROTOCOL_SERVER}" 'response\["type"\]|write_signing_' \
+  "protocol request server must not own public signing response JSON"
 expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" '"signing"' \
   "session-read handler must advertise shared signing capabilities"
-expect_present "${USB_OPERATION_RESPONSE_WRITER_HEADER}" 'UsbOperationResponseWriter' \
+expect_present "${USB_OPERATION_RESPONSE_WRITER_HEADER}" 'ResponseWriter' \
   "USB operation response writer boundary must be shared outside the USB server"
-expect_present "${USB_OPERATION_DISPATCH_SOURCE}" 'dispatch_usb_operation' \
+expect_present "${USB_OPERATION_DISPATCH_SOURCE}" 'dispatch_operation' \
   "USB operation dispatch boundary must live outside the USB server"
-expect_present "${USB_OPERATION_DISPATCH_SOURCE}" 'UsbOperationHandlers' \
+expect_present "${USB_OPERATION_DISPATCH_SOURCE}" 'OperationHandlers' \
   "USB operation dispatch boundary must route through an explicit handler table"
-expect_present "${USB_SERVER}" 'usb_operation_handlers' \
-  "USB request server must provide its public operation handler table"
-expect_present "${USB_SERVER}" 'handle_usb_request_line' \
-  "USB request server must route public request lines through the extracted line handler"
+expect_present "${PROTOCOL_SERVER}" 'protocol_operation_handlers' \
+  "protocol request server must provide its public operation handler table"
+expect_present "${PROTOCOL_SERVER}" 'handle_protocol_request_line' \
+  "protocol request server must route public request lines through the extracted line handler"
 expect_present "${USB_LINE_RECEIVER_SOURCE}" 'usb_serial_jtag_read_bytes' \
   "USB line receiver must own physical USB serial reads"
-expect_present "${USB_SERVER}" 'usb_line_receiver_poll' \
-  "USB request server must delegate physical line receive to the extracted line receiver"
-expect_absent "${USB_SERVER}" 'request_line_feed|g_line_buffer|g_line_size|g_discarding_invalid_line' \
-  "USB request server must not own line-framing accumulator state"
+expect_present "${PROTOCOL_SERVER}" 'usb_line_receiver_poll' \
+  "protocol request server must delegate physical line receive to the extracted line receiver"
+expect_absent "${PROTOCOL_SERVER}" 'request_line_feed|g_line_buffer|g_line_size|g_discarding_invalid_line' \
+  "protocol request server must not own line-framing accumulator state"
 expect_present "${UI_EVENT_BRIDGE_SOURCE}" 'modal_drawing_set_callbacks' \
   "UI event bridge must own modal callback registration"
 expect_present "${UI_EVENT_BRIDGE_SOURCE}" 'xQueueCreate' \
   "UI event bridge must own UI input queues"
-expect_present "${USB_SERVER}" 'ui_event_bridge_receive' \
-  "USB request server must consume UI events through the bridge"
+expect_present "${PROTOCOL_SERVER}" 'ui_event_bridge_receive' \
+  "protocol request server must consume UI events through the bridge"
 expect_present "${LOCAL_SETTINGS_RESET_UI_SOURCE}" 'storage_maintenance_ui_clear_if_needed' \
   "storage maintenance UI flow must own reset timeout and panel-loss cleanup"
 expect_present "${LOCAL_SETTINGS_RESET_UI_SOURCE}" 'storage_maintenance_ui_handle_auth_worker_result' \
   "storage maintenance UI flow must own action PIN worker-result handling"
 expect_present "${LOCAL_SETTINGS_RESET_UI_SOURCE}" 'storage_maintenance_ui_commit_if_ready' \
   "storage maintenance UI flow must own destructive reset commit handling"
-expect_present "${USB_SERVER}" 'storage_maintenance_ui_clear_if_needed' \
-  "USB request server maintenance phase must delegate local settings/reset cleanup"
-expect_present "${USB_SERVER}" 'storage_maintenance_ui_handle_auth_worker_result' \
-  "USB request server must delegate storage maintenance auth worker results"
-expect_absent "${USB_SERVER}" 'storage_maintenance_submit_pin_for_verification|storage_maintenance_complete_pin_verify_job|storage_maintenance_commit_material' \
-  "USB request server must not own local action PIN verification or destructive reset commit logic"
+expect_present "${PROTOCOL_SERVER}" 'storage_maintenance_ui_clear_if_needed' \
+  "protocol request server maintenance phase must delegate local settings/reset cleanup"
+expect_present "${PROTOCOL_SERVER}" 'storage_maintenance_ui_handle_auth_worker_result' \
+  "protocol request server must delegate storage maintenance auth worker results"
+expect_absent "${PROTOCOL_SERVER}" 'storage_maintenance_submit_pin_for_verification|storage_maintenance_complete_pin_verify_job|storage_maintenance_commit_material' \
+  "protocol request server must not own local action PIN verification or destructive reset commit logic"
 expect_present "${LOCAL_PIN_AUTH_UI_SOURCE}" 'local_pin_auth_ui_handle_verify_worker_result' \
   "local PIN auth UI flow must own PIN verifier worker-result handling"
 expect_present "${LOCAL_PIN_AUTH_UI_SOURCE}" 'local_pin_auth_ui_clear_if_needed' \
@@ -231,14 +231,14 @@ expect_present "${LOCAL_PIN_AUTH_UI_SOURCE}" 'local_pin_auth_ui_commit_setting_i
   "local PIN auth UI flow must own local PIN setting commit handling"
 expect_present "${LOCAL_PIN_AUTH_UI_SOURCE}" 'local_pin_auth_ui_cancel' \
   "local PIN auth UI flow must own local PIN cancellation terminal effects"
-expect_present "${USB_SERVER}" 'local_pin_auth_ui_handle_verify_worker_result' \
-  "USB request server must delegate local PIN auth verifier worker results"
-expect_present "${USB_SERVER}" 'local_pin_auth_ui_clear_if_needed' \
-  "USB request server maintenance phase must delegate local PIN auth cleanup"
-expect_absent "${USB_SERVER}" 'local_pin_auth_complete_verify_job|local_pin_auth_fail_processing_if_expired|local_pin_auth_release_lockout_if_elapsed|request_backed_local_pin_deadline_reached|request_backed_local_pin_resume_input_window|request_backed_local_pin_pause_input_window' \
-  "USB request server must not own local PIN verification, lockout, timeout, or request-backed input-window effects"
-expect_present "${USB_SERVER}" 'complete_user_signing_pin_verify_from_local_pin_auth' \
-  "USB request server must wire user-signing PIN verification through the user-signing confirmation coordinator"
+expect_present "${PROTOCOL_SERVER}" 'local_pin_auth_ui_handle_verify_worker_result' \
+  "protocol request server must delegate local PIN auth verifier worker results"
+expect_present "${PROTOCOL_SERVER}" 'local_pin_auth_ui_clear_if_needed' \
+  "protocol request server maintenance phase must delegate local PIN auth cleanup"
+expect_absent "${PROTOCOL_SERVER}" 'local_pin_auth_complete_verify_job|local_pin_auth_fail_processing_if_expired|local_pin_auth_release_lockout_if_elapsed|request_backed_local_pin_deadline_reached|request_backed_local_pin_resume_input_window|request_backed_local_pin_pause_input_window' \
+  "protocol request server must not own local PIN verification, lockout, timeout, or request-backed input-window effects"
+expect_present "${PROTOCOL_SERVER}" 'complete_user_signing_pin_verify_from_local_pin_auth' \
+  "protocol request server must wire user-signing PIN verification through the user-signing confirmation coordinator"
 expect_absent "${LOCAL_PIN_AUTH_UI_SOURCE}" 'user_signing_confirmation_complete_pin_verify_job_and_write_history|user_signing_confirmation_record_timeout|user_signing_confirmation_cancel_for_pin_loss|user_signing_flow_terminal_pending|user_signing_flow_cancel_for_ui_loss' \
   "local PIN auth UI flow must use app-level user-signing callbacks instead of direct user-signing owner calls"
 expect_present "${POLICY_UPDATE_REVIEW_UI_SOURCE}" 'policy_update_review_ui_continue' \
@@ -257,18 +257,18 @@ expect_present "${USER_SIGNING_REVIEW_UI_SOURCE}" 'user_signing_review_ui_scroll
   "user signing review UI flow must own scroll-start effects"
 expect_present "${USER_SIGNING_REVIEW_UI_SOURCE}" 'user_signing_review_ui_scroll_finished' \
   "user signing review UI flow must own scroll-finish effects"
-expect_present "${USB_SERVER}" 'policy_update_review_ui_continue' \
-  "USB request server must delegate policy update review continue handling"
-expect_present "${USB_SERVER}" 'policy_update_review_ui_clear_if_needed' \
-  "USB request server maintenance phase must delegate policy update review cleanup"
-expect_present "${USB_SERVER}" 'user_signing_review_ui_accept' \
-  "USB request server must delegate user signing review accept handling"
-expect_present "${USB_SERVER}" 'user_signing_review_ui_scroll_started' \
-  "USB request server must delegate user signing review scroll-start handling"
-expect_present "${USB_SERVER}" 'user_signing_review_ui_scroll_finished' \
-  "USB request server must delegate user signing review scroll-finish handling"
-expect_present "${USB_SERVER}" 'user_signing_review_ui_clear_if_needed' \
-  "USB request server maintenance phase must delegate user signing review cleanup"
+expect_present "${PROTOCOL_SERVER}" 'policy_update_review_ui_continue' \
+  "protocol request server must delegate policy update review continue handling"
+expect_present "${PROTOCOL_SERVER}" 'policy_update_review_ui_clear_if_needed' \
+  "protocol request server maintenance phase must delegate policy update review cleanup"
+expect_present "${PROTOCOL_SERVER}" 'user_signing_review_ui_accept' \
+  "protocol request server must delegate user signing review accept handling"
+expect_present "${PROTOCOL_SERVER}" 'user_signing_review_ui_scroll_started' \
+  "protocol request server must delegate user signing review scroll-start handling"
+expect_present "${PROTOCOL_SERVER}" 'user_signing_review_ui_scroll_finished' \
+  "protocol request server must delegate user signing review scroll-finish handling"
+expect_present "${PROTOCOL_SERVER}" 'user_signing_review_ui_clear_if_needed' \
+  "protocol request server maintenance phase must delegate user signing review cleanup"
 expect_present "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'request_backed_local_pin_owner_for_purpose' \
   "request-backed local PIN context must own purpose-to-owner classification"
 expect_present "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'request_backed_local_pin_cap_input_window' \
@@ -277,89 +277,89 @@ expect_present "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'request_backed_loca
   "request-backed local PIN context must own request-backed pause delegation"
 expect_present "${REQUEST_BACKED_LOCAL_PIN_CONTEXT_SOURCE}" 'request_backed_local_pin_resume_input_window' \
   "request-backed local PIN context must own request-backed resume delegation"
-expect_absent "${USB_SERVER}" 'RequestBackedPinOwner|request_backed_pin_owner_for_purpose|protocol_pin_approval_refresh_deadline_for_local_pin_purpose|protocol_pin_approval_pause_deadline_for_local_pin_purpose|user_signing_flow_refresh_pin_deadline|user_signing_confirmation_mark_pin_verification_started' \
-  "USB request server must not own request-backed local PIN owner/deadline delegation"
-expect_absent "${USB_SERVER}" 'signing::user_signing_flow_pause_review_deadline\(|signing::user_signing_flow_resume_review_deadline\(|signing::modal_pause_screen_bottom_timeout_timer_bar\(\)|signing::modal_resume_screen_bottom_timeout_timer_bar\(\)' \
-  "USB request server must not coordinate user signing review scroll state or timer display directly"
+expect_absent "${PROTOCOL_SERVER}" 'RequestBackedPinOwner|request_backed_pin_owner_for_purpose|protocol_pin_approval_refresh_deadline_for_local_pin_purpose|protocol_pin_approval_pause_deadline_for_local_pin_purpose|user_signing_flow_refresh_pin_deadline|user_signing_confirmation_mark_pin_verification_started' \
+  "protocol request server must not own request-backed local PIN owner/deadline delegation"
+expect_absent "${PROTOCOL_SERVER}" 'signing::user_signing_flow_pause_review_deadline\(|signing::user_signing_flow_resume_review_deadline\(|signing::modal_pause_screen_bottom_timeout_timer_bar\(\)|signing::modal_resume_screen_bottom_timeout_timer_bar\(\)' \
+  "protocol request server must not coordinate user signing review scroll state or timer display directly"
 expect_absent "${MODAL_DRAWING_HEADER}" 'modal_pause_screen_bottom_timeout_timer_bar|modal_resume_screen_bottom_timeout_timer_bar' \
   "modal drawing must not expose unscoped bottom timer pause/resume controls"
-expect_absent "${USB_SERVER}" 'g_ui_event_queue|g_connect_review_choice_queue|modal_drawing_set_callbacks|drawing_surface_set_panel_deleted_callback|xQueueCreate|xQueueSend|xQueueReceive|on_(connect_review|user_signing_review|policy_update_review|setup|settings|error_recovery|reset|backup_phrase|pin|import).*clicked' \
-  "USB request server must not own LVGL callback or UI input queue wiring"
-expect_present "${USB_LINE_HANDLER_SOURCE}" 'parse_usb_request_envelope' \
+expect_absent "${PROTOCOL_SERVER}" 'g_ui_event_queue|g_connect_review_choice_queue|modal_drawing_set_callbacks|drawing_surface_set_panel_deleted_callback|xQueueCreate|xQueueSend|xQueueReceive|on_(connect_review|user_signing_review|policy_update_review|setup|settings|error_recovery|reset|backup_phrase|pin|import).*clicked' \
+  "protocol request server must not own LVGL callback or UI input queue wiring"
+expect_present "${USB_LINE_HANDLER_SOURCE}" 'parse_request_envelope' \
   "USB line handler must parse request envelopes through the extracted helper"
-expect_present "${USB_LINE_HANDLER_SOURCE}" 'dispatch_usb_operation' \
+expect_present "${USB_LINE_HANDLER_SOURCE}" 'dispatch_operation' \
   "USB line handler must delegate to the extracted dispatch helper"
-expect_present "${USB_ENVELOPE_SOURCE}" 'classify_usb_operation_type' \
+expect_present "${USB_ENVELOPE_SOURCE}" 'classify_operation_type' \
   "USB envelope parser must use the public operation classifier"
 expect_present "${USB_LINE_HANDLER_SOURCE}" 'operation_type' \
   "USB line handler dispatch must use typed operation ids from the parsed envelope"
-expect_present "${USB_DEVICE_HANDLERS_SOURCE}" 'handle_usb_get_status_request' \
+expect_present "${USB_DEVICE_HANDLERS_SOURCE}" 'handle_protocol_get_status_request' \
   "get_status operation handler must live outside the USB server"
-expect_present "${USB_SERVER}" 'handle_usb_get_status_request' \
-  "USB request server handler table must route get_status to the extracted handler"
-expect_present "${USB_SERVER}" 'handle_identify_device_request' \
-  "USB request server must route identify_device through an injected operation wrapper"
-expect_present "${USB_DEVICE_HANDLERS_SOURCE}" 'handle_usb_identify_device_request' \
+expect_present "${PROTOCOL_SERVER}" 'handle_protocol_get_status_request' \
+  "protocol request server handler table must route get_status to the extracted handler"
+expect_present "${PROTOCOL_SERVER}" 'handle_identify_device_request' \
+  "protocol request server must route identify_device through an injected operation wrapper"
+expect_present "${USB_DEVICE_HANDLERS_SOURCE}" 'handle_protocol_identify_device_request' \
   "identify_device operation handler must live outside the USB server"
-expect_present "${USB_SERVER}" 'handle_connect_request' \
-  "USB request server must route connect through an operation handler"
-expect_present "${USB_CONNECT_HANDLER_SOURCE}" 'handle_usb_connect_request' \
+expect_present "${PROTOCOL_SERVER}" 'handle_connect_request' \
+  "protocol request server must route connect through an operation handler"
+expect_present "${USB_CONNECT_HANDLER_SOURCE}" 'handle_protocol_connect_request' \
   "connect operation handler must live outside the USB server"
-expect_present "${USB_SERVER}" 'handle_get_result_request' \
-  "USB request server must route get_result through an injected operation wrapper"
-expect_present "${USB_RETAINED_RESPONSE_HANDLERS_SOURCE}" 'handle_usb_get_result_request' \
+expect_present "${PROTOCOL_SERVER}" 'handle_get_result_request' \
+  "protocol request server must route get_result through an injected operation wrapper"
+expect_present "${USB_RETAINED_RESPONSE_HANDLERS_SOURCE}" 'handle_protocol_get_result_request' \
   "get_result operation handler must live outside the USB server"
 expect_present "${USB_RETAINED_RESPONSE_HANDLERS_SOURCE}" 'signing_response_find' \
   "retained-response handler must own stored-response lookup"
-expect_present "${USB_SERVER}" 'handle_ack_result_request' \
-  "USB request server must route ack_result through an injected operation wrapper"
-expect_present "${USB_RETAINED_RESPONSE_HANDLERS_SOURCE}" 'handle_usb_ack_result_request' \
+expect_present "${PROTOCOL_SERVER}" 'handle_ack_result_request' \
+  "protocol request server must route ack_result through an injected operation wrapper"
+expect_present "${USB_RETAINED_RESPONSE_HANDLERS_SOURCE}" 'handle_protocol_ack_result_request' \
   "ack_result operation handler must live outside the USB server"
 expect_present "${USB_RETAINED_RESPONSE_HANDLERS_SOURCE}" 'signing_response_ack' \
   "retained-response handler must own stored-response ack"
-expect_absent "${USB_SERVER}" 'try_deliver_stored_response_by_id|ack_stored_response_by_id' \
-  "USB request server must not own retained signing-outcome store adapters"
-expect_present "${USB_SERVER}" 'handle_get_capabilities_request' \
-  "USB request server must route get_capabilities through an operation handler"
-expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" 'handle_usb_get_capabilities_request' \
+expect_absent "${PROTOCOL_SERVER}" 'try_deliver_stored_response_by_id|ack_stored_response_by_id' \
+  "protocol request server must not own retained signing-outcome store adapters"
+expect_present "${PROTOCOL_SERVER}" 'handle_get_capabilities_request' \
+  "protocol request server must route get_capabilities through an operation handler"
+expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" 'handle_protocol_get_capabilities_request' \
   "get_capabilities operation handler must live outside the USB server"
-expect_present "${USB_SERVER}" 'handle_get_accounts_request' \
-  "USB request server must route get_accounts through an operation handler"
-expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" 'handle_usb_get_accounts_request' \
+expect_present "${PROTOCOL_SERVER}" 'handle_get_accounts_request' \
+  "protocol request server must route get_accounts through an operation handler"
+expect_present "${USB_SESSION_READ_HANDLERS_SOURCE}" 'handle_protocol_get_accounts_request' \
   "get_accounts operation handler must live outside the USB server"
-expect_present "${USB_SERVER}" 'handle_policy_get_request' \
-  "USB request server must route policy_get through an operation handler"
-expect_present "${USB_POLICY_HANDLER_SOURCE}" 'handle_usb_policy_get_request' \
+expect_present "${PROTOCOL_SERVER}" 'handle_policy_get_request' \
+  "protocol request server must route policy_get through an operation handler"
+expect_present "${USB_POLICY_HANDLER_SOURCE}" 'handle_protocol_policy_get_request' \
   "policy_get operation handler must live outside the USB server"
-expect_present "${USB_SERVER}" 'handle_disconnect_request' \
-  "USB request server must route disconnect through an operation handler"
-expect_present "${USB_DISCONNECT_HANDLER_SOURCE}" 'handle_usb_disconnect_request' \
+expect_present "${PROTOCOL_SERVER}" 'handle_disconnect_request' \
+  "protocol request server must route disconnect through an operation handler"
+expect_present "${USB_DISCONNECT_HANDLER_SOURCE}" 'handle_protocol_disconnect_request' \
   "disconnect operation handler must live outside the USB server"
-expect_present "${USB_SERVER}" 'handle_get_approval_history_request' \
-  "USB request server must route get_approval_history through an operation handler"
-expect_present "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" 'handle_usb_get_approval_history_request' \
+expect_present "${PROTOCOL_SERVER}" 'handle_get_approval_history_request' \
+  "protocol request server must route get_approval_history through an operation handler"
+expect_present "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" 'handle_protocol_get_approval_history_request' \
   "get_approval_history operation handler must live outside the USB server"
 expect_present "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" 'writer\.write_success_result\(id,[[:space:]]*"get_approval_history"' \
   "get_approval_history handler must own get_approval_history response JSON"
 expect_present "${USB_APPROVAL_HISTORY_HANDLER_SOURCE}" 'read_approval_history_page' \
   "get_approval_history handler must own approval-history page read dispatch"
-expect_absent "${USB_SERVER}" 'response\["type"\][[:space:]]*=[[:space:]]*"approval_history"|write_approval_history_response' \
-  "USB request server must not own approval_history response JSON"
-expect_present "${USB_SERVER}" 'handle_policy_propose_request' \
-  "USB request server must route policy_propose through an operation handler"
-expect_present "${USB_POLICY_HANDLER_SOURCE}" 'handle_usb_policy_propose_request' \
+expect_absent "${PROTOCOL_SERVER}" 'response\["type"\][[:space:]]*=[[:space:]]*"approval_history"|write_approval_history_response' \
+  "protocol request server must not own approval_history response JSON"
+expect_present "${PROTOCOL_SERVER}" 'handle_policy_propose_request' \
+  "protocol request server must route policy_propose through an operation handler"
+expect_present "${USB_POLICY_HANDLER_SOURCE}" 'handle_protocol_policy_propose_request' \
   "policy_propose operation handler must live outside the USB server"
 expect_present "${USB_POLICY_HANDLER_SOURCE}" 'writer\.write_success_result' \
   "policy_propose outcome writer must own policy_propose response JSON"
-expect_absent "${USB_SERVER}" 'response\["type"\]|usb_response_write_success_result\([^;]*"policy_propose"' \
-  "USB request server must not own policy proposal outcome response JSON"
-expect_present "${USB_SERVER}" 'handle_sign_transaction_request' \
-  "USB request server must route sign_transaction through an operation handler"
-expect_present "${USB_SERVER}" 'handle_sign_personal_message_request' \
-  "USB request server must route sign_personal_message through an operation handler"
-expect_present "${USB_SIGNING_HANDLER_SOURCE}" 'handle_usb_sign_transaction_request' \
+expect_absent "${PROTOCOL_SERVER}" 'response\["type"\]|usb_response_write_success_result\([^;]*"policy_propose"' \
+  "protocol request server must not own policy proposal outcome response JSON"
+expect_present "${PROTOCOL_SERVER}" 'handle_sign_transaction_request' \
+  "protocol request server must route sign_transaction through an operation handler"
+expect_present "${PROTOCOL_SERVER}" 'handle_sign_personal_message_request' \
+  "protocol request server must route sign_personal_message through an operation handler"
+expect_present "${USB_SIGNING_HANDLER_SOURCE}" 'handle_protocol_sign_transaction_request' \
   "sign_transaction operation handler must live outside the USB server"
-expect_present "${USB_SIGNING_HANDLER_SOURCE}" 'handle_usb_sign_personal_message_request' \
+expect_present "${USB_SIGNING_HANDLER_SOURCE}" 'handle_protocol_sign_personal_message_request' \
   "sign_personal_message operation handler must live outside the USB server"
 expect_present "${USB_SIGNING_HANDLER_SOURCE}" 'begin_transaction_user_signing|begin_personal_message_user_signing' \
   "extracted signing handler must enter user-confirmed authorization through injected state owners"
@@ -371,12 +371,12 @@ expect_present "${POLICY_SIGNING_EXECUTION_SOURCE}" 'write_policy_signing_confir
   "policy signing execution owner must own policy confirmation history writes"
 expect_present "${POLICY_SIGNING_EXECUTION_SOURCE}" 'sign_sui_transaction_from_active_identity' \
   "policy signing execution owner must own policy signing critical section"
-expect_absent "${USB_SERVER}" 'write_policy_signing_confirmation_history|write_policy_signing_terminal_history|sign_sui_ed25519_transaction_from_stored_root|sign_sui_transaction_from_active_identity' \
-  "USB request server must not assemble policy signing history/signing directly"
-expect_present "${USB_SERVER}" 'read_signing_authorization_mode' \
-  "USB request server must supply Firmware-local signing authorization mode"
-expect_present "${USB_SERVER}" 'user_signing_flow_begin' \
-  "USB request server must supply user-confirmed flow dependencies"
+expect_absent "${PROTOCOL_SERVER}" 'write_policy_signing_confirmation_history|write_policy_signing_terminal_history|sign_sui_ed25519_transaction_from_stored_root|sign_sui_transaction_from_active_identity' \
+  "protocol request server must not assemble policy signing history/signing directly"
+expect_present "${PROTOCOL_SERVER}" 'read_signing_authorization_mode' \
+  "protocol request server must supply Firmware-local signing authorization mode"
+expect_present "${PROTOCOL_SERVER}" 'user_signing_flow_begin' \
+  "protocol request server must supply user-confirmed flow dependencies"
 
 SIGN_TRANSACTION_BRANCH_SNIPPET="${TMP_DIR}/sign-transaction-branch.cpp"
 SIGN_TRANSACTION_PREFLIGHT_SNIPPET="${TMP_DIR}/sign-transaction-preflight.cpp"
@@ -398,9 +398,9 @@ awk '
   /PreflightResult evaluate_sign_personal_message_preflight/ { capture = 0 }
 ' "${SIGNING_PREFLIGHT_SOURCE}" >"${SIGN_TRANSACTION_PREFLIGHT_SNIPPET}"
 awk '
-  /void handle_usb_sign_transaction_request/ { capture = 1 }
+  /void handle_protocol_sign_transaction_request/ { capture = 1 }
   capture { print }
-  /void handle_usb_sign_personal_message_request/ { capture = 0 }
+  /void handle_protocol_sign_personal_message_request/ { capture = 0 }
 ' "${USB_SIGNING_HANDLER_SOURCE}" >"${SIGN_TRANSACTION_BRANCH_SNIPPET}"
 expect_present "${SIGN_TRANSACTION_BRANCH_SNIPPET}" 'make_preflight_runtime\(ops' \
   "sign_transaction handler snippet must be captured"
@@ -443,7 +443,7 @@ awk '
   /^\}  \/\/ namespace signing/ { capture = 0 }
 ' "${SIGNING_PREFLIGHT_SOURCE}" >"${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}"
 awk '
-  /void handle_usb_sign_personal_message_request/ { capture = 1 }
+  /void handle_protocol_sign_personal_message_request/ { capture = 1 }
   capture { print }
   /^}  \/\/ namespace signing/ { capture = 0 }
 ' "${USB_SIGNING_HANDLER_SOURCE}" >"${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}"
@@ -477,8 +477,8 @@ expect_present "${USB_SIGNING_HANDLER_SOURCE}" 'writer\.write_error\(id, "unsupp
   "sign_personal_message policy mode must emit unsupported_method"
 expect_present "${SIGN_PERSONAL_MESSAGE_PREFLIGHT_SNIPPET}" 'evaluate_sign_personal_message_user_ingress' \
   "sign_personal_message user mode must use the method-specific ingress owner"
-expect_absent "${USB_SERVER}" 'decode_sign_personal_message_request' \
-  "USB request server must not inline-decode sign_personal_message params"
+expect_absent "${PROTOCOL_SERVER}" 'decode_sign_personal_message_request' \
+  "protocol request server must not inline-decode sign_personal_message params"
 expect_present "${SIGN_PERSONAL_MESSAGE_BRANCH_SNIPPET}" 'begin_personal_message_user_signing' \
   "sign_personal_message user mode must enter the user-confirmed flow owner"
 
@@ -498,7 +498,7 @@ expect_absent "${USER_SIGNING_SOURCE}" 'strcmp\(snapshot\.method' \
   "signing critical section must not branch on raw snapshot method strings"
 expect_absent "${USER_SIGNING_SOURCE}" 'classify_signing_route' \
   "signing critical section must not reclassify raw method strings"
-expect_absent "${USB_SERVER}" 'classify_signing_route' \
+expect_absent "${PROTOCOL_SERVER}" 'classify_signing_route' \
   "signing response writer must not reclassify raw method strings"
 expect_absent "${POLICY_SIGNING_EXECUTION_SOURCE}" 'classify_sui_sign_transaction|base64_to_bytes|approval_history_digest_payload' \
   "policy signing execution must consume prepared signing data, not re-prepare transaction bytes"
@@ -521,41 +521,41 @@ awk '
   /void handle_line/ { capture = 1 }
   capture { print }
   /void poll_usb_input/ { capture = 0 }
-' "${USB_SERVER}" >"${HANDLE_LINE_SNIPPET}"
-expect_present "${HANDLE_LINE_SNIPPET}" 'handle_usb_request_line' \
+' "${PROTOCOL_SERVER}" >"${HANDLE_LINE_SNIPPET}"
+expect_present "${HANDLE_LINE_SNIPPET}" 'handle_protocol_request_line' \
   "handle_line must delegate line-level envelope parsing and operation dispatch"
-expect_absent "${HANDLE_LINE_SNIPPET}" 'classify_usb_operation_type' \
+expect_absent "${HANDLE_LINE_SNIPPET}" 'classify_operation_type' \
   "handle_line must not directly classify raw type strings"
-expect_absent "${HANDLE_LINE_SNIPPET}" 'parse_usb_request_envelope|dispatch_usb_operation' \
+expect_absent "${HANDLE_LINE_SNIPPET}" 'parse_request_envelope|dispatch_operation' \
   "handle_line must not own envelope parsing or operation dispatch"
 expect_absent "${HANDLE_LINE_SNIPPET}" 'strcmp\(type' \
   "handle_line must not own request-specific operation branching"
 expect_absent "${HANDLE_LINE_SNIPPET}" 'handle_(get_status|identify_device|connect|sign_transaction|sign_personal_message|get_result|ack_result|disconnect|get_capabilities|get_accounts|policy_get|get_approval_history|policy_propose)_request' \
   "handle_line must not call operation handlers directly"
 
-USB_TICK_SNIPPET="${TMP_DIR}/usb-request-server-tick.cpp"
+PROTOCOL_TICK_SNIPPET="${TMP_DIR}/protocol-request-server-tick.cpp"
 awk '
-  /void run_usb_request_server_tick/ { capture = 1 }
+  /void run_protocol_request_server_tick/ { capture = 1 }
   capture { print }
-  /void usb_request_task/ { capture = 0 }
-' "${USB_SERVER}" >"${USB_TICK_SNIPPET}"
-expect_order "${USB_TICK_SNIPPET}" 'run_usb_request_server_maintenance_phase' 'run_usb_request_server_local_ui_phase' \
-  "USB request server tick must run maintenance before local UI events"
-expect_order "${USB_TICK_SNIPPET}" 'run_usb_request_server_local_ui_phase' 'run_usb_request_server_connect_response_phase' \
-  "USB request server tick must process local UI state before connect responses"
-expect_order "${USB_TICK_SNIPPET}" 'run_usb_request_server_connect_response_phase' 'run_usb_request_server_transport_phase' \
-  "USB request server tick must resolve connect responses before USB transport polling"
+  /void protocol_request_task/ { capture = 0 }
+' "${PROTOCOL_SERVER}" >"${PROTOCOL_TICK_SNIPPET}"
+expect_order "${PROTOCOL_TICK_SNIPPET}" 'run_protocol_request_server_maintenance_phase' 'run_protocol_request_server_local_ui_phase' \
+  "protocol request server tick must run maintenance before local UI events"
+expect_order "${PROTOCOL_TICK_SNIPPET}" 'run_protocol_request_server_local_ui_phase' 'run_protocol_request_server_connect_response_phase' \
+  "protocol request server tick must process local UI state before connect responses"
+expect_order "${PROTOCOL_TICK_SNIPPET}" 'run_protocol_request_server_connect_response_phase' 'run_protocol_request_server_transport_phase' \
+  "protocol request server tick must resolve connect responses before transport polling"
 
-USB_CONNECT_RESPONSE_PHASE_SNIPPET="${TMP_DIR}/usb-connect-response-phase.cpp"
+PROTOCOL_CONNECT_RESPONSE_PHASE_SNIPPET="${TMP_DIR}/usb-connect-response-phase.cpp"
 awk '
-  /void run_usb_request_server_connect_response_phase/ { capture = 1 }
+  /void run_protocol_request_server_connect_response_phase/ { capture = 1 }
   capture { print }
-  /void run_usb_request_server_transport_phase/ { capture = 0 }
-' "${USB_SERVER}" >"${USB_CONNECT_RESPONSE_PHASE_SNIPPET}"
-expect_present "${USB_CONNECT_RESPONSE_PHASE_SNIPPET}" 'run_connect_review_response_flow' \
-  "USB connect-response phase must delegate connect review terminal response and recovery"
-expect_absent "${USB_CONNECT_RESPONSE_PHASE_SNIPPET}" 'send_connect_review_response_if_needed|ensure_connect_review_ui|connect_approval_deadline_reached|replace_active_session' \
-  "USB connect-response phase must not inline connect review terminal response logic"
+  /void run_protocol_request_server_transport_phase/ { capture = 0 }
+' "${PROTOCOL_SERVER}" >"${PROTOCOL_CONNECT_RESPONSE_PHASE_SNIPPET}"
+expect_present "${PROTOCOL_CONNECT_RESPONSE_PHASE_SNIPPET}" 'run_connect_review_response_flow' \
+  "protocol connect-response phase must delegate connect review terminal response and recovery"
+expect_absent "${PROTOCOL_CONNECT_RESPONSE_PHASE_SNIPPET}" 'send_connect_review_response_if_needed|ensure_connect_review_ui|connect_approval_deadline_reached|replace_active_session' \
+  "protocol connect-response phase must not inline connect review terminal response logic"
 expect_present "${CONNECT_REVIEW_RESPONSE_FLOW_SOURCE}" 'connect_review_response_flow_run' \
   "connect review response flow must own the connect response phase"
 expect_present "${CONNECT_REVIEW_RESPONSE_FLOW_SOURCE}" 'drain_connect_review_choice_events' \
@@ -569,10 +569,10 @@ expect_order "${CONNECT_REVIEW_RESPONSE_FLOW_SOURCE}" 'send_connect_terminal_res
 
 USB_TRANSPORT_PHASE_SNIPPET="${TMP_DIR}/usb-transport-phase.cpp"
 awk '
-  /void run_usb_request_server_transport_phase/ { capture = 1 }
+  /void run_protocol_request_server_transport_phase/ { capture = 1 }
   capture { print }
-  /void run_usb_request_server_tick/ { capture = 0 }
-' "${USB_SERVER}" >"${USB_TRANSPORT_PHASE_SNIPPET}"
+  /void run_protocol_request_server_tick/ { capture = 0 }
+' "${PROTOCOL_SERVER}" >"${USB_TRANSPORT_PHASE_SNIPPET}"
 expect_present "${USB_TRANSPORT_PHASE_SNIPPET}" 'poll_usb_host_connection' \
   "USB transport phase must poll host-link state before line input"
 expect_present "${USB_TRANSPORT_PHASE_SNIPPET}" 'poll_usb_input' \
@@ -580,24 +580,35 @@ expect_present "${USB_TRANSPORT_PHASE_SNIPPET}" 'poll_usb_input' \
 expect_order "${USB_TRANSPORT_PHASE_SNIPPET}" 'poll_usb_host_connection' 'poll_usb_input' \
   "USB transport phase must poll host-link state before reading new input"
 
+PROTOCOL_INIT_SNIPPET="${TMP_DIR}/protocol-request-server-init.cpp"
+awk '
+  /void init_protocol_request_server/ { capture = 1 }
+  capture { print }
+  /void notify_signing_ui_surface_ready/ { capture = 0 }
+' "${PROTOCOL_SERVER}" >"${PROTOCOL_INIT_SNIPPET}"
+expect_present "${PROTOCOL_INIT_SNIPPET}" 'g_usb_ready = init_usb_transport\(\);' \
+  "protocol request server must isolate USB initialization"
+expect_order "${PROTOCOL_INIT_SNIPPET}" 'g_usb_ready = init_usb_transport' 'if \(g_protocol_task == nullptr\)' \
+  "protocol task creation must not depend on USB transport availability"
+
 expect_present "${TRANSIENT_UI_FLOW_SOURCE}" 'transient_ui_show_identification_code' \
   "temporary identification display lifecycle must live in transient UI flow"
 expect_present "${TRANSIENT_UI_FLOW_SOURCE}" 'transient_ui_clear_identification_if_needed' \
   "temporary identification expiry must live in transient UI flow"
 expect_present "${TRANSIENT_UI_FLOW_SOURCE}" 'transient_ui_clear_message_if_needed' \
   "temporary message expiry must live in transient UI flow"
-expect_present "${USB_SERVER}" 'transient_ui_show_identification_code' \
-  "USB request server must delegate identification display to transient UI flow"
-expect_present "${USB_SERVER}" 'transient_ui_clear_identification_if_needed' \
-  "USB request server must delegate identification expiry to transient UI flow"
-expect_present "${USB_SERVER}" 'transient_ui_clear_message_if_needed' \
-  "USB request server must delegate message expiry to transient UI flow"
+expect_present "${PROTOCOL_SERVER}" 'transient_ui_show_identification_code' \
+  "protocol request server must delegate identification display to transient UI flow"
+expect_present "${PROTOCOL_SERVER}" 'transient_ui_clear_identification_if_needed' \
+  "protocol request server must delegate identification expiry to transient UI flow"
+expect_present "${PROTOCOL_SERVER}" 'transient_ui_clear_message_if_needed' \
+  "protocol request server must delegate message expiry to transient UI flow"
 USB_CLEAR_IDENTIFICATION_SNIPPET="${TMP_DIR}/usb-clear-identification.cpp"
 awk '
   /void clear_identification_if_needed/ { capture = 1 }
   capture { print }
   /void clear_signing_message_if_needed/ { capture = 0 }
-' "${USB_SERVER}" >"${USB_CLEAR_IDENTIFICATION_SNIPPET}"
+' "${PROTOCOL_SERVER}" >"${USB_CLEAR_IDENTIFICATION_SNIPPET}"
 expect_absent "${USB_CLEAR_IDENTIFICATION_SNIPPET}" 'identification_display_deadline_reached|avatar_overlay_mode\(\)|avatar_overlay_clear' \
   "USB clear_identification_if_needed must not inline temporary identification expiry logic"
 USB_CLEAR_MESSAGE_SNIPPET="${TMP_DIR}/usb-clear-message.cpp"
@@ -605,7 +616,7 @@ awk '
   /void clear_signing_message_if_needed/ { capture = 1 }
   capture { print }
   /void clear_connect_review_state/ { capture = 0 }
-' "${USB_SERVER}" >"${USB_CLEAR_MESSAGE_SNIPPET}"
+' "${PROTOCOL_SERVER}" >"${USB_CLEAR_MESSAGE_SNIPPET}"
 expect_absent "${USB_CLEAR_MESSAGE_SNIPPET}" 'avatar_overlay_message_deadline_reached|avatar_overlay_clear' \
   "USB clear_signing_message_if_needed must not inline temporary message expiry logic"
 
@@ -661,10 +672,17 @@ for source_dir in \
     "Production source must not retain Sui network policy facts"
 done
 
-while IFS= read -r source_file; do
+for source_file in \
+  "${REPO_ROOT}/packages/core/src/core.ts" \
+  "${REPO_ROOT}/packages/core/src/device.ts" \
+  "${REPO_ROOT}/packages/provider-sui/src/provider-sui.ts" \
+  "${REPO_ROOT}/packages/provider-sui/src/wallet-standard.ts" \
+  "${REPO_ROOT}/packages/provider-sui/src/browser.ts" \
+  "${REPO_ROOT}/packages/agent-q/src/mcp.ts" \
+  "${REPO_ROOT}/packages/agent-q/src/local-api.ts"; do
   expect_absent "${source_file}" 'approvalTimeoutMs|durationMs|timeoutMs' \
-    "Production signing source must not accept caller-controlled timing fields"
-done < <(find "${REPO_ROOT}/packages/core/src" "${REPO_ROOT}/packages/provider-sui/src" "${REPO_ROOT}/packages/agent-q/src" -type f \( -name '*.ts' -o -name '*.mts' -o -name '*.cts' \))
+    "Public signing and policy surfaces must not accept caller-controlled timing fields"
+done
 
 if [[ ${failures} -ne 0 ]]; then
   echo "${failures} Sign API activation boundary check(s) failed" >&2

@@ -31,12 +31,12 @@ for required in \
   "${COMMON_ROOT}/sui/zklogin_credential_payload.h" \
   "${COMMON_ROOT}/protocol/json_input.h" \
   "${COMMON_ROOT}/protocol/request_id.h" \
-  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
-  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.h" \
-  "${COMMON_ROOT}/protocol/usb_sui_zklogin_credential_handlers.cpp" \
-  "${COMMON_ROOT}/protocol/usb_sui_zklogin_credential_handlers.h" \
+  "${COMMON_ROOT}/protocol/active_session_request_guard.cpp" \
+  "${COMMON_ROOT}/protocol/active_session_request_guard.h" \
+  "${COMMON_ROOT}/protocol/sui_zklogin_credential_handlers.cpp" \
+  "${COMMON_ROOT}/protocol/sui_zklogin_credential_handlers.h" \
   "${COMMON_ROOT}/sui/zklogin_proof_record.h" \
-  "${COMMON_ROOT}/protocol/usb_operation_response_writer.h"; do
+  "${COMMON_ROOT}/protocol/response_writer.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -86,7 +86,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <string.h>
 
 #include "protocol/session_id.h"
-#include "protocol/usb_sui_zklogin_credential_handlers.h"
+#include "protocol/sui_zklogin_credential_handlers.h"
 
 namespace {
 
@@ -108,10 +108,10 @@ bool g_prepare_admission_blocks = false;
 bool g_propose_admission_blocks = false;
 bool g_safe_read_admission_blocks = false;
 bool g_session_valid = true;
-signing::UsbSuiZkLoginCredentialPrepareResult g_prepare_result =
-    signing::UsbSuiZkLoginCredentialPrepareResult::ok;
-signing::UsbSuiZkLoginCredentialProposalBeginResult g_begin_result =
-    signing::UsbSuiZkLoginCredentialProposalBeginResult::ok;
+signing::SuiZkLoginCredentialPrepareResult g_prepare_result =
+    signing::SuiZkLoginCredentialPrepareResult::ok;
+signing::SuiZkLoginCredentialProposalBeginResult g_begin_result =
+    signing::SuiZkLoginCredentialProposalBeginResult::ok;
 bool g_show_review_result = true;
 const char* g_last_id = nullptr;
 const char* g_last_session = nullptr;
@@ -122,8 +122,8 @@ char g_last_json_reason[40] = {};
 char g_last_json_public_key[48] = {};
 char g_last_json_address[80] = {};
 bool g_last_json_session_ended = false;
-signing::UsbOperationType g_last_safe_read_operation =
-    signing::UsbOperationType::unsupported;
+signing::OperationType g_last_safe_read_operation =
+    signing::OperationType::unsupported;
 
 void reset_state()
 {
@@ -145,8 +145,8 @@ void reset_state()
     g_propose_admission_blocks = false;
     g_safe_read_admission_blocks = false;
     g_session_valid = true;
-    g_prepare_result = signing::UsbSuiZkLoginCredentialPrepareResult::ok;
-    g_begin_result = signing::UsbSuiZkLoginCredentialProposalBeginResult::ok;
+    g_prepare_result = signing::SuiZkLoginCredentialPrepareResult::ok;
+    g_begin_result = signing::SuiZkLoginCredentialProposalBeginResult::ok;
     g_show_review_result = true;
     g_last_id = nullptr;
     g_last_session = nullptr;
@@ -157,7 +157,7 @@ void reset_state()
     g_last_json_public_key[0] = '\0';
     g_last_json_address[0] = '\0';
     g_last_json_session_ended = false;
-    g_last_safe_read_operation = signing::UsbOperationType::unsupported;
+    g_last_safe_read_operation = signing::OperationType::unsupported;
 }
 
 bool write_error(const char* id, const char* code)
@@ -181,7 +181,7 @@ bool material_ready()
     return g_material_ready;
 }
 
-bool write_prepare_admission(const char* id, const signing::UsbOperationResponseWriter& writer)
+bool write_prepare_admission(const char* id, const signing::ResponseWriter& writer)
 {
     g_prepare_admission_calls += 1;
     g_last_id = id;
@@ -192,7 +192,7 @@ bool write_prepare_admission(const char* id, const signing::UsbOperationResponse
     return false;
 }
 
-bool write_propose_admission(const char* id, const signing::UsbOperationResponseWriter& writer)
+bool write_propose_admission(const char* id, const signing::ResponseWriter& writer)
 {
     g_propose_admission_calls += 1;
     g_last_id = id;
@@ -205,8 +205,8 @@ bool write_propose_admission(const char* id, const signing::UsbOperationResponse
 
 bool write_safe_read_admission(
     const char* id,
-    signing::UsbOperationType operation,
-    const signing::UsbOperationResponseWriter& writer)
+    signing::OperationType operation,
+    const signing::ResponseWriter& writer)
 {
     g_safe_read_admission_calls += 1;
     g_last_id = id;
@@ -218,9 +218,9 @@ bool write_safe_read_admission(
     return false;
 }
 
-bool write_propose_state_error(const char* id, const signing::UsbOperationResponseWriter& writer)
+bool write_propose_state_error(const char* id, const signing::ResponseWriter& writer)
 {
-    if (g_prepare_result == signing::UsbSuiZkLoginCredentialPrepareResult::ok) {
+    if (g_prepare_result == signing::SuiZkLoginCredentialPrepareResult::ok) {
         return false;
     }
     writer.write_error(id, "invalid_state");
@@ -230,7 +230,7 @@ bool write_propose_state_error(const char* id, const signing::UsbOperationRespon
 bool require_session(
     const char* id,
     const char* session_id,
-    const signing::UsbOperationResponseWriter& writer)
+    const signing::ResponseWriter& writer)
 {
     g_require_session_calls += 1;
     g_last_id = id;
@@ -242,14 +242,14 @@ bool require_session(
     return g_session_valid;
 }
 
-signing::UsbSuiZkLoginCredentialPrepareResult prepare_credential(
+signing::SuiZkLoginCredentialPrepareResult prepare_credential(
     const char* session_id,
-    signing::UsbSuiZkLoginCredentialPreparation* output)
+    signing::SuiZkLoginCredentialPreparation* output)
 {
     g_prepare_credential_calls += 1;
     assert(strcmp(session_id, "session_0001020304050607") == 0);
     if (output == nullptr ||
-        g_prepare_result != signing::UsbSuiZkLoginCredentialPrepareResult::ok) {
+        g_prepare_result != signing::SuiZkLoginCredentialPrepareResult::ok) {
         return g_prepare_result;
     }
     snprintf(output->address, sizeof(output->address), "%s",
@@ -259,7 +259,7 @@ signing::UsbSuiZkLoginCredentialPrepareResult prepare_credential(
         output->public_key[index] = static_cast<uint8_t>(index);
     }
     output->public_key_size = 33;
-    return signing::UsbSuiZkLoginCredentialPrepareResult::ok;
+    return signing::SuiZkLoginCredentialPrepareResult::ok;
 }
 
 signing::TimeoutTick current_tick()
@@ -274,7 +274,7 @@ signing::TimeoutWindow make_window(signing::TimeoutTick now)
     return signing::timeout_window_from_deadline(now, now + 100);
 }
 
-signing::UsbSuiZkLoginCredentialProposalBeginResult begin_proposal(
+signing::SuiZkLoginCredentialProposalBeginResult begin_proposal(
     JsonVariantConst params,
     const char* request_id,
     const char* session_id,
@@ -312,38 +312,38 @@ bool write_success_result(const char* id, const char* method, JsonObjectConst re
     return true;
 }
 
-signing::UsbOperationResponseWriter make_writer()
+signing::ResponseWriter make_writer()
 {
-    return signing::UsbOperationResponseWriter{
+    return signing::ResponseWriter{
         write_error,
         write_success_result,
         log_write_failure,
     };
 }
 
-signing::UsbSuiZkLoginCredentialHandlerOps make_ops()
+signing::SuiZkLoginCredentialHandlerOps make_ops()
 {
-    const signing::UsbActiveSessionRequestGuardOps prepare_guard{
+    const signing::ActiveSessionRequestGuardOps prepare_guard{
         material_ready,
         nullptr,
         write_safe_read_admission,
         require_session,
     };
-    const signing::UsbActiveSessionRequestGuardOps propose_guard{
+    const signing::ActiveSessionRequestGuardOps propose_guard{
         material_ready,
         nullptr,
         nullptr,
         require_session,
     };
-    return signing::UsbSuiZkLoginCredentialHandlerOps{
+    return signing::SuiZkLoginCredentialHandlerOps{
         write_prepare_admission,
         write_propose_admission,
         nullptr,
         write_propose_state_error,
         prepare_guard,
         propose_guard,
-        signing::UsbSessionIdMode::required,
-        signing::UsbSessionIdMode::required,
+        signing::SessionIdMode::required,
+        signing::SessionIdMode::required,
         prepare_credential,
         current_tick,
         make_window,
@@ -399,11 +399,11 @@ int main()
         reset_state();
         JsonDocument request = parse_request(
             "{\"id\":\"req\",\"version\":1,\"method\":\"credential_prepare\",\"sessionId\":\"session_0001020304050607\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
-        signing::handle_usb_credential_prepare_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_credential_prepare_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_prepare_admission_calls == 1);
         assert(g_safe_read_admission_calls == 1);
-        assert(g_last_safe_read_operation == signing::UsbOperationType::credential_prepare);
+        assert(g_last_safe_read_operation == signing::OperationType::credential_prepare);
         assert(g_require_session_calls == 1);
         assert(g_prepare_credential_calls == 1);
         assert(g_write_json_calls == 1);
@@ -416,10 +416,10 @@ int main()
 
     {
         reset_state();
-        g_prepare_result = signing::UsbSuiZkLoginCredentialPrepareResult::invalid_state;
+        g_prepare_result = signing::SuiZkLoginCredentialPrepareResult::invalid_state;
         JsonDocument request = parse_request(
             "{\"id\":\"req\",\"version\":1,\"method\":\"credential_prepare\",\"sessionId\":\"session_0001020304050607\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
-        signing::handle_usb_credential_prepare_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_credential_prepare_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
         assert(g_write_json_calls == 0);
@@ -429,7 +429,7 @@ int main()
         reset_state();
         JsonDocument request = parse_request(
             "{\"id\":\"req\",\"version\":1,\"method\":\"credential_prepare\",\"sessionId\":\"session_0001020304050607\",\"payload\":{\"chain\":\"sui\",\"credential\":\"passkey\"}}");
-        signing::handle_usb_credential_prepare_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_credential_prepare_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_prepare_credential_calls == 0);
@@ -439,7 +439,7 @@ int main()
         reset_state();
         JsonDocument request = parse_request(
             "{\"id\":\"req\",\"version\":1,\"method\":\"credential_prepare\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
-        signing::handle_usb_credential_prepare_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_credential_prepare_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
         assert(g_prepare_credential_calls == 0);
@@ -449,7 +449,7 @@ int main()
         reset_state();
         JsonDocument request = parse_request(
             "{\"id\":\"req\",\"version\":1,\"method\":\"credential_prepare\",\"sessionId\":\"session_badg\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
-        signing::handle_usb_credential_prepare_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_credential_prepare_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
         assert(g_prepare_credential_calls == 0);
@@ -459,7 +459,7 @@ int main()
         reset_state();
         JsonDocument request = parse_request(
             "{\"id\":\"req\",\"version\":1,\"method\":\"credential_propose\",\"sessionId\":\"session_0001020304050607\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
-        signing::handle_usb_credential_propose_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_credential_propose_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_propose_admission_calls == 1);
@@ -473,7 +473,7 @@ int main()
         reset_state();
         JsonDocument request = parse_request(
             "{\"id\":\"req\",\"version\":1,\"method\":\"credential_propose\",\"sessionId\":\"session_0001020304050607\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\",\"network\":\"testnet\",\"address\":\"0x1\",\"publicKey\":\"bad\",\"maxEpoch\":\"1\",\"inputs\":{}}}");
-        signing::handle_usb_credential_propose_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_credential_propose_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_propose_admission_calls == 1);
         assert(g_safe_read_admission_calls == 0);
@@ -487,10 +487,10 @@ int main()
 
     {
         reset_state();
-        g_begin_result = signing::UsbSuiZkLoginCredentialProposalBeginResult::invalid_proof;
+        g_begin_result = signing::SuiZkLoginCredentialProposalBeginResult::invalid_proof;
         JsonDocument request = parse_request(
             "{\"id\":\"req\",\"version\":1,\"method\":\"credential_propose\",\"sessionId\":\"session_0001020304050607\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\",\"network\":\"testnet\",\"address\":\"0x1\",\"publicKey\":\"bad\",\"maxEpoch\":\"1\",\"inputs\":{}}}");
-        signing::handle_usb_credential_propose_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_credential_propose_request("req", request, make_writer(), make_ops());
         assert(g_begin_proposal_calls == 1);
         assert(g_show_review_calls == 0);
         assert(g_write_json_calls == 1);
@@ -502,10 +502,10 @@ int main()
 
     {
         reset_state();
-        g_prepare_result = signing::UsbSuiZkLoginCredentialPrepareResult::invalid_state;
+        g_prepare_result = signing::SuiZkLoginCredentialPrepareResult::invalid_state;
         JsonDocument request = parse_request(
             "{\"id\":\"req\",\"version\":1,\"method\":\"credential_propose\",\"sessionId\":\"session_0001020304050607\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\",\"network\":\"testnet\",\"address\":\"0x1\",\"publicKey\":\"bad\",\"maxEpoch\":\"1\",\"inputs\":{}}}");
-        signing::handle_usb_credential_propose_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_credential_propose_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
         assert(g_begin_proposal_calls == 0);
@@ -516,7 +516,7 @@ int main()
         reset_state();
         JsonDocument request = parse_request(
             "{\"id\":\"req\",\"version\":1,\"method\":\"credential_propose\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
-        signing::handle_usb_credential_propose_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_credential_propose_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
         assert(g_begin_proposal_calls == 0);
@@ -527,7 +527,7 @@ int main()
         reset_state();
         JsonDocument request = parse_request(
             "{\"id\":\"req\",\"version\":1,\"method\":\"credential_propose\",\"sessionId\":\"session_badg\",\"payload\":{\"chain\":\"sui\",\"credential\":\"zklogin\"}}");
-        signing::handle_usb_credential_propose_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_credential_propose_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
         assert(g_begin_proposal_calls == 0);
@@ -546,8 +546,8 @@ CPP
   -I"${COMMON_ROOT}" \
   -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${COMMON_ROOT}/protocol/usb_active_session_request_guard.cpp" \
-  "${COMMON_ROOT}/protocol/usb_sui_zklogin_credential_handlers.cpp" \
+  "${COMMON_ROOT}/protocol/active_session_request_guard.cpp" \
+  "${COMMON_ROOT}/protocol/sui_zklogin_credential_handlers.cpp" \
   "${COMMON_ROOT}/sui/zklogin_credential_outcome.cpp" \
   "${COMMON_ROOT}/sui/zklogin_credential_payload.cpp" \
   -o "${TMP_DIR}/test"

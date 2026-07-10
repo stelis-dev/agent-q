@@ -53,6 +53,7 @@ for required_common_protocol in \
   device_response.h \
   json_input.h \
   protocol_constants.h \
+  protocol_transport.h \
   protocol_input_copy.h \
   request_id.cpp \
   request_id.h \
@@ -65,15 +66,15 @@ for required_common_protocol in \
   sign_request_identity.h \
   signing_response_store.cpp \
   signing_response_store.h \
-  usb_active_session_request_guard.cpp \
-  usb_active_session_request_guard.h \
-  usb_session_read_handlers.cpp \
-  usb_session_read_handlers.h \
-  usb_sui_zklogin_credential_handlers.cpp \
-  usb_sui_zklogin_credential_handlers.h \
-  usb_operation_response_writer.h \
-  usb_operation_type.cpp \
-  usb_operation_type.h; do
+  active_session_request_guard.cpp \
+  active_session_request_guard.h \
+  session_read_handlers.cpp \
+  session_read_handlers.h \
+  sui_zklogin_credential_handlers.cpp \
+  sui_zklogin_credential_handlers.h \
+  response_writer.h \
+  operation_type.cpp \
+  operation_type.h; do
   if [[ ! -f "${COMMON_PROTOCOL}/${required_common_protocol}" ]]; then
     echo "Missing tracked common protocol source: ${COMMON_PROTOCOL}/${required_common_protocol}" >&2
     exit 1
@@ -82,6 +83,8 @@ done
 for required_common_signing in \
   policy_signing_execution_result.cpp \
   policy_signing_execution_result.h \
+	  protocol_transport_loss.cpp \
+	  protocol_transport_loss.h \
 	  signing_preflight.cpp \
 	  signing_preflight.h \
 	  signing_retry_delivery.cpp \
@@ -98,10 +101,10 @@ for required_common_signing in \
   sign_transaction_user_ingress.h \
   sign_transaction_user_validation.cpp \
   sign_transaction_user_validation.h \
-	  usb_signing_handlers.cpp \
-	  usb_signing_handlers.h \
-	  usb_signing_outcome_writer.cpp \
-	  usb_signing_outcome_writer.h \
+	  signing_handlers.cpp \
+	  signing_handlers.h \
+	  signing_outcome_writer.cpp \
+	  signing_outcome_writer.h \
 	  user_signing_flow.cpp \
   user_signing_flow.h \
   user_signing_critical_section.cpp \
@@ -132,8 +135,8 @@ for required_common_policy in \
   policy_update_flow.h \
   policy_update_marker.cpp \
   policy_update_marker.h \
-  usb_policy_handlers.cpp \
-  usb_policy_handlers.h \
+  policy_handlers.cpp \
+  policy_handlers.h \
   u64.h; do
   if [[ ! -f "${COMMON_POLICY}/${required_common_policy}" ]]; then
     echo "Missing tracked common policy source: ${COMMON_POLICY}/${required_common_policy}" >&2
@@ -184,6 +187,26 @@ for required_common_transport in \
   connect_approval.h \
   connect_review_response_flow.cpp \
   connect_review_response_flow.h \
+  local_transport_crypto.cpp \
+  local_transport_crypto.h \
+  local_transport_frame.cpp \
+  local_transport_frame.h \
+  local_transport_identity.h \
+  local_transport_identity_store.cpp \
+  local_transport_identity_store.h \
+  local_transport_mbedtls_crypto.cpp \
+  local_transport_mbedtls_crypto.h \
+  local_transport_nimble_peripheral.cpp \
+  local_transport_nimble_peripheral.h \
+  local_transport_nimble_pairing_session.cpp \
+  local_transport_nimble_pairing_session.h \
+  local_transport_noise.cpp \
+  local_transport_noise.h \
+  local_transport_optical_payload.cpp \
+  local_transport_optical_payload.h \
+  local_transport_pairing_session.cpp \
+  local_transport_pairing_session.h \
+  local_transport_profile.h \
   payload_delivery_admission.cpp \
   payload_delivery_admission.h \
   payload_delivery_operation_kind.h \
@@ -354,8 +377,21 @@ def set_config_value(config_path: Path, key: str, value: str) -> None:
     config_path.write_text("\n".join(updated) + "\n")
 
 
+REQUIRED_CONFIG = {
+    "CONFIG_ESP_MAIN_TASK_STACK_SIZE": "32768",
+    "CONFIG_LV_USE_QRCODE": "y",
+}
+
 for arg in sys.argv[1:]:
-    set_config_value(Path(arg), "CONFIG_ESP_MAIN_TASK_STACK_SIZE", "32768")
+    for key, value in REQUIRED_CONFIG.items():
+        set_config_value(Path(arg), key, value)
 PY
+
+python3 "${REPO_ROOT}/firmware/tools/common/configure_local_transport_sdkconfig.py" \
+  --malloc-always-internal 512 \
+  --malloc-reserve-internal 65536 \
+  --prefer-network-psram \
+  "${CHECKOUT_DIR}/sdkconfig.defaults" \
+  "${CHECKOUT_DIR}/sdkconfig"
 
 echo "Prepared StopWatch ESP32-S3 firmware at ${CHECKOUT_DIR}"

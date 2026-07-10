@@ -90,6 +90,8 @@ struct ModalDrawingCallbacks {
     lv_event_cb_t on_settings_policy_reset_clicked = nullptr;
     lv_event_cb_t on_settings_change_pin_clicked = nullptr;
     lv_event_cb_t on_settings_wallet_erase_clicked = nullptr;
+    lv_event_cb_t on_settings_local_transport_pairing_clicked = nullptr;
+    lv_event_cb_t on_local_transport_pairing_cancel_clicked = nullptr;
     lv_event_cb_t on_chain_settings_sui_clicked = nullptr;
     lv_event_cb_t on_sui_settings_back_clicked = nullptr;
     lv_event_cb_t on_sui_settings_gas_sponsor_clicked = nullptr;
@@ -237,6 +239,8 @@ int main()
     assert(g_callbacks.on_import_slot_clicked != nullptr);
     assert(g_callbacks.on_connect_review_accept_clicked != nullptr);
     assert(g_callbacks.on_settings_policy_reset_clicked != nullptr);
+    assert(g_callbacks.on_settings_local_transport_pairing_clicked != nullptr);
+    assert(g_callbacks.on_local_transport_pairing_cancel_clicked != nullptr);
     assert(g_callbacks.on_chain_settings_sui_clicked != nullptr);
     assert(g_callbacks.on_sui_settings_back_clicked != nullptr);
     assert(g_callbacks.on_sui_settings_gas_sponsor_clicked != nullptr);
@@ -328,6 +332,12 @@ int main()
 
     g_callbacks.on_settings_wallet_erase_clicked(nullptr);
     assert(receive_event().kind == signing::UiEventKind::settings_wallet_erase_requested);
+
+    g_callbacks.on_settings_local_transport_pairing_clicked(nullptr);
+    assert(receive_event().kind == signing::UiEventKind::settings_local_transport_pairing_requested);
+
+    g_callbacks.on_local_transport_pairing_cancel_clicked(nullptr);
+    assert(receive_event().kind == signing::UiEventKind::local_transport_pairing_cancel_requested);
 
     g_callbacks.on_sui_zklogin_review_continue_clicked(nullptr);
     assert(receive_event().kind == signing::UiEventKind::sui_zklogin_review_continue_requested);

@@ -13,12 +13,12 @@ for required in \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.h" \
   "${COMMON_ROOT}/protocol/device_response.h" \
-  "${COMMON_ROOT}/protocol/usb_json_response.cpp" \
+  "${COMMON_ROOT}/protocol/json_response.cpp" \
   "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
   "${COMMON_ROOT}/protocol/signing_response_store.h" \
   "${COMMON_ROOT}/protocol/sign_route.h" \
-  "${COMMON_ROOT}/signing/usb_signing_outcome_writer.cpp" \
-  "${COMMON_ROOT}/signing/usb_signing_outcome_writer.h"; do
+  "${COMMON_ROOT}/signing/signing_outcome_writer.cpp" \
+  "${COMMON_ROOT}/signing/signing_outcome_writer.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -89,7 +89,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 
 #include <string>
 
-#include "signing/usb_signing_outcome_writer.h"
+#include "signing/signing_outcome_writer.h"
 #include "protocol/device_contract.h"
 #include "protocol/device_response.h"
 #include "protocol/protocol_constants.h"
@@ -159,10 +159,10 @@ bool write_method_error_for_test(
     return true;
 }
 
-const signing::UsbSigningOutcomeWriterOps& outcome_writer_ops()
+const signing::SigningOutcomeWriterOps& outcome_writer_ops()
 {
-    static const signing::UsbSigningOutcomeWriterOps ops{
-        signing::UsbJsonResponseWriteOps{
+    static const signing::SigningOutcomeWriterOps ops{
+        signing::JsonResponseWriteOps{
             capture_response_bytes,
             nullptr,
             nullptr,
@@ -325,7 +325,7 @@ int main()
         result.signing_route = signing::Route::sui_sign_transaction;
         fill_native_signature(result.signature, sizeof(result.signature));
         result.signature_size = signing::kSuiEd25519SignatureBytes;
-        assert(signing::usb_signing_outcome_write_policy_execution(
+        assert(signing::signing_outcome_write_policy_execution(
             "req-policy-signed",
             "session-a",
             identity,
@@ -352,7 +352,7 @@ int main()
         result.signing_route = signing::Route::sui_sign_transaction;
         fill_zklogin_signature(result.signature, sizeof(result.signature));
         result.signature_size = signing::kSuiEd25519SignatureBytes + 48;
-        assert(signing::usb_signing_outcome_write_policy_execution(
+        assert(signing::signing_outcome_write_policy_execution(
             "req-policy-zklogin-signed",
             "session-a",
             identity,
@@ -379,12 +379,12 @@ int main()
         output.message_bytes[0] = 'h';
         output.message_bytes[1] = 'i';
         output.message_bytes_size = 2;
-        assert(signing::usb_signing_outcome_user_signed_response_fits(
+        assert(signing::signing_outcome_user_signed_response_fits(
             "req-user-signed",
             "user",
             snapshot,
             output));
-        assert(signing::usb_signing_outcome_write_user_signed(
+        assert(signing::signing_outcome_write_user_signed(
             "req-user-signed",
             "session-a",
             "user",
@@ -414,7 +414,7 @@ int main()
         output.message_bytes[0] = 'h';
         output.message_bytes[1] = 'i';
         output.message_bytes_size = 2;
-        assert(signing::usb_signing_outcome_write_user_signed(
+        assert(signing::signing_outcome_write_user_signed(
             "req-user-zklogin-personal-message",
             "session-a",
             "user",
@@ -444,12 +444,12 @@ int main()
             output.message_bytes[index] = static_cast<uint8_t>('A' + (index % 26));
         }
         output.message_bytes_size = signing::kSuiSignPersonalMessageMaxBytes;
-        assert(signing::usb_signing_outcome_user_signed_response_fits(
+        assert(signing::signing_outcome_user_signed_response_fits(
             "req-user-max-personal-message",
             "user",
             snapshot,
             output));
-        assert(signing::usb_signing_outcome_write_user_signed(
+        assert(signing::signing_outcome_write_user_signed(
             "req-user-max-personal-message",
             "session-a",
             "user",
@@ -483,12 +483,12 @@ int main()
         output.message_bytes[1] = 'i';
         output.message_bytes_size = 2;
         std::string oversized_id(signing::kResponseMaxSize, 'r');
-        assert(!signing::usb_signing_outcome_user_signed_response_fits(
+        assert(!signing::signing_outcome_user_signed_response_fits(
             oversized_id.c_str(),
             "user",
             snapshot,
             output));
-        assert(!signing::usb_signing_outcome_write_user_signed(
+        assert(!signing::signing_outcome_write_user_signed(
             oversized_id.c_str(),
             "session-too-large",
             "user",
@@ -523,7 +523,7 @@ int main()
         output.message_bytes[0] = 'h';
         output.message_bytes[1] = 'i';
         output.message_bytes_size = 2;
-        assert(!signing::usb_signing_outcome_write_user_signed(
+        assert(!signing::signing_outcome_write_user_signed(
             "req-conflict",
             "session-conflict",
             "user",
@@ -535,7 +535,7 @@ int main()
 
     {
         reset_capture();
-        assert(signing::usb_signing_outcome_write_user_terminal(
+        assert(signing::signing_outcome_write_user_terminal(
             "req-user-rejected",
             "session-b",
             identity,
@@ -559,7 +559,7 @@ int main()
         result.status = signing::PolicySigningExecutionStatus::account_error;
         result.code = "account_unavailable";
         result.message = "Signing account is unavailable.";
-        assert(signing::usb_signing_outcome_write_policy_execution(
+        assert(signing::signing_outcome_write_policy_execution(
             "req-policy-error",
             "session-c",
             identity,
@@ -585,9 +585,9 @@ CPP
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
-  "${COMMON_ROOT}/protocol/usb_json_response.cpp" \
+  "${COMMON_ROOT}/protocol/json_response.cpp" \
   "${COMMON_ROOT}/protocol/signing_response_store.cpp" \
-  "${COMMON_ROOT}/signing/usb_signing_outcome_writer.cpp" \
+  "${COMMON_ROOT}/signing/signing_outcome_writer.cpp" \
   -o "${TMP_DIR}/test_usb_signing_outcome_writer"
 
 "${TMP_DIR}/test_usb_signing_outcome_writer"

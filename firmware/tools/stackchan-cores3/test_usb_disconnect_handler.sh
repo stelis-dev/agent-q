@@ -27,10 +27,10 @@ ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${COMMON_TRANSPORT_DIR}/usb_disconnect_handler.cpp" \
-  "${COMMON_TRANSPORT_DIR}/usb_disconnect_handler.h" \
+  "${COMMON_TRANSPORT_DIR}/disconnect_handler.cpp" \
+  "${COMMON_TRANSPORT_DIR}/disconnect_handler.h" \
   "${USB_RESPONSE_WRITER_SOURCE}" \
-  "${COMMON_DIR}/protocol/usb_operation_response_writer.h"; do
+  "${COMMON_DIR}/protocol/response_writer.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -66,7 +66,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "transport/usb_disconnect_handler.h"
+#include "transport/disconnect_handler.h"
 
 namespace {
 
@@ -135,7 +135,7 @@ void log_write_failure(const char* response_type, const char* id)
 bool require_session(
     const char* id,
     const char* session_id,
-    const signing::UsbOperationResponseWriter& writer)
+    const signing::ResponseWriter& writer)
 {
     g_require_session_calls += 1;
     g_last_id = id;
@@ -149,7 +149,7 @@ bool require_session(
 bool disconnect_policy(
     const char* id,
     const char* session_id,
-    const signing::UsbOperationResponseWriter& writer)
+    const signing::ResponseWriter& writer)
 {
     g_cleanup_writer_available = writer.can_write_error();
     g_policy_cleanup_calls += 1;
@@ -161,7 +161,7 @@ bool disconnect_policy(
 bool disconnect_sui_zklogin(
     const char* id,
     const char* session_id,
-    const signing::UsbOperationResponseWriter& writer)
+    const signing::ResponseWriter& writer)
 {
     g_cleanup_writer_available = writer.can_write_error();
     g_sui_zklogin_cleanup_calls += 1;
@@ -173,7 +173,7 @@ bool disconnect_sui_zklogin(
 bool disconnect_user_signing(
     const char* id,
     const char* session_id,
-    const signing::UsbOperationResponseWriter& writer)
+    const signing::ResponseWriter& writer)
 {
     g_cleanup_writer_available = writer.can_write_error();
     g_user_signing_cleanup_calls += 1;
@@ -182,7 +182,7 @@ bool disconnect_user_signing(
     return g_user_signing_cleanup_consumed;
 }
 
-bool write_busy(const char* id, const signing::UsbOperationResponseWriter& writer)
+bool write_busy(const char* id, const signing::ResponseWriter& writer)
 {
     g_busy_calls += 1;
     g_last_id = id;
@@ -194,10 +194,10 @@ bool write_busy(const char* id, const signing::UsbOperationResponseWriter& write
 
 bool write_payload_admission_error(
     const char* id,
-    signing::UsbOperationType operation,
-    const signing::UsbOperationResponseWriter& writer)
+    signing::OperationType operation,
+    const signing::ResponseWriter& writer)
 {
-    assert(operation == signing::UsbOperationType::disconnect);
+    assert(operation == signing::OperationType::disconnect);
     g_payload_admission_calls += 1;
     g_last_id = id;
     if (g_payload_admission_blocks) {
@@ -224,18 +224,18 @@ bool write_success_result(const char* id, const char* method, JsonObjectConst re
     return g_write_disconnect_ok;
 }
 
-signing::UsbOperationResponseWriter make_writer()
+signing::ResponseWriter make_writer()
 {
-    return signing::UsbOperationResponseWriter{
+    return signing::ResponseWriter{
         write_error,
         write_success_result,
         log_write_failure,
     };
 }
 
-signing::UsbDisconnectHandlerOps make_ops()
+signing::DisconnectHandlerOps make_ops()
 {
-    return signing::UsbDisconnectHandlerOps{
+    return signing::DisconnectHandlerOps{
         require_session,
         disconnect_policy,
         disconnect_sui_zklogin,
@@ -261,7 +261,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"disconnect\",\"sessionId\":7}");
-        signing::handle_usb_disconnect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_disconnect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_session") == 0);
         assert(g_require_session_calls == 0);
@@ -272,7 +272,7 @@ int main()
         reset_state();
         g_session_valid = false;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"disconnect\",\"sessionId\":\"session\"}");
-        signing::handle_usb_disconnect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_disconnect_request("req", request, make_writer(), make_ops());
         assert(g_require_session_calls == 1);
         assert(strcmp(g_last_session, "session") == 0);
         assert(g_write_error_calls == 1);
@@ -285,7 +285,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"disconnect\",\"sessionId\":\"session\",\"extra\":1}");
-        signing::handle_usb_disconnect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_disconnect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_request") == 0);
         assert(g_policy_cleanup_calls == 0);
@@ -296,7 +296,7 @@ int main()
         reset_state();
         g_policy_cleanup_consumed = true;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"disconnect\",\"sessionId\":\"session\"}");
-        signing::handle_usb_disconnect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_disconnect_request("req", request, make_writer(), make_ops());
         assert(g_policy_cleanup_calls == 1);
         assert(g_cleanup_writer_available);
         assert(g_sui_zklogin_cleanup_calls == 0);
@@ -310,7 +310,7 @@ int main()
         reset_state();
         g_sui_zklogin_cleanup_consumed = true;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"disconnect\",\"sessionId\":\"session\"}");
-        signing::handle_usb_disconnect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_disconnect_request("req", request, make_writer(), make_ops());
         assert(g_policy_cleanup_calls == 1);
         assert(g_sui_zklogin_cleanup_calls == 1);
         assert(g_user_signing_cleanup_calls == 0);
@@ -323,7 +323,7 @@ int main()
         reset_state();
         g_user_signing_cleanup_consumed = true;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"disconnect\",\"sessionId\":\"session\"}");
-        signing::handle_usb_disconnect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_disconnect_request("req", request, make_writer(), make_ops());
         assert(g_policy_cleanup_calls == 1);
         assert(g_sui_zklogin_cleanup_calls == 1);
         assert(g_user_signing_cleanup_calls == 1);
@@ -336,7 +336,7 @@ int main()
         reset_state();
         g_busy = true;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"disconnect\",\"sessionId\":\"session\"}");
-        signing::handle_usb_disconnect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_disconnect_request("req", request, make_writer(), make_ops());
         assert(g_policy_cleanup_calls == 1);
         assert(g_sui_zklogin_cleanup_calls == 1);
         assert(g_user_signing_cleanup_calls == 1);
@@ -350,7 +350,7 @@ int main()
         reset_state();
         g_payload_admission_blocks = true;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"disconnect\",\"sessionId\":\"session\"}");
-        signing::handle_usb_disconnect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_disconnect_request("req", request, make_writer(), make_ops());
         assert(g_policy_cleanup_calls == 1);
         assert(g_sui_zklogin_cleanup_calls == 1);
         assert(g_user_signing_cleanup_calls == 1);
@@ -363,7 +363,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"disconnect\",\"sessionId\":\"session\"}");
-        signing::handle_usb_disconnect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_disconnect_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_payload_admission_calls == 1);
         assert(g_clear_session_calls == 1);
@@ -376,7 +376,7 @@ int main()
         reset_state();
         g_write_disconnect_ok = false;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"disconnect\",\"sessionId\":\"session\"}");
-        signing::handle_usb_disconnect_request("req", request, make_writer(), make_ops());
+        signing::handle_protocol_disconnect_request("req", request, make_writer(), make_ops());
         assert(g_clear_session_calls == 1);
         assert(g_write_disconnect_calls == 1);
         assert(g_log_write_failure_calls == 1);
@@ -393,7 +393,7 @@ CPP
   -I"${COMMON_DIR}" \
   -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${COMMON_TRANSPORT_DIR}/usb_disconnect_handler.cpp" \
+  "${COMMON_TRANSPORT_DIR}/disconnect_handler.cpp" \
   -o "${TMP_DIR}/test"
 
 "${TMP_DIR}/test"

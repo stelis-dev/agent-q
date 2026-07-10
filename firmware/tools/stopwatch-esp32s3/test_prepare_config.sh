@@ -86,6 +86,18 @@ for config_file in "${CHECKOUT_DIR}/sdkconfig.defaults" "${CHECKOUT_DIR}/sdkconf
   fi
 done
 
+for expected_config in \
+  'CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=512' \
+  'CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536' \
+  'CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y'; do
+  for config_file in "${CHECKOUT_DIR}/sdkconfig.defaults" "${CHECKOUT_DIR}/sdkconfig"; do
+    if ! grep -qx "${expected_config}" "${config_file}"; then
+      echo "prepare.sh did not preserve the internal-memory budget in ${config_file}: ${expected_config}" >&2
+      exit 1
+    fi
+  done
+done
+
 if grep -R "nvs_flash_erase" "${CHECKOUT_DIR}/main" "${CHECKOUT_DIR}/components" >/dev/null; then
   echo "prepare.sh left unsafe nvs_flash_erase in prepared tree" >&2
   exit 1

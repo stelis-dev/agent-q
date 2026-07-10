@@ -55,6 +55,14 @@ struct LocalTransportPairingState {
 };
 
 LocalTransportPairingState g_pairing;
+LocalTransportPairingSessionOps g_writer_ops = {};
+bool g_writer_ops_active = false;
+
+void clear_response_writer()
+{
+    g_writer_ops_active = false;
+    g_writer_ops = {};
+}
 
 bool scratch_valid(const LocalTransportPairingScratchBuffers& scratch)
 {
@@ -83,13 +91,13 @@ bool ops_valid(const LocalTransportPairingSessionOps& ops)
            ops.load_identity_secret != nullptr &&
            ops.start_advertising != nullptr &&
            ops.stop_advertising != nullptr &&
+           ops.poll_carrier != nullptr &&
            ops.advertising_active != nullptr &&
            ops.connected != nullptr &&
            ops.disconnect != nullptr &&
            ops.current_att_mtu != nullptr &&
            ops.receive != nullptr &&
            ops.send_acknowledged != nullptr &&
-           ops.draw_pairing_panel != nullptr &&
            ops.notify != nullptr &&
            ops.handle_request_line != nullptr &&
            ops.transport_kind != nullptr &&
@@ -133,15 +141,6 @@ bool build_optical_payload(
         fingerprint_hex_size);
 }
 
-bool draw_pairing_panel(const LocalTransportPairingSessionOps& ops)
-{
-    return ops.draw_pairing_panel(
-        g_pairing.payload,
-        g_pairing.fingerprint_hex,
-        g_pairing.pairing_deadline,
-        ops.context);
-}
-
 bool deadline_reached(TickType_t now, TickType_t deadline)
 {
     return deadline != 0 && static_cast<int32_t>(now - deadline) >= 0;
@@ -176,6 +175,13 @@ void clear_established_session(const LocalTransportPairingSessionOps& ops)
     wipe_transport_buffers(ops);
 }
 
+void clear_pairing_session_state(const LocalTransportPairingSessionOps& ops)
+{
+    clear_established_session(ops);
+    g_pairing.clear();
+    clear_response_writer();
+}
+
 void close_session(const LocalTransportPairingSessionOps& ops)
 {
     g_pairing.state = LocalTransportSessionState::closing;
@@ -184,8 +190,7 @@ void close_session(const LocalTransportPairingSessionOps& ops)
         ops.connected(ops.context)) {
         ops.disconnect(ops.context);
     }
-    clear_established_session(ops);
-    g_pairing.clear();
+    clear_pairing_session_state(ops);
 }
 
 void fail_pairing(const LocalTransportPairingSessionOps& ops, LocalTransportPairingEvent event)
@@ -194,8 +199,7 @@ void fail_pairing(const LocalTransportPairingSessionOps& ops, LocalTransportPair
     if (ops.connected(ops.context)) {
         ops.disconnect(ops.context);
     }
-    g_pairing.clear();
-    wipe_transport_buffers(ops);
+    clear_pairing_session_state(ops);
     notify(ops, event);
 }
 
@@ -302,9 +306,6 @@ bool write_response_json(const LocalTransportPairingSessionOps& ops, JsonDocumen
     return ok;
 }
 
-LocalTransportPairingSessionOps g_writer_ops = {};
-bool g_writer_ops_active = false;
-
 bool write_local_transport_success_result(const char* id, const char* method, JsonObjectConst result)
 {
     if (!g_writer_ops_active) {
@@ -346,15 +347,38 @@ bool write_local_transport_method_error(const char* id, const char* method, cons
 
 void log_local_transport_write_failure(const char*, const char*) {}
 
-const UsbOperationResponseWriter& local_transport_response_writer()
+const ResponseWriter& local_transport_response_writer()
 {
-    static const UsbOperationResponseWriter writer = {
+    static const ResponseWriter writer = {
         write_local_transport_method_error,
         write_local_transport_success_result,
         write_local_transport_transport_success_result,
         log_local_transport_write_failure,
     };
     return writer;
+}
+
+bool write_local_transport_response_bytes(const char* data, size_t length, void*)
+{
+    if (data != nullptr && length == 1 && data[0] == '\n') {
+        return true;
+    }
+    return g_writer_ops_active &&
+           send_protocol_line(g_writer_ops, data, length);
+}
+
+const ProtocolTransportEndpoint& local_transport_endpoint()
+{
+    static const ProtocolTransportEndpoint endpoint{
+        ProtocolTransport::local_transport,
+        local_transport_response_writer(),
+        JsonResponseWriteOps{
+            write_local_transport_response_bytes,
+            nullptr,
+            nullptr,
+        },
+    };
+    return endpoint;
 }
 
 bool build_pairing_prologue(uint8_t* output, size_t output_size, size_t* output_len)
@@ -459,6 +483,8 @@ void process_control_frame(
         local_transport_reassembly_reset(&g_pairing.reassembly);
         g_pairing.phase_deadline = 0;
         g_pairing.state = LocalTransportSessionState::ready;
+        g_writer_ops = ops;
+        g_writer_ops_active = true;
         const uint8_t ready_signal = kLocalTransportHandshakeReadySignal;
         if (!send_control_indication(ops, &ready_signal, sizeof(ready_signal))) {
             close_session(ops);
@@ -526,14 +552,11 @@ void process_data_frame(
         now + pdMS_TO_TICKS(kLocalTransportResponseMs);
     g_pairing.state = LocalTransportSessionState::awaiting_response;
     ops.scratch.request_line[line_size] = '\0';
-    g_writer_ops = ops;
-    g_writer_ops_active = true;
+    const ProtocolTransportRoute route(local_transport_endpoint());
     ops.handle_request_line(
         reinterpret_cast<const char*>(ops.scratch.request_line),
-        local_transport_response_writer(),
+        route,
         ops.context);
-    g_writer_ops_active = false;
-    g_writer_ops = {};
     local_transport_wipe_bytes(ops.scratch.request_line, ops.scratch.request_line_size);
 }
 
@@ -546,8 +569,7 @@ bool local_transport_pairing_session_begin(
     if (!ops_valid(ops)) {
         return false;
     }
-    g_pairing.clear();
-    wipe_transport_buffers(ops);
+    clear_pairing_session_state(ops);
 
     LocalTransportPairingIdentity identity = {};
     if (!ops.load_or_create_identity(&identity, ops.context)) {
@@ -603,12 +625,6 @@ bool local_transport_pairing_session_begin(
     g_pairing = next;
     if (ops.advertising_active(ops.context)) {
         g_pairing.state = LocalTransportSessionState::pairing_window;
-        if (!draw_pairing_panel(ops)) {
-            ops.stop_advertising(ops.context);
-            g_pairing.clear();
-            notify(ops, LocalTransportPairingEvent::display_failed);
-            return false;
-        }
     }
     return true;
 }
@@ -623,9 +639,11 @@ void local_transport_pairing_session_cancel(const LocalTransportPairingSessionOp
             ops.disconnect(ops.context);
         }
         g_pairing.state = LocalTransportSessionState::closing;
-        wipe_transport_buffers(ops);
+        clear_pairing_session_state(ops);
+        return;
     }
     g_pairing.clear();
+    clear_response_writer();
 }
 
 void local_transport_pairing_session_handle_display_loss(
@@ -643,8 +661,10 @@ void local_transport_pairing_session_poll(
 {
     if (!ops_valid(ops)) {
         g_pairing.clear();
+        clear_response_writer();
         return;
     }
+    ops.poll_carrier(ops.context);
     if (state_is_pairing_open(g_pairing.state) &&
         deadline_reached(now, g_pairing.pairing_deadline)) {
         fail_pairing(ops, LocalTransportPairingEvent::expired);
@@ -654,17 +674,12 @@ void local_transport_pairing_session_poll(
         if (g_pairing.state == LocalTransportSessionState::pairing_starting &&
             ops.advertising_active(ops.context)) {
             g_pairing.state = LocalTransportSessionState::pairing_window;
-            if (!draw_pairing_panel(ops)) {
-                fail_pairing(ops, LocalTransportPairingEvent::display_failed);
-                return;
-            }
         }
         if (g_pairing.state == LocalTransportSessionState::pairing_handshake) {
             fail_pairing(ops, LocalTransportPairingEvent::failed);
             return;
         } else if (state_has_encrypted_session(g_pairing.state)) {
-            clear_established_session(ops);
-            g_pairing.clear();
+            clear_pairing_session_state(ops);
             return;
         }
     }
@@ -715,42 +730,6 @@ bool local_transport_pairing_session_active()
 bool local_transport_pairing_session_established()
 {
     return state_has_encrypted_session(g_pairing.state);
-}
-
-bool local_transport_pairing_session_write_line(
-    const LocalTransportPairingSessionOps& ops,
-    const char* line,
-    size_t line_len)
-{
-    if (!ops_valid(ops) ||
-        g_pairing.state != LocalTransportSessionState::awaiting_response) {
-        return false;
-    }
-    return send_protocol_line(ops, line, line_len);
-}
-
-bool local_transport_pairing_session_write_response(
-    const LocalTransportPairingSessionOps& ops,
-    LocalTransportPairingResponseCallback callback,
-    void* context)
-{
-    if (!ops_valid(ops) ||
-        callback == nullptr ||
-        g_pairing.state != LocalTransportSessionState::awaiting_response) {
-        return false;
-    }
-    g_writer_ops = ops;
-    g_writer_ops_active = true;
-    const bool written = callback(local_transport_response_writer(), context);
-    g_writer_ops_active = false;
-    g_writer_ops = {};
-    if (!written || g_pairing.state != LocalTransportSessionState::ready) {
-        if (g_pairing.state != LocalTransportSessionState::idle) {
-            close_session(ops);
-        }
-        return false;
-    }
-    return true;
 }
 
 }  // namespace signing

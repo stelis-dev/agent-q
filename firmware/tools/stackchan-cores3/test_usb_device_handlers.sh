@@ -20,8 +20,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
-DEVICE_HANDLER_SOURCE="${COMMON_ROOT}/protocol/usb_device_handlers.cpp"
-DEVICE_HANDLER_HEADER="${COMMON_ROOT}/protocol/usb_device_handlers.h"
+DEVICE_HANDLER_SOURCE="${COMMON_ROOT}/protocol/device_handlers.cpp"
+DEVICE_HANDLER_HEADER="${COMMON_ROOT}/protocol/device_handlers.h"
 DEFAULT_ARDUINOJSON_ROOT="${REPO_ROOT}/.firmware-cache/stackchan-cores3/StackChan/firmware/components/ArduinoJson/src"
 ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
@@ -30,7 +30,7 @@ for required in \
   "${COMMON_ROOT}/protocol/device_response.h" \
   "${DEVICE_HANDLER_SOURCE}" \
   "${DEVICE_HANDLER_HEADER}" \
-  "${COMMON_ROOT}/protocol/usb_operation_response_writer.h"; do
+  "${COMMON_ROOT}/protocol/response_writer.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required source: ${required}" >&2
     echo "Run firmware/tools/stackchan-cores3/build.sh first when cache sources are missing." >&2
@@ -49,7 +49,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "protocol/usb_device_handlers.h"
+#include "protocol/device_handlers.h"
 
 namespace {
 
@@ -168,7 +168,7 @@ void log_write_failure(const char* response_type, const char* id)
     g_last_id = id;
 }
 
-bool write_busy(const char* id, const signing::UsbOperationResponseWriter& writer)
+bool write_busy(const char* id, const signing::ResponseWriter& writer)
 {
     g_busy_calls += 1;
     g_last_id = id;
@@ -180,10 +180,10 @@ bool write_busy(const char* id, const signing::UsbOperationResponseWriter& write
 
 bool write_payload_admission_error(
     const char* id,
-    signing::UsbOperationType operation,
-    const signing::UsbOperationResponseWriter& writer)
+    signing::OperationType operation,
+    const signing::ResponseWriter& writer)
 {
-    assert(operation == signing::UsbOperationType::get_status);
+    assert(operation == signing::OperationType::get_status);
     g_payload_admission_calls += 1;
     g_last_id = id;
     if (!g_payload_admission_error) {
@@ -211,9 +211,9 @@ bool refresh_material()
     return true;
 }
 
-signing::UsbDeviceStatusInfo device_info()
+signing::DeviceStatusInfo device_info()
 {
-    return signing::UsbDeviceStatusInfo{
+    return signing::DeviceStatusInfo{
         {
             "device-1",
             "idle",
@@ -225,27 +225,27 @@ signing::UsbDeviceStatusInfo device_info()
     };
 }
 
-signing::UsbOperationResponseWriter make_writer()
+signing::ResponseWriter make_writer()
 {
-    return signing::UsbOperationResponseWriter{
+    return signing::ResponseWriter{
         write_error,
         signing::usb_response_write_success_result,
         log_write_failure,
     };
 }
 
-signing::UsbGetStatusHandlerOps make_status_ops()
+signing::GetStatusHandlerOps make_status_ops()
 {
-    return signing::UsbGetStatusHandlerOps{
+    return signing::GetStatusHandlerOps{
         refresh_material,
         write_payload_admission_error,
         device_info,
     };
 }
 
-signing::UsbIdentifyDeviceHandlerOps make_identify_ops()
+signing::IdentifyDeviceHandlerOps make_identify_ops()
 {
-    return signing::UsbIdentifyDeviceHandlerOps{
+    return signing::IdentifyDeviceHandlerOps{
         write_busy,
         is_safe_code,
         show_code,
@@ -269,7 +269,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req_status\",\"version\":1,\"method\":\"get_status\"}");
-        signing::handle_usb_get_status_request("req_status", request, make_writer(), make_status_ops());
+        signing::handle_protocol_get_status_request("req_status", request, make_writer(), make_status_ops());
         assert(g_payload_admission_calls == 1);
         assert(g_refresh_calls == 1);
         assert(g_write_json_calls == 1);
@@ -282,7 +282,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req_status\",\"version\":1,\"method\":\"get_status\",\"extra\":1}");
-        signing::handle_usb_get_status_request("req_status", request, make_writer(), make_status_ops());
+        signing::handle_protocol_get_status_request("req_status", request, make_writer(), make_status_ops());
         assert(g_write_json_calls == 0);
         assert(g_write_error_calls == 1);
         assert(g_payload_admission_calls == 0);
@@ -294,7 +294,7 @@ int main()
         reset_state();
         g_payload_admission_error = true;
         JsonDocument request = parse_request("{\"id\":\"req_status\",\"version\":1,\"method\":\"get_status\"}");
-        signing::handle_usb_get_status_request("req_status", request, make_writer(), make_status_ops());
+        signing::handle_protocol_get_status_request("req_status", request, make_writer(), make_status_ops());
         assert(g_payload_admission_calls == 1);
         assert(g_refresh_calls == 0);
         assert(g_write_json_calls == 0);
@@ -306,7 +306,7 @@ int main()
         reset_state();
         g_busy = true;
         JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"method\":\"identify_device\",\"payload\":{\"code\":\"1234\"}}");
-        signing::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
+        signing::handle_protocol_identify_device_request("req_id", request, make_writer(), make_identify_ops());
         assert(g_busy_calls == 1);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "busy") == 0);
@@ -317,7 +317,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"method\":\"identify_device\",\"payload\":{\"code\":\"1234\"},\"extra\":1}");
-        signing::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
+        signing::handle_protocol_identify_device_request("req_id", request, make_writer(), make_identify_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_request") == 0);
     }
@@ -325,7 +325,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"method\":\"identify_device\",\"payload\":{\"code\":\"1234\",\"extra\":1}}");
-        signing::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
+        signing::handle_protocol_identify_device_request("req_id", request, make_writer(), make_identify_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
     }
@@ -334,7 +334,7 @@ int main()
         reset_state();
         g_safe_code = false;
         JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"method\":\"identify_device\",\"payload\":{\"code\":\"abcd\"}}");
-        signing::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
+        signing::handle_protocol_identify_device_request("req_id", request, make_writer(), make_identify_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_params") == 0);
         assert(g_show_calls == 0);
@@ -344,7 +344,7 @@ int main()
     {
         reset_state();
         JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"method\":\"identify_device\",\"payload\":{\"code\":\"1234\"}}");
-        signing::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
+        signing::handle_protocol_identify_device_request("req_id", request, make_writer(), make_identify_ops());
         assert(g_write_error_calls == 0);
         assert(g_show_calls == 1);
         assert(g_write_json_calls == 1);
@@ -358,7 +358,7 @@ int main()
         reset_state();
         g_write_json_ok = false;
         JsonDocument request = parse_request("{\"id\":\"req_id\",\"version\":1,\"method\":\"identify_device\",\"payload\":{\"code\":\"1234\"}}");
-        signing::handle_usb_identify_device_request("req_id", request, make_writer(), make_identify_ops());
+        signing::handle_protocol_identify_device_request("req_id", request, make_writer(), make_identify_ops());
         assert(g_show_calls == 1);
         assert(g_write_json_calls == 1);
         assert(g_log_write_failure_calls == 1);

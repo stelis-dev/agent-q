@@ -56,13 +56,14 @@ Legend:
 | Device reset | O | Device-local destructive reset. From idle, KEYB opens reset review and local-authentication confirmation performs Device reset. If the local-authentication record is invalid or unreadable, KEYB on the error screen performs the same Device reset because local authentication cannot be verified. Device reset clears local authentication, the active zkLogin credential, mutable settings, session state, pending state, retained responses, and signing scratch, then returns to first-run local-authentication setup. |
 | `identify_device` | O | Shows a short temporary identification code on the display and returns the shared identify result. |
 | `connect` | O | Requires local authentication and device-local approval when no session is active. A live same-link session returns the existing session without a second approval. Locked local authentication fails with `auth_unavailable`. |
-| Firmware sessions | O | Sessions are volatile and USB-link-bound. The advertised `sessionTtlMs` is `4294967295`. Sessions clear on `disconnect`, reset/reboot, Device reset, credential consistency error, or USB removal after the grace window expires. |
+| Firmware sessions | O | Sessions are volatile and bound to the USB or encrypted local transport that created them. Exactly one session exists across transports. The advertised `sessionTtlMs` is `4294967295`. Sessions clear on `disconnect`, reset/reboot, Device reset, credential consistency error, confirmed USB removal, or local carrier loss. |
+| QR and encrypted BLE local transport | O | From unlocked idle, KEYA creates a fresh 120-second QR payload and advertises the matching BLE service. Noise XX establishes only an encrypted carrier; the normal shared `connect` request and StopWatch `LINK?` approval still create the protocol session. KEYA cancels the pairing window. Touch has no pairing or approval authority. |
 | `disconnect` session cleanup | O | Clears session-scoped credential preparation, payload transfer, pending proof review, and pending request state. |
 | `get_capabilities` | O | With a valid session, reports Sui zkLogin credential operations while no proof is active. With an active proof, reports the active Sui account and user-confirmed Sui signing methods. |
 | `get_accounts` | O | With a valid session, returns an empty account list while no proof is active and one Sui zkLogin account while a valid proof is active. |
 | Display feedback | O | Shows the rotary dial and center passcode slots for local-authentication input. |
 | Touch feedback | O | Rotary telephone-style digit pull/release appends digits into four fixed center slots. |
-| Physical button feedback | O | With the display on, KEYA deletes local-authentication input, KEYB submits or confirms local-authentication input, and KEYA+KEYB remains local feedback only. With the display off, each physical input wakes the display and is consumed before its normal action. |
+| Physical button feedback | O | With the display on, KEYA deletes local-authentication input, enters local transport from unlocked idle, or cancels its pairing window according to the current runtime state. KEYB submits or confirms local-authentication input and opens Device reset review from idle. KEYA+KEYB opens signing authorization mode review from idle. With the display off, each physical input wakes the display and is consumed before its normal action. |
 | Vibration feedback | O | Target-local user feedback only; it does not authorize protocol behavior. |
 | Power-button behavior | O | USB-power-present short click toggles display backlight off/on. While the display is off, M5PM1, KEYA, KEYB, or KEYA+KEYB wakes it; touch does not. USB-power-absent short click remains the StopWatch PMIC power-on/reset behavior. Hardware double-click power-off remains PMIC-owned. |
 | zkLogin proof storage | O | Stores one current-format Sui zkLogin proof record with the Ed25519 seed prepared in the same credential session. Invalid or unreadable proof storage projects `error` and fails closed. |
@@ -71,7 +72,7 @@ Legend:
 | Credential preparation/proposal | O | `credential_prepare` creates session-bound Ed25519 public material for zkLogin proof issuance. `credential_propose` consumes a payload-backed current Sui zkLogin proof shape, shows device-local review, requires local authentication, and activates the proof on successful commit. The session ends after activation. |
 | Payload transfer | O | Implements the shared `payload_transfer` begin/chunk/finish/abort operation for credential proposal payload input with session binding, digest validation, timeout, abort, and scratch cleanup. |
 | Signing | O | User-confirmed Sui `sign_personal_message`; user-confirmed or policy-authorized Sui `sign_transaction` according to the stored signing authorization mode. |
-| Signing authorization mode | O | Device-local idle-screen mode selection. KEYA opens the mode screen, KEYB selects the opposite mode, and local-authentication confirmation stores it. |
+| Signing authorization mode | O | Device-local idle-screen mode selection. KEYA+KEYB opens the mode screen, KEYB selects the opposite mode, and local-authentication confirmation stores it. |
 | Policy | O | Stores the current policy document, returns it through `policy_get`, applies `policy_propose` after device-local policy review and local-authentication confirmation, and authorizes or rejects policy-mode Sui transaction signing through the current policy. |
 | Approval history | O | Records policy-update and signing-decision history and exposes it through `get_approval_history`. |
 | Retained responses | O | Implemented for successful signing responses within the active session. |
@@ -122,7 +123,7 @@ Signing scratch and retained-response state exists for active Sui signing
 requests and retained signed results. Policy storage, policy-update scratch,
 signing authorization mode storage, and approval history exist in this target.
 The stored signing authorization mode is initialized to user mode during first
-setup. From the idle screen, KEYA opens local signing mode selection; KEYB
+setup. From the idle screen, KEYA+KEYB opens local signing mode selection; KEYB
 chooses the opposite mode; storing the new mode requires local-authentication
 confirmation. The host cannot choose the mode. In policy mode,
 `sign_personal_message` fails with `unsupported_method`. `sign_transaction`

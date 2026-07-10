@@ -40,17 +40,17 @@ require_contains "$APP_CPP" "void RuntimeApp::maybe_enter_watch(uint32_t now_ms)
 require_contains "$APP_CPP" "void RuntimeApp::reset_unlock_watch()"
 require_contains "$APP_CPP" "void RuntimeApp::show_unlock_watch()"
 require_contains "$APP_CPP" "bool RuntimeApp::unlock_watch_allowed() const"
-require_contains "$APP_CPP" "pending.kind != UsbPendingRequestKind::none"
+require_contains "$APP_CPP" "pending.kind != PendingRequestKind::none"
 require_contains "$APP_CPP" "identification.active"
 require_contains "$APP_CPP" "if (!unlock_watch_timer_armed_)"
 require_contains "$APP_CPP" "unlock_watch_timer_armed_ = true;"
 require_contains "$APP_CPP" "auth_entry_.length() == 0"
 require_contains "$APP_CPP" "const bool state_allows_watch = unlock_watch_allowed();"
-require_contains "$APP_CPP" "if (screen_mode_ != ScreenMode::setup_enter &&"
-require_contains "$APP_CPP" "screen_mode_ != ScreenMode::unlock"
-require_contains "$APP_CPP" "clock_scene_.set_visible(watch_visible_);"
+require_contains "$APP_CPP" "if (runtime_state_ != RuntimeState::setup_enter &&"
+require_contains "$APP_CPP" "runtime_state_ != RuntimeState::unlock"
+require_contains "$APP_CPP" "clock_scene_.set_visible(watch_visible_ && !local_transport_scene_visible);"
 require_contains "$APP_CPP" "clock_scene_.update(now);"
-require_contains "$APP_CPP" "rotary_dial_.set_visible(auth_entry_mode() && !watch_visible_);"
+require_contains "$APP_CPP" "auth_entry_mode() && !watch_visible_ && !local_transport_scene_visible);"
 require_contains "$APP_CPP" "if (!auth_entry_mode() || watch_visible_)"
 require_contains "$APP_CPP" "const bool touch_was_down = touch_down_;"
 require_contains "$APP_CPP" "ignore_touch_until_release_ = true;"
@@ -88,7 +88,7 @@ if grep -Fq "lv_obj_move_foreground(hand)" "$CLOCK_CPP"; then
 fi
 
 watch_touch_block="$(sed -n '/void RuntimeApp::handle_touch_poll/,/void RuntimeApp::handle_power_button/p' "$APP_CPP")"
-if grep -F "watch_visible_" <<<"$watch_touch_block" | grep -Fq "enter_mode"; then
+if grep -F "watch_visible_" <<<"$watch_touch_block" | grep -Fq "transition_to"; then
   echo "Touch handling must not leave watch mode; use physical input only." >&2
   exit 1
 fi
@@ -98,9 +98,9 @@ if grep -Fq "touch_down_" <<<"$watch_allowed_block"; then
   echo "Watch eligibility must not depend on touch state; touch must not leave watch mode." >&2
   exit 1
 fi
-require_contains "$APP_CPP" "const bool request_prompt_active = pending.kind != UsbPendingRequestKind::none ||"
+require_contains "$APP_CPP" "const bool request_prompt_active = pending.kind != PendingRequestKind::none ||"
 
-maybe_watch_block="$(sed -n '/void RuntimeApp::maybe_enter_watch/,/void RuntimeApp::sync_usb_runtime_state/p' "$APP_CPP")"
+maybe_watch_block="$(sed -n '/void RuntimeApp::maybe_enter_watch/,/void RuntimeApp::sync_protocol_runtime_state/p' "$APP_CPP")"
 if ! grep -Fq "const bool touch_was_down = touch_down_;" <<<"$maybe_watch_block" ||
    ! grep -Fq "ignore_touch_until_release_ = true;" <<<"$maybe_watch_block"; then
   echo "Automatic watch exit must preserve touch-ignore until a finger that started on the watch is released." >&2
@@ -113,20 +113,20 @@ if grep -Fq "unlock_idle_started_ms_" <<<"$auth_input_block"; then
   exit 1
 fi
 
-same_mode_enter_block="$(sed -n '/void RuntimeApp::enter_mode/,/if (screen_mode_ == ScreenMode::setup_confirm/p' "$APP_CPP")"
+same_mode_enter_block="$(sed -n '/void RuntimeApp::transition_to/,/if (runtime_state_ == RuntimeState::setup_confirm/p' "$APP_CPP")"
 if grep -Fq "reset_unlock_watch" <<<"$same_mode_enter_block"; then
   echo "Same-mode enter must not reset the unlock watch timer." >&2
   exit 1
 fi
 
 auth_entry_block="$(sed -n '/bool RuntimeApp::auth_entry_mode/,/bool RuntimeApp::input_timed_out/p' "$APP_CPP")"
-if grep -Fq "ScreenMode::watch" <<<"$auth_entry_block"; then
+if grep -Fq "RuntimeState::watch" <<<"$auth_entry_block"; then
     echo "watch must not be an auth-entry mode." >&2
     exit 1
 fi
 
-if grep -Fq "ScreenMode::watch" "$APP_CPP" "$APP_H"; then
-  echo "watch must be a display layer, not a ScreenMode." >&2
+if grep -Fq "RuntimeState::watch" "$APP_CPP" "$APP_H"; then
+  echo "watch must be a display layer, not a RuntimeState." >&2
   exit 1
 fi
 

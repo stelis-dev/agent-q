@@ -5,8 +5,8 @@ usage() {
   cat >&2 <<'EOF'
 Usage: firmware/tools/stackchan-cores3/test_usb_request_line_handler.sh
 
-Compiles the USB request line handler and verifies public line-level envelope,
-error, and operation-dispatch behavior. It does not require hardware.
+Compiles the shared protocol request-line handler and verifies transport-neutral
+envelope, error, and operation-dispatch behavior. It does not require hardware.
 EOF
 }
 
@@ -25,19 +25,19 @@ ARDUINOJSON_ROOT="${FIRMWARE_ARDUINOJSON_ROOT:-${DEFAULT_ARDUINOJSON_ROOT}}"
 
 for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
-  "${COMMON_PROTOCOL_DIR}/usb_request_line_handler.cpp" \
-  "${COMMON_PROTOCOL_DIR}/usb_request_line_handler.h" \
-  "${COMMON_PROTOCOL_DIR}/usb_request_envelope.cpp" \
-  "${COMMON_PROTOCOL_DIR}/usb_request_envelope.h" \
+  "${COMMON_PROTOCOL_DIR}/request_line_handler.cpp" \
+  "${COMMON_PROTOCOL_DIR}/request_line_handler.h" \
+  "${COMMON_PROTOCOL_DIR}/request_envelope.cpp" \
+  "${COMMON_PROTOCOL_DIR}/request_envelope.h" \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.h" \
-  "${COMMON_PROTOCOL_DIR}/usb_operation_dispatch.cpp" \
-  "${COMMON_PROTOCOL_DIR}/usb_operation_dispatch.h" \
-  "${COMMON_PROTOCOL_DIR}/usb_operation_manifest.cpp" \
-  "${COMMON_PROTOCOL_DIR}/usb_operation_manifest.h" \
-  "${COMMON_ROOT}/protocol/usb_operation_response_writer.h" \
-  "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
-  "${COMMON_ROOT}/protocol/usb_operation_type.h" \
+  "${COMMON_PROTOCOL_DIR}/operation_dispatch.cpp" \
+  "${COMMON_PROTOCOL_DIR}/operation_dispatch.h" \
+  "${COMMON_PROTOCOL_DIR}/operation_manifest.cpp" \
+  "${COMMON_PROTOCOL_DIR}/operation_manifest.h" \
+  "${COMMON_ROOT}/protocol/response_writer.h" \
+  "${COMMON_ROOT}/protocol/operation_type.cpp" \
+  "${COMMON_ROOT}/protocol/operation_type.h" \
   "${COMMON_ROOT}/protocol/session_state.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp"; do
   if [[ ! -f "${required}" ]]; then
@@ -66,7 +66,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
-#include "protocol/usb_request_line_handler.h"
+#include "protocol/request_line_handler.h"
 
 namespace {
 
@@ -87,6 +87,10 @@ char g_last_error_id[96] = {};
 char g_last_error_method[96] = {};
 const char* g_last_error_code = nullptr;
 int g_log_write_failure_calls = 0;
+signing::ProtocolTransport g_last_writer_transport =
+    signing::ProtocolTransport::none;
+signing::ProtocolTransport g_last_handler_transport =
+    signing::ProtocolTransport::none;
 
 void reset_state()
 {
@@ -98,15 +102,34 @@ void reset_state()
     g_last_error_method[0] = '\0';
     g_last_error_code = nullptr;
     g_log_write_failure_calls = 0;
+    g_last_writer_transport = signing::ProtocolTransport::none;
+    g_last_handler_transport = signing::ProtocolTransport::none;
 }
 
-bool write_method_error(const char* id, const char* method, const char* code)
+bool record_method_error(
+    signing::ProtocolTransport transport,
+    const char* id,
+    const char* method,
+    const char* code)
 {
+    g_last_writer_transport = transport;
     g_write_error_calls += 1;
     snprintf(g_last_error_id, sizeof(g_last_error_id), "%s", id == nullptr ? "" : id);
     snprintf(g_last_error_method, sizeof(g_last_error_method), "%s", method == nullptr ? "" : method);
     g_last_error_code = code;
     return true;
+}
+
+bool write_usb_method_error(const char* id, const char* method, const char* code)
+{
+    return record_method_error(
+        signing::ProtocolTransport::usb, id, method, code);
+}
+
+bool write_local_method_error(const char* id, const char* method, const char* code)
+{
+    return record_method_error(
+        signing::ProtocolTransport::local_transport, id, method, code);
 }
 
 void log_write_failure(const char* response_type, const char* id)
@@ -119,9 +142,12 @@ void log_write_failure(const char* response_type, const char* id)
 void handle_get_status(
     const char* id,
     JsonDocument& request,
-    const signing::UsbOperationResponseWriter& writer)
+    const signing::ResponseWriter& writer)
 {
-    (void)writer;
+    g_last_handler_transport =
+        writer.write_method_error_fn == write_local_method_error
+            ? signing::ProtocolTransport::local_transport
+            : signing::ProtocolTransport::usb;
     const char* method = request["method"] | "";
     assert(strcmp(method, "get_status") == 0);
     g_last_handler = HandlerSlot::get_status;
@@ -132,7 +158,7 @@ void handle_get_status(
 void handle_sign_transaction(
     const char* id,
     JsonDocument& request,
-    const signing::UsbOperationResponseWriter& writer)
+    const signing::ResponseWriter& writer)
 {
     (void)writer;
     const char* method = request["method"] | "";
@@ -145,7 +171,7 @@ void handle_sign_transaction(
 void handle_policy_propose(
     const char* id,
     JsonDocument& request,
-    const signing::UsbOperationResponseWriter& writer)
+    const signing::ResponseWriter& writer)
 {
     (void)writer;
     const char* method = request["method"] | "";
@@ -161,7 +187,7 @@ void handle_policy_propose(
 void handle_credential_prepare(
     const char* id,
     JsonDocument& request,
-    const signing::UsbOperationResponseWriter& writer)
+    const signing::ResponseWriter& writer)
 {
     (void)writer;
     const char* method = request["method"] | "";
@@ -176,7 +202,7 @@ void handle_credential_prepare(
 void handle_credential_propose(
     const char* id,
     JsonDocument& request,
-    const signing::UsbOperationResponseWriter& writer)
+    const signing::ResponseWriter& writer)
 {
     (void)writer;
     const char* method = request["method"] | "";
@@ -188,17 +214,42 @@ void handle_credential_propose(
     snprintf(g_last_id, sizeof(g_last_id), "%s", id == nullptr ? "" : id);
 }
 
-signing::UsbOperationResponseWriter make_writer()
+signing::ResponseWriter make_writer(signing::ProtocolTransport transport)
 {
-    return signing::UsbOperationResponseWriter{
-        write_method_error,
+    return signing::ResponseWriter{
+        transport == signing::ProtocolTransport::local_transport
+            ? write_local_method_error
+            : write_usb_method_error,
         log_write_failure,
     };
 }
 
-signing::UsbOperationHandlers make_handlers()
+bool write_bytes(const char*, size_t, void*)
 {
-    signing::UsbOperationHandlers handlers = {};
+    return true;
+}
+
+signing::ProtocolTransportRoute make_route(signing::ProtocolTransport transport)
+{
+    static const signing::ProtocolTransportEndpoint usb_endpoint{
+        signing::ProtocolTransport::usb,
+        make_writer(signing::ProtocolTransport::usb),
+        signing::JsonResponseWriteOps{write_bytes, nullptr, nullptr},
+    };
+    static const signing::ProtocolTransportEndpoint local_endpoint{
+        signing::ProtocolTransport::local_transport,
+        make_writer(signing::ProtocolTransport::local_transport),
+        signing::JsonResponseWriteOps{write_bytes, nullptr, nullptr},
+    };
+    return signing::ProtocolTransportRoute(
+        transport == signing::ProtocolTransport::local_transport
+            ? local_endpoint
+            : usb_endpoint);
+}
+
+signing::OperationHandlers make_handlers()
+{
+    signing::OperationHandlers handlers = {};
     handlers.get_status = handle_get_status;
     handlers.sign_transaction = handle_sign_transaction;
     handlers.policy_propose = handle_policy_propose;
@@ -211,10 +262,12 @@ void expect_error(
     const char* line,
     const char* expected_id,
     const char* expected_method,
-    const char* expected_code)
+    const char* expected_code,
+    signing::ProtocolTransport transport = signing::ProtocolTransport::usb)
 {
     reset_state();
-    signing::handle_usb_request_line(line, 100, make_writer(), make_handlers());
+    signing::handle_protocol_request_line(
+        line, 100, make_route(transport), make_handlers());
     assert(g_handler_calls == 0);
     assert(g_write_error_calls == 1);
     if (expected_id == nullptr) {
@@ -228,19 +281,25 @@ void expect_error(
         assert(strcmp(g_last_error_method, expected_method) == 0);
     }
     assert(strcmp(g_last_error_code, expected_code) == 0);
+    assert(g_last_writer_transport == transport);
 }
 
 void expect_handler(
     const char* line,
     HandlerSlot expected_handler,
-    const char* expected_id)
+    const char* expected_id,
+    signing::ProtocolTransport transport = signing::ProtocolTransport::usb)
 {
     reset_state();
-    signing::handle_usb_request_line(line, 100, make_writer(), make_handlers());
+    signing::handle_protocol_request_line(
+        line, 100, make_route(transport), make_handlers());
     assert(g_handler_calls == 1);
     assert(g_last_handler == expected_handler);
     assert(strcmp(g_last_id, expected_id) == 0);
     assert(g_write_error_calls == 0);
+    if (expected_handler == HandlerSlot::get_status) {
+        assert(g_last_handler_transport == transport);
+    }
 }
 
 }  // namespace
@@ -264,6 +323,11 @@ int main()
         HandlerSlot::get_status,
         "req_status");
     expect_handler(
+        "{\"id\":\"req_status_local\",\"version\":1,\"method\":\"get_status\"}",
+        HandlerSlot::get_status,
+        "req_status_local",
+        signing::ProtocolTransport::local_transport);
+    expect_handler(
         "{\"id\":\"req_sign\",\"version\":1,\"method\":\"sign_transaction\",\"sessionId\":\"session_aaaaaaaaaaaaaaaa\",\"payload\":{\"chain\":\"sui\",\"network\":\"testnet\",\"txBytes\":\"AA==\"}}",
         HandlerSlot::sign_transaction,
         "req_sign");
@@ -281,6 +345,12 @@ int main()
         "req_credential_propose");
 
     expect_error("{not-json", nullptr, nullptr, "invalid_request");
+    expect_error(
+        "{not-json",
+        nullptr,
+        nullptr,
+        "invalid_request",
+        signing::ProtocolTransport::local_transport);
     expect_error(
         "{\"version\":1,\"type\":\"get_status\"}",
         nullptr,
@@ -332,7 +402,17 @@ int main()
         "connect",
         "internal_output_error");
 
-    printf("USB request line handler tests passed\n");
+    reset_state();
+    signing::handle_protocol_request_line(
+        "{\"id\":\"req_unbound\",\"version\":1,\"method\":\"get_status\"}",
+        100,
+        signing::ProtocolTransportRoute{},
+        make_handlers());
+    assert(g_handler_calls == 0);
+    assert(g_write_error_calls == 0);
+    assert(g_last_writer_transport == signing::ProtocolTransport::none);
+
+    printf("Protocol request line handler tests passed\n");
     return 0;
 }
 CPP
@@ -343,12 +423,12 @@ CPP
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_ROOT}" \
   "${TMP_DIR}/test.cpp" \
-  "${COMMON_PROTOCOL_DIR}/usb_request_line_handler.cpp" \
-  "${COMMON_PROTOCOL_DIR}/usb_request_envelope.cpp" \
+  "${COMMON_PROTOCOL_DIR}/request_line_handler.cpp" \
+  "${COMMON_PROTOCOL_DIR}/request_envelope.cpp" \
   "${COMMON_ROOT}/protocol/device_contract.cpp" \
-  "${COMMON_PROTOCOL_DIR}/usb_operation_dispatch.cpp" \
-  "${COMMON_PROTOCOL_DIR}/usb_operation_manifest.cpp" \
-  "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
+  "${COMMON_PROTOCOL_DIR}/operation_dispatch.cpp" \
+  "${COMMON_PROTOCOL_DIR}/operation_manifest.cpp" \
+  "${COMMON_ROOT}/protocol/operation_type.cpp" \
   "${COMMON_ROOT}/protocol/session_state.cpp" \
   "${COMMON_ROOT}/protocol/request_id.cpp" \
   -o "${TMP_DIR}/test"

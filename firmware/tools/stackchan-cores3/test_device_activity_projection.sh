@@ -29,10 +29,10 @@ for required in \
   "${ARDUINOJSON_ROOT}/ArduinoJson.h" \
   "${RUNTIME_DIR}/device_activity_projection.cpp" \
   "${RUNTIME_DIR}/device_activity_projection.h" \
-  "${COMMON_PROTOCOL_DIR}/usb_operation_manifest.cpp" \
-  "${COMMON_PROTOCOL_DIR}/usb_operation_manifest.h" \
-  "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
-  "${COMMON_ROOT}/protocol/usb_operation_type.h"; do
+  "${COMMON_PROTOCOL_DIR}/operation_manifest.cpp" \
+  "${COMMON_PROTOCOL_DIR}/operation_manifest.h" \
+  "${COMMON_ROOT}/protocol/operation_type.cpp" \
+  "${COMMON_ROOT}/protocol/operation_type.h"; do
   if [[ ! -f "${required}" ]]; then
     echo "Missing required file: ${required}" >&2
     exit 1
@@ -57,7 +57,7 @@ cat >"${TMP_DIR}/device_activity_projection_test.cpp" <<'CPP'
 #include <string.h>
 
 #include "device_activity_projection.h"
-#include "protocol/usb_operation_type.h"
+#include "protocol/operation_type.h"
 
 namespace {
 
@@ -144,8 +144,8 @@ void expect_usb_block(
     bool blocked,
     const char* message)
 {
-    const signing::DeviceActivityUsbRequestBlock block =
-        signing::device_activity_usb_request_block(
+    const signing::DeviceActivityRequestBlock block =
+        signing::device_activity_request_block(
             activity,
             { allow_settings_menu, allow_payload_delivery });
     expect(block.blocked == blocked, "USB block flag matches expectation");
@@ -169,20 +169,20 @@ int main()
     expect(!signing::device_activity_blocks_user_signing_ingress(activity),
            "idle activity allows user signing ingress");
     expect_usb_block(activity, false, false, false, nullptr);
-    expect(signing::usb_operation_is_retained_response_read_cleanup(
-               signing::UsbOperationType::get_result),
+    expect(signing::operation_is_retained_response_read_cleanup(
+               signing::OperationType::get_result),
            "get_result is a retained-response read route");
-    expect(signing::usb_operation_is_retained_response_read_cleanup(
-               signing::UsbOperationType::ack_result),
+    expect(signing::operation_is_retained_response_read_cleanup(
+               signing::OperationType::ack_result),
            "ack_result is a retained-response cleanup route");
-    expect(!signing::usb_operation_is_retained_response_read_cleanup(
-               signing::UsbOperationType::sign_transaction),
+    expect(!signing::operation_is_retained_response_read_cleanup(
+               signing::OperationType::sign_transaction),
            "sign_transaction is not a retained-response route");
-    expect(!signing::usb_operation_is_retained_response_read_cleanup(
-               signing::UsbOperationType::policy_propose),
+    expect(!signing::operation_is_retained_response_read_cleanup(
+               signing::OperationType::policy_propose),
            "policy_propose is not a retained-response route");
-    expect(!signing::usb_operation_is_retained_response_read_cleanup(
-               signing::UsbOperationType::credential_propose),
+    expect(!signing::operation_is_retained_response_read_cleanup(
+               signing::OperationType::credential_propose),
            "credential_propose is not a retained-response route");
 
     for (signing::PolicyUpdateFlowStage stage : {
@@ -318,8 +318,8 @@ CPP
   -I"${ARDUINOJSON_ROOT}" \
   "${TMP_DIR}/device_activity_projection_test.cpp" \
   "${RUNTIME_DIR}/device_activity_projection.cpp" \
-  "${COMMON_PROTOCOL_DIR}/usb_operation_manifest.cpp" \
-  "${COMMON_ROOT}/protocol/usb_operation_type.cpp" \
+  "${COMMON_PROTOCOL_DIR}/operation_manifest.cpp" \
+  "${COMMON_ROOT}/protocol/operation_type.cpp" \
   -o "${TMP_DIR}/device_activity_projection_test"
 
 "${TMP_DIR}/device_activity_projection_test"

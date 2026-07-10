@@ -73,6 +73,12 @@ cat >"${TMP_DIR}/stubs/ArduinoJson.h" <<'H'
 struct JsonVariantConst {};
 H
 
+cat >"${TMP_DIR}/stubs/esp_attr.h" <<'H'
+#pragma once
+
+#define EXT_RAM_BSS_ATTR
+H
+
 cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
@@ -186,6 +192,7 @@ int g_user_cancel_pin_loss_calls = 0;
 int g_user_local_pin_draw_calls = 0;
 int g_user_local_pin_draw_order = 0;
 int g_user_write_error_calls = 0;
+char g_user_last_error_method[64] = {};
 int g_user_display_error_calls = 0;
 int g_user_execute_calls = 0;
 int g_user_finish_terminal_calls = 0;
@@ -302,6 +309,7 @@ void reset_user()
     g_user_snapshot.active = true;
     g_user_snapshot.stage = signing::UserSigningStage::reviewing;
     snprintf(g_user_snapshot.request_id, sizeof(g_user_snapshot.request_id), "%s", "sign-1");
+    snprintf(g_user_snapshot.method, sizeof(g_user_snapshot.method), "%s", "sign_transaction");
     g_user_snapshot.request_window = {10, 200};
     g_user_timer_state = {};
     g_user_timer_state.available = true;
@@ -339,6 +347,7 @@ void reset_user()
     g_user_local_pin_draw_calls = 0;
     g_user_local_pin_draw_order = 0;
     g_user_write_error_calls = 0;
+    memset(g_user_last_error_method, 0, sizeof(g_user_last_error_method));
     g_user_display_error_calls = 0;
     g_user_execute_calls = 0;
     g_user_finish_terminal_calls = 0;
@@ -740,8 +749,9 @@ signing::UserSigningTransitionResult clear_user_flow()
 }
 bool user_terminal_pending() { return g_user_terminal_pending; }
 void cancel_pin_loss() { ++g_user_cancel_pin_loss_calls; }
-bool write_error(const char*, const char* code){
+bool write_error(const char*, const char* method, const char* code){
     ++g_user_write_error_calls;
+    snprintf(g_user_last_error_method, sizeof(g_user_last_error_method), "%s", method);
     snprintf(g_user_last_error_code, sizeof(g_user_last_error_code), "%s", code);
     return true;
 }
@@ -1143,6 +1153,8 @@ void test_user_recovery_timeout_and_pin_display_failure()
     signing::user_signing_review_ui_clear_if_needed(user_ops());
     expect(g_user_clear_flow_calls == 1, "user redraw failure clears flow");
     expect(g_user_write_error_calls == 1, "user redraw failure writes error");
+    expect(strcmp(g_user_last_error_method, "sign_transaction") == 0,
+           "user redraw failure preserves the originating method");
     expect(g_user_display_error_calls == 1, "user redraw failure displays error");
 
     reset_user();

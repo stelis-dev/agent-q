@@ -88,8 +88,8 @@ bool payload_delivery_resolve_request_payload_ref(
     JsonDocument& request,
     JsonDocument& resolved_payload,
     TimeoutTick now_tick,
-    const UsbRequestEnvelope& envelope,
-    const UsbOperationResponseWriter& writer)
+    const RequestEnvelope& envelope,
+    const ResponseWriter& writer)
 {
     const char* payload_ref = nullptr;
     if (!payload_delivery_payload_ref_wrapper(request, &payload_ref)) {

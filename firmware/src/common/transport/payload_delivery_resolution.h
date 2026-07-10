@@ -4,8 +4,8 @@
 
 #include "transport/payload_delivery_primitives.h"
 #include "transport/timeout_window.h"
-#include "protocol/usb_operation_response_writer.h"
-#include "protocol/usb_request_envelope.h"
+#include "protocol/response_writer.h"
+#include "protocol/request_envelope.h"
 
 namespace signing {
 
@@ -15,7 +15,7 @@ bool payload_delivery_resolve_request_payload_ref(
     JsonDocument& request,
     JsonDocument& resolved_payload,
     TimeoutTick now_tick,
-    const UsbRequestEnvelope& envelope,
-    const UsbOperationResponseWriter& writer);
+    const RequestEnvelope& envelope,
+    const ResponseWriter& writer);
 
 }  // namespace signing

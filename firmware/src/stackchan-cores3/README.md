@@ -323,7 +323,7 @@ firmware/tools/stackchan-cores3/test_protocol_pin_approval.sh
 firmware/tools/stackchan-cores3/test_identification_display.sh
 firmware/tools/stackchan-cores3/test_local_settings_touch_entry.sh
 firmware/tools/stackchan-cores3/test_usb_link_state.sh
-firmware/tools/stackchan-cores3/test_usb_session_loss.sh
+firmware/tools/common/test_protocol_transport_loss.sh
 firmware/tools/stackchan-cores3/test_device_activity_projection.sh
 firmware/tools/stackchan-cores3/test_ui_panel_cleanup.sh
 firmware/tools/stackchan-cores3/test_modal_layout_static.sh
@@ -493,11 +493,11 @@ In the hardware firmware tree:
   initialization.
 - Initialize NVS during the host firmware boot sequence before Agent-Q
   initialization.
-- Call `signing::init_usb_request_server()` once after boot checks and NVS
+- Call `signing::init_protocol_request_server()` once after boot checks and NVS
   initialization.
-- `signing::init_usb_request_server()` starts the USB request task. The task
-  keeps protocol handling available even when another firmware mode takes over
-  the main app loop.
+- `signing::init_protocol_request_server()` starts the protocol request task.
+  The task keeps USB and implemented local-transport handling available even
+  when another firmware mode takes over the main app loop.
 - Call `signing::notify_signing_ui_surface_ready()` after the target attaches
   the default avatar to let Agent-Q draw the current idle UI for the active
   device state.

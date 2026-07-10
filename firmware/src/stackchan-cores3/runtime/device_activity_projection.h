@@ -56,12 +56,12 @@ struct DeviceActivityProjection {
     bool user_signing_awaiting_approval;
 };
 
-struct DeviceActivityUsbRequestOptions {
+struct DeviceActivityRequestOptions {
     bool allow_settings_menu;
     bool allow_payload_delivery;
 };
 
-struct DeviceActivityUsbRequestBlock {
+struct DeviceActivityRequestBlock {
     bool blocked;
     const char* code;
     const char* message;
@@ -78,8 +78,8 @@ bool device_activity_allows_local_settings_start(
     const DeviceActivityProjection& activity);
 bool device_activity_allows_local_error_recovery(
     const DeviceActivityProjection& activity);
-DeviceActivityUsbRequestBlock device_activity_usb_request_block(
+DeviceActivityRequestBlock device_activity_request_block(
     const DeviceActivityProjection& activity,
-    DeviceActivityUsbRequestOptions options);
+    DeviceActivityRequestOptions options);
 
 }  // namespace signing

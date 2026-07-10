@@ -18,6 +18,9 @@ Sui zkLogin proof-bootstrap slice, and the Sui signing/policy slice:
   authentication;
 - USB `connect` approval, Firmware sessions, same-link session recovery,
   `disconnect`, `get_capabilities`, and `get_accounts`;
+- a target-local QR scene and BLE peripheral that use the shared optical
+  payload, Noise XX, encrypted-frame, pairing-state, and protocol-dispatch
+  owners; KEYA enters from unlocked idle and cancels the pairing window;
 - `credential_prepare`, `payload_transfer`, and `credential_propose` for
   installing a Sui zkLogin proof after device-local review and local
   authentication;
@@ -41,9 +44,8 @@ Sui zkLogin proof-bootstrap slice, and the Sui signing/policy slice:
   button, KEYA, and KEYB wake it and consume that first physical input. Touch
   does not wake the display or enter a dial digit.
 
-The target does not implement Bluetooth, QR, camera, pairing, host-triggered
-reset, Firmware-local Sui zkLogin proof verification, or a mnemonic/native
-root-material wallet path.
+The target does not implement a camera, host-triggered reset, Firmware-local
+Sui zkLogin proof verification, or a mnemonic/native root-material wallet path.
 
 Target-specific behavior and capability status live in `SPEC.md`.
 
@@ -114,8 +116,10 @@ Firmware protocol method or app-owned product state transition.
 
 ## Boundary
 
-This target keeps display, touch, buttons, vibration, power behavior, USB
-transport, credential storage, proposal state, and hardware glue target-local.
+This target keeps display, touch, buttons, vibration, power behavior, physical
+USB integration, BLE memory and storage adapters, QR composition, credential
+storage, proposal state, and hardware glue target-local. The BLE peripheral and
+encrypted carrier process are shared Firmware owners.
 Protocol method and error rows are shared through
 `firmware/src/common/protocol/device_contract.{h,cpp}`. Protocol version,
 request-id validation, JSON input helpers, USB request line framing, session id

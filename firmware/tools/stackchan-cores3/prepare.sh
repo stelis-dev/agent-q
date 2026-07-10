@@ -433,7 +433,7 @@ main_cpp = read_text_file(main_path, "main.cpp")
 main_cpp = insert_after_once(
     main_cpp,
     "#include <hal/hal.h>\n",
-    "#include <runtime/entropy.h>\n#include <runtime/signing_self_test.h>\n#include <runtime/usb_request_server.h>\n",
+    "#include <runtime/entropy.h>\n#include <runtime/signing_self_test.h>\n#include <runtime/protocol_request_server.h>\n",
     "main.cpp includes",
 )
 main_cpp = insert_after_once(
@@ -445,7 +445,7 @@ main_cpp = insert_after_once(
 main_cpp = insert_after_once(
     main_cpp,
     "    GetHAL().init();\n",
-    "\n    // Agent-Q smoke checks\n    signing::run_signing_self_test();\n    signing::init_usb_request_server();\n",
+    "\n    // Agent-Q smoke checks\n    signing::run_signing_self_test();\n    signing::init_protocol_request_server();\n",
     "main.cpp startup",
 )
 main_cpp = replace_once(
@@ -712,7 +712,7 @@ launcher = read_text_file(launcher_path, "app_launcher.cpp")
 launcher = insert_after_once(
     launcher,
     "#include <stackchan/stackchan.h>\n",
-    "#include <runtime/usb_request_server.h>\n"
+    "#include <runtime/protocol_request_server.h>\n"
     "#include <runtime/display_power.h>\n"
     "#include <runtime/motion_state.h>\n",
     "app_launcher.cpp Agent-Q provisioning UI include",
@@ -1139,56 +1139,6 @@ from pathlib import Path
 REQUIRED_CONFIG = {
     "CONFIG_LV_FONT_UNSCII_8": "y",
     "CONFIG_LV_USE_QRCODE": "y",
-    # Agent-Q local transport uses StackChan as a BLE peripheral. Keep the
-    # BLE/NimBLE shape bounded to one central peer for the LT slices; this is
-    # not a general Bluetooth product surface.
-    "CONFIG_BT_ENABLED": "y",
-    "CONFIG_BT_NIMBLE_ENABLED": "y",
-    "CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_INTERNAL": "n",
-    "CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL": "y",
-    "CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_DEFAULT": "n",
-    "CONFIG_BT_NIMBLE_ROLE_CENTRAL": "n",
-    "CONFIG_BT_NIMBLE_ROLE_PERIPHERAL": "y",
-    "CONFIG_BT_NIMBLE_ROLE_BROADCASTER": "y",
-    "CONFIG_BT_NIMBLE_ROLE_OBSERVER": "n",
-    "CONFIG_BT_NIMBLE_GATT_CLIENT": "n",
-    "CONFIG_BT_NIMBLE_GATT_SERVER": "y",
-    "CONFIG_BT_NIMBLE_SECURITY_ENABLE": "n",
-    "CONFIG_BT_NIMBLE_HS_PVCY": "n",
-    "CONFIG_MBEDTLS_HKDF_C": "y",
-    "CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP": "y",
-    "CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY": "y",
-    "CONFIG_BT_NIMBLE_MAX_BONDS": "1",
-    "CONFIG_BT_NIMBLE_MAX_CONNECTIONS": "1",
-    "CONFIG_BT_NIMBLE_MAX_CCCDS": "2",
-    "CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU": "128",
-    "CONFIG_BT_NIMBLE_ATT_MAX_PREP_ENTRIES": "4",
-    "CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT": "8",
-    "CONFIG_BT_NIMBLE_MSYS_1_BLOCK_SIZE": "256",
-    "CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT": "8",
-    "CONFIG_BT_NIMBLE_MSYS_2_BLOCK_SIZE": "320",
-    "CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT": "8",
-    "CONFIG_BT_NIMBLE_TRANSPORT_ACL_SIZE": "255",
-    "CONFIG_BT_NIMBLE_TRANSPORT_EVT_COUNT": "12",
-    "CONFIG_BT_NIMBLE_TRANSPORT_EVT_DISCARD_COUNT": "2",
-    "CONFIG_BT_NIMBLE_50_FEATURE_SUPPORT": "n",
-    "CONFIG_BT_NIMBLE_PROX_SERVICE": "n",
-    "CONFIG_BT_NIMBLE_ANS_SERVICE": "n",
-    "CONFIG_BT_NIMBLE_CTS_SERVICE": "n",
-    "CONFIG_BT_NIMBLE_HTP_SERVICE": "n",
-    "CONFIG_BT_NIMBLE_IPSS_SERVICE": "n",
-    "CONFIG_BT_NIMBLE_TPS_SERVICE": "n",
-    "CONFIG_BT_NIMBLE_IAS_SERVICE": "n",
-    "CONFIG_BT_NIMBLE_LLS_SERVICE": "n",
-    "CONFIG_BT_NIMBLE_SPS_SERVICE": "n",
-    "CONFIG_BT_NIMBLE_HR_SERVICE": "n",
-    "CONFIG_BT_NIMBLE_BAS_SERVICE": "n",
-    "CONFIG_BT_NIMBLE_DIS_SERVICE": "n",
-    "CONFIG_BT_NIMBLE_DTM_MODE_TEST": "n",
-    "CONFIG_BT_CTRL_BLE_MAX_ACT": "2",
-    "CONFIG_BT_CTRL_BLE_SCAN": "n",
-    "CONFIG_BT_CTRL_BLE_SECURITY_ENABLE": "n",
-    "CONFIG_BT_CTRL_DTM_ENABLE": "n",
 }
 
 
@@ -1230,5 +1180,12 @@ def ensure_required_config(config_path: Path) -> None:
 for arg in sys.argv[1:]:
     ensure_required_config(Path(arg))
 PY
+
+python3 "${REPO_ROOT}/firmware/tools/common/configure_local_transport_sdkconfig.py" \
+  --malloc-always-internal 512 \
+  --malloc-reserve-internal 65536 \
+  --prefer-network-psram \
+  "${FIRMWARE_DIR}/sdkconfig.defaults" \
+  "${FIRMWARE_DIR}/sdkconfig"
 
 echo "Prepared StackChan CoreS3 firmware at ${FIRMWARE_DIR}"

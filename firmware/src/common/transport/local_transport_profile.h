@@ -4,6 +4,7 @@
 
 namespace signing {
 
+constexpr const char* kLocalTransportBleDeviceName = "Agent-Q";
 constexpr uint32_t kLocalTransportPairingAdvertiseMs = 120000;
 constexpr uint32_t kLocalTransportPairingHandshakeMs = 10000;
 constexpr uint32_t kLocalTransportRequestReassemblyMs = 8000;
