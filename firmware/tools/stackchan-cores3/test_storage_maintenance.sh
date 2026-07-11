@@ -108,7 +108,6 @@ cat >"${TMP_DIR}/storage_maintenance_test.cpp" <<'CPP'
 #include <string.h>
 
 #include "human_approval_settings.h"
-#include "local_auth_test.h"
 #include "local_pin_auth.h"
 #include "storage_maintenance.h"
 #include "policy/policy_store.h"
@@ -124,7 +123,10 @@ bool g_open_fails = false;
 bool g_marker_write_fails = false;
 bool g_root_present = true;
 bool g_policy_present = true;
-bool g_auth_present = true;
+bool g_keystore_present = true;
+signing::StackChanKeystoreMaterialStatus g_keystore_status =
+    signing::StackChanKeystoreMaterialStatus::active;
+signing::KeystoreState g_keystore_state = signing::KeystoreState::unlocked;
 bool g_human_approval_setting_present = true;
 bool g_signing_mode_present = true;
 bool g_approval_history_present = true;
@@ -142,6 +144,10 @@ signing::HumanApprovalInputMode g_human_approval_input_mode =
     signing::HumanApprovalInputMode::pin;
 uint32_t g_last_worker_job_id = 0;
 uint32_t g_last_cancelled_worker_job_id = 0;
+uint32_t g_worker_cancel_attempt_count = 0;
+bool g_worker_job_cancellable = false;
+signing::LocalAuthWorkerOperation g_last_worker_operation =
+    signing::LocalAuthWorkerOperation::authenticate_pin;
 int g_clear_session_count = 0;
 int g_persist_unprovisioned_count = 0;
 int g_persist_provisioned_count = 0;
@@ -163,6 +169,7 @@ signing::TimeoutWindow pin_window(TickType_t started_at, TickType_t deadline)
 
 void reset_stubs()
 {
+    signing::storage_maintenance_clear_flow();
     g_now = 0;
     g_marker_present = false;
     g_marker_value = 0;
@@ -170,7 +177,9 @@ void reset_stubs()
     g_marker_write_fails = false;
     g_root_present = true;
     g_policy_present = true;
-    g_auth_present = true;
+    g_keystore_present = true;
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::active;
+    g_keystore_state = signing::KeystoreState::unlocked;
     g_human_approval_setting_present = true;
     g_signing_mode_present = true;
     g_approval_history_present = true;
@@ -187,11 +196,18 @@ void reset_stubs()
     g_human_approval_input_mode = signing::HumanApprovalInputMode::pin;
     g_last_worker_job_id = 0;
     g_last_cancelled_worker_job_id = 0;
+    g_worker_cancel_attempt_count = 0;
+    g_worker_job_cancellable = false;
+    g_last_worker_operation = signing::LocalAuthWorkerOperation::authenticate_pin;
     g_clear_session_count = 0;
     g_persist_unprovisioned_count = 0;
     g_persist_provisioned_count = 0;
     g_consistency_error_count = 0;
-    signing::storage_maintenance_clear_flow();
+}
+
+void mark_worker_result_delivered()
+{
+    g_worker_job_cancellable = false;
 }
 
 void clear_session()
@@ -290,33 +306,43 @@ void wipe_sensitive_buffer(void* data, size_t size)
     }
 }
 
-bool has_root_material()
+StackChanKeystoreMaterialStatus stackchan_keystore_status()
 {
-    return g_root_present;
+    return g_keystore_status;
 }
 
-bool wipe_root_material()
+KeystoreState stackchan_keystore_state()
 {
-    if (g_root_wipe_fails) {
-        return false;
+    return g_keystore_state;
+}
+
+StackChanKeystoreMaterialStatus stackchan_keystore_root_status()
+{
+    return g_root_present ? StackChanKeystoreMaterialStatus::active
+                          : StackChanKeystoreMaterialStatus::missing;
+}
+
+KeystoreOperationStatus stackchan_keystore_erase()
+{
+    if (g_root_wipe_fails || g_pairing_store_wipe_fails) {
+        return KeystoreOperationStatus::storage_error;
     }
+    g_keystore_present = false;
+    g_keystore_status = StackChanKeystoreMaterialStatus::missing;
     g_root_present = false;
-    return true;
-}
-
-bool local_transport_pairing_wipe_identity()
-{
-    if (g_pairing_store_wipe_fails) {
-        return false;
-    }
     g_pairing_store_present = false;
-    return true;
+    return KeystoreOperationStatus::success;
 }
 
-bool store_root_material(const uint8_t*, size_t)
+KeystoreOperationStatus stackchan_keystore_replace_root(
+    const uint8_t root[kStackChanRootMaterialBytes])
 {
+    if (root == nullptr || !g_keystore_present ||
+        g_keystore_status != StackChanKeystoreMaterialStatus::active) {
+        return KeystoreOperationStatus::locked;
+    }
     g_root_present = true;
-    return true;
+    return KeystoreOperationStatus::success;
 }
 
 PolicyStoreStatus active_policy_status()
@@ -336,56 +362,17 @@ bool store_default_policy()
     return true;
 }
 
-LocalAuthStatus local_auth_status()
+bool keystore_pin_valid(const char* pin)
 {
-    return g_auth_present ? LocalAuthStatus::active : LocalAuthStatus::missing;
-}
-
-bool is_valid_local_pin(const char* pin)
-{
-    if (pin == nullptr || strlen(pin) != kLocalPinDigits) {
+    if (pin == nullptr || strlen(pin) != kKeystorePinDigits) {
         return false;
     }
-    for (size_t index = 0; index < kLocalPinDigits; ++index) {
+    for (size_t index = 0; index < kKeystorePinDigits; ++index) {
         if (pin[index] < '0' || pin[index] > '9') {
             return false;
         }
     }
     return true;
-}
-
-bool clear_local_auth()
-{
-    g_auth_present = false;
-    return true;
-}
-
-bool verify_local_pin(const char*, bool* verified)
-{
-    *verified = false;
-    return true;
-}
-
-bool prepare_local_pin_verifier_record(const char* pin, LocalAuthPreparedRecord* out)
-{
-    if (!is_valid_local_pin(pin) || out == nullptr) {
-        return false;
-    }
-    wipe_sensitive_buffer(out->bytes, sizeof(out->bytes));
-    memcpy(out->bytes, pin, kLocalPinBufferSize);
-    return true;
-}
-
-bool store_prepared_local_pin_verifier(const LocalAuthPreparedRecord*)
-{
-    return true;
-}
-
-void wipe_local_pin_verifier_record(LocalAuthPreparedRecord* prepared)
-{
-    if (prepared != nullptr) {
-        wipe_sensitive_buffer(prepared->bytes, sizeof(prepared->bytes));
-    }
 }
 
 bool wipe_human_approval_input_mode()
@@ -519,35 +506,57 @@ HumanApprovalInputModeStatus human_approval_input_mode_status()
                : HumanApprovalInputModeStatus::missing;
 }
 
-bool store_local_pin_verifier(const char*)
-{
-    return true;
-}
-
-bool local_auth_worker_submit_verify(
+bool local_auth_worker_submit_authenticate(
     LocalAuthWorkerOwner,
     const char* pin,
     uint32_t* job_id)
 {
     static uint32_t next_job_id = 1;
-    if (job_id == nullptr || !is_valid_local_pin(pin)) {
+    if (job_id == nullptr || !keystore_pin_valid(pin)) {
         return false;
     }
     *job_id = next_job_id++;
     g_last_worker_job_id = *job_id;
+    g_last_worker_operation = LocalAuthWorkerOperation::authenticate_pin;
+    g_worker_job_cancellable = true;
     return true;
 }
 
-bool local_auth_worker_submit_prepare_verifier(
-    LocalAuthWorkerOwner owner,
+bool local_auth_worker_submit_unlock(
+    LocalAuthWorkerOwner,
     const char* pin,
     uint32_t* job_id)
 {
-    return local_auth_worker_submit_verify(owner, pin, job_id);
+    static uint32_t next_job_id = 1000;
+    if (job_id == nullptr || !keystore_pin_valid(pin)) {
+        return false;
+    }
+    *job_id = next_job_id++;
+    g_last_worker_job_id = *job_id;
+    g_last_worker_operation = LocalAuthWorkerOperation::unlock_keystore;
+    g_worker_job_cancellable = true;
+    return true;
 }
 
-bool local_auth_worker_cancel_job(uint32_t)
+bool local_auth_worker_submit_rewrap(
+    LocalAuthWorkerOwner owner,
+    const char* current_pin,
+    const char* new_pin,
+    uint32_t* job_id)
 {
+    return keystore_pin_valid(new_pin) &&
+           local_auth_worker_submit_authenticate(owner, current_pin, job_id);
+}
+
+bool local_auth_worker_cancel_authentication(uint32_t job_id)
+{
+    ++g_worker_cancel_attempt_count;
+    if (job_id != g_last_worker_job_id ||
+        g_last_worker_operation != LocalAuthWorkerOperation::authenticate_pin ||
+        !g_worker_job_cancellable) {
+        return false;
+    }
+    g_worker_job_cancellable = false;
     g_last_cancelled_worker_job_id = g_last_worker_job_id;
     return true;
 }
@@ -574,7 +583,7 @@ int main()
     expect(!signing::storage_maintenance_commit_ready(199), "wipe waits for display delay");
     expect(signing::storage_maintenance_commit_ready(200), "wipe ready after delay");
     expect(signing::storage_maintenance_commit_material(ops()) == Commit::ok, "error recovery commit succeeds");
-    expect(!g_root_present && !g_policy_present && !g_auth_present &&
+    expect(!g_root_present && !g_policy_present && !g_keystore_present &&
                !g_human_approval_setting_present && !g_approval_history_present &&
                !g_policy_update_marker_present && !g_zklogin_proof_present &&
                !g_sui_account_settings_present && !g_pairing_store_present,
@@ -596,12 +605,16 @@ int main()
     expect(signing::storage_maintenance_submit_pin_for_verification(10, 100) ==
                signing::StorageMaintenancePinSubmitResult::started_verification,
            "settings action PIN verification starts");
+    expect(g_last_worker_operation ==
+               signing::LocalAuthWorkerOperation::authenticate_pin,
+           "ordinary unlocked settings use non-effectful PIN authentication");
     signing::LocalAuthWorkerResult settings_worker_result = {};
     settings_worker_result.job_id = g_last_worker_job_id;
     settings_worker_result.owner = signing::LocalAuthWorkerOwner::storage_maintenance;
-    settings_worker_result.operation = signing::LocalAuthWorkerOperation::verify_pin;
-    settings_worker_result.status = signing::LocalAuthWorkerStatus::ok;
-    settings_worker_result.verified = true;
+    settings_worker_result.operation = signing::LocalAuthWorkerOperation::authenticate_pin;
+    settings_worker_result.status = signing::LocalAuthWorkerStatus::completed;
+    settings_worker_result.operation_status = signing::KeystoreOperationStatus::success;
+    mark_worker_result_delivered();
     expect(signing::storage_maintenance_complete_pin_verify_job(settings_worker_result, 90, 200) ==
                signing::StorageMaintenancePinVerifyResult::verified,
            "settings action PIN verification succeeds");
@@ -611,7 +624,7 @@ int main()
            "settings repair operation is tracked separately from Device reset");
     expect(signing::storage_maintenance_commit_material(ops()) == Commit::ok,
            "settings storage action commit succeeds");
-    expect(g_root_present && g_auth_present,
+    expect(g_root_present && g_keystore_present,
            "settings repair preserves root material and local auth verifier");
     expect(g_policy_present && g_human_approval_setting_present &&
                g_signing_mode_present && g_sui_account_settings_present,
@@ -632,7 +645,7 @@ int main()
     expect(signing::storage_maintenance_begin_error_recovery_wallet_erase(100), "marker failure path enters committing");
     expect(signing::storage_maintenance_commit_material(ops()) == Commit::action_marker_storage_error,
            "marker failure aborts before committing");
-    expect(g_root_present && g_policy_present && g_auth_present &&
+    expect(g_root_present && g_policy_present && g_keystore_present &&
                g_human_approval_setting_present && g_approval_history_present &&
                g_policy_update_marker_present && g_zklogin_proof_present &&
                g_sui_account_settings_present,
@@ -644,8 +657,8 @@ int main()
         pin_window(1, 100),
         signing::StorageMaintenanceOperation::wallet_erase);
     expect(signing::storage_maintenance_begin_error_recovery_wallet_erase(100), "root failure path enters committing");
-    expect(signing::storage_maintenance_commit_material(ops()) == Commit::root_wipe_error,
-           "root wipe failure reports error");
+    expect(signing::storage_maintenance_commit_material(ops()) == Commit::keystore_wipe_error,
+           "keystore root-record wipe failure reports error");
     expect(g_consistency_error_count == 1, "root wipe failure enters consistency error");
 
     reset_stubs();
@@ -677,7 +690,7 @@ int main()
         signing::StorageMaintenanceOperation::wallet_erase);
     expect(signing::storage_maintenance_begin_error_recovery_wallet_erase(100),
            "local transport identity failure path enters committing");
-    expect(signing::storage_maintenance_commit_material(ops()) == Commit::pairing_store_wipe_error,
+    expect(signing::storage_maintenance_commit_material(ops()) == Commit::keystore_wipe_error,
            "local transport identity wipe failure reports error");
     expect(g_consistency_error_count == 1,
            "local transport identity wipe failure enters consistency error");
@@ -702,7 +715,7 @@ int main()
     expect(signing::storage_maintenance_resume_pending_if_needed(ops(), &marker_seen) == Commit::ok,
            "pending marker resumes wipe");
     expect(marker_seen, "pending marker reported");
-    expect(!g_root_present && !g_policy_present && !g_auth_present &&
+    expect(!g_root_present && !g_policy_present && !g_keystore_present &&
                !g_human_approval_setting_present && !g_approval_history_present &&
                !g_policy_update_marker_present && !g_zklogin_proof_present &&
                !g_sui_account_settings_present && !g_pairing_store_present,
@@ -804,6 +817,82 @@ int main()
            "error-recovery repair PIN cancel returns to repair prompt without opening settings");
 
     reset_stubs();
+    g_keystore_state = signing::KeystoreState::locked;
+    g_now = 20;
+    signing::storage_maintenance_begin_error_recovery_confirm(
+        pin_window(10, 100),
+        signing::StorageMaintenanceOperation::settings_reset);
+    expect(signing::storage_maintenance_begin_error_recovery_settings_repair(
+               pin_window(10, 100)),
+           "locked error recovery enters repair PIN");
+    for (size_t index = 0; settings_pin[index] != '\0'; ++index) {
+        expect(signing::storage_maintenance_add_pin_digit(settings_pin[index]),
+               "locked repair PIN digit accepted");
+    }
+    expect(signing::storage_maintenance_submit_pin_for_verification(20, 25) ==
+               signing::StorageMaintenancePinSubmitResult::started_verification,
+           "locked repair starts keystore unlock");
+    expect(g_last_worker_operation == signing::LocalAuthWorkerOperation::unlock_keystore,
+           "locked repair selects the effectful unlock operation");
+    expect(!signing::storage_maintenance_fail_processing_if_expired(25),
+           "effectful unlock is not discarded by a UI worker deadline");
+    expect(signing::storage_maintenance_handle_ui_maintenance(false, 25) ==
+               MaintenanceResult::redraw_pin_verification_panel,
+           "panel loss preserves and redraws effectful unlock state");
+    expect(!signing::storage_maintenance_abort_pin_verification(),
+           "effectful unlock cannot be aborted as a discardable authentication");
+    expect(!signing::storage_maintenance_clear_flow(),
+           "generic cleanup preserves the effectful unlock owner");
+    expect(signing::storage_maintenance_snapshot(25).stage == Stage::pin_verifying,
+           "effectful unlock remains owned until its result is reconciled");
+    signing::LocalAuthWorkerResult unlock_result = {};
+    unlock_result.job_id = g_last_worker_job_id;
+    unlock_result.owner = signing::LocalAuthWorkerOwner::storage_maintenance;
+    unlock_result.operation = signing::LocalAuthWorkerOperation::unlock_keystore;
+    unlock_result.status = signing::LocalAuthWorkerStatus::completed;
+    unlock_result.operation_status = signing::KeystoreOperationStatus::success;
+    g_keystore_state = signing::KeystoreState::unlocked;
+    mark_worker_result_delivered();
+    expect(signing::storage_maintenance_complete_pin_verify_job(
+               unlock_result, 90, 40) ==
+               signing::StorageMaintenancePinVerifyResult::verified,
+           "successful locked repair unlock advances to the repair commit");
+    expect(signing::storage_maintenance_snapshot(25).stage == Stage::committing,
+           "locked repair owns the commit state after unlock");
+    expect(signing::storage_maintenance_clear_flow(),
+           "repair state is clearable after unlock result reconciliation");
+
+    reset_stubs();
+    g_keystore_state = signing::KeystoreState::locked;
+    g_now = 20;
+    signing::storage_maintenance_begin_error_recovery_confirm(
+        pin_window(10, 100),
+        signing::StorageMaintenanceOperation::settings_reset);
+    expect(signing::storage_maintenance_begin_error_recovery_settings_repair(
+               pin_window(10, 100)),
+           "locked wrong-PIN repair enters PIN state");
+    for (size_t index = 0; settings_pin[index] != '\0'; ++index) {
+        expect(signing::storage_maintenance_add_pin_digit(settings_pin[index]),
+               "locked wrong-PIN repair digit accepted");
+    }
+    expect(signing::storage_maintenance_submit_pin_for_verification(20, 80) ==
+               signing::StorageMaintenancePinSubmitResult::started_verification,
+           "locked wrong-PIN repair starts unlock");
+    unlock_result = {};
+    unlock_result.job_id = g_last_worker_job_id;
+    unlock_result.owner = signing::LocalAuthWorkerOwner::storage_maintenance;
+    unlock_result.operation = signing::LocalAuthWorkerOperation::unlock_keystore;
+    unlock_result.status = signing::LocalAuthWorkerStatus::completed;
+    unlock_result.operation_status = signing::KeystoreOperationStatus::wrong_pin;
+    mark_worker_result_delivered();
+    expect(signing::storage_maintenance_complete_pin_verify_job(
+               unlock_result, 90, 0) ==
+               signing::StorageMaintenancePinVerifyResult::wrong_pin,
+           "wrong PIN leaves locked repair in retry state");
+    expect(signing::storage_maintenance_snapshot(20).stage == Stage::pin_entry,
+           "locked repair retries PIN without entering commit");
+
+    reset_stubs();
     signing::storage_maintenance_begin_settings(pin_window(10, 100));
     expect(signing::storage_maintenance_handle_ui_maintenance(false, 50) ==
                MaintenanceResult::panel_lost,
@@ -878,9 +967,9 @@ int main()
         signing::LocalAuthWorkerResult worker_result = {};
         worker_result.job_id = g_last_worker_job_id;
         worker_result.owner = signing::LocalAuthWorkerOwner::local_pin_auth;
-        worker_result.operation = signing::LocalAuthWorkerOperation::verify_pin;
-        worker_result.status = signing::LocalAuthWorkerStatus::ok;
-        worker_result.verified = false;
+        worker_result.operation = signing::LocalAuthWorkerOperation::authenticate_pin;
+        worker_result.status = signing::LocalAuthWorkerStatus::completed;
+        worker_result.operation_status = signing::KeystoreOperationStatus::wrong_pin;
         const signing::LocalPinAuthVerifyResult result =
             signing::local_pin_auth_complete_verify_job(
                 worker_result,
@@ -942,9 +1031,10 @@ int main()
     signing::LocalAuthWorkerResult action_worker_result = {};
     action_worker_result.job_id = g_last_worker_job_id;
     action_worker_result.owner = signing::LocalAuthWorkerOwner::storage_maintenance;
-    action_worker_result.operation = signing::LocalAuthWorkerOperation::verify_pin;
-    action_worker_result.status = signing::LocalAuthWorkerStatus::ok;
-    action_worker_result.verified = false;
+    action_worker_result.operation = signing::LocalAuthWorkerOperation::authenticate_pin;
+    action_worker_result.status = signing::LocalAuthWorkerStatus::completed;
+    action_worker_result.operation_status = signing::KeystoreOperationStatus::wrong_pin;
+    mark_worker_result_delivered();
     expect(signing::storage_maintenance_complete_pin_verify_job(action_worker_result, 180, 0) ==
                signing::StorageMaintenancePinVerifyResult::wrong_pin,
            "action wrong PIN result before worker deadline opens retry state");
@@ -989,12 +1079,17 @@ int main()
     action_worker_result = {};
     action_worker_result.job_id = g_last_worker_job_id;
     action_worker_result.owner = signing::LocalAuthWorkerOwner::storage_maintenance;
-    action_worker_result.operation = signing::LocalAuthWorkerOperation::verify_pin;
-    action_worker_result.status = signing::LocalAuthWorkerStatus::ok;
-    action_worker_result.verified = true;
+    action_worker_result.operation = signing::LocalAuthWorkerOperation::authenticate_pin;
+    action_worker_result.status = signing::LocalAuthWorkerStatus::completed;
+    action_worker_result.operation_status = signing::KeystoreOperationStatus::success;
+    const uint32_t cancel_attempts_before_late_result =
+        g_worker_cancel_attempt_count;
+    mark_worker_result_delivered();
     expect(signing::storage_maintenance_complete_pin_verify_job(action_worker_result, 430, 0) ==
                signing::StorageMaintenancePinVerifyResult::auth_unavailable,
            "late action PIN verification result fails closed");
+    expect(g_worker_cancel_attempt_count == cancel_attempts_before_late_result,
+           "late maintenance terminal result cleanup does not cancel an ended worker job");
     expect(signing::storage_maintenance_snapshot(351).stage == signing::StorageMaintenanceStage::none,
            "late action PIN verification result clears flow");
 
@@ -1011,6 +1106,7 @@ CPP
   -I"${TMP_DIR}/stubs" \
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \
+  -I"${COMMON_ROOT}" \
   -I"${RUNTIME_DIR}" -I"${TMP_DIR}/firmware_common" \
   "${RUNTIME_DIR}/pin_attempt.cpp" \
   "${RUNTIME_DIR}/persistent_material.cpp" \

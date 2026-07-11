@@ -466,8 +466,7 @@ void provisioning_ui_handle_pin_submit(const ProvisioningUiFlowOps& ops)
     const PinSubmitResult result =
         provisioning_flow_submit_pin(
             window_from_now_ms(ops, ops.local_pin_setup_ms),
-            now + pdMS_TO_TICKS(ops.local_processing_display_ms),
-            now + pdMS_TO_TICKS(ops.local_auth_worker_max_ms));
+            now + pdMS_TO_TICKS(ops.local_processing_display_ms));
     if (result == PinSubmitResult::invalid_pin) {
         redraw_pin_setup_panel_or_wipe(
             ops,
@@ -515,13 +514,14 @@ void provisioning_ui_handle_setup_auth_worker_result(
     const ProvisioningFlowCommitFinishResult finish_result =
         provisioning_flow_finish_commit_worker_result(
             worker_result,
-            ops.commit_setup_with_prepared_auth);
+            ops.commit_setup,
+            ops.rollback_setup);
     if (finish_result.status == CommitFinishStatus::stale) {
         return;
     }
 
     if (finish_result.status == CommitFinishStatus::failed) {
-        log_warn(ops, "local setup PIN verifier preparation failed");
+        log_warn(ops, "local setup keystore creation failed");
         ops.clear_panel_if_kind(UiPanelKind::pin_entry, SensitiveUiClearPolicy::preserve);
         show_result(ops, "Storage error", MessageKind::error);
         return;

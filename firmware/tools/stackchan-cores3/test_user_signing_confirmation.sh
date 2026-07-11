@@ -62,7 +62,6 @@ cat >"${TMP_DIR}/user_signing_confirmation_test.cpp" <<'CPP'
 #include <string>
 #include <vector>
 
-#include "local_auth_test.h"
 #include "local_auth_worker.h"
 #include "local_pin_auth.h"
 #include "pin_attempt.h"
@@ -100,10 +99,11 @@ TickType_t g_now = 1;
 int g_history_write_calls = 0;
 bool g_history_write_result = true;
 bool g_history_write_clears_flow = false;
-char g_current_pin[signing::kLocalPinBufferSize] = "123456";
 char g_account_address[signing::kSuiAddressBufferSize] =
     "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 uint32_t g_last_worker_job_id = 0;
+uint32_t g_worker_cancel_attempt_count = 0;
+bool g_worker_job_cancellable = false;
 constexpr TickType_t kDefaultRequestWindowStart = 0;
 
 void expect(bool condition, const char* label)
@@ -217,12 +217,15 @@ void enter_pin(const char* pin)
 
 signing::LocalAuthWorkerResult make_verify_result(bool verified)
 {
+    g_worker_job_cancellable = false;
     signing::LocalAuthWorkerResult worker_result = {};
     worker_result.job_id = g_last_worker_job_id;
     worker_result.owner = signing::LocalAuthWorkerOwner::local_pin_auth;
-    worker_result.operation = signing::LocalAuthWorkerOperation::verify_pin;
-    worker_result.status = signing::LocalAuthWorkerStatus::ok;
-    worker_result.verified = verified;
+    worker_result.operation = signing::LocalAuthWorkerOperation::authenticate_pin;
+    worker_result.status = signing::LocalAuthWorkerStatus::completed;
+    worker_result.operation_status = verified
+        ? signing::KeystoreOperationStatus::success
+        : signing::KeystoreOperationStatus::wrong_pin;
     return worker_result;
 }
 
@@ -320,7 +323,8 @@ void reset_all()
     g_history_write_calls = 0;
     g_history_write_result = true;
     g_history_write_clears_flow = false;
-    snprintf(g_current_pin, sizeof(g_current_pin), "%s", "123456");
+    g_worker_cancel_attempt_count = 0;
+    g_worker_job_cancellable = false;
     snprintf(g_account_address, sizeof(g_account_address), "%s",
              "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 }
@@ -420,12 +424,12 @@ SuiActiveIdentity resolve_active_sui_identity()
     return identity;
 }
 
-bool is_valid_local_pin(const char* pin)
+bool keystore_pin_valid(const char* pin)
 {
-    if (pin == nullptr || strlen(pin) != kLocalPinDigits) {
+    if (pin == nullptr || strlen(pin) != kKeystorePinDigits) {
         return false;
     }
-    for (size_t index = 0; index < kLocalPinDigits; ++index) {
+    for (size_t index = 0; index < kKeystorePinDigits; ++index) {
         if (!isdigit(static_cast<unsigned char>(pin[index]))) {
             return false;
         }
@@ -433,40 +437,47 @@ bool is_valid_local_pin(const char* pin)
     return true;
 }
 
-bool verify_local_pin(const char* pin, bool* verified)
-{
-    if (verified == nullptr) {
-        return false;
-    }
-    *verified = pin != nullptr && strcmp(pin, g_current_pin) == 0;
-    return true;
-}
-
-bool local_auth_worker_submit_verify(
+bool local_auth_worker_submit_authenticate(
     LocalAuthWorkerOwner owner,
     const char* pin,
     uint32_t* job_id)
 {
     (void)owner;
     static uint32_t next_job_id = 1;
-    if (job_id == nullptr || !is_valid_local_pin(pin)) {
+    if (job_id == nullptr || !keystore_pin_valid(pin)) {
         return false;
     }
     *job_id = next_job_id++;
     g_last_worker_job_id = *job_id;
+    g_worker_job_cancellable = true;
     return true;
 }
 
-bool local_auth_worker_submit_prepare_verifier(
-    LocalAuthWorkerOwner,
-    const char*,
-    uint32_t*)
+bool local_auth_worker_submit_unlock(
+    LocalAuthWorkerOwner owner,
+    const char* pin,
+    uint32_t* job_id)
 {
-    return false;
+    return local_auth_worker_submit_authenticate(owner, pin, job_id);
 }
 
-bool local_auth_worker_cancel_job(uint32_t)
+bool local_auth_worker_submit_rewrap(
+    LocalAuthWorkerOwner owner,
+    const char* current_pin,
+    const char* new_pin,
+    uint32_t* job_id)
 {
+    return keystore_pin_valid(new_pin) &&
+           local_auth_worker_submit_authenticate(owner, current_pin, job_id);
+}
+
+bool local_auth_worker_cancel_authentication(uint32_t job_id)
+{
+    ++g_worker_cancel_attempt_count;
+    if (!g_worker_job_cancellable || job_id != g_last_worker_job_id) {
+        return false;
+    }
+    g_worker_job_cancellable = false;
     return true;
 }
 
@@ -488,35 +499,6 @@ bool store_human_approval_input_mode(HumanApprovalInputMode)
 bool wipe_human_approval_input_mode()
 {
     return true;
-}
-
-bool prepare_local_pin_verifier_record(const char*, LocalAuthPreparedRecord*)
-{
-    return false;
-}
-
-bool store_prepared_local_pin_verifier(const LocalAuthPreparedRecord*)
-{
-    return false;
-}
-
-void wipe_local_pin_verifier_record(LocalAuthPreparedRecord*)
-{
-}
-
-bool store_local_pin_verifier(const char*)
-{
-    return false;
-}
-
-bool clear_local_auth()
-{
-    return true;
-}
-
-LocalAuthStatus local_auth_status()
-{
-    return LocalAuthStatus::active;
 }
 
 }  // namespace signing
@@ -596,7 +578,7 @@ int main()
                    Confirm::ok,
                "signing PIN submit pauses only PIN input deadline");
         expect(signing::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(true), 120, 0, nullptr, nullptr) ==
+                   make_verify_result(true), 120, 0, true, nullptr, nullptr) ==
                    Confirm::invalid_argument,
                "missing history writer fails closed");
         expect(g_history_write_calls == 0,
@@ -606,6 +588,35 @@ int main()
         expect(signing::user_signing_flow_snapshot().terminal_result ==
                    signing::UserSigningTerminalResult::canceled,
                "missing history writer terminalizes request");
+
+        reset_all();
+        expect(begin_valid_flow("req_material_lost"),
+               "begin before signing material loss");
+        expect(signing::user_signing_confirmation_accept_review_and_begin_pin(
+                   99, pin_window(99, 200)) == Confirm::ok,
+               "review acceptance starts PIN before signing material loss");
+        enter_pin("123456");
+        g_now = 101;
+        expect(signing::local_pin_auth_submit(101, 0, pin_window(101, 200), 150) ==
+                   signing::LocalPinAuthSubmitResult::started_verification,
+               "material-loss test starts PIN verification");
+        expect(signing::user_signing_confirmation_mark_pin_verification_started(101) ==
+                   Confirm::ok,
+               "material-loss test records PIN verification start");
+        expect(signing::user_signing_confirmation_complete_pin_verify_job_and_write_history(
+                   make_verify_result(true),
+                   120,
+                   0,
+                   false,
+                   write_confirmation_history,
+                   nullptr) == Confirm::auth_unavailable,
+               "material loss after PIN result fails closed");
+        expect(g_history_write_calls == 0,
+               "material loss after PIN result does not write confirmation history");
+        expect(!signing::user_signing_confirmation_pin_active(),
+               "material loss after PIN result clears local PIN state");
+        expect(signing::user_signing_flow_terminal_pending(),
+               "material loss after PIN result terminalizes the signing request");
 
         reset_all();
         expect(begin_valid_flow("req_pin_ok_2"), "begin before signing PIN retry");
@@ -621,7 +632,7 @@ int main()
                    Confirm::ok,
                "signing PIN retry submit pauses only PIN input deadline");
         expect(signing::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(true), 120, 0, write_confirmation_history, nullptr) ==
+                   make_verify_result(true), 120, 0, true, write_confirmation_history, nullptr) ==
                    Confirm::ok,
                "verified PIN completion writes history and enters critical section");
         expect(g_history_write_calls == 1, "history writer called once");
@@ -648,11 +659,45 @@ int main()
                    signing::user_signing_flow_snapshot().request_window.deadline == 300,
                "only signing PIN input deadline is paused during verification");
         expect(signing::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(true), 170, 0, write_confirmation_history, nullptr) ==
+                   make_verify_result(true), 170, 0, true, write_confirmation_history, nullptr) ==
                    Confirm::ok,
                "verified PIN after input deadline still enters critical section");
         expect(signing::user_signing_flow_in_signing_critical_section(),
                "late verified PIN is not converted to timeout");
+
+        reset_all();
+        expect(begin_valid_flow("req_pin_worker_late"),
+               "begin before late worker terminal result");
+        expect(signing::user_signing_confirmation_accept_review_and_begin_pin(
+                   99, pin_window(99, 160)) == Confirm::ok,
+               "review acceptance starts PIN before late worker terminal result");
+        enter_pin("123456");
+        g_now = 100;
+        expect(signing::local_pin_auth_submit(100, 0, pin_window(100, 160), 105) ==
+                   signing::LocalPinAuthSubmitResult::started_verification,
+               "late worker terminal test starts PIN verification");
+        expect(signing::user_signing_confirmation_mark_pin_verification_started(100) ==
+                   Confirm::ok,
+               "late worker terminal test records PIN verification start");
+        const uint32_t cancel_attempts_before_result =
+            g_worker_cancel_attempt_count;
+        signing::LocalAuthWorkerResult late_worker_result =
+            make_verify_result(true);
+        g_now = 106;
+        expect(signing::user_signing_confirmation_complete_pin_verify_job_and_write_history(
+                   late_worker_result,
+                   106,
+                   0,
+                   true,
+                   write_confirmation_history,
+                   nullptr) == Confirm::auth_unavailable,
+               "late worker terminal result fails closed");
+        expect(g_worker_cancel_attempt_count == cancel_attempts_before_result,
+               "late signing terminal result cleanup does not cancel an ended worker job");
+        expect(!signing::user_signing_confirmation_pin_active(),
+               "late worker terminal result clears signing PIN state");
+        expect(signing::user_signing_flow_terminal_pending(),
+               "late worker terminal result terminalizes the signing request");
 
         reset_all();
         expect(begin_valid_flow_with_deadline("req_pin_from_paused_review", 100),
@@ -719,7 +764,7 @@ int main()
                    signing::user_signing_flow_snapshot().request_window.deadline == 130,
                "only signing PIN input deadline is paused while verification runs");
         expect(signing::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(true), 170, 0, write_confirmation_history, nullptr) ==
+                   make_verify_result(true), 170, 0, true, write_confirmation_history, nullptr) ==
                    Confirm::ok,
                "verified PIN after request admission window still enters critical section");
         expect(!signing::user_signing_confirmation_pin_active(),
@@ -745,7 +790,7 @@ int main()
                    Confirm::ok,
                "wrong PIN verification start pauses only signing PIN input deadline");
         expect(signing::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(false), 170, 300, write_confirmation_history, nullptr) ==
+                   make_verify_result(false), 170, 300, true, write_confirmation_history, nullptr) ==
                    Confirm::wrong_pin,
                "wrong signing PIN after input deadline resumes remaining input window");
         expect(signing::user_signing_confirmation_pin_active(),
@@ -775,7 +820,7 @@ int main()
                    Confirm::ok,
                "wrong PIN verification start pauses the input deadline");
         expect(signing::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(false), 170, 300, write_confirmation_history, nullptr) ==
+                   make_verify_result(false), 170, 300, true, write_confirmation_history, nullptr) ==
                    Confirm::wrong_pin,
                "wrong PIN after request admission window resumes remaining input window");
         expect(signing::user_signing_confirmation_pin_active(),
@@ -809,7 +854,7 @@ int main()
             g_now = verify_at;
             const Confirm result =
                 signing::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                    make_verify_result(false), verify_at, 240, write_confirmation_history, nullptr);
+                    make_verify_result(false), verify_at, 240, true, write_confirmation_history, nullptr);
             expect(result ==
                        (attempt + 1 == signing::kMaxWrongPinAttempts
                             ? Confirm::locked
@@ -868,9 +913,9 @@ int main()
                    Confirm::ok,
                "auth unavailable submit pauses only PIN input deadline");
         signing::LocalAuthWorkerResult worker_result = make_verify_result(true);
-        worker_result.status = signing::LocalAuthWorkerStatus::auth_unavailable;
+        worker_result.status = signing::LocalAuthWorkerStatus::worker_unavailable;
         expect(signing::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   worker_result, 120, 0, write_confirmation_history, nullptr) ==
+                   worker_result, 120, 0, true, write_confirmation_history, nullptr) ==
                    Confirm::auth_unavailable,
                "auth unavailable fails closed");
         expect(!signing::user_signing_confirmation_pin_active(),
@@ -910,7 +955,7 @@ int main()
                    signing::UserSigningTransitionResult::ok,
                "misuse moves same-id replacement flow to pin_entry without coordinator");
         expect(signing::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(true), 120, 0, write_confirmation_history, nullptr) ==
+                   make_verify_result(true), 120, 0, true, write_confirmation_history, nullptr) ==
                    Confirm::wrong_stage,
                "old PIN cannot verify same-id replacement request");
         expect(g_history_write_calls == 0, "same-id stale PIN does not write history");
@@ -932,7 +977,7 @@ int main()
                "history failure submit pauses only PIN input deadline");
         g_history_write_result = false;
         expect(signing::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(true), 120, 0, write_confirmation_history, nullptr) ==
+                   make_verify_result(true), 120, 0, true, write_confirmation_history, nullptr) ==
                    Confirm::history_error,
                "history failure terminalizes request");
         expect(!signing::user_signing_confirmation_pin_active(),
@@ -958,7 +1003,7 @@ int main()
                "session-loss submit pauses only PIN input deadline");
         signing::session_clear();
         expect(signing::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(true), 120, 0, write_confirmation_history, nullptr) ==
+                   make_verify_result(true), 120, 0, true, write_confirmation_history, nullptr) ==
                    Confirm::invalid_session,
                "session loss before history write cancels the active confirmation");
         expect(!signing::user_signing_confirmation_pin_active(),
@@ -988,7 +1033,7 @@ int main()
                    signing::UserSigningTransitionResult::ok,
                "misuse moves replacement flow to pin_entry without coordinator");
         expect(signing::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(true), 120, 0, write_confirmation_history, nullptr) ==
+                   make_verify_result(true), 120, 0, true, write_confirmation_history, nullptr) ==
                    Confirm::wrong_stage,
                "old PIN cannot verify replacement request");
         expect(g_history_write_calls == 0, "stale PIN does not write history");
@@ -1039,7 +1084,7 @@ int main()
                "callback clear submit pauses only PIN input deadline");
         g_history_write_clears_flow = true;
         expect(signing::user_signing_confirmation_complete_pin_verify_job_and_write_history(
-                   make_verify_result(true), 120, 0, write_confirmation_history, nullptr) ==
+                   make_verify_result(true), 120, 0, true, write_confirmation_history, nullptr) ==
                    Confirm::stale_state,
                "callback clear cannot enter critical section");
         expect(!signing::user_signing_confirmation_pin_active(),

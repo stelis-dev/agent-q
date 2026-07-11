@@ -44,9 +44,8 @@ selected Sui adapter owns decoded-payload capacity and semantic classification.
 Policy updates enter only through the Firmware-owned `policy_propose`
 proposal flow; there is no direct policy setter. It links a host-tested Sui
 `TransactionData` facts extractor plus current policy document storage/readback
-and offline condition-facts extraction, stores
-DEV_PROFILE root entropy and a DEV_PROFILE active
-default-reject policy record plus a DEV_PROFILE local PIN verifier plus
+and offline condition-facts extraction, stores a software-encrypted BIP-39 root
+behind a PIN-wrapped keyslot and an active default-reject policy record plus
 device-local signing authorization mode, and consumes the committed active
 policy for Sui `sign_transaction` policy mode only through Firmware-owned
 gates. Policy-mode Sui transactions sign only when the active current policy has
@@ -67,12 +66,12 @@ Legend:
 | QR and encrypted BLE local transport | O | From local Settings, a fresh QR starts one Noise XX encrypted BLE carrier only while no USB data link is connected. Host USB SOF has transport priority: it blocks pairing entry and closes an advertising, handshaking, or established BLE carrier through the normal local-transport loss cleanup. Removing USB does not restart BLE; another local pairing action and fresh QR are required. A power-only cable without host SOF does not block BLE. |
 | Persistent protocol `deviceId` | O | Stored in NVS namespace `device_identity`, key `device_id`. |
 | `get_status` | O | Returns device id, current state, and provisioning status without approval UI. Before reporting status, the target refreshes persistent-material consistency and can fail closed into `error` while clearing stale runtime session state. Payload-delivery safe-read admission treats `get_status` as safe read; receiving or finalized payload scratch does not by itself block status. |
-| Provisioning status reporting | △ | Reports `unprovisioned`, material-backed `provisioned`, or `error` for persistent material inconsistency. Hardware smoke coverage exists for local setup and import setup reaching `provisioned`; failure and consistency-error states still need targeted hardware checks. This is not signing approval. Sign API requests still require a matching active session, the selected authorization gate, required history, signing critical section, response writer, and current-tree hardware/LVGL evidence before product-active status. |
-| Mnemonic UI flow | △ | The local setup speech bubble opens a Generate/Import choice. Generate creates DEV_PROFILE BIP-39 root entropy in RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and advances to local 6-digit PIN entry after local backup confirmation. Import accepts 12 BIP-39 words through a device-local 3-word-per-page prefix/candidate UI, verifies checksum, then enters the same PIN setup path. The target stores root entropy plus an active default-reject policy plus a salt/PIN verifier plus signing authorization mode only after the repeated PIN matches. Three-letter BIP-39 words are displayed as the full word. The target keeps setup/import volatile state and cleanup decisions in a provisioning-flow state module; USB/UI code routes events and renders the current state. Local controls own the setup transitions; there are no USB setup transition requests. Hardware smoke coverage exists for Generate setup, PIN entry, and Import entry. |
+| Provisioning status reporting | △ | Reports `unprovisioned`, material-backed `provisioned`, or `error` for persistent material inconsistency. Current-tree hardware verification covers encrypted-keystore provisioning, locked boot, wrong and correct PIN handling, settings consistency error, repair, and Device reset back to `unprovisioned`. This is not signing approval. Sign API requests still require a matching active session, the selected authorization gate, required history, signing critical section, and response writer. |
+| Mnemonic UI flow | △ | The local setup speech bubble opens a Generate/Import choice. Generate creates DEV_PROFILE BIP-39 root entropy in RAM from an early-boot-seeded Agent-Q CSPRNG, displays only up-to-4-letter prefixes on device in a 3-column by 4-row grid, and advances to local 6-digit PIN entry after local backup confirmation. Import accepts 12 BIP-39 words through a device-local 3-word-per-page prefix/candidate UI, verifies checksum, then enters the same PIN setup path. Only after the repeated PIN matches does the target create the PIN-wrapped keyslot, encrypt the root entropy, and commit active default-reject policy plus signing authorization mode. Three-letter BIP-39 words are displayed as the full word. The target keeps setup/import volatile state and cleanup decisions in a provisioning-flow state module; USB/UI code routes events and renders the current state. Local controls own the setup transitions; there are no USB setup transition requests. Current-tree hardware verification covers encrypted-keystore provisioning, while Generate and Import remain separate local setup choices. |
 | `identify_device` | O | Shows a short code using temporary Agent-Q avatar UI. |
-| `connect` | O | Source accepts connection only after material-backed `provisioned` state and Firmware-owned device-local approval. The target shows a connect review modal first. The device-local human approval input mode then selects either local PIN entry or physical Confirm. The session is RAM-only and does not authorize signing. A sessionless `connect` while a RAM session is already active returns the existing session without new approval and without replacing that session, so a host process can recover its in-memory session mirror while the USB physical link remains approved. USB link loss, matching `disconnect`, Device reset, persistent-material consistency failure, and signing flows that explicitly invalidate the session still clear the RAM session. Hardware smoke coverage exists for local PIN approval and fresh reconnect after USB detach/replug. |
+| `connect` | O | Source accepts connection only after the encrypted keystore is unlocked, material-backed `provisioned` state is valid, and Firmware-owned device-local approval succeeds. Unlock does not count as connect approval. The target shows a connect review modal first. The device-local human approval input mode then selects either keyslot-backed local PIN authentication or physical Confirm. The session is RAM-only and does not authorize signing. A sessionless `connect` while a RAM session is already active returns the existing session without new approval and without replacing that session, so a host process can recover its in-memory session mirror while the USB physical link remains approved. USB link loss, matching `disconnect`, Device reset, persistent-material consistency failure, and signing flows that explicitly invalidate the session still clear the RAM session. Current-tree USB and BLE paths have hardware verification for the native encrypted-keystore account. |
 | `disconnect` | O | Source clears only a matching RAM-only Firmware session and does not require persistent material readiness. It returns `busy` while local setup/PIN/reset or sensitive settings subflow state is active, including Change PIN, so external session teardown cannot interleave with device-local sensitive UI. A matching disconnect cancels a pending policy update before the commit critical section, because that proposal is session-bound rather than generic local UI; the canceled policy-update request receives `invalid_session`, and the disconnect request receives `disconnect response`. Idle Settings menu does not block disconnect. |
-| Local settings / storage maintenance | △ | Source implements the device-local common Settings actions listed in the Local settings menu section and a separate device-local chain account menu whose current Sui account view displays active identity/proof state, can toggle whether the active account accepts gas sponsors after local PIN verification, and can clear the local zkLogin proof. Common Settings actions are human approval input mode toggle, signing authorization mode toggle, policy reset to the default reject policy, Change PIN, and Device reset. Policy reset, signing-mode changes, Sui gas sponsor setting changes, zkLogin proof clear, Change PIN, and Device reset require local PIN verification. After proof-clear PIN verification, the terminal result restores the Sui account view from current device state. Change PIN verifies the current PIN, stores only a replacement salt/PIN verifier after repeated new PIN entry, and leaves root material/policy unchanged; storage failure either preserves the previous verifier or fails closed if the post-write verifier state cannot be proven. Device reset is the single user-facing wallet initialization action in Settings; internally it erases root material, active policy, Sui account settings, Sui zkLogin proof material, PIN verifier, signing authorization mode, approval history, policy-update terminal marker, human approval input mode setting, session, and returns to `unprovisioned`. Source also implements root-preserving settings repair from persistent-material consistency `error` when signing key material and a valid PIN verifier remain. That repair requires local PIN, restores recoverable mutable settings to current defaults, persists `provisioned`, and is an internal storage-maintenance path, not a normal Settings menu action. When the authority gate is unavailable, error recovery offers destructive Device reset without PIN because the verifier may be unreadable. Both paths use the storage-action pending marker and per-key storage functions rather than NVS partition erase. Host-triggered reset/debug/recovery/PIN-change/signing-mode setter/policy-reset/proof-clear/Sui account setting protocol paths are not implemented. Current-tree hardware smoke has confirmed root-preserving settings repair after current-schema mutable-settings corruption and explicit Device reset returning the device to `unprovisioned`. Prior hardware smoke covered the predecessor destructive storage path, idle Settings session behavior, Change PIN session retention, USB detach/replug session invalidation, error-recovery modal layering, and Sui account-view proof display/clear after browser zkLogin activation. Sui gas sponsor setting hardware smoke remains pending. |
+| Local settings / storage maintenance | △ | Source implements the device-local common Settings actions listed in the Local settings menu section and a separate device-local chain account menu whose current Sui account view displays active identity/proof state, can toggle whether the active account accepts gas sponsors after local PIN authentication, and can clear the local zkLogin proof. Common Settings actions are human approval input mode toggle, signing authorization mode toggle, policy reset to the default reject policy, Change PIN, and Device reset. These sensitive actions authenticate the same encrypted keyslot; there is no second verifier. Change PIN authenticates the old PIN and atomically rewraps the unchanged master key after repeated new PIN entry; protected-record ciphertext and policy remain unchanged. Device reset erases the keyslot, encrypted root and private transport identity, mutable settings, session, and approval state before returning to `unprovisioned`. Source also implements keyslot/root-preserving settings repair from persistent-material consistency `error` when those authority records remain structurally valid. Repair requires local unlock, restores recoverable mutable settings, and is not a normal Settings menu action. When authority material is unavailable, error recovery offers only on-device destructive Device reset without PIN. Both paths use the storage-action pending marker and per-key storage functions rather than NVS partition erase. Host-triggered reset/debug/recovery/PIN-change/signing-mode setter/policy-reset/proof-clear/Sui account setting protocol paths are not implemented. Current-tree hardware verification covers Change PIN, repair, and Device reset. |
 | Agent-Q avatar UI | O | Uses Agent-Q-owned top speech-bubble decorators, modal review panels for external-request human approval, local PIN panels where required, screen-bottom timer bars, and temporary result feedback. |
 | Result feedback UI | O | Shows temporary result speech and returns to the default avatar. |
 | Head movement feedback | O | Briefly raises the head for notification, approval, and success states. |
@@ -80,15 +79,15 @@ Legend:
 | Boot/sleep posture | O | Centers yaw and raises pitch when the default avatar is attached at boot or the screen wakes. Moves to centered yaw and lowered pitch before screen-off or power-off. |
 | Ed25519 signing self-test | △ | Runtime-generated test seed only; wiped after the self-test. Not a signing API. |
 | Sui transaction signing substrate | △ | Source can derive the Sui account 0 signing seed from stored DEV_PROFILE root material, sign Sui transaction bytes with the pinned MicroSui Ed25519 transaction-intent routine, return only a Sui signature envelope to internal callers, and wipe root/mnemonic/seed scratch. Host tests cover a deterministic signature vector, verification, invalid-input output wiping, and missing-root failure. The substrate is not exposed as a public signing API. |
-| `sign_transaction` | △ | Source is wired for Sui `sign_transaction` with inline `txBytes` and same-session staged payload delivery before the current Sui `TransactionData::V1 -> ProgrammableTransaction` facts extractor. The public USB dispatcher, payload transfer handlers, signing outcome writer, client/MCP/provider parser/API, Wallet Standard adapter, and raw `signing` capability are present in source. Host tests cover bounded request metadata parsed from inline `txBytes` or staged `payloadRef`, payload transfer/digest/descriptor behavior, command argument refs, top-level TypeTag facts, malformed ref rejection, signable payload scratch, payload digest, policy runtime including sponsored gas facts, review/PIN/history/signing stages, session ownership, terminal cleanup, review view-model rows derived from Firmware-parsed bytes, host-supplied `network` handling, active zkLogin proof network matching, required history writes, signing-critical handoff, response boundaries, payload/signature scratch wiping, signing-review scroll pause/resume, and abandoned-scroll fallback. Firmware reads device-local signing authorization mode and selects one gate: policy mode validates active policy availability, request network scope, account binding, and complete offline policy condition facts, then signs only when the active current policy has a matching `sign` policy; user mode may enter offline facts review when semantic review coverage is complete and required details fit into the bounded display summary, or blind-signing review when Firmware can validate and bind the transaction but offline facts review coverage is incomplete. The parsed sender must match the active account. The parsed gas owner must also match unless the active account's Sui setting accepts gas sponsors; accepted sponsored transactions still return only the active sender signature. Invalid or unbindable Sui transaction bytes, active zkLogin proof network mismatch, caller-selected authorization, and caller-controlled timing fields fail closed or are not supported; Firmware-owned review/PIN input windows use a fixed internal 30-second window. Scrolling the signing review pauses the review timer and on-device timer bar until scrolling ends or until the Firmware-owned abandoned-scroll fallback resumes the remaining review time after one original review-window duration. StackChan CoreS3 hardware smoke has confirmed active review scrolling pauses the timer bar, scroll release resumes it, and active scrolling does not time out or reject the request; missed `SCROLL_END` abandoned-scroll fallback remains host-tested but not manually reproduced on hardware. Submitting a complete PIN pauses the input timer while stored-PIN cryptographic verification runs; the signing confirmation window is the review/PIN-entry admission boundary and is not the terminal timeout authority during stored-PIN processing after submit. The internal local-auth worker watchdog still fails closed as authentication unavailable. Wrong PIN results resume the remaining paused input window unless the shared lockout is active; while lockout is active, PIN input remains unavailable until lockout release, then the request-backed PIN input window resumes with its remaining time if the signing request/session is still valid. Product-active status is tracked in `docs/IMPLEMENTATION_STATUS.md`. |
+| `sign_transaction` | △ | Source is wired for Sui `sign_transaction` with inline `txBytes` and same-session staged payload delivery before the current Sui `TransactionData::V1 -> ProgrammableTransaction` facts extractor. The public USB dispatcher, payload transfer handlers, signing outcome writer, client/MCP/provider parser/API, Wallet Standard adapter, and raw `signing` capability are present in source. Host tests cover bounded request metadata parsed from inline `txBytes` or staged `payloadRef`, payload transfer/digest/descriptor behavior, command argument refs, top-level TypeTag facts, malformed ref rejection, signable payload scratch, payload digest, policy runtime including sponsored gas facts, review/PIN/history/signing stages, session ownership, terminal cleanup, review view-model rows derived from Firmware-parsed bytes, host-supplied `network` handling, active zkLogin proof network matching, required history writes, signing-critical handoff, response boundaries, payload/signature scratch wiping, signing-review scroll pause/resume, and abandoned-scroll fallback. Firmware reads device-local signing authorization mode and selects one gate: policy mode validates active policy availability, request network scope, account binding, and complete offline policy condition facts, then signs only when the active current policy has a matching `sign` policy; user mode may enter offline facts review when semantic review coverage is complete and required details fit into the bounded display summary, or blind-signing review when Firmware can validate and bind the transaction but offline facts review coverage is incomplete. The parsed sender must match the active account. The parsed gas owner must also match unless the active account's Sui setting accepts gas sponsors; accepted sponsored transactions still return only the active sender signature. Invalid or unbindable Sui transaction bytes, active zkLogin proof network mismatch, caller-selected authorization, and caller-controlled timing fields fail closed or are not supported; Firmware-owned review/PIN input windows use a fixed internal 30-second window. Scrolling the signing review pauses the review timer and on-device timer bar until scrolling ends or until the Firmware-owned abandoned-scroll fallback resumes the remaining review time after one original review-window duration. StackChan CoreS3 hardware smoke has confirmed active review scrolling pauses the timer bar, scroll release resumes it, and active scrolling does not time out or reject the request; missed `SCROLL_END` abandoned-scroll fallback remains host-tested but not manually reproduced on hardware. Submitting a complete PIN pauses the input timer while encrypted-keyslot authentication runs; the signing confirmation window is the review/PIN-entry admission boundary and is not the terminal timeout authority during authentication after submit. The state owner's PIN-authentication processing deadline still fails closed as authentication unavailable. Wrong PIN results resume the remaining paused input window unless the shared lockout is active; while lockout is active, PIN input remains unavailable until lockout release, then the request-backed PIN input window resumes with its remaining time if the signing request/session is still valid. Product-active status is tracked in `docs/IMPLEMENTATION_STATUS.md`. |
 | `get_capabilities` | O | Source reports one active Sui account identity capability and no delegated public methods over an approved session while material-backed `provisioned`: native Ed25519 when no zkLogin proof is active, or zkLogin when proof material is active. Top-level `signing` reports read-only Firmware signing authorization mode and supported signing routes. While native identity is active, `credentials[]` may advertise common Sui zkLogin `credential_prepare`/`credential_propose` availability. |
-| `get_accounts` | O | Source returns one active Sui account identity over an approved session while `provisioned`: native Sui Ed25519 account 0 (`m/44'/784'/0'/0'/0'`) derived from stored DEV_PROFILE root entropy, or the locally stored Sui zkLogin identity when proof material is active. The raw Agent-Q account projection includes read-only `sponsoredTransactions.acceptGasSponsor` from the active account's device-local Sui account setting. Read-only; private material, raw JWTs, and proof secrets never leave Firmware. Native derivation is verified against Sui SDK address vectors on host; hardware smoke coverage exists for the native path while idle Settings is open, after Change PIN on the same session, after reconnect, after browser/Web Serial zkLogin activation, and after local proof clear returns to native identity. Hardware smoke has not yet covered account projection after toggling the Sui gas sponsor setting. |
-| Sui zkLogin credential preparation/proposal | △ | Source exposes common `credential_prepare` and `credential_propose` with `source-wired-not-product-active` status. `credential_prepare` returns native scheme-prefixed Ed25519 public material only while native Sui identity is active. `credential_propose` accepts bounded zkLogin proof inputs, shows a device-local proof review, requires local PIN, stores a bounded proof record after successful commit, and ends the session after activation so callers reconnect before reading the zkLogin account projection. It stores no raw JWT and does not claim local OAuth/prover/validator freshness verification. Preparation/proposal fail closed while zkLogin is active or proof storage is unavailable. Hardware smoke coverage exists for browser-to-device Web Serial operation through Google/Enoki setup, proof review, local PIN activation, reconnect, and zkLogin account projection. |
+| `get_accounts` | O | Source returns one active Sui account identity over an approved session while `provisioned` and unlocked: native Sui Ed25519 account 0 (`m/44'/784'/0'/0'/0'`) derived through callback-scoped access to the encrypted root, or the locally stored Sui zkLogin identity when proof material is active. The raw Agent-Q account projection includes read-only `sponsoredTransactions.acceptGasSponsor` from the active account's device-local Sui account setting. Read-only; private material, raw JWTs, and proof secrets never leave Firmware. Native derivation is verified against Sui SDK address vectors on host; current-tree hardware verification confirms native account stability across reboot, repair, and PIN rewrap. |
+| Sui zkLogin credential preparation/proposal | △ | Source exposes common `credential_prepare` and `credential_propose` with `source-wired-not-product-active` status. `credential_prepare` returns native scheme-prefixed Ed25519 public material only while native Sui identity is active. `credential_propose` accepts bounded zkLogin proof inputs, shows a device-local proof review, requires local PIN, stores a bounded proof record after successful commit, and ends the session after activation so callers reconnect before reading the zkLogin account projection. It stores no raw JWT and does not claim local OAuth/prover/validator freshness verification. Preparation/proposal fail closed while zkLogin is active or proof storage is unavailable. Earlier hardware smoke covered browser-to-device Web Serial operation through Google/Enoki setup, proof review, local PIN activation, reconnect, and zkLogin account projection on the predecessor PIN-verifier path. Current encrypted-keystore local-authentication hardware verification remains required. |
 | `policy_get` | △ | Source implements session-scoped read-only document readback for the committed active `signing.policy` policy record. The current product flow installs a valid empty default-reject policy, and the target active-policy store accepts bounded current-schema active policy material. Corrupt/unreadable active policy or missing policy under `provisioned` fails closed. Host process and MCP parser tests and target policy-store host tests cover the current source/parser/store behavior, including full-document readback shape and response-size bounds. Current-tree hardware readback evidence for the full document response remains pending. |
-| `get_approval_history` | △ | Source implements a session-scoped read-only view of persistent Firmware-authored signing and policy-update terminal metadata. Records are stored in a fixed-size binary NVS ring buffer, newest-first paginated, and wiped by internal settings repair, Device reset, or error-state Device reset recovery. `sign_transaction` records policy confirmation after policy approval, user confirmation after device-local approval, and terminal signing metadata for signed, rejected, timed-out, and failed outcomes as applicable; user-mode `sign_personal_message` records user confirmation and terminal signing metadata for supported terminal outcomes. Invalid parameter, malformed transaction/message, and unsupported-method errors are not persisted as approval history. The policy-update flow records `applied`, `rejected`, `timed_out`, and `storage_error` terminal records through a required-write path. Product-active status is tracked in `docs/IMPLEMENTATION_STATUS.md`; Host process and MCP parser tests, target approval-history host tests, and opt-in policy-update hardware smoke coverage cover current source behavior. |
-| Persistent signing material | △ | DEV_PROFILE root entropy NVS blob exists after backup confirmation plus matching PIN repeat. Source can additionally store one bounded Sui zkLogin proof record after device-local review and local PIN approval. Public active account projection is implemented (`get_accounts`, native Sui Ed25519 account 0 or active Sui zkLogin identity). Internal Sui signing substrate is wired into `sign_transaction` after inline or staged Sui payload preparation and user-mode `sign_personal_message` for bounded personal-message bytes, then wraps the device-produced Ed25519 user signature in a zkLogin envelope when zkLogin is active. Product-active status is tracked in `docs/IMPLEMENTATION_STATUS.md`. USER_PROFILE secure storage and import are not implemented. |
-| Mnemonic generation/import | △ | DEV_PROFILE backup phrase generation/display, device-local mnemonic import entry, local 6-digit PIN setup, and backup-confirmed/checksum-verified root entropy storage source exists. USB, host process, or MCP mnemonic import and USER_PROFILE secure provisioning are not implemented. |
-| Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Backup confirmation plus matching PIN repeat stores root entropy, initializes the active default-reject policy, stores the local PIN verifier, and initializes signing authorization mode. Public account derivation is implemented via `get_accounts`; USER_PROFILE secure provisioning is not implemented. |
+| `get_approval_history` | △ | Source implements a session-scoped read-only view of persistent Firmware-authored signing and policy-update terminal metadata. Records are stored in a fixed-size binary NVS ring buffer, newest-first paginated, and wiped by internal settings repair, Device reset, or error-state Device reset recovery. `sign_transaction` records policy confirmation after policy approval, user confirmation after device-local approval, and terminal signing metadata for signed, rejected, timed-out, and failed outcomes as applicable; user-mode `sign_personal_message` records user confirmation and terminal signing metadata for supported terminal outcomes. Invalid parameter, malformed transaction/message, and unsupported-method errors are not persisted as approval history. The policy-update flow records `applied`, `rejected`, `timed_out`, and `storage_error` terminal records through a required-write path. Product-active status is tracked in `docs/IMPLEMENTATION_STATUS.md`; Host process and MCP parser tests and target approval-history host tests cover current source behavior. Current-tree native policy update and policy-authorized signing hardware verification recorded their terminal history paths. |
+| Persistent signing material | △ | A PIN-wrapped random master key and XChaCha20-Poly1305 encrypted root record exist after backup confirmation plus matching PIN repeat. The local-transport X25519 private/public pair is added as a separate encrypted record on first use. Public account derivation and signing consume decrypted records only inside callback-scoped access while unlocked. Source can additionally store one bounded Sui zkLogin proof record after device-local review and local PIN approval. Current-tree hardware verification covers the native encrypted-keyslot account and signature path. This software layer is not Secure Boot, Flash Encryption, or eFuse-backed protection. |
+| Mnemonic generation/import | △ | DEV_PROFILE backup phrase generation/display, device-local mnemonic import entry, local 6-digit PIN setup, and backup-confirmed/checksum-verified encrypted root storage source exists. USB, host process, or MCP mnemonic import is not implemented. |
+| Provisioning flow | △ | DEV_PROFILE mnemonic UI and material-backed `provisioned` state source exists. Backup confirmation plus matching PIN repeat creates the encrypted keyslot and root, initializes the active default-reject policy and signing authorization mode, and enters `locked` after reboot. Public account derivation is implemented via `get_accounts` only after local unlock. Current-tree hardware verification covers provisioning, reboot to locked state, and local unlock. |
 | Policy evaluation | △ | Source has the current policy document parser/storage/readback boundary, a Sui offline condition-facts extractor over Firmware-derived `TransactionData` facts, and a current policy evaluator for Sui `sign_transaction`. Policy mode signs only when active policy availability, request network scope, account binding, complete offline condition facts, and a matching `sign` policy all pass. Missing, incomplete, unmatched, or reject-matched policy coverage returns `policy_rejected`. |
 | Policy storage/read | △ | Stores the active policy as canonical `signing.policy` binary records in two bounded NVS slots plus commit metadata and a pending-write marker, exposes read-only `policy_get` active policy document readback, preserves the previous committed policy only for interrupted writes identified by that pending marker, treats metadata flip as the commit point, classifies each write as applied, unchanged failure, or consistency error, tolerates stale pending markers that exactly match the selected committed policy, removes stale commit metadata before slot reuse, and treats corrupt/unreadable committed records, invalid commit metadata without a matching pending marker, or pending targets that overlap active material without exactly matching it as a material-consistency error. The current product flow installs a valid empty default-reject policy; the Firmware-owned `policy_propose` proposal path accepts bounded current-schema policy material. |
 | Policy update | △ | Source implements a Firmware-owned `policy_propose` flow for active sessions: bounded proposal validation, a device-local policy summary review, local-PIN approval only after device-local Continue, canonical active-policy commit, required terminal history recording, and no direct policy setter. The target accepts bounded current-schema `signing.policy` documents. Policy-mode signing consumes the committed active policy only through Firmware-owned signing gates. The flow uses the two-slot active-policy store plus a persistent policy-update terminal marker that makes an incomplete post-commit terminal sequence a material-consistency error on reboot. The host-process/MCP request/parser surface exists, and the host process has a local Admin Page for current-schema policy proposal submission and a minimal Sui testnet policy template. Policy reset is available only as a Firmware-local Settings action. |
@@ -110,7 +109,7 @@ mode selects policy authorization or user confirmation for transaction signing.
 | Sui `sign_personal_message` | △ | `source-wired-not-product-active` for bounded Sui personal-message bytes in user authorization mode. Public USB dispatcher, USB signing outcome writer, provider/client/MCP parser/API, Wallet Standard `sui:signPersonalMessage`, user clear-signing review rows, approval-history metadata, and PersonalMessage intent digest signing are present in source. Policy mode fails closed with `unsupported_method`; policy facts/rules for personal-message signing are not implemented. Product-active status is tracked in `docs/IMPLEMENTATION_STATUS.md`. |
 | Sui `sign_transaction` | △ | Through `sign_transaction`, this method validates request-context `network`, matches that request network against the stored proof network when zkLogin is active, and accepts either canonical base64 inline `txBytes` or a same-session staged `payloadRef`, derives offline-provable facts with the current Sui `TransactionData::V1 -> ProgrammableTransaction` facts extractor, and then uses the Firmware-local signing authorization mode only if the parsed shape has mode-specific authorization coverage. Policy mode validates active policy availability, request network scope, account binding, and offline policy condition facts, then signs only when the active current policy has a matching `sign` policy; user mode shows covered offline facts when semantic review coverage is complete and required details fit into the bounded display summary, or a blind-signing warning when Firmware can validate and bind the transaction but offline facts review coverage is incomplete. The parsed sender must match the active account. The parsed gas owner must also match unless the active account's Sui setting accepts gas sponsors. Sponsored transaction gas owner, gas budget, and gas price policy facts describe sponsor gas data, not user spending. Product-active status is tracked in `docs/IMPLEMENTATION_STATUS.md`. Corrupt/unreadable or missing policy fails closed before policy-mode signing is available. |
 | Sui transaction decoding | △ | The StackChan build links the common Sui `TransactionData::V1 -> ProgrammableTransaction` facts extractor for inline or staged transaction bytes. Host fixtures cover all PTB command variants currently decoded by the bounded extractor, MoveCall package/module/function metadata, TypeTag facts, command argument refs, `TransactionKind`-only rejection, out-of-range ref rejection, sponsored gas owner extraction, unsupported-version/kind/shape classification, and malformed/trailing/oversized rejects. The runtime keeps parser success separate from policy facts coverage and user review display coverage. |
-| Sui zkLogin | △ | `source-wired-not-product-active` for common proof preparation/proposal, bounded proof storage, active account projection, device-local Sui account-view display/clear, and final zkLogin signature-envelope construction after the existing signing authorization gate. It stores no raw JWT, does not claim local OAuth/prover/validator freshness verification, has no signer-selector API, and has no proof-clear protocol route. Hardware smoke coverage exists for browser/Web Serial setup, reconnect, sign-only transaction signing, local proof clear, and native account return; broader product-active evidence remains incomplete. |
+| Sui zkLogin | △ | `source-wired-not-product-active` for common proof preparation/proposal, bounded proof storage, active account projection, device-local Sui account-view display/clear, and final zkLogin signature-envelope construction after the existing signing authorization gate. It stores no raw JWT, does not claim local OAuth/prover/validator freshness verification, has no signer-selector API, and has no proof-clear protocol route. Earlier hardware smoke covered browser/Web Serial setup, reconnect, sign-only transaction signing, local proof clear, and native account return on the predecessor root/PIN path. Current encrypted-keystore hardware verification remains required; broader product-active evidence remains incomplete. |
 | EVM signing | X | Not implemented. |
 | Solana signing | X | Not implemented. |
 
@@ -272,43 +271,45 @@ for session-scoped protocol requests.
 ## Persistent Storage
 
 This target persists the protocol `deviceId`, the provisioning state flag, a
-DEV_PROFILE binary root entropy blob, the DEV_PROFILE active default-reject
-policy record, a DEV_PROFILE local PIN verifier, and one optional bounded Sui
-zkLogin proof record in ordinary NVS. Root entropy is stored after physical
-backup confirmation plus matching PIN repeat. The zkLogin proof record is
+PIN-wrapped random master key, an encrypted BIP-39 root record, the active
+default-reject policy record, and one optional bounded Sui zkLogin proof record
+in ordinary NVS. Root entropy is encrypted after physical backup confirmation
+plus matching PIN repeat. The zkLogin proof record is
 stored only after device-local proof review and local PIN approval. Setup also
 initializes device-local signing authorization mode and the human approval input
 mode default. The provisioning state
 flag is not signing material by itself and does not make the device ready to
-sign. The target reports `provisioned` only when the persisted state, valid root
-entropy blob, valid active policy record, valid local PIN verifier, and valid
-signing authorization mode all exist. If those records disagree after boot or during runtime checks, the target
+sign. The target reports `provisioned` only when the persisted state, valid
+keyslot and encrypted root, valid active policy record, and valid signing
+authorization mode all exist. If those records disagree after boot or during runtime checks, the target
 reports `provisioning.state = error` and fails closed. It does not store the
-mnemonic display string, prefixes, seed, or account data to NVS. Root entropy
-and the local PIN verifier live in the protected authority namespace. The
+mnemonic display string, prefixes, seed, or account data to NVS. A PIN-wrapped
+random master key and encrypted root and transport-identity records live in the
+protected signing namespace. The
 protocol `deviceId` lives in a device-identity namespace because it is neither
 signing key material nor mutable settings. Mutable settings, policy state,
 approval history, provisioning state,
 storage-maintenance markers, and zkLogin proof material live in a separate
 mutable settings namespace. Settings repair rebuilds only the mutable settings
-namespace and never deletes the root entropy or local PIN verifier. The local
-PIN verifier is a UX gate for human-approval branches when the input mode is
-`pin`, settings changes, storage maintenance actions, the current policy-update
-proposal flow, and sensitive local writes; it is not root-material encryption.
-If the target boots with `prov_state = provisioned` and valid root entropy but
+namespace and never deletes the keyslot or encrypted private-material records.
+The encrypted keyslot is the sole current PIN verifier. Boot unlock and each
+PIN-authorized action authenticate that keyslot through the shared keystore
+process; boot unlock does not count as connect or signing approval.
+If the target boots with `prov_state = provisioned` and valid encrypted root but
 no active canonical policy record, it enters material/state consistency error.
 Unsupported current policy-history or policy-storage blobs are not accepted as
 product state; settings repair, Device reset, or development flash erase is the supported
-recovery path. Devices without a valid current local PIN verifier fail closed;
+recovery path. Devices without a valid current keyslot fail closed;
 root-preserving settings repair is unavailable because the authority gate
 cannot be proven.
 
 | Namespace | Key | Purpose |
 |---|---|---|
 | `device_identity` | `device_id` | host process reconnect and device-selection identity; not wallet material |
-| `signing` | `root_entropy` | DEV_PROFILE BIP-39 root entropy blob; not exported over USB; erased only by explicit destructive Device reset or development flash erase |
-| `signing` | `pin_auth` | DEV_PROFILE salt + PBKDF2-HMAC-SHA512 local PIN verifier; protected authority-gate material, not root encryption |
-| `signing_state` | `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy, active policy, local PIN verifier, and signing authorization mode present |
+| `signing` | `keyslot` | Random master key wrapped by the six-digit PIN-derived key using the StackChan fixed Argon2id optimization profile: 512 KiB, 6 passes, 1 lane |
+| `signing` | `root` | XChaCha20-Poly1305 encrypted BIP-39 root entropy record |
+| `signing` | `transport_id` | XChaCha20-Poly1305 encrypted local-transport X25519 private/public key-pair record |
+| `signing_state` | `prov_state` | Provisioning state flag; `provisioned` is valid only with the keyslot, encrypted root, active policy, and required settings present |
 | `signing_state` | `pol_s0`, `pol_s1` | Active policy canonical record slots |
 | `signing_state` | `pol_c0`, `pol_c1` | Active policy commit metadata records |
 | `signing_state` | `pol_p` | Active policy pending-write marker used to distinguish interrupted inactive-slot writes from post-commit corruption |
@@ -319,6 +320,14 @@ cannot be proven.
 | `signing_state` | `sui_zkl_proof` | Bounded Sui zkLogin proof record used only for active account projection and final zkLogin signature-envelope construction; local proof clear, internal settings repair, Device reset, and error-state Device reset wipe it |
 | `signing_state` | `approval_hist` | Fixed-size 8-record binary ring buffer of Firmware-authored signing and policy-update metadata; internal settings repair, Device reset, and error-state Device reset wipe it |
 | `signing_state` | `storage_action` | Internal Firmware-owned marker used to resume an interrupted settings repair or Device reset commit at boot; not a protocol state or host API |
+
+The StackChan KDF profile is a target optimization selected from physical
+measurement; cryptographic format, state transitions, callback-scoped secret
+access, and wipe behavior remain common keystore contracts. Software encryption
+removes plaintext private material from ordinary NVS and blocks normal access
+while locked. A copied flash image still exposes a practical offline exhaustive
+search over the six-digit PIN space. This target does not claim Secure Boot,
+Flash Encryption, or eFuse-backed key protection.
 
 The StackChan build preparation step patches the generated firmware
 `partitions.csv` so this target owns a 64 KiB NVS partition. The upstream
@@ -377,18 +386,20 @@ edit, delete, or clear history records.
 
 ## Provisioning Capability
 
-Provisioning status reporting, the mnemonic UI flow, and DEV_PROFILE root
-entropy persistence are implemented in the target firmware source. Hardware
-smoke is still required. `get_status` returns `provisioning.state`.
+Provisioning status reporting, the mnemonic UI flow, and encrypted root
+persistence are implemented in the target firmware source. Current-tree
+hardware verification covers encrypted-keystore provisioning, locked boot,
+local unlock, settings repair, and Device reset. `get_status` returns
+`provisioning.state`.
 
 Setup transition paths are local device UX only. The target does not implement
 USB requests for setup start, setup cancel, backup phrase
 confirmation, mnemonic import, factory reset, or diagnostic display
 signaling. `provisioned` is set only after local backup confirmation or
 checksum-verified local import, matching local PIN repeat, and successful
-root entropy, active policy, local PIN verifier, signing authorization mode,
-and provisioning-state persistence. `locked` is not used because no unlock
-model exists.
+encrypted keyslot and root, active policy, signing authorization mode, and
+provisioning-state persistence. A provisioned reboot projects `locked` until
+the local PIN opens the keyslot and authenticates the mandatory records.
 
 Device-local backup phrase setup starts from the local setup speech bubble shown while
 the device is `unprovisioned`, then shows local Generate and Import choices.
@@ -425,14 +436,14 @@ accepts exactly six digits, asks for a repeat, wipes typed PIN scratch on
 mismatch, and returns to first PIN entry while retaining root entropy scratch.
 Matching PIN repeat enters
 `pin_committing`, keeps the PIN panel active with a non-interactive processing
-overlay, stores the DEV_PROFILE root entropy blob, stores the active
-default-reject policy, stores a salt + PIN verifier, stores the signing
-authorization mode, persists `provisioned`, and then wipes volatile scratch.
+overlay, creates the PIN-wrapped keyslot, stores the encrypted root record,
+stores the active default-reject policy and signing authorization mode,
+persists `provisioned`, and then wipes volatile scratch.
 Storage failure rolls back persistent setup
 material where possible, wipes scratch, and must not report `provisioned`.
-Hardware smoke coverage exists for StackChan CoreS3 Generate setup, PIN entry,
-and Import entry. Targeted hardware verification remains required after setup
-UI or setup-state changes.
+Earlier hardware smoke covered StackChan CoreS3 Generate setup, PIN entry, and
+Import entry on the plaintext predecessor schema. Current encrypted-keystore
+setup and locked-boot transitions require current-tree hardware verification.
 
 The LVGL panel is not the source of truth for setup scratch validity. If the
 backup phrase display or PIN panel is removed or replaced while the matching
@@ -449,7 +460,7 @@ subsequent backup confirmation or PIN submit can use that scratch.
 
 The device-local Cancel button wipes volatile setup scratch and leaves
 persistent state `unprovisioned`. Cancellation does not erase already-confirmed
-root material, active policy, PIN verifier, or signing authorization mode.
+encrypted authority material, active policy, or signing authorization mode.
 
 Local settings actions are separate device-local flows under `provisioned`.
 The target enters local settings only when no setup, approval, identification,
@@ -460,21 +471,22 @@ mode toggle, policy reset to the default reject policy, Change PIN, and Device
 reset.
 The same local settings state owns a separate chain account menu whose current
 Sui account view displays active identity/proof state and can clear the local
-zkLogin proof. Selecting a sensitive action opens stored 6-digit PIN
-verification directly. Change PIN then accepts and repeats a new 6-digit PIN,
-stores only the replacement salt/verifier, and returns to Settings without
-ending the active RAM session; storage failure either leaves the old verifier
-in place or fails closed if the post-write verifier state cannot be proven.
+zkLogin proof. Selecting a sensitive action opens six-digit keyslot
+authentication directly. Change PIN then accepts and repeats a new 6-digit PIN,
+atomically rewraps the unchanged master key, and returns to Settings without
+ending the active RAM session; storage failure either proves the previous
+keyslot remains selected or fails closed if the post-write keyslot state cannot
+be proven.
 Opening or closing the Settings menu alone does not end the active RAM session.
 While the Settings menu is idle, existing session-scoped requests remain
 available; PIN verification, PIN change, and Device reset subflows return `busy` until
 the local flow completes or is canceled.
 Canceling human approval input mode, Change PIN, Device reset, or settings repair PIN verification, and
-successfully changing the human approval input mode setting or PIN verifier, return to the
+successfully changing the human approval input mode setting or keyslot wrapping PIN, return to the
 settings menu instead of closing local settings. Successfully changing the
 human approval input mode setting affects the next external-request
 human-approval branch; it does not end the current active RAM session.
-Wrong PIN, timeout, or cancel leaves root material, active policy, PIN verifier,
+Wrong PIN, timeout, or cancel leaves the keyslot, encrypted records, active policy,
 signing authorization mode, the human approval input mode setting, and `provisioned` state
 intact.
 Submitting a complete PIN pauses the input deadline while stored-PIN
@@ -508,15 +520,16 @@ action aborts before material is changed. After the marker is written, partial
 store/wipe, marker-clear, or state persistence failure enters material/state
 consistency error. A present storage-action marker owns the next recovery
 operation before live repairability is evaluated, so a pending Device reset
-continues as Device reset even if root material and the PIN verifier still read
+continues as Device reset even if the keyslot and encrypted root still read
 as present. Storage maintenance flows are not exposed over USB.
 When the target detects a material/state consistency error, it clears any active
 RAM session immediately and fails closed for session-scoped requests. The error
-panel offers settings repair when signing key material and a valid PIN verifier
-remain; that repair requires local PIN and preserves signing key material. When
+panel offers settings repair when the keyslot and encrypted root remain
+structurally valid; that repair requires local PIN unlock and preserves those
+authority records. When
 the authority gate is unavailable, the panel offers only destructive wallet
 erase: it cannot read, repair, unlock, or export stored material, it does not
-require PIN because the PIN verifier may be unreadable, and it uses the same
+require PIN because the keyslot or encrypted root may be unreadable, and it uses the same
 storage-action pending marker plus per-key Device reset transaction before
 returning to `unprovisioned`. Connect, settings, Change PIN, and storage
 maintenance PIN verification share one RAM-only
@@ -531,7 +544,7 @@ implemented in source. Product-active signing status still requires the current
 hardware evidence tracked in the implementation status. Mnemonic import, direct
 policy setters, Firmware-local Admin UI, arbitrary Sui transaction signing,
 policy-authorized personal-message signing, host-triggered proof clearing, and
-USER_PROFILE secure root-material handling are not implemented on this target.
+hardware-backed release-profile key protection are not implemented on this target.
 Host-process Admin policy authority is not implemented: the Admin
 Page may submit current-schema policy proposals and a minimal Sui testnet policy
 template, but Firmware owns validation,
@@ -588,9 +601,11 @@ tests.
 - run `firmware/tools/stackchan-cores3/test_bip39_vectors.sh` after ESP-IDF
   v5.5.4 is active to check known BIP-39 entropy-to-mnemonic vectors against
   the tracked encoder, ESP-IDF mbedTLS SHA-256, and generated wordlist source;
-- run `firmware/tools/stackchan-cores3/test_local_auth.sh` to check local
-  6-digit PIN verifier storage, verification, fresh salt, wipe, and fail-closed
-  behavior against host NVS/RNG stubs and pinned Monocypher;
+- run `firmware/tools/stackchan-cores3/test_stackchan_keystore.sh` to check the
+  target KDF profile, encrypted keyslot/root/transport-identity records,
+  callback-scoped access, unlock, PIN rewrap, authenticated corruption failure,
+  wipe, and fail-closed state transitions against host NVS/RNG stubs and pinned
+  Monocypher;
 - run `firmware/tools/stackchan-cores3/test_local_pin_auth.sh` to check local
   PIN authorization state transitions, including lockout release and paused
   input-window resume;
@@ -656,23 +671,24 @@ tests.
 - smoke-test local Cancel wipes scratch and leaves `provisioning.state =
   unprovisioned`;
 - smoke-test local Confirm advances to local PIN setup without storing material;
-- smoke-test matching local PIN repeat stores root material plus active
-  default-reject policy plus local PIN verifier plus signing authorization
+- smoke-test matching local PIN repeat stores the encrypted keyslot and root
+  plus active default-reject policy and signing authorization
   mode, wipes scratch, and reports `provisioning.state = provisioned`;
 - smoke-test PIN mismatch wipes typed PIN scratch only and retries first PIN
   entry;
 - smoke-test PIN cancel/timeout wipes PIN plus root scratch and remains
   `unprovisioned`;
-- smoke-test reboot persistence after matching PIN repeat;
-- smoke-test `connect` after backup-confirmed root material, active policy,
-  local PIN verifier, and signing authorization mode storage requires local PIN
-  by default and returns a RAM-only session id;
+- smoke-test reboot enters `locked`, wrong PIN remains locked, and the correct
+  PIN unlocks the same account;
+- smoke-test `connect` after local unlock still requires its separate
+  device-local approval and returns a RAM-only session id;
 - smoke-test local settings human approval input mode toggle requires current
   PIN, changes only that local setting, and leaves it unchanged after wrong PIN,
   cancel, or timeout;
-- smoke-test local settings Change PIN requires the current PIN, stores the new
-  PIN only after repeated new PIN entry, leaves the old PIN valid on mismatch,
-  cancel, timeout, or storage failure, and never changes root material or policy;
+- smoke-test local settings Change PIN requires the current PIN, atomically
+  rewraps only the unchanged master key after repeated new PIN entry, leaves the
+  old keyslot active on mismatch, cancel, timeout, or unchanged write, and never
+  rewrites encrypted root, transport identity, or policy;
 - smoke-test USB host SOF loss clears the Firmware RAM session;
 - smoke-test `disconnect` clears a matching active session and rejects an
   unknown or inactive session id;

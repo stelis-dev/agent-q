@@ -8,9 +8,8 @@ namespace {
 bool ops_valid(const LocalTransportIdentityStoreOps& ops)
 {
     return ops.storage.read_public_key != nullptr &&
-           ops.storage.read_key_pair != nullptr &&
+           ops.storage.with_key_pair != nullptr &&
            ops.storage.write_key_pair != nullptr &&
-           ops.storage.erase_key_pair != nullptr &&
            ops.crypto != nullptr &&
            local_transport_crypto_ops_valid(*ops.crypto);
 }
@@ -77,53 +76,46 @@ bool compute_fingerprint(
     return ok;
 }
 
-LocalTransportIdentityRecordReadStatus read_validated_identity(
-    const LocalTransportIdentityStoreOps& ops,
-    LocalTransportPairingIdentitySecret* identity)
-{
-    if (identity == nullptr) {
-        return LocalTransportIdentityRecordReadStatus::error;
-    }
-    local_transport_wipe_bytes(
-        reinterpret_cast<uint8_t*>(identity),
-        sizeof(*identity));
-    if (!ops_valid(ops)) {
-        return LocalTransportIdentityRecordReadStatus::error;
-    }
+struct SecretConsumerContext {
+    const LocalTransportIdentityStoreOps* ops = nullptr;
+    LocalTransportIdentitySecretConsumer consumer = nullptr;
+    void* consumer_context = nullptr;
+};
 
-    const LocalTransportIdentityRecordReadStatus status =
-        ops.storage.read_key_pair(
-            identity->secret_key,
-            identity->public_key,
-            ops.storage.context);
-    if (status != LocalTransportIdentityRecordReadStatus::found) {
-        local_transport_wipe_bytes(
-            reinterpret_cast<uint8_t*>(identity),
-            sizeof(*identity));
-        return status;
+bool validate_and_consume_key_pair(
+    const uint8_t secret_key[kLocalTransportStaticKeyBytes],
+    const uint8_t public_key[kLocalTransportStaticKeyBytes],
+    void* context_ptr)
+{
+    auto* context = static_cast<SecretConsumerContext*>(context_ptr);
+    if (context == nullptr || context->ops == nullptr ||
+        context->consumer == nullptr || secret_key == nullptr ||
+        public_key == nullptr) {
+        return false;
     }
 
     uint8_t derived_public[kLocalTransportStaticKeyBytes] = {};
-    const bool valid = ops.crypto->x25519_public_key(
+    uint8_t fingerprint[kLocalTransportIdentityFingerprintBytes] = {};
+    const bool valid = context->ops->crypto->x25519_public_key(
                            derived_public,
-                           identity->secret_key,
-                           ops.crypto->context) &&
+                           secret_key,
+                           context->ops->crypto->context) &&
                        memcmp(
                            derived_public,
-                           identity->public_key,
+                           public_key,
                            sizeof(derived_public)) == 0 &&
                        compute_fingerprint(
-                           *ops.crypto,
-                           identity->public_key,
-                           identity->fingerprint);
+                           *context->ops->crypto,
+                           public_key,
+                           fingerprint);
+    const bool consumed = valid && context->consumer(
+        secret_key,
+        public_key,
+        fingerprint,
+        context->consumer_context);
     local_transport_wipe_bytes(derived_public, sizeof(derived_public));
-    if (!valid) {
-        local_transport_wipe_bytes(
-            reinterpret_cast<uint8_t*>(identity),
-            sizeof(*identity));
-        return LocalTransportIdentityRecordReadStatus::error;
-    }
-    return LocalTransportIdentityRecordReadStatus::found;
+    local_transport_wipe_bytes(fingerprint, sizeof(fingerprint));
+    return consumed;
 }
 
 }  // namespace
@@ -192,11 +184,19 @@ bool local_transport_identity_load_or_create(
     return true;
 }
 
-bool local_transport_identity_load_secret(
+bool local_transport_identity_with_secret(
     const LocalTransportIdentityStoreOps& ops,
-    LocalTransportPairingIdentitySecret* identity)
+    LocalTransportIdentitySecretConsumer consumer,
+    void* consumer_context)
 {
-    return read_validated_identity(ops, identity) ==
+    if (!ops_valid(ops) || consumer == nullptr) {
+        return false;
+    }
+    SecretConsumerContext context{&ops, consumer, consumer_context};
+    return ops.storage.with_key_pair(
+               validate_and_consume_key_pair,
+               &context,
+               ops.storage.context) ==
            LocalTransportIdentityRecordReadStatus::found;
 }
 

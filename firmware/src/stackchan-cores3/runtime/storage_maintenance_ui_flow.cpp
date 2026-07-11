@@ -66,16 +66,24 @@ void clear_settings_touch_entry(const StorageMaintenanceUiFlowOps& ops)
     }
 }
 
-void clear_storage_maintenance_flow(
+bool clear_storage_maintenance_flow(
     const StorageMaintenanceUiFlowOps& ops,
     const char* reason)
 {
     const bool had_storage_action_scratch = storage_maintenance_flow_active();
-    storage_maintenance_clear_flow();
+    if (!storage_maintenance_clear_flow()) {
+        if (had_storage_action_scratch) {
+            log_warn(
+                ops,
+                "storage maintenance state preserved until effectful auth completes");
+        }
+        return false;
+    }
     clear_settings_touch_entry(ops);
     if (had_storage_action_scratch) {
         log_warn(ops, reason != nullptr ? reason : "storage maintenance scratch wiped");
     }
+    return true;
 }
 
 bool clear_panel_if_kind(
@@ -433,16 +441,14 @@ void storage_maintenance_ui_commit_if_ready(const StorageMaintenanceUiFlowOps& o
         case MaintenanceCommitResult::auth_unavailable:
             log_error(ops, "Settings repair could not be authorized; device entered consistency error");
             break;
-        case MaintenanceCommitResult::root_wipe_error:
+        case MaintenanceCommitResult::keystore_wipe_error:
         case MaintenanceCommitResult::policy_wipe_error:
-        case MaintenanceCommitResult::local_auth_wipe_error:
         case MaintenanceCommitResult::human_approval_setting_wipe_error:
         case MaintenanceCommitResult::signing_mode_wipe_error:
         case MaintenanceCommitResult::sui_account_settings_wipe_error:
         case MaintenanceCommitResult::approval_history_wipe_error:
         case MaintenanceCommitResult::policy_update_marker_wipe_error:
         case MaintenanceCommitResult::zklogin_proof_wipe_error:
-        case MaintenanceCommitResult::pairing_store_wipe_error:
         case MaintenanceCommitResult::material_remaining_error:
         case MaintenanceCommitResult::material_incomplete_error:
         case MaintenanceCommitResult::state_storage_error:
@@ -874,7 +880,7 @@ void storage_maintenance_ui_handle_auth_worker_result(
                     ? PersistentMaterialRuntimeFailure::wallet_erase_auth_unavailable
                     : PersistentMaterialRuntimeFailure::settings_reset_auth_unavailable);
             clear_settings_touch_entry(ops);
-            log_warn(ops, "settings action PIN verifier unavailable");
+            log_warn(ops, "settings action PIN authentication unavailable");
             complete_panel_to_result(
                 ops,
                 UiPanelKind::action_pin_entry,

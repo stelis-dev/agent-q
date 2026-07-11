@@ -80,6 +80,30 @@ bool all_zero(const uint8_t* bytes, size_t size)
     return true;
 }
 
+struct PairObservation {
+    bool called = false;
+    uint8_t secret[signing::kLocalTransportStaticKeyBytes] = {};
+    uint8_t public_key[signing::kLocalTransportStaticKeyBytes] = {};
+};
+
+bool observe_pair(
+    const uint8_t* secret,
+    const uint8_t* public_key,
+    void* context)
+{
+    auto* observation = static_cast<PairObservation*>(context);
+    if (observation == nullptr || secret == nullptr || public_key == nullptr) {
+        return false;
+    }
+    observation->called = true;
+    memcpy(observation->secret, secret, sizeof(observation->secret));
+    memcpy(
+        observation->public_key,
+        public_key,
+        sizeof(observation->public_key));
+    return true;
+}
+
 void reset_store()
 {
     g_namespace_exists = false;
@@ -251,7 +275,6 @@ int main()
     const signing::LocalTransportIdentityStorageOps ops =
         signing::local_transport_nvs_identity_storage_ops(&config);
 
-    uint8_t secret[signing::kLocalTransportStaticKeyBytes];
     uint8_t public_key[signing::kLocalTransportStaticKeyBytes];
     uint8_t expected_secret[signing::kLocalTransportStaticKeyBytes];
     uint8_t expected_public[signing::kLocalTransportStaticKeyBytes];
@@ -264,11 +287,10 @@ int main()
            signing::LocalTransportIdentityRecordReadStatus::missing);
     assert(all_zero(public_key, sizeof(public_key)));
     assert(g_private_value_reads == 0);
-    memset(secret, 0xa5, sizeof(secret));
-    memset(public_key, 0xa5, sizeof(public_key));
-    assert(ops.read_key_pair(secret, public_key, ops.context) ==
+    PairObservation observation = {};
+    assert(ops.with_key_pair(observe_pair, &observation, ops.context) ==
            signing::LocalTransportIdentityRecordReadStatus::missing);
-    assert(all_zero(secret, sizeof(secret)) && all_zero(public_key, sizeof(public_key)));
+    assert(!observation.called);
 
     assert(ops.write_key_pair(expected_secret, expected_public, ops.context));
     memset(public_key, 0xa5, sizeof(public_key));
@@ -276,10 +298,12 @@ int main()
            signing::LocalTransportIdentityRecordReadStatus::found);
     assert(memcmp(public_key, expected_public, sizeof(public_key)) == 0);
     assert(g_private_size_queries == 1 && g_private_value_reads == 0);
-    assert(ops.read_key_pair(secret, public_key, ops.context) ==
+    observation = {};
+    assert(ops.with_key_pair(observe_pair, &observation, ops.context) ==
            signing::LocalTransportIdentityRecordReadStatus::found);
-    assert(memcmp(secret, expected_secret, sizeof(secret)) == 0);
-    assert(memcmp(public_key, expected_public, sizeof(public_key)) == 0);
+    assert(observation.called);
+    assert(memcmp(observation.secret, expected_secret, sizeof(expected_secret)) == 0);
+    assert(memcmp(observation.public_key, expected_public, sizeof(expected_public)) == 0);
     assert(g_private_value_reads == 1);
 
     g_committed_public = {};
@@ -287,11 +311,10 @@ int main()
     assert(ops.read_public_key(public_key, ops.context) ==
            signing::LocalTransportIdentityRecordReadStatus::error);
     assert(all_zero(public_key, sizeof(public_key)));
-    memset(secret, 0xa5, sizeof(secret));
-    memset(public_key, 0xa5, sizeof(public_key));
-    assert(ops.read_key_pair(secret, public_key, ops.context) ==
+    observation = {};
+    assert(ops.with_key_pair(observe_pair, &observation, ops.context) ==
            signing::LocalTransportIdentityRecordReadStatus::error);
-    assert(all_zero(secret, sizeof(secret)) && all_zero(public_key, sizeof(public_key)));
+    assert(!observation.called);
 
     reset_store();
     g_namespace_exists = true;
@@ -352,11 +375,11 @@ int main()
     aliased.public_key_name = kPrivateKey;
     const signing::LocalTransportIdentityStorageOps aliased_ops =
         signing::local_transport_nvs_identity_storage_ops(&aliased);
-    memset(secret, 0xa5, sizeof(secret));
-    memset(public_key, 0xa5, sizeof(public_key));
-    assert(aliased_ops.read_key_pair(secret, public_key, aliased_ops.context) ==
+    observation = {};
+    assert(aliased_ops.with_key_pair(
+               observe_pair, &observation, aliased_ops.context) ==
            signing::LocalTransportIdentityRecordReadStatus::error);
-    assert(all_zero(secret, sizeof(secret)) && all_zero(public_key, sizeof(public_key)));
+    assert(!observation.called);
     assert(!aliased_ops.write_key_pair(expected_secret, expected_public, aliased_ops.context));
     assert(!aliased_ops.erase_key_pair(aliased_ops.context));
     return 0;

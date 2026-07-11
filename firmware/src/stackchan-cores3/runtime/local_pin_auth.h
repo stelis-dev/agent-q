@@ -14,6 +14,7 @@ namespace signing {
 
 enum class LocalPinAuthPurpose {
     none,
+    unlock,
     connect,
     settings_human_approval_input,
     settings_signing_mode,
@@ -57,6 +58,7 @@ enum class LocalPinAuthSubmitResult {
 
 enum class LocalPinAuthVerifyResult {
     not_ready,
+    unlocked,
     verified_connect,
     verified_settings_policy_reset,
     verified_settings_sui_zklogin_clear,
@@ -142,7 +144,8 @@ bool local_pin_auth_processing_deadline_expired(TickType_t now);
 bool local_pin_auth_fail_processing_if_expired(TickType_t now);
 LocalPinAuthLockoutReleaseResult local_pin_auth_release_lockout_if_elapsed(TickType_t now);
 
-void local_pin_auth_clear_flow();
+bool local_pin_auth_clear_flow();
+bool local_pin_auth_begin_unlock(TickType_t now, TimeoutWindow input_window);
 bool local_pin_auth_begin_connect(TickType_t now, TimeoutWindow input_window);
 bool local_pin_auth_begin_human_approval_input_setting(
     HumanApprovalInputMode target_human_approval_input_mode,

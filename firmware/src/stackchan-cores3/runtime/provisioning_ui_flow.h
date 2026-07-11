@@ -25,17 +25,16 @@ struct ProvisioningUiFlowOps {
     bool (*draw_pin_setup_processing_or_panel)();
     void (*clear_overlay)();
     void (*show_message)(const char* message, MessageKind kind);
-    ProvisioningFlowCommitResult (*commit_setup_with_prepared_auth)(
+    ProvisioningFlowCommitResult (*commit_setup)(
         const uint8_t* root_material,
-        size_t root_material_size,
-        const LocalAuthPreparedRecord* prepared_auth);
+        size_t root_material_size);
+    bool (*rollback_setup)();
     void (*log_info)(const char* message);
     void (*log_warn)(const char* message);
     uint32_t provisioning_approval_ms;
     uint32_t backup_phrase_display_ms;
     uint32_t local_pin_setup_ms;
     uint32_t local_processing_display_ms;
-    uint32_t local_auth_worker_max_ms;
 };
 
 void provisioning_ui_clear_setup_choice_if_needed(const ProvisioningUiFlowOps& ops);

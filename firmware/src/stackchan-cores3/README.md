@@ -148,10 +148,10 @@ The current implementation includes:
   by 4-row grid, and advances to local 6-digit PIN entry after the backup
   phrase panel's local `Confirm` button. Import accepts 12 BIP-39 words
   through a device-local 3-word-per-page prefix/candidate UI, verifies checksum,
-  and then advances to the same local PIN setup path. The target stores the root
-  entropy plus active default-reject policy plus salt/PIN verifier plus signing
-  authorization mode only after the repeated PIN matches. Local Cancel controls
-  wipe volatile setup scratch.
+  and then advances to the same local PIN setup path. Only after the repeated
+  PIN matches does the target create the PIN-wrapped keyslot, encrypt the root
+  entropy, and commit the active default-reject policy and signing authorization
+  mode. Local Cancel controls wipe volatile setup scratch.
   These setup transitions are not exposed as USB JSONL requests.
 - device-local settings flows for `provisioned` devices: human approval input
   mode toggle, signing authorization mode toggle, policy reset to the default
@@ -161,17 +161,14 @@ The current implementation includes:
   changes, zkLogin proof clear, Change PIN, and Device reset require local PIN
   verification. Proof clear wipes only Sui zkLogin proof material, ends the
   active session, and restores the Sui account view from current device state.
-  Change PIN verifies the current stored 6-digit PIN, accepts and repeats a new
-  PIN, and replaces only the salt/PIN verifier. Device reset is the single
-  user-facing wallet initialization action in Settings: it erases root material
-  and returns the device to
-  `unprovisioned`. Root-preserving settings repair is an internal
+  Change PIN authenticates the current keyslot with the current 6-digit PIN,
+  accepts and repeats a new PIN, and rewraps only the unchanged master key.
+  Device reset is the single user-facing wallet initialization action in
+  Settings: it erases the keyslot and encrypted private-material records and
+  returns the device to `unprovisioned`. Keyslot/root-preserving settings repair is an internal
   storage-maintenance path for material/state consistency errors, not a normal
-  Settings menu action and not a USB JSONL request. Current-tree hardware smoke
-  has confirmed root-preserving settings repair after current-schema
-  mutable-settings corruption and explicit Device reset returning the device to
-  `unprovisioned`. Targeted hardware verification remains required after
-  storage-maintenance UI/state changes.
+  Settings menu action and not a USB JSONL request. Current-tree hardware
+  verification covers encrypted-keystore repair, Change PIN, and Device reset.
 - a locked-down Agent-Q firmware profile that keeps only the local launcher,
   local default avatar idle surface, and USB Agent-Q request server. It does not
   start the StackChan/Xiaozhi remote AI runtime, does not register Xiaozhi MCP
@@ -232,10 +229,10 @@ history. It does not expose MCP directly; the host process and MCP only submit r
 parse Firmware responses. It does persist bounded approval-history metadata for
 signing and policy update terminal records. The
 persisted values in this target implementation are the protocol `deviceId`,
-provisioning state flag, DEV_PROFILE root entropy blob after backup
+provisioning state flag, encrypted keyslot and root after backup
 confirmation, canonical active policy slots plus commit metadata and a
-pending-write marker, a policy-update terminal marker, a DEV_PROFILE local PIN
-verifier, the human approval input mode setting, and the approval-history ring
+pending-write marker, a policy-update terminal marker, the human approval input
+mode setting, and the approval-history ring
 buffer. The normal provisioning flow still installs the default-reject policy;
 the session-scoped `policy_propose` proposal path accepts bounded
 current-schema policy material.
@@ -315,7 +312,7 @@ firmware/tools/stackchan-cores3/test_user_signing_review_view_model.sh
 firmware/tools/stackchan-cores3/test_user_signing_critical_section.sh
 firmware/tools/stackchan-cores3/test_sign_transaction_user_validation.sh
 firmware/tools/stackchan-cores3/test_sign_personal_message_user_validation.sh
-firmware/tools/stackchan-cores3/test_local_auth.sh
+firmware/tools/stackchan-cores3/test_stackchan_keystore.sh
 firmware/tools/stackchan-cores3/test_local_auth_worker.sh
 firmware/tools/stackchan-cores3/test_local_pin_auth.sh
 firmware/tools/stackchan-cores3/test_connect_approval.sh
@@ -431,12 +428,12 @@ then verifies missing/present/unreadable storage classification and state
 writes. Persistent-material consistency meaning remains owned by
 `persistent_material.cpp`.
 
-The StackChan local-auth test is target-specific. It compiles the tracked
-`local_auth.cpp` verifier store with the pinned MicroSui Monocypher
-source plus host NVS/RNG stubs, then verifies exact 6-digit PIN validation,
-PBKDF2-HMAC-SHA512 verifier storage, correct/wrong PIN checks, fresh salt,
-wipe behavior, and corrupt/failed-write fail-closed behavior. This verifier is
-a DEV_PROFILE local UX gate, not root-material encryption.
+The StackChan keystore test is target-specific. It compiles the tracked target
+adapter and shared encrypted-keystore process with pinned Monocypher plus host
+NVS/RNG stubs. It verifies the measured fixed KDF optimization profile,
+keyslot/root/transport-identity encryption, callback-scoped secret access,
+correct/wrong PIN behavior, PIN rewrap, wipe behavior, and authenticated
+corruption failure.
 
 The StackChan local-auth worker test is target-specific. It compiles the
 tracked `local_auth_worker.cpp` task boundary with host FreeRTOS stubs,
@@ -484,8 +481,8 @@ In the hardware firmware tree:
   for the USB JSONL smoke path.
 - Patch the generated StackChan `partitions.csv` so the Agent-Q target owns a
   64 KiB NVS partition. The upstream 16 KiB NVS layout is too small for the
-  current Agent-Q root material, two-slot active policy store, approval-history
-  ring buffer, local PIN verifier, settings, and terminal markers.
+  current Agent-Q encrypted key material, two-slot active policy store,
+  approval-history ring buffer, settings, and terminal markers.
 - Call `signing::init_secure_random_from_early_boot_entropy()` before HAL
   initialization so backup phrase generation never depends on late direct
   `esp_fill_random()` while RF/ADC entropy is unavailable.
@@ -512,9 +509,10 @@ Local-transport identity storage uses the shared parameterized NVS mechanism.
 This target owns its namespace and key names, random source, reset composition,
 memory placement, UI, and target-specific storage-failure projection.
 
-This target stores root signing material and the local PIN verifier separately
-from mutable settings. The current `signing` NVS namespace holds protected
-authority material: DEV_PROFILE root entropy and the local PIN verifier. The
+This target stores a PIN-wrapped random master key and encrypted private
+material separately from mutable settings. The current `signing` NVS namespace
+holds the encrypted keyslot, BIP-39 root record, and local-transport identity
+record. The
 protocol `deviceId` lives in the `device_identity` namespace because it is
 stable device identity, not signing key material, authority-gate material, or
 recoverable mutable settings. The `signing_state` NVS namespace holds mutable settings:
@@ -522,27 +520,28 @@ provisioning state, committed active policy records, human approval input mode,
 signing authorization mode, Sui account settings, one optional bounded Sui
 zkLogin proof record, approval-history ring buffer, and storage-maintenance
 marker. Internal settings repair rebuilds `signing_state` and never deletes the
-root entropy or local PIN verifier. The protected root-material and local-PIN
-storage names under `signing` are the current permanent keystore contract, not
-a mutable settings schema or compatibility path. Firmware updates must not
-rename or move those records as part of settings repair. The StackChan build preparation step patches the generated firmware
+keyslot or encrypted private-material records. The storage names under
+`signing` are the current permanent keystore contract, not a mutable settings
+schema or compatibility path. Settings repair does not rename, rewrite, or
+delete those records. The StackChan build preparation step patches the generated firmware
 partition table to use a 64 KiB NVS partition; the upstream 16 KiB default is
 not sufficient for the current Agent-Q material set.
-If current storage has `prov_state = provisioned` and valid root entropy but no active
-canonical policy record, local PIN verifier, or signing authorization mode,
+If current storage has `prov_state = provisioned` and valid encrypted root and
+keyslot records but no active canonical policy record or signing authorization mode,
 Firmware fails closed with a material/state consistency error. Unsupported
 current policy-history or policy-storage blobs are not accepted as product
 state; settings repair, Device reset, or development flash erase is the
-supported recovery path according to the remaining authority-gate material.
-Devices missing the current local PIN verifier or signing authorization mode
+supported recovery path according to the remaining encrypted key material.
+Devices missing the current keyslot or signing authorization mode
 fail closed until Device reset or development flash erase.
 
 | Namespace | Key | Purpose |
 |---|---|---|
 | `device_identity` | `device_id` | host process reconnect and device-selection identity; not wallet material |
-| `signing` | `root_entropy` | DEV_PROFILE BIP-39 root entropy blob; not exported over USB; erased only by explicit destructive Device reset or development flash erase |
-| `signing` | `pin_auth` | DEV_PROFILE salt + PBKDF2-HMAC-SHA512 local PIN verifier; protected authority-gate material, not root encryption |
-| `signing_state` | `prov_state` | Provisioning state flag; `provisioned` is valid only with root entropy, active policy, local PIN verifier, and signing authorization mode present |
+| `signing` | `keyslot` | Random keystore master key wrapped by the six-digit PIN-derived key; Argon2id uses the StackChan measured fixed profile of 512 KiB, 6 passes, and 1 lane |
+| `signing` | `root` | XChaCha20-Poly1305 encrypted BIP-39 root entropy record; plaintext is available only through callback-scoped access while unlocked |
+| `signing` | `transport_id` | XChaCha20-Poly1305 encrypted local-transport X25519 private/public key-pair record; created on first local-transport use |
+| `signing_state` | `prov_state` | Provisioning state flag; `provisioned` is valid only with the keyslot, encrypted root, active policy, and required settings present |
 | `signing_state` | `pol_s0`, `pol_s1` | Active policy canonical record slots |
 | `signing_state` | `pol_c0`, `pol_c1` | Active policy commit metadata records |
 | `signing_state` | `pol_p` | Active policy pending-write marker used to distinguish interrupted inactive-slot writes from post-commit corruption |
@@ -561,14 +560,20 @@ Import uses device-local A-Z prefix buttons and scrollable BIP-39 candidate
 bubbles, verifies checksum, and then advances to the same PIN setup path.
 Volatile setup scratch is wiped on cancel, display expiry, PIN timeout, storage
 failure, or firmware restart. Backup-confirmed or checksum-verified root entropy
-is stored as DEV_PROFILE scaffolding only after the repeated PIN matches; this
-build does not enable USER_PROFILE encrypted storage. Three-letter BIP-39 words
-are displayed as the full word.
+is encrypted only after the repeated PIN matches and the keyslot is created. A
+provisioned boot starts in `locked`; the local six-digit PIN must authenticate
+the keyslot and encrypted records before account access, local transport,
+settings, or signing can run. This software encryption removes plaintext
+private material from ordinary NVS and blocks normal locked-state access. It
+does not make a six-digit PIN resistant to determined offline exhaustive search
+of a copied flash image and does not claim Secure Boot, Flash Encryption, or
+eFuse-backed key protection. Three-letter BIP-39 words are displayed as the
+full word.
 
 Agent-Q-owned modules are sources under `runtime/` in this target tree. Storage
-keys must stay in the namespace that matches their authority: protected root and
-local-authentication material under `signing`, stable device identity under
+keys must stay in the namespace that matches their authority: encrypted keyslot
+and private-material records under `signing`, stable device identity under
 `device_identity`, and mutable settings and proof state under `signing_state`.
-Protected root and local-authentication key names are fixed keystore records.
+The keyslot and protected-record key names are fixed current keystore records.
 New mutable settings keys should be named by feature, such as
 `<feature>_<name>`, to avoid collisions.

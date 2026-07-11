@@ -80,21 +80,19 @@ LocalTransportIdentityRecordReadStatus read_public_key(
     return LocalTransportIdentityRecordReadStatus::found;
 }
 
-LocalTransportIdentityRecordReadStatus read_key_pair(
-    uint8_t secret_key[kLocalTransportStaticKeyBytes],
-    uint8_t public_key[kLocalTransportStaticKeyBytes],
-    void* context)
+LocalTransportIdentityRecordReadStatus with_key_pair(
+    LocalTransportStoredKeyPairConsumer consumer,
+    void* consumer_context,
+    void* storage_context)
 {
     const auto* config =
-        static_cast<const LocalTransportNvsIdentityStorageConfig*>(context);
-    if (secret_key == nullptr || public_key == nullptr) {
+        static_cast<const LocalTransportNvsIdentityStorageConfig*>(storage_context);
+    if (!config_valid(config) || consumer == nullptr) {
         return LocalTransportIdentityRecordReadStatus::error;
     }
-    local_transport_wipe_bytes(secret_key, kLocalTransportStaticKeyBytes);
-    local_transport_wipe_bytes(public_key, kLocalTransportStaticKeyBytes);
-    if (!config_valid(config)) {
-        return LocalTransportIdentityRecordReadStatus::error;
-    }
+
+    uint8_t secret_key[kLocalTransportStaticKeyBytes] = {};
+    uint8_t public_key[kLocalTransportStaticKeyBytes] = {};
 
     nvs_handle_t nvs = 0;
     const esp_err_t open_result =
@@ -123,17 +121,23 @@ LocalTransportIdentityRecordReadStatus read_key_pair(
     nvs_close(nvs);
     if (secret_result == ESP_ERR_NVS_NOT_FOUND &&
         public_result == ESP_ERR_NVS_NOT_FOUND) {
+        local_transport_wipe_bytes(secret_key, sizeof(secret_key));
+        local_transport_wipe_bytes(public_key, sizeof(public_key));
         return LocalTransportIdentityRecordReadStatus::missing;
     }
     if (secret_result != ESP_OK || public_result != ESP_OK ||
         secret_size != kLocalTransportStaticKeyBytes ||
         public_size != kLocalTransportStaticKeyBytes) {
-        local_transport_wipe_bytes(secret_key, kLocalTransportStaticKeyBytes);
-        local_transport_wipe_bytes(public_key, kLocalTransportStaticKeyBytes);
+        local_transport_wipe_bytes(secret_key, sizeof(secret_key));
+        local_transport_wipe_bytes(public_key, sizeof(public_key));
         ESP_LOGW(config->log_tag, "identity record invalid");
         return LocalTransportIdentityRecordReadStatus::error;
     }
-    return LocalTransportIdentityRecordReadStatus::found;
+    const bool consumed = consumer(secret_key, public_key, consumer_context);
+    local_transport_wipe_bytes(secret_key, sizeof(secret_key));
+    local_transport_wipe_bytes(public_key, sizeof(public_key));
+    return consumed ? LocalTransportIdentityRecordReadStatus::found
+                    : LocalTransportIdentityRecordReadStatus::error;
 }
 
 bool erase_key(
@@ -225,7 +229,7 @@ LocalTransportIdentityStorageOps local_transport_nvs_identity_storage_ops(
 {
     return LocalTransportIdentityStorageOps{
         read_public_key,
-        read_key_pair,
+        with_key_pair,
         write_key_pair,
         erase_key_pair,
         const_cast<LocalTransportNvsIdentityStorageConfig*>(config),

@@ -8,7 +8,7 @@ Usage: firmware/tools/stackchan-cores3/test_sui_signing_service.sh
 Compiles the internal Agent-Q Sui signing substrate against the pinned MicroSui
 signing source. It verifies deterministic transaction signatures for the Sui
 standard account 0 derivation path, invalid-input output committing, and the
-stored-root signing boundary using host stubs. This is not a protocol signing
+callback-scoped encrypted-root boundary using host stubs. This is not a protocol signing
 test and does not require ESP-IDF.
 EOF
 }
@@ -56,7 +56,7 @@ cat >"${TMP_DIR}/sui_signing_service_test.cpp" <<'CPP'
 #include <vector>
 
 #include "bip39.h"
-#include "root_material.h"
+#include "stackchan_keystore.h"
 #include "sui_signing_service.h"
 #include "sui_zklogin_proof_store.h"
 #include "sui/zklogin_signature.h"
@@ -160,14 +160,25 @@ void wipe_sensitive_buffer(void* data, size_t size)
     }
 }
 
-bool read_root_material(uint8_t* root_material_out, size_t root_material_size)
+KeystoreOperationStatus stackchan_keystore_with_root(
+    KeystoreRecordConsumer consumer,
+    void* consumer_context)
 {
-    if (!g_root_available || root_material_out == nullptr || root_material_size != kRootMaterialBytes) {
-        wipe_sensitive_buffer(root_material_out, root_material_size);
-        return false;
+    if (!g_root_available) {
+        return KeystoreOperationStatus::missing;
     }
-    memset(root_material_out, 0x42, root_material_size);
-    return true;
+    if (consumer == nullptr) {
+        return KeystoreOperationStatus::invalid_input;
+    }
+    uint8_t root_material[kStackChanRootMaterialBytes] = {};
+    memset(root_material, 0x42, sizeof(root_material));
+    const bool consumed = consumer(
+        root_material,
+        sizeof(root_material),
+        consumer_context);
+    wipe_sensitive_buffer(root_material, sizeof(root_material));
+    return consumed ? KeystoreOperationStatus::success
+                    : KeystoreOperationStatus::consumer_failed;
 }
 
 bool make_bip39_mnemonic_12_words(

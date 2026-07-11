@@ -4,7 +4,6 @@
 
 #include "bip39.h"
 #include "human_approval_settings.h"
-#include "local_auth.h"
 #include "local_pin_auth_signature_internal.h"
 #include "pin_attempt.h"
 #include "protocol/signing_mode.h"
@@ -15,8 +14,9 @@ namespace signing {
 namespace {
 
 struct LocalPinAuthState {
-    char pin_entry[kLocalPinBufferSize] = {};
-    char new_pin[kLocalPinBufferSize] = {};
+    char pin_entry[kKeystorePinBufferBytes] = {};
+    char current_pin[kKeystorePinBufferBytes] = {};
+    char new_pin[kKeystorePinBufferBytes] = {};
     size_t pin_entry_length = 0;
     LocalPinAuthPurpose purpose = LocalPinAuthPurpose::none;
     LocalPinAuthStage stage = LocalPinAuthStage::none;
@@ -56,12 +56,26 @@ struct LocalPinAuthState {
         signature_binding = {};
     }
 
-    void clear_flow()
+    bool effectful_worker_job_active() const
     {
+        return auth_job_id != 0 &&
+               (stage == LocalPinAuthStage::committing_pin_change ||
+                (stage == LocalPinAuthStage::pin_verifying &&
+                 purpose == LocalPinAuthPurpose::unlock));
+    }
+
+    bool clear_flow()
+    {
+        if (effectful_worker_job_active()) {
+            return false;
+        }
         if (auth_job_id != 0) {
-            local_auth_worker_cancel_job(auth_job_id);
+            if (!local_auth_worker_cancel_authentication(auth_job_id)) {
+                return false;
+            }
         }
         wipe_sensitive_buffer(pin_entry, sizeof(pin_entry));
+        wipe_sensitive_buffer(current_pin, sizeof(current_pin));
         wipe_sensitive_buffer(new_pin, sizeof(new_pin));
         pin_entry_length = 0;
         purpose = LocalPinAuthPurpose::none;
@@ -76,6 +90,7 @@ struct LocalPinAuthState {
         commit_ready_at = 0;
         worker_deadline = 0;
         clear_signature_binding();
+        return true;
     }
 
     void set_input_window(TimeoutWindow window)
@@ -115,10 +130,12 @@ bool processing_stage(LocalPinAuthStage stage)
            stage == LocalPinAuthStage::committing_pin_change;
 }
 
-bool timeout_bound_processing_stage(LocalPinAuthStage stage)
+bool timeout_bound_processing_stage(
+    LocalPinAuthStage stage,
+    LocalPinAuthPurpose purpose)
 {
-    return stage == LocalPinAuthStage::pin_verifying ||
-           stage == LocalPinAuthStage::committing_pin_change;
+    return stage == LocalPinAuthStage::pin_verifying &&
+           purpose != LocalPinAuthPurpose::unlock;
 }
 
 LocalPinAuthLockoutReleaseResult release_lockout_if_elapsed(TickType_t now)
@@ -243,7 +260,7 @@ bool local_pin_auth_deadline_expired(TickType_t now)
 bool local_pin_auth_processing_deadline_expired(TickType_t now)
 {
     return g_state.flow_active() &&
-           timeout_bound_processing_stage(g_state.stage) &&
+           timeout_bound_processing_stage(g_state.stage, g_state.purpose) &&
            timeout_window_tick_reached(now, g_state.worker_deadline);
 }
 
@@ -252,8 +269,7 @@ bool local_pin_auth_fail_processing_if_expired(TickType_t now)
     if (!local_pin_auth_processing_deadline_expired(now)) {
         return false;
     }
-    g_state.clear_flow();
-    return true;
+    return g_state.clear_flow();
 }
 
 LocalPinAuthLockoutReleaseResult local_pin_auth_release_lockout_if_elapsed(TickType_t now)
@@ -261,18 +277,34 @@ LocalPinAuthLockoutReleaseResult local_pin_auth_release_lockout_if_elapsed(TickT
     return release_lockout_if_elapsed(now);
 }
 
-void local_pin_auth_clear_flow()
+bool local_pin_auth_clear_flow()
 {
-    g_state.clear_flow();
+    return g_state.clear_flow();
 }
 
 bool local_pin_auth_begin_connect(TickType_t now, TimeoutWindow input_window)
 {
-    g_state.clear_flow();
+    if (!g_state.clear_flow()) {
+        return false;
+    }
     if (!timeout_window_valid_and_open_at(input_window, now)) {
         return false;
     }
     g_state.purpose = LocalPinAuthPurpose::connect;
+    g_state.stage = LocalPinAuthStage::pin_entry;
+    g_state.set_input_window(input_window);
+    return true;
+}
+
+bool local_pin_auth_begin_unlock(TickType_t now, TimeoutWindow input_window)
+{
+    if (!g_state.clear_flow()) {
+        return false;
+    }
+    if (!timeout_window_valid_and_open_at(input_window, now)) {
+        return false;
+    }
+    g_state.purpose = LocalPinAuthPurpose::unlock;
     g_state.stage = LocalPinAuthStage::pin_entry;
     g_state.set_input_window(input_window);
     return true;
@@ -283,7 +315,9 @@ bool local_pin_auth_begin_human_approval_input_setting(
     TickType_t now,
     TimeoutWindow input_window)
 {
-    g_state.clear_flow();
+    if (!g_state.clear_flow()) {
+        return false;
+    }
     if (!timeout_window_valid_and_open_at(input_window, now)) {
         return false;
     }
@@ -299,7 +333,9 @@ bool local_pin_auth_begin_signing_mode_setting(
     TickType_t now,
     TimeoutWindow input_window)
 {
-    g_state.clear_flow();
+    if (!g_state.clear_flow()) {
+        return false;
+    }
     if (!timeout_window_valid_and_open_at(input_window, now)) {
         return false;
     }
@@ -315,7 +351,9 @@ bool local_pin_auth_begin_sui_accept_gas_sponsor_setting(
     TickType_t now,
     TimeoutWindow input_window)
 {
-    g_state.clear_flow();
+    if (!g_state.clear_flow()) {
+        return false;
+    }
     if (!timeout_window_valid_and_open_at(input_window, now)) {
         return false;
     }
@@ -328,7 +366,9 @@ bool local_pin_auth_begin_sui_accept_gas_sponsor_setting(
 
 bool local_pin_auth_begin_policy_reset_setting(TickType_t now, TimeoutWindow input_window)
 {
-    g_state.clear_flow();
+    if (!g_state.clear_flow()) {
+        return false;
+    }
     if (!timeout_window_valid_and_open_at(input_window, now)) {
         return false;
     }
@@ -340,7 +380,9 @@ bool local_pin_auth_begin_policy_reset_setting(TickType_t now, TimeoutWindow inp
 
 bool local_pin_auth_begin_change_pin(TickType_t now, TimeoutWindow input_window)
 {
-    g_state.clear_flow();
+    if (!g_state.clear_flow()) {
+        return false;
+    }
     if (!timeout_window_valid_and_open_at(input_window, now)) {
         return false;
     }
@@ -354,7 +396,9 @@ bool local_pin_auth_begin_sui_zklogin_clear_setting(
     TickType_t now,
     TimeoutWindow input_window)
 {
-    g_state.clear_flow();
+    if (!g_state.clear_flow()) {
+        return false;
+    }
     if (!timeout_window_valid_and_open_at(input_window, now)) {
         return false;
     }
@@ -366,7 +410,9 @@ bool local_pin_auth_begin_sui_zklogin_clear_setting(
 
 bool local_pin_auth_begin_policy_update(TickType_t now, TimeoutWindow input_window)
 {
-    g_state.clear_flow();
+    if (!g_state.clear_flow()) {
+        return false;
+    }
     if (!timeout_window_valid_and_open_at(input_window, now)) {
         return false;
     }
@@ -378,7 +424,9 @@ bool local_pin_auth_begin_policy_update(TickType_t now, TimeoutWindow input_wind
 
 bool local_pin_auth_begin_sui_zklogin_proposal(TickType_t now, TimeoutWindow input_window)
 {
-    g_state.clear_flow();
+    if (!g_state.clear_flow()) {
+        return false;
+    }
     if (!timeout_window_valid_and_open_at(input_window, now)) {
         return false;
     }
@@ -431,7 +479,7 @@ LocalPinAuthInputResult local_pin_auth_add_digit(char digit)
     if (digit < '0' || digit > '9') {
         return LocalPinAuthInputResult::invalid_digit;
     }
-    if (g_state.pin_entry_length >= kLocalPinDigits) {
+    if (g_state.pin_entry_length >= kKeystorePinDigits) {
         return LocalPinAuthInputResult::full;
     }
 
@@ -487,8 +535,8 @@ LocalPinAuthSubmitResult local_pin_auth_submit(
     if (pin_attempt_locked_at(now)) {
         return LocalPinAuthSubmitResult::locked;
     }
-    if (g_state.pin_entry_length != kLocalPinDigits ||
-        !is_valid_local_pin(g_state.pin_entry)) {
+    if (g_state.pin_entry_length != kKeystorePinDigits ||
+        !keystore_pin_valid(g_state.pin_entry)) {
         return LocalPinAuthSubmitResult::invalid_pin;
     }
 
@@ -521,10 +569,12 @@ LocalPinAuthSubmitResult local_pin_auth_submit(
         }
 
         uint32_t job_id = 0;
-        if (!local_auth_worker_submit_prepare_verifier(
+        if (!local_auth_worker_submit_rewrap(
                 LocalAuthWorkerOwner::local_pin_auth,
+                g_state.current_pin,
                 g_state.new_pin,
-        &job_id)) {
+                &job_id)) {
+            wipe_sensitive_buffer(g_state.current_pin, sizeof(g_state.current_pin));
             g_state.clear_new_pin();
             g_state.clear_pin_only();
             g_state.stage = LocalPinAuthStage::new_pin_entry;
@@ -535,6 +585,7 @@ LocalPinAuthSubmitResult local_pin_auth_submit(
             g_state.set_input_window(next_input_window);
             return LocalPinAuthSubmitResult::worker_unavailable;
         }
+        wipe_sensitive_buffer(g_state.current_pin, sizeof(g_state.current_pin));
         g_state.clear_new_pin();
         g_state.clear_pin_only();
         g_state.stage = LocalPinAuthStage::committing_pin_change;
@@ -549,10 +600,21 @@ LocalPinAuthSubmitResult local_pin_auth_submit(
     if (!g_state.pause_input_window(now)) {
         return LocalPinAuthSubmitResult::unavailable_stage;
     }
-    if (!local_auth_worker_submit_verify(
-            LocalAuthWorkerOwner::local_pin_auth,
-            g_state.pin_entry,
-            &job_id)) {
+    if (g_state.purpose == LocalPinAuthPurpose::settings_change_pin) {
+        memcpy(g_state.current_pin, g_state.pin_entry, sizeof(g_state.current_pin));
+    }
+    const bool submitted =
+        g_state.purpose == LocalPinAuthPurpose::unlock
+            ? local_auth_worker_submit_unlock(
+                  LocalAuthWorkerOwner::local_pin_auth,
+                  g_state.pin_entry,
+                  &job_id)
+            : local_auth_worker_submit_authenticate(
+                  LocalAuthWorkerOwner::local_pin_auth,
+                  g_state.pin_entry,
+                  &job_id);
+    if (!submitted) {
+        wipe_sensitive_buffer(g_state.current_pin, sizeof(g_state.current_pin));
         g_state.resume_paused_input_window(now);
         return LocalPinAuthSubmitResult::worker_unavailable;
     }
@@ -575,27 +637,37 @@ LocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
         g_state.auth_job_id == 0 ||
         result.job_id != g_state.auth_job_id ||
         result.owner != LocalAuthWorkerOwner::local_pin_auth ||
-        result.operation != LocalAuthWorkerOperation::verify_pin) {
+        result.operation !=
+            (g_state.purpose == LocalPinAuthPurpose::unlock
+                 ? LocalAuthWorkerOperation::unlock_keystore
+                 : LocalAuthWorkerOperation::authenticate_pin)) {
         return LocalPinAuthVerifyResult::not_ready;
     }
     if (g_state.purpose == LocalPinAuthPurpose::user_signing) {
         return LocalPinAuthVerifyResult::not_ready;
     }
     const TickType_t now = xTaskGetTickCount();
-    if (local_pin_auth_processing_deadline_expired(now)) {
+    const bool processing_deadline_expired =
+        local_pin_auth_processing_deadline_expired(now);
+    g_state.auth_job_id = 0;
+    g_state.verify_ready_at = 0;
+    g_state.worker_deadline = 0;
+    if (processing_deadline_expired) {
         g_state.clear_flow();
         return LocalPinAuthVerifyResult::auth_unavailable;
     }
 
-    g_state.auth_job_id = 0;
-    g_state.verify_ready_at = 0;
-    g_state.worker_deadline = 0;
-    if (result.status != LocalAuthWorkerStatus::ok) {
-        g_state.clear_pin_only();
+    if (result.status != LocalAuthWorkerStatus::completed) {
+        g_state.clear_flow();
         return LocalPinAuthVerifyResult::auth_unavailable;
     }
 
-    if (!result.verified) {
+    if (result.operation_status != KeystoreOperationStatus::success) {
+        if (result.operation_status != KeystoreOperationStatus::wrong_pin) {
+            g_state.clear_flow();
+            return LocalPinAuthVerifyResult::auth_unavailable;
+        }
+        wipe_sensitive_buffer(g_state.current_pin, sizeof(g_state.current_pin));
         g_state.clear_pin_only();
         g_state.stage = LocalPinAuthStage::pin_entry;
         const bool locked = pin_attempt_record_failure(lockout_until);
@@ -611,6 +683,11 @@ LocalPinAuthVerifyResult local_pin_auth_complete_verify_job(
 
     g_state.clear_pin_only();
     pin_attempt_clear();
+
+    if (g_state.purpose == LocalPinAuthPurpose::unlock) {
+        g_state.clear_flow();
+        return LocalPinAuthVerifyResult::unlocked;
+    }
 
     if (g_state.purpose == LocalPinAuthPurpose::settings_change_pin) {
         g_state.stage = LocalPinAuthStage::new_pin_entry;
@@ -660,24 +737,30 @@ LocalPinAuthSignatureVerifyResult local_pin_auth_complete_user_signing_verify_jo
         g_state.auth_job_id == 0 ||
         result.job_id != g_state.auth_job_id ||
         result.owner != LocalAuthWorkerOwner::local_pin_auth ||
-        result.operation != LocalAuthWorkerOperation::verify_pin) {
+        result.operation != LocalAuthWorkerOperation::authenticate_pin) {
         return LocalPinAuthSignatureVerifyResult::not_ready;
     }
     const TickType_t now = xTaskGetTickCount();
-    if (local_pin_auth_processing_deadline_expired(now)) {
-        g_state.clear_flow();
-        return LocalPinAuthSignatureVerifyResult::auth_unavailable;
-    }
-
+    const bool processing_deadline_expired =
+        local_pin_auth_processing_deadline_expired(now);
     g_state.auth_job_id = 0;
     g_state.verify_ready_at = 0;
     g_state.worker_deadline = 0;
-    if (result.status != LocalAuthWorkerStatus::ok) {
+    if (processing_deadline_expired) {
         g_state.clear_flow();
         return LocalPinAuthSignatureVerifyResult::auth_unavailable;
     }
 
-    if (!result.verified) {
+    if (result.status != LocalAuthWorkerStatus::completed) {
+        g_state.clear_flow();
+        return LocalPinAuthSignatureVerifyResult::auth_unavailable;
+    }
+
+    if (result.operation_status != KeystoreOperationStatus::success) {
+        if (result.operation_status != KeystoreOperationStatus::wrong_pin) {
+            g_state.clear_flow();
+            return LocalPinAuthSignatureVerifyResult::auth_unavailable;
+        }
         g_state.clear_pin_only();
         g_state.stage = LocalPinAuthStage::pin_entry;
         const bool locked = pin_attempt_record_failure(lockout_until);
@@ -704,31 +787,32 @@ LocalPinAuthCommitResult local_pin_auth_complete_pin_change_job(
         g_state.auth_job_id == 0 ||
         result.job_id != g_state.auth_job_id ||
         result.owner != LocalAuthWorkerOwner::local_pin_auth ||
-        result.operation != LocalAuthWorkerOperation::prepare_verifier_record) {
+        result.operation != LocalAuthWorkerOperation::rewrap_keystore) {
         return LocalPinAuthCommitResult::not_ready;
     }
-    if (local_pin_auth_processing_deadline_expired(xTaskGetTickCount())) {
-        g_state.clear_flow();
-        return LocalPinAuthCommitResult::pin_change_auth_unavailable;
-    }
-
+    const bool processing_deadline_expired =
+        local_pin_auth_processing_deadline_expired(xTaskGetTickCount());
     g_state.auth_job_id = 0;
     g_state.commit_ready_at = 0;
     g_state.worker_deadline = 0;
-    if (result.status != LocalAuthWorkerStatus::ok) {
+    if (processing_deadline_expired) {
         g_state.clear_flow();
         return LocalPinAuthCommitResult::pin_change_auth_unavailable;
     }
 
-    const bool stored = store_prepared_local_pin_verifier(&result.prepared_record);
+    if (result.status != LocalAuthWorkerStatus::completed) {
+        g_state.clear_flow();
+        return LocalPinAuthCommitResult::pin_change_auth_unavailable;
+    }
+
+    const KeystoreOperationStatus operation_status = result.operation_status;
     g_state.clear_flow();
-    if (!stored) {
-        if (local_auth_status() != LocalAuthStatus::active) {
-            return LocalPinAuthCommitResult::pin_change_auth_unavailable;
-        }
+    if (operation_status == KeystoreOperationStatus::unchanged) {
         return LocalPinAuthCommitResult::pin_change_storage_error;
     }
-    return LocalPinAuthCommitResult::pin_changed;
+    return operation_status == KeystoreOperationStatus::success
+        ? LocalPinAuthCommitResult::pin_changed
+        : LocalPinAuthCommitResult::pin_change_auth_unavailable;
 }
 
 LocalPinAuthCommitResult local_pin_auth_commit_if_ready(TickType_t now)

@@ -331,7 +331,7 @@ cmake = read_text_file(cmake_path, "main/CMakeLists.txt")
 cmake = insert_after_once(
     cmake,
     '    "hal/*.cpp"\n',
-    '    "runtime/*.c"\n    "runtime/*.cc"\n    "runtime/*.cpp"\n    "firmware_common/sui/*.c"\n    "firmware_common/sui/*.cc"\n    "firmware_common/sui/*.cpp"\n',
+    '    "runtime/*.c"\n    "runtime/*.cc"\n    "runtime/*.cpp"\n    "firmware_common/keystore/*.c"\n    "firmware_common/keystore/*.cc"\n    "firmware_common/keystore/*.cpp"\n    "firmware_common/sui/*.c"\n    "firmware_common/sui/*.cc"\n    "firmware_common/sui/*.cpp"\n',
     "main/CMakeLists.txt sources",
 )
 cmake = insert_after_once(

@@ -3,17 +3,12 @@
 #include "avatar_overlay_drawing.h"
 #include "esp_attr.h"
 #include "local_transport_crypto_adapter.h"
-#include "stackchan_storage_names.h"
+#include "stackchan_keystore.h"
 #include "transport/local_transport_identity_store.h"
 #include "transport/local_transport_nimble_pairing_session.h"
-#include "transport/local_transport_nvs_identity_storage.h"
 
 namespace signing {
 namespace {
-
-constexpr const char* kTag = "LocalTransportPairing";
-constexpr const char* kIdentityPrivateKey = "static_priv";
-constexpr const char* kIdentityPublicKey = "static_pub";
 
 void (*g_request_handler)(
     const char* line,
@@ -25,16 +20,8 @@ EXT_RAM_BSS_ATTR LocalTransportBleInboundFrame g_ble_inbound_frame;
 
 const LocalTransportIdentityStoreOps& identity_store_ops()
 {
-    static const LocalTransportNvsIdentityStorageConfig config{
-        kStackChanPairingIdentityNvsNamespace,
-        kIdentityPrivateKey,
-        kIdentityPublicKey,
-        kTag,
-    };
-    static const LocalTransportIdentityStorageOps storage =
-        local_transport_nvs_identity_storage_ops(&config);
     static const LocalTransportIdentityStoreOps ops{
-        storage,
+        stackchan_transport_identity_storage_ops(),
         &stackchan_local_transport_crypto_ops(),
     };
     return ops;
@@ -139,11 +126,6 @@ bool local_transport_pairing_established()
 bool local_transport_pairing_connected()
 {
     return local_transport_ble_connected();
-}
-
-bool local_transport_pairing_wipe_identity()
-{
-    return local_transport_identity_wipe(identity_store_ops());
 }
 
 }  // namespace signing

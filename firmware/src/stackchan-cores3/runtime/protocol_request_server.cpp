@@ -20,10 +20,10 @@
 #include "device_activity_projection.h"
 #include "protocol/json_input.h"
 #include "protocol/device_response.h"
-#include "local_auth.h"
 #include "local_auth_worker.h"
 #include "local_pin_auth.h"
 #include "local_pin_auth_ui_flow.h"
+#include "stackchan_keystore.h"
 #include "transport/local_transport_nimble_peripheral.h"
 #include "local_transport_pairing.h"
 #include "storage_maintenance_ui_flow.h"
@@ -261,8 +261,8 @@ void handle_sign_transaction_request(
 void wipe_setup_scratch(const char* reason)
 {
     const bool had_setup_scratch = signing::provisioning_flow_active();
-    signing::provisioning_flow_wipe();
-    if (had_setup_scratch) {
+    const bool wiped = signing::provisioning_flow_wipe();
+    if (had_setup_scratch && wiped) {
         ESP_LOGW(kTag, "Setup scratch wiped: %s", reason != nullptr ? reason : "unspecified");
     }
 }
@@ -271,7 +271,16 @@ void clear_storage_maintenance_flow(const char* reason)
 {
     const bool had_storage_action_scratch =
         signing::storage_maintenance_snapshot(xTaskGetTickCount()).flow_active;
-    signing::storage_maintenance_clear_flow();
+    const bool cleared = signing::storage_maintenance_clear_flow();
+    if (!cleared) {
+        if (had_storage_action_scratch) {
+            ESP_LOGW(
+                kTag,
+                "Storage maintenance state preserved until effectful auth completes: %s",
+                reason != nullptr ? reason : "unspecified");
+        }
+        return;
+    }
     signing::local_settings_touch_entry_clear();
     if (had_storage_action_scratch) {
         ESP_LOGW(kTag, "Storage maintenance scratch wiped: %s", reason != nullptr ? reason : "unspecified");
@@ -281,8 +290,8 @@ void clear_storage_maintenance_flow(const char* reason)
 void clear_local_pin_auth_scratch(const char* reason)
 {
     const bool had_pin_auth = signing::local_pin_auth_flow_active();
-    signing::local_pin_auth_clear_flow();
-    if (had_pin_auth) {
+    const bool cleared = signing::local_pin_auth_clear_flow();
+    if (had_pin_auth && cleared) {
         ESP_LOGW(kTag, "Local PIN authorization scratch wiped: %s", reason != nullptr ? reason : "unspecified");
     }
 }
@@ -424,6 +433,8 @@ signing::DeviceActivityProjection current_device_activity()
     const signing::DeviceActivityFacts facts = {
         signing::persistent_material_consistency_error_active(),
         signing::provisioning_runtime_state_is_provisioned(),
+        signing::provisioning_runtime_state_is_provisioned() &&
+            signing::stackchan_keystore_state() != signing::KeystoreState::unlocked,
         ui_idle_for_local_settings(),
         signing::identification_display_active(),
         signing::connect_approval_active(),
@@ -1139,6 +1150,7 @@ signing::LocalPinLossPurpose local_pin_loss_purpose(
         case LocalPinAuthPurpose::user_signing:
             return signing::LocalPinLossPurpose::user_signing;
         case LocalPinAuthPurpose::none:
+        case LocalPinAuthPurpose::unlock:
         case LocalPinAuthPurpose::settings_human_approval_input:
         case LocalPinAuthPurpose::settings_signing_mode:
         case LocalPinAuthPurpose::settings_policy_reset:
@@ -1448,7 +1460,8 @@ bool refresh_persistent_material_consistency()
 
 bool provisioned_material_ready()
 {
-    return signing::provisioning_runtime_state_material_ready(persistent_material_ops());
+    return signing::stackchan_keystore_state() == signing::KeystoreState::unlocked &&
+           signing::provisioning_runtime_state_material_ready(persistent_material_ops());
 }
 
 signing::SessionValidationResult validate_session_for_user_signing(
@@ -2212,7 +2225,20 @@ void show_provisioning_welcome_if_available()
 
 void show_idle_signing_ui_for_current_state()
 {
+    {
+        LvglLockGuard lock;
+        if (!signing::drawing_surface_ready()) {
+            return;
+        }
+    }
+
     show_persistent_error_recovery_if_needed();
+    if (signing::provisioning_runtime_state_is_provisioned() &&
+        signing::stackchan_keystore_state() == signing::KeystoreState::locked &&
+        !signing::local_pin_auth_flow_active()) {
+        signing::local_pin_auth_ui_start_unlock(local_pin_auth_ui_flow_ops());
+        return;
+    }
     show_provisioning_welcome_if_available();
 }
 
@@ -2349,16 +2375,14 @@ void provisioning_ui_show_message(const char* message, MessageKind kind)
         kResultDisplayMs);
 }
 
-signing::ProvisioningFlowCommitResult commit_setup_with_prepared_auth_for_provisioning(
+signing::ProvisioningFlowCommitResult commit_setup_for_provisioning(
     const uint8_t* root_material,
-    size_t root_material_size,
-    const signing::LocalAuthPreparedRecord* prepared_auth)
+    size_t root_material_size)
 {
     const signing::PersistentMaterialCommitResult result =
-        signing::persistent_material_commit_setup_with_prepared_auth(
+        signing::persistent_material_commit_setup(
             root_material,
             root_material_size,
-            prepared_auth,
             persistent_material_ops());
     switch (result) {
         case signing::PersistentMaterialCommitResult::ok:
@@ -2367,7 +2391,6 @@ signing::ProvisioningFlowCommitResult commit_setup_with_prepared_auth_for_provis
             return signing::ProvisioningFlowCommitResult::missing_input;
         case signing::PersistentMaterialCommitResult::root_storage_error:
         case signing::PersistentMaterialCommitResult::policy_storage_error:
-        case signing::PersistentMaterialCommitResult::local_auth_storage_error:
         case signing::PersistentMaterialCommitResult::signing_mode_storage_error:
         case signing::PersistentMaterialCommitResult::human_approval_setting_storage_error:
         case signing::PersistentMaterialCommitResult::sui_account_settings_storage_error:
@@ -2375,6 +2398,12 @@ signing::ProvisioningFlowCommitResult commit_setup_with_prepared_auth_for_provis
             return signing::ProvisioningFlowCommitResult::storage_error;
     }
     return signing::ProvisioningFlowCommitResult::storage_error;
+}
+
+bool rollback_setup_for_provisioning()
+{
+    return signing::persistent_material_rollback_setup(
+        persistent_material_ops());
 }
 
 void provisioning_ui_log_info(const char* message)
@@ -2465,14 +2494,14 @@ const signing::ProvisioningUiFlowOps& provisioning_ui_ops()
         draw_pin_setup_processing_or_panel_for_provisioning,
         signing::avatar_overlay_clear,
         provisioning_ui_show_message,
-        commit_setup_with_prepared_auth_for_provisioning,
+        commit_setup_for_provisioning,
+        rollback_setup_for_provisioning,
         provisioning_ui_log_info,
         provisioning_ui_log_warn,
         kProvisioningApprovalMaxMs,
         kBackupPhraseDisplayMs,
         kLocalPinSetupMs,
         kLocalProcessingDisplayMs,
-        signing::kLocalAuthWorkerMaxMs,
     };
     return ops;
 }
@@ -2872,12 +2901,14 @@ signing::UserSigningConfirmationResult
 complete_user_signing_pin_verify_from_local_pin_auth(
     const signing::LocalAuthWorkerResult& worker_result,
     TickType_t now,
-    TickType_t lockout_until)
+    TickType_t lockout_until,
+    bool authorization_available)
 {
     return signing::user_signing_confirmation_complete_pin_verify_job_and_write_history(
         worker_result,
         now,
         lockout_until,
+        authorization_available,
         write_user_signing_confirmation_history,
         nullptr);
 }
@@ -3677,10 +3708,10 @@ void handle_local_pin_auth_verify_worker_result(
         local_pin_auth_ui_flow_ops());
 }
 
-void handle_local_pin_auth_prepare_worker_result(
+void handle_local_pin_auth_pin_change_worker_result(
     const signing::LocalAuthWorkerResult& worker_result)
 {
-    signing::local_pin_auth_ui_handle_prepare_worker_result(
+    signing::local_pin_auth_ui_handle_pin_change_worker_result(
         worker_result,
         local_pin_auth_ui_flow_ops());
 }
@@ -3697,10 +3728,10 @@ void drain_local_auth_worker_results()
                 handle_storage_maintenance_auth_worker_result(worker_result);
                 break;
             case signing::LocalAuthWorkerOwner::local_pin_auth:
-                if (worker_result.operation == signing::LocalAuthWorkerOperation::verify_pin) {
+                if (worker_result.operation != signing::LocalAuthWorkerOperation::rewrap_keystore) {
                     handle_local_pin_auth_verify_worker_result(worker_result);
                 } else {
-                    handle_local_pin_auth_prepare_worker_result(worker_result);
+                    handle_local_pin_auth_pin_change_worker_result(worker_result);
                 }
                 break;
         }
@@ -5253,6 +5284,11 @@ void run_protocol_request_server_maintenance_phase()
     clear_policy_update_review_if_needed();
     clear_sui_zklogin_review_if_needed();
     clear_user_signing_review_if_needed();
+    if (signing::provisioning_runtime_state_is_provisioned() &&
+        signing::stackchan_keystore_state() == signing::KeystoreState::locked &&
+        !signing::local_pin_auth_flow_active()) {
+        show_idle_signing_ui_for_current_state();
+    }
 }
 
 void run_protocol_request_server_usb_link_phase()
@@ -5318,6 +5354,7 @@ namespace signing {
 void init_protocol_request_server()
 {
     load_or_create_device_id();
+    signing::stackchan_keystore_initialize();
     signing::provisioning_runtime_state_load(
         storage_maintenance_persistence_ops(),
         persistent_material_ops());

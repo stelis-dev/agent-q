@@ -334,7 +334,7 @@ int main()
 
     reset_stubs();
     g_storage_action_marker_present = true;
-    g_reset_result = ResetResult::root_wipe_error;
+    g_reset_result = ResetResult::keystore_wipe_error;
     signing::provisioning_runtime_state_load(reset_ops(), material_ops());
     expect(g_record_failure_count == 1, "failed pending reset records material failure");
     expect(g_last_failure == RuntimeFailure::pending_storage_action_resume_failed,

@@ -19,6 +19,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stackchan-cores3/runtime"
+COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
 CXX_BIN="${CXX:-c++}"
 
 for required in \
@@ -43,6 +44,21 @@ cat >"${TMP_DIR}/stubs/esp_log.h" <<'H'
 #define ESP_LOGE(tag, format, ...) do { (void)(tag); } while (0)
 H
 
+cat >"${TMP_DIR}/stubs/esp_heap_caps.h" <<'H'
+#pragma once
+
+#include <stddef.h>
+#include <stdint.h>
+
+#define MALLOC_CAP_SPIRAM 0x1u
+#define MALLOC_CAP_8BIT 0x2u
+
+extern "C" void* heap_caps_aligned_alloc(
+    size_t alignment,
+    size_t size,
+    uint32_t caps);
+H
+
 cat >"${TMP_DIR}/stubs/freertos/FreeRTOS.h" <<'H'
 #pragma once
 
@@ -57,7 +73,24 @@ typedef unsigned int TickType_t;
 #define pdFALSE 0
 #define pdPASS 1
 #define portMAX_DELAY 0xffffffffu
+
+typedef int portMUX_TYPE;
+#define portMUX_INITIALIZER_UNLOCKED 0
+
+inline void portENTER_CRITICAL(portMUX_TYPE*) {}
+inline void portEXIT_CRITICAL(portMUX_TYPE*) {}
 H
+
+if rg -q 'atomic_flag|test_and_set' "${RUNTIME_DIR}/local_auth_worker.cpp"; then
+  echo "FAILED: local-auth worker must not wait on a preemptible atomic spin lock" >&2
+  exit 1
+fi
+for required_lock_call in portENTER_CRITICAL portEXIT_CRITICAL; do
+  if ! rg -q "${required_lock_call}" "${RUNTIME_DIR}/local_auth_worker.cpp"; then
+    echo "FAILED: local-auth worker missing ${required_lock_call}" >&2
+    exit 1
+  fi
+done
 
 cat >"${TMP_DIR}/stubs/freertos/queue.h" <<'H'
 #pragma once
@@ -100,6 +133,8 @@ cat >"${TMP_DIR}/local_auth_worker_test.cpp" <<'CPP'
 #include <string.h>
 
 #include "local_auth_worker.h"
+#include "stackchan_keystore.h"
+#include "esp_heap_caps.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
@@ -118,8 +153,17 @@ bool g_fail_next_request_send = false;
 bool g_fail_next_result_send = false;
 bool g_stop_worker_when_idle = false;
 TaskFunction_t g_worker_task_code = nullptr;
-int g_verify_call_count = 0;
-int g_prepare_call_count = 0;
+alignas(16) uint8_t g_kdf_work_area[signing::kStackChanKeystoreKdfWorkAreaBytes] = {};
+size_t g_heap_request_alignment = 0;
+size_t g_heap_request_size = 0;
+uint32_t g_heap_request_caps = 0;
+int g_heap_request_count = 0;
+int g_create_keystore_calls = 0;
+int g_unlock_keystore_calls = 0;
+int g_authenticate_pin_calls = 0;
+int g_rewrap_keystore_calls = 0;
+signing::KeystoreOperationStatus g_operation_status =
+    signing::KeystoreOperationStatus::success;
 int failures = 0;
 
 struct WorkerStop {};
@@ -153,9 +197,9 @@ void finish_worker_job(uint32_t job_id)
     signing::LocalAuthWorkerResult result = {};
     result.job_id = job_id;
     result.owner = signing::LocalAuthWorkerOwner::local_pin_auth;
-    result.operation = signing::LocalAuthWorkerOperation::verify_pin;
-    result.status = signing::LocalAuthWorkerStatus::ok;
-    result.verified = true;
+    result.operation = signing::LocalAuthWorkerOperation::authenticate_pin;
+    result.status = signing::LocalAuthWorkerStatus::completed;
+    result.operation_status = signing::KeystoreOperationStatus::success;
     memcpy(g_result_queue.item, &result, sizeof(result));
     g_result_queue.has_item = true;
 
@@ -175,6 +219,14 @@ void run_worker_until_idle()
     g_stop_worker_when_idle = false;
 }
 
+signing::LocalAuthWorkerResult run_worker_and_poll(const char* label)
+{
+    run_worker_until_idle();
+    signing::LocalAuthWorkerResult result = {};
+    expect(signing::local_auth_worker_poll_result(&result), label);
+    return result;
+}
+
 }  // namespace
 
 namespace signing {
@@ -188,12 +240,12 @@ void wipe_sensitive_buffer(void* data, size_t size)
     }
 }
 
-bool is_valid_local_pin(const char* pin)
+bool keystore_pin_valid(const char* pin)
 {
-    if (pin == nullptr || strlen(pin) != kLocalPinDigits) {
+    if (pin == nullptr || strlen(pin) != kKeystorePinDigits) {
         return false;
     }
-    for (size_t index = 0; index < kLocalPinDigits; ++index) {
+    for (size_t index = 0; index < kKeystorePinDigits; ++index) {
         if (!isdigit(static_cast<unsigned char>(pin[index]))) {
             return false;
         }
@@ -201,36 +253,74 @@ bool is_valid_local_pin(const char* pin)
     return true;
 }
 
-bool prepare_local_pin_verifier_record(const char* pin, LocalAuthPreparedRecord* out)
+bool valid_worker_inputs(
+    const char* pin,
+    void* kdf_work_area,
+    size_t kdf_work_area_size)
 {
-    ++g_prepare_call_count;
-    if (!is_valid_local_pin(pin) || out == nullptr) {
-        return false;
-    }
-    memset(out->bytes, 0xa5, sizeof(out->bytes));
-    return true;
+    return keystore_pin_valid(pin) &&
+           kdf_work_area == g_kdf_work_area &&
+           kdf_work_area_size == kStackChanKeystoreKdfWorkAreaBytes;
 }
 
-void wipe_local_pin_verifier_record(LocalAuthPreparedRecord* prepared)
+KeystoreOperationStatus stackchan_keystore_create(
+    char pin[kKeystorePinDigits + 1],
+    void* kdf_work_area,
+    size_t kdf_work_area_size)
 {
-    if (prepared != nullptr) {
-        memset(prepared->bytes, 0, sizeof(prepared->bytes));
-    }
+    ++g_create_keystore_calls;
+    return valid_worker_inputs(pin, kdf_work_area, kdf_work_area_size)
+               ? g_operation_status
+               : KeystoreOperationStatus::invalid_input;
 }
 
-bool verify_local_pin(const char* pin, bool* verified)
+KeystoreOperationStatus stackchan_keystore_unlock(
+    char pin[kKeystorePinDigits + 1],
+    void* kdf_work_area,
+    size_t kdf_work_area_size)
 {
-    ++g_verify_call_count;
-    if (!is_valid_local_pin(pin) || verified == nullptr) {
-        return false;
-    }
-    *verified = strcmp(pin, "123456") == 0;
-    return true;
+    ++g_unlock_keystore_calls;
+    return valid_worker_inputs(pin, kdf_work_area, kdf_work_area_size)
+               ? g_operation_status
+               : KeystoreOperationStatus::invalid_input;
+}
+
+KeystoreOperationStatus stackchan_keystore_authenticate_pin(
+    char pin[kKeystorePinDigits + 1],
+    void* kdf_work_area,
+    size_t kdf_work_area_size)
+{
+    ++g_authenticate_pin_calls;
+    return valid_worker_inputs(pin, kdf_work_area, kdf_work_area_size)
+               ? g_operation_status
+               : KeystoreOperationStatus::invalid_input;
+}
+
+KeystoreOperationStatus stackchan_keystore_rewrap(
+    char current_pin[kKeystorePinDigits + 1],
+    char new_pin[kKeystorePinDigits + 1],
+    void* kdf_work_area,
+    size_t kdf_work_area_size)
+{
+    ++g_rewrap_keystore_calls;
+    return valid_worker_inputs(current_pin, kdf_work_area, kdf_work_area_size) &&
+                   keystore_pin_valid(new_pin)
+               ? g_operation_status
+               : KeystoreOperationStatus::invalid_input;
 }
 
 }  // namespace signing
 
 extern "C" {
+
+void* heap_caps_aligned_alloc(size_t alignment, size_t size, uint32_t caps)
+{
+    ++g_heap_request_count;
+    g_heap_request_alignment = alignment;
+    g_heap_request_size = size;
+    g_heap_request_caps = caps;
+    return size == sizeof(g_kdf_work_area) ? g_kdf_work_area : nullptr;
+}
 
 QueueHandle_t xQueueCreate(UBaseType_t queue_length, UBaseType_t item_size)
 {
@@ -304,32 +394,107 @@ BaseType_t xTaskCreatePinnedToCore(
 int main()
 {
     expect(signing::local_auth_worker_init(), "worker initializes");
+    expect(g_heap_request_count == 1, "worker allocates one KDF work area");
+    expect(g_heap_request_alignment == signing::kKeystoreKdfWorkAreaAlignment,
+           "worker requests the common Argon2 work-area alignment");
+    expect(g_heap_request_size == signing::kStackChanKeystoreKdfWorkAreaBytes,
+           "worker allocates the StackChan measured KDF work-area size");
+    expect(g_heap_request_caps == (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+           "worker allocates the KDF work area from byte-addressable PSRAM");
+    expect(signing::local_auth_worker_init(), "worker initialization is idempotent");
+    expect(g_heap_request_count == 1, "idempotent initialization reuses the KDF work area");
 
     uint32_t job_id = 0;
-    expect(signing::local_auth_worker_submit_verify(
-               signing::LocalAuthWorkerOwner::local_pin_auth,
-               "123456",
-               &job_id),
-           "verify submit succeeds");
-    expect(job_id != 0, "verify submit returns job id");
-    expect(g_request_queue.has_item, "verify submit enqueues request metadata");
-    expect(!bytes_contain(g_request_queue.item, g_request_queue.item_size, "123456"),
-           "verify request queue item does not contain raw PIN");
-
-    finish_worker_job(job_id);
-
-    expect(signing::local_auth_worker_submit_prepare_verifier(
+    expect(signing::local_auth_worker_submit_create(
                signing::LocalAuthWorkerOwner::provisioning_setup,
                "654321",
                &job_id),
-           "prepare submit succeeds");
-    expect(g_request_queue.has_item, "prepare submit enqueues request metadata");
+           "create submit succeeds");
+    expect(job_id != 0, "create submit returns job id");
+    expect(g_request_queue.has_item, "create submit enqueues request metadata");
     expect(!bytes_contain(g_request_queue.item, g_request_queue.item_size, "654321"),
-           "prepare request queue item does not contain raw PIN");
+           "create request queue item does not contain raw PIN");
+    expect(!signing::local_auth_worker_cancel_authentication(job_id),
+           "create job cannot be discarded after submission");
+    signing::LocalAuthWorkerResult operation_result =
+        run_worker_and_poll("create result can be polled");
+    expect(operation_result.operation == signing::LocalAuthWorkerOperation::create_keystore,
+           "create result preserves operation");
+    expect(operation_result.status == signing::LocalAuthWorkerStatus::completed &&
+               operation_result.operation_status == signing::KeystoreOperationStatus::success,
+           "create result preserves keystore success");
+    expect(g_create_keystore_calls == 1, "create routes to the StackChan keystore adapter");
+    signing::local_auth_worker_wipe_result(&operation_result);
+    expect(operation_result.job_id == 0 &&
+               operation_result.operation_status == signing::KeystoreOperationStatus::invalid_input,
+           "result wipe clears job metadata and status");
 
-    finish_worker_job(job_id);
+    expect(signing::local_auth_worker_submit_unlock(
+               signing::LocalAuthWorkerOwner::local_pin_auth,
+               "123456",
+               &job_id),
+           "unlock submit succeeds");
+    expect(!signing::local_auth_worker_cancel_authentication(job_id),
+           "unlock job cannot be discarded after submission");
+    operation_result = run_worker_and_poll("unlock result can be polled");
+    expect(operation_result.operation == signing::LocalAuthWorkerOperation::unlock_keystore &&
+               operation_result.operation_status == signing::KeystoreOperationStatus::success,
+           "unlock routes to the StackChan keystore adapter");
+    expect(g_unlock_keystore_calls == 1, "unlock adapter called once");
+    signing::local_auth_worker_wipe_result(&operation_result);
 
-    expect(signing::local_auth_worker_submit_verify(
+    g_operation_status = signing::KeystoreOperationStatus::wrong_pin;
+    expect(signing::local_auth_worker_submit_authenticate(
+               signing::LocalAuthWorkerOwner::storage_maintenance,
+               "111111",
+               &job_id),
+           "PIN authentication submit succeeds");
+    operation_result = run_worker_and_poll("PIN authentication result can be polled");
+    expect(operation_result.operation == signing::LocalAuthWorkerOperation::authenticate_pin &&
+               operation_result.operation_status == signing::KeystoreOperationStatus::wrong_pin,
+           "PIN authentication preserves wrong-PIN status");
+    expect(g_authenticate_pin_calls == 1, "PIN authentication adapter called once");
+    signing::local_auth_worker_wipe_result(&operation_result);
+    g_operation_status = signing::KeystoreOperationStatus::success;
+
+    expect(signing::local_auth_worker_submit_rewrap(
+               signing::LocalAuthWorkerOwner::local_pin_auth,
+               "123456",
+               "654321",
+               &job_id),
+           "PIN rewrap submit succeeds");
+    expect(!bytes_contain(g_request_queue.item, g_request_queue.item_size, "123456") &&
+               !bytes_contain(g_request_queue.item, g_request_queue.item_size, "654321"),
+           "rewrap request queue contains neither current nor new PIN");
+    expect(!signing::local_auth_worker_cancel_authentication(job_id),
+           "PIN rewrap job cannot be discarded after submission");
+    operation_result = run_worker_and_poll("PIN rewrap result can be polled");
+    expect(operation_result.operation == signing::LocalAuthWorkerOperation::rewrap_keystore &&
+               operation_result.operation_status == signing::KeystoreOperationStatus::success,
+           "PIN rewrap routes to the StackChan keystore adapter");
+    expect(g_rewrap_keystore_calls == 1, "PIN rewrap adapter called once");
+    signing::local_auth_worker_wipe_result(&operation_result);
+
+    expect(signing::local_auth_worker_submit_rewrap(
+               signing::LocalAuthWorkerOwner::local_pin_auth,
+               "123456",
+               "654321",
+               &job_id),
+           "PIN rewrap submit succeeds before result queue failure");
+    g_fail_next_result_send = true;
+    run_worker_until_idle();
+    signing::LocalAuthWorkerResult rewrap_fallback = {};
+    expect(signing::local_auth_worker_poll_result(&rewrap_fallback),
+           "effectful PIN rewrap result survives queue-send failure");
+    expect(rewrap_fallback.operation ==
+                   signing::LocalAuthWorkerOperation::rewrap_keystore &&
+               rewrap_fallback.status == signing::LocalAuthWorkerStatus::completed &&
+               rewrap_fallback.operation_status ==
+                   signing::KeystoreOperationStatus::success,
+           "effectful terminal fallback preserves exact PIN rewrap outcome");
+    signing::local_auth_worker_wipe_result(&rewrap_fallback);
+
+    expect(signing::local_auth_worker_submit_authenticate(
                signing::LocalAuthWorkerOwner::local_pin_auth,
                "123456",
                &job_id),
@@ -343,39 +508,41 @@ int main()
     expect(failed_result.job_id == job_id, "terminal result keeps job id");
     expect(failed_result.owner == signing::LocalAuthWorkerOwner::local_pin_auth,
            "terminal result keeps owner");
-    expect(failed_result.operation == signing::LocalAuthWorkerOperation::verify_pin,
+    expect(failed_result.operation == signing::LocalAuthWorkerOperation::authenticate_pin,
            "terminal result keeps operation");
-    expect(failed_result.status == signing::LocalAuthWorkerStatus::worker_unavailable,
-           "terminal result reports worker unavailable");
+    expect(failed_result.status == signing::LocalAuthWorkerStatus::completed &&
+               failed_result.operation_status == signing::KeystoreOperationStatus::success,
+           "terminal fallback preserves the exact completed operation result");
     signing::local_auth_worker_wipe_result(&failed_result);
-    expect(signing::local_auth_worker_submit_verify(
+    expect(signing::local_auth_worker_submit_authenticate(
                signing::LocalAuthWorkerOwner::local_pin_auth,
                "333333",
                &job_id),
            "submit can retry after terminal worker failure is polled");
     finish_worker_job(job_id);
 
-    expect(signing::local_auth_worker_submit_verify(
+    expect(signing::local_auth_worker_submit_authenticate(
                signing::LocalAuthWorkerOwner::storage_maintenance,
                "444444",
                &job_id),
            "submit succeeds before queued job cancellation");
-    expect(signing::local_auth_worker_cancel_job(job_id), "queued worker job can be cancelled");
-    const int verify_count_before_cancelled_job = g_verify_call_count;
+    expect(signing::local_auth_worker_cancel_authentication(job_id),
+           "queued authentication job can be cancelled");
+    const int verify_count_before_cancelled_job = g_authenticate_pin_calls;
     run_worker_until_idle();
-    expect(g_verify_call_count == verify_count_before_cancelled_job,
+    expect(g_authenticate_pin_calls == verify_count_before_cancelled_job,
            "cancelled queued job does not verify wiped PIN");
     signing::LocalAuthWorkerResult cancelled_result = {};
     expect(!signing::local_auth_worker_poll_result(&cancelled_result),
            "cancelled queued job does not produce caller result");
-    expect(signing::local_auth_worker_submit_verify(
+    expect(signing::local_auth_worker_submit_authenticate(
                signing::LocalAuthWorkerOwner::local_pin_auth,
                "555555",
                &job_id),
            "submit can retry after queued job cancellation");
     finish_worker_job(job_id);
 
-    expect(signing::local_auth_worker_submit_verify(
+    expect(signing::local_auth_worker_submit_authenticate(
                signing::LocalAuthWorkerOwner::local_pin_auth,
                "666666",
                &job_id),
@@ -384,15 +551,16 @@ int main()
     signing::LocalAuthWorkerResult queued_result = {};
     queued_result.job_id = job_id;
     queued_result.owner = signing::LocalAuthWorkerOwner::local_pin_auth;
-    queued_result.operation = signing::LocalAuthWorkerOperation::verify_pin;
-    queued_result.status = signing::LocalAuthWorkerStatus::ok;
-    queued_result.verified = true;
+    queued_result.operation = signing::LocalAuthWorkerOperation::authenticate_pin;
+    queued_result.status = signing::LocalAuthWorkerStatus::completed;
+    queued_result.operation_status = signing::KeystoreOperationStatus::success;
     memcpy(g_result_queue.item, &queued_result, sizeof(queued_result));
     g_result_queue.has_item = true;
-    expect(signing::local_auth_worker_cancel_job(job_id), "queued result job can be cancelled");
+    expect(signing::local_auth_worker_cancel_authentication(job_id),
+           "queued authentication result can be cancelled");
     expect(!signing::local_auth_worker_poll_result(&cancelled_result),
            "cancelled queued result is discarded");
-    expect(signing::local_auth_worker_submit_verify(
+    expect(signing::local_auth_worker_submit_authenticate(
                signing::LocalAuthWorkerOwner::local_pin_auth,
                "777777",
                &job_id),
@@ -400,12 +568,12 @@ int main()
     finish_worker_job(job_id);
 
     g_fail_next_request_send = true;
-    expect(!signing::local_auth_worker_submit_verify(
+    expect(!signing::local_auth_worker_submit_authenticate(
                signing::LocalAuthWorkerOwner::storage_maintenance,
                "111111",
                &job_id),
            "request queue send failure is reported");
-    expect(signing::local_auth_worker_submit_verify(
+    expect(signing::local_auth_worker_submit_authenticate(
                signing::LocalAuthWorkerOwner::storage_maintenance,
                "222222",
                &job_id),
@@ -424,6 +592,7 @@ CPP
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
   -I"${TMP_DIR}/stubs" \
+  -I"${COMMON_ROOT}" \
   -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/local_auth_worker_test.cpp" \
   "${RUNTIME_DIR}/local_auth_worker.cpp" \

@@ -195,15 +195,32 @@ user_signing_confirmation_complete_pin_verify_job_and_write_history(
     const LocalAuthWorkerResult& worker_result,
     TickType_t now,
     TickType_t lockout_until,
+    bool authorization_available,
     UserSigningHistoryWriteFn write_fn,
     void* context)
 {
-    if (!signature_pin_bound_to_flow(
+    const bool bound_to_expected_flow = signature_pin_bound_to_flow(
             LocalPinAuthStage::pin_verifying,
-            UserSigningStage::pin_entry)) {
+            UserSigningStage::pin_entry);
+    const UserSigningFlowCoreSnapshot expected = g_signature_pin_binding.flow;
+    const LocalPinAuthSignatureVerifyResult result =
+        local_pin_auth_complete_user_signing_verify_job(
+            worker_result,
+            lockout_until);
+    if (!bound_to_expected_flow) {
+        if (result != LocalPinAuthSignatureVerifyResult::not_ready) {
+            local_pin_auth_clear_flow();
+            g_signature_pin_binding = {};
+        }
         return UserSigningConfirmationResult::wrong_stage;
     }
-    const UserSigningFlowCoreSnapshot expected = g_signature_pin_binding.flow;
+    if (result == LocalPinAuthSignatureVerifyResult::not_ready) {
+        return UserSigningConfirmationResult::not_ready;
+    }
+    if (!authorization_available) {
+        clear_expected_flow_and_pin(expected);
+        return UserSigningConfirmationResult::auth_unavailable;
+    }
     if (write_fn == nullptr) {
         clear_expected_flow_and_pin(expected);
         return UserSigningConfirmationResult::invalid_argument;
@@ -217,15 +234,9 @@ user_signing_confirmation_complete_pin_verify_job_and_write_history(
                    : map_transition(timeout);
     }
 
-    const LocalPinAuthSignatureVerifyResult result =
-        local_pin_auth_complete_user_signing_verify_job(
-            worker_result,
-            lockout_until);
     switch (result) {
         case LocalPinAuthSignatureVerifyResult::verified:
             return record_verified_pin_and_write_history(now, write_fn, context, expected);
-        case LocalPinAuthSignatureVerifyResult::not_ready:
-            return UserSigningConfirmationResult::not_ready;
         case LocalPinAuthSignatureVerifyResult::auth_unavailable:
             clear_expected_flow_and_pin(expected);
             return UserSigningConfirmationResult::auth_unavailable;
@@ -240,6 +251,8 @@ user_signing_confirmation_complete_pin_verify_job_and_write_history(
             }
             return UserSigningConfirmationResult::wrong_pin;
         }
+        case LocalPinAuthSignatureVerifyResult::not_ready:
+            break;
     }
     return UserSigningConfirmationResult::wrong_stage;
 }

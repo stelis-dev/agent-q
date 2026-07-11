@@ -164,8 +164,8 @@ void clear_local_pin_auth_scratch(
     const char* reason)
 {
     const bool had_pin_auth = local_pin_auth_flow_active();
-    local_pin_auth_clear_flow();
-    if (had_pin_auth) {
+    const bool cleared = local_pin_auth_clear_flow();
+    if (had_pin_auth && cleared) {
         log_warn(ops, reason != nullptr ? reason : "local PIN authorization scratch wiped");
     }
 }
@@ -324,13 +324,15 @@ UserSigningConfirmationResult complete_user_signing_pin_verify_from_pin(
     const LocalPinAuthUiFlowOps& ops,
     const LocalAuthWorkerResult& worker_result,
     TickType_t now,
-    TickType_t lockout_until)
+    TickType_t lockout_until,
+    bool authorization_available)
 {
     return ops.user_signing.complete_user_signing_pin_verify_from_pin != nullptr
                ? ops.user_signing.complete_user_signing_pin_verify_from_pin(
                    worker_result,
                    now,
-                   lockout_until)
+                   lockout_until,
+                   authorization_available)
                : UserSigningConfirmationResult::invalid_argument;
 }
 
@@ -1334,6 +1336,24 @@ void local_pin_auth_ui_start_settings_human_approval_input(
     }
 }
 
+bool local_pin_auth_ui_start_unlock(const LocalPinAuthUiFlowOps& ops)
+{
+    const TickType_t now = now_or_zero(ops);
+    if (!local_pin_auth_begin_unlock(
+            now,
+            timeout_window_from_deadline(
+                now,
+                now + pdMS_TO_TICKS(ops.timing.storage_maintenance_entry_ms)))) {
+        return false;
+    }
+    if (!draw_local_pin_panel(ops)) {
+        clear_local_pin_auth_scratch(ops, "unlock display allocation failed");
+        show_message(ops, "Display error", MessageKind::error);
+        return false;
+    }
+    return true;
+}
+
 void local_pin_auth_ui_start_settings_signing_mode(
     const LocalPinAuthUiFlowOps& ops)
 {
@@ -1511,6 +1531,15 @@ void local_pin_auth_ui_cancel(
     }
 
     const LocalPinAuthPurpose purpose = snapshot.purpose;
+    if (purpose == LocalPinAuthPurpose::unlock) {
+        if (!draw_local_pin_panel(ops, "Device remains locked.")) {
+            handle_local_pin_auth_display_failure(
+                "unlock display allocation failed after cancel",
+                false,
+                ops);
+        }
+        return;
+    }
     if (finish_request_backed_local_pin_input_timeout_if_reached(
             purpose,
             now,
@@ -1829,24 +1858,13 @@ void local_pin_auth_ui_handle_verify_worker_result(
     if (purpose == LocalPinAuthPurpose::user_signing) {
         char request_id[kMaxRequestIdSize] = {};
         request_id_for_pin(ops, purpose, request_id, sizeof(request_id));
-        if (!provisioned_material_ready(ops)) {
-            cancel_user_signing_for_pin_loss(ops);
-            clear_local_pin_auth_scratch(ops, "user_signing material state unavailable");
-            complete_local_pin_to_user_error_terminal(
-                ops,
-                request_id,
-                "invalid_state",
-                "Signing request is unavailable.",
-                "Signing unavailable");
-            return;
-        }
-
         const UserSigningConfirmationResult confirmation_result =
             complete_user_signing_pin_verify_from_pin(
                 ops,
                 worker_result,
                 now,
-                now + pdMS_TO_TICKS(kStorageMaintenancePinLockoutMs));
+                now + pdMS_TO_TICKS(kStorageMaintenancePinLockoutMs),
+                provisioned_material_ready(ops));
         switch (confirmation_result) {
             case UserSigningConfirmationResult::not_ready:
                 return;
@@ -1874,7 +1892,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
                     ops,
                     request_id,
                     "auth_unavailable",
-                    "Local PIN verifier unavailable.",
+                    "Local PIN authentication unavailable.",
                     "Auth error");
                 return;
             case UserSigningConfirmationResult::history_error:
@@ -1917,7 +1935,20 @@ void local_pin_auth_ui_handle_verify_worker_result(
         run_user_signing_then_clear_local_pin_panel(ops, request_id);
         return;
     }
-    if (!provisioned_material_ready(ops)) {
+    const TimeoutWindow next_input_window =
+        local_pin_auth_next_input_window(purpose, now, ops);
+    const LocalPinAuthVerifyResult result =
+        local_pin_auth_complete_verify_job(
+            worker_result,
+            next_input_window,
+            now + pdMS_TO_TICKS(kStorageMaintenancePinLockoutMs),
+            now + pdMS_TO_TICKS(ops.timing.local_processing_display_ms));
+    if (result == LocalPinAuthVerifyResult::not_ready) {
+        return;
+    }
+
+    if (purpose != LocalPinAuthPurpose::unlock &&
+        !provisioned_material_ready(ops)) {
         char request_id[kMaxRequestIdSize] = {};
         request_id_for_pin(ops, purpose, request_id, sizeof(request_id));
         clear_local_pin_auth_scratch(ops, "local PIN authorization material state unavailable");
@@ -1955,34 +1986,11 @@ void local_pin_auth_ui_handle_verify_worker_result(
         return;
     }
 
-    if (finish_request_backed_local_pin_input_timeout_if_reached(
-            purpose,
-            now,
-            "protocol-backed local PIN verifier result reached timeout",
-            ops)) {
-        return;
-    }
-
-    const TimeoutWindow next_input_window =
-        local_pin_auth_next_input_window(purpose, now, ops);
-    const LocalPinAuthVerifyResult result =
-        local_pin_auth_complete_verify_job(
-            worker_result,
-            next_input_window,
-            now + pdMS_TO_TICKS(kStorageMaintenancePinLockoutMs),
-            now + pdMS_TO_TICKS(ops.timing.local_processing_display_ms));
-    if ((result == LocalPinAuthVerifyResult::locked ||
-         result == LocalPinAuthVerifyResult::wrong_pin ||
-         result == LocalPinAuthVerifyResult::verified_connect ||
-         result == LocalPinAuthVerifyResult::verified_settings_policy_reset ||
-         result == LocalPinAuthVerifyResult::verified_settings_sui_zklogin_clear ||
-         result == LocalPinAuthVerifyResult::verified_policy_update ||
-         result == LocalPinAuthVerifyResult::verified_sui_zklogin_proposal) &&
-        request_backed_local_pin_input_deadline_reached(purpose, now)) {
+    if (request_backed_local_pin_input_deadline_reached(purpose, now)) {
         if (finish_request_backed_local_pin_input_timeout_if_reached(
                 purpose,
                 now,
-                "protocol-backed local PIN authorization timed out",
+                "protocol-backed local PIN authentication result reached timeout",
                 ops)) {
             return;
         }
@@ -1995,13 +2003,19 @@ void local_pin_auth_ui_handle_verify_worker_result(
     switch (result) {
         case LocalPinAuthVerifyResult::not_ready:
             return;
+        case LocalPinAuthVerifyResult::unlocked:
+            complete_local_pin_processing_to_message(
+                ops,
+                "Unlocked",
+                MessageKind::success);
+            return;
         case LocalPinAuthVerifyResult::auth_unavailable: {
             char request_id[kMaxRequestIdSize] = {};
             request_id_for_pin(ops, purpose, request_id, sizeof(request_id));
             record_material_failure(
                 ops,
                 PersistentMaterialRuntimeFailure::local_pin_auth_unavailable);
-            clear_local_pin_auth_scratch(ops, "local PIN authorization verifier unavailable");
+            clear_local_pin_auth_scratch(ops, "local PIN authentication unavailable");
             if (purpose == LocalPinAuthPurpose::policy_update &&
                 request_id[0] != '\0') {
                 finish_policy_update_unavailable_from_pin(
@@ -2232,7 +2246,7 @@ void local_pin_auth_ui_handle_verify_worker_result(
     }
 }
 
-void local_pin_auth_ui_handle_prepare_worker_result(
+void local_pin_auth_ui_handle_pin_change_worker_result(
     const LocalAuthWorkerResult& worker_result,
     const LocalPinAuthUiFlowOps& ops)
 {
@@ -2289,7 +2303,7 @@ void finish_local_pin_processing_deadline_failure(
         MessageKind::timeout);
 }
 
-void finish_local_pin_verifier_unavailable(
+void finish_local_pin_authentication_unavailable(
     LocalPinAuthPurpose purpose,
     const char* request_id,
     const LocalPinAuthUiFlowOps& ops)
@@ -2350,7 +2364,7 @@ void clear_user_signing_processing_if_needed(
     }
     if (local_pin_auth_processing_deadline_expired(now)) {
         cancel_user_signing_for_pin_loss(ops);
-        clear_local_pin_auth_scratch(ops, "user_signing local PIN verifier timed out");
+        clear_local_pin_auth_scratch(ops, "user_signing local PIN authentication timed out");
         record_material_failure(
             ops,
             PersistentMaterialRuntimeFailure::local_pin_auth_unavailable);
@@ -2358,7 +2372,7 @@ void clear_user_signing_processing_if_needed(
             ops,
             request_id,
             "auth_unavailable",
-            "Local PIN verifier unavailable.",
+            "Local PIN authentication unavailable.",
             "Auth error");
         return;
     }
@@ -2407,7 +2421,7 @@ void clear_processing_local_pin_if_needed(
     char request_id[kMaxRequestIdSize] = {};
     request_id_for_pin(ops, purpose, request_id, sizeof(request_id));
     if (snapshot.stage == LocalPinAuthStage::pin_verifying) {
-        finish_local_pin_verifier_unavailable(purpose, request_id, ops);
+        finish_local_pin_authentication_unavailable(purpose, request_id, ops);
         return;
     }
     finish_local_pin_processing_deadline_failure(purpose, request_id, ops);

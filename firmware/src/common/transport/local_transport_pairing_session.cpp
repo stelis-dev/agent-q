@@ -407,6 +407,47 @@ bool build_pairing_prologue(uint8_t* output, size_t output_size, size_t* output_
     return true;
 }
 
+struct Message2IdentityContext {
+    const LocalTransportPairingInboundFrame* frame = nullptr;
+    const LocalTransportPairingSessionOps* ops = nullptr;
+    const uint8_t* prologue = nullptr;
+    size_t prologue_len = 0;
+    uint8_t* message2 = nullptr;
+    size_t message2_capacity = 0;
+    size_t* message2_len = nullptr;
+    LocalTransportNoiseStatus status = LocalTransportNoiseStatus::invalid_argument;
+};
+
+bool write_message2_with_identity(
+    const uint8_t secret_key[kLocalTransportStaticKeyBytes],
+    const uint8_t public_key[kLocalTransportStaticKeyBytes],
+    const uint8_t fingerprint[kLocalTransportIdentityFingerprintBytes],
+    void* context_ptr)
+{
+    auto* context = static_cast<Message2IdentityContext*>(context_ptr);
+    if (context == nullptr || context->frame == nullptr || context->ops == nullptr ||
+        context->ops->crypto_ops == nullptr || context->message2_len == nullptr ||
+        memcmp(public_key, g_pairing.identity.public_key, kLocalTransportStaticKeyBytes) != 0 ||
+        memcmp(fingerprint, g_pairing.identity.fingerprint,
+               kLocalTransportIdentityFingerprintBytes) != 0) {
+        return false;
+    }
+    context->status = local_transport_noise_responder_write_message2(
+        &g_pairing.noise,
+        context->prologue,
+        context->prologue_len,
+        secret_key,
+        public_key,
+        fingerprint,
+        context->frame->payload,
+        context->frame->length,
+        context->message2,
+        context->message2_capacity,
+        context->message2_len,
+        *context->ops->crypto_ops);
+    return context->status == LocalTransportNoiseStatus::ok;
+}
+
 void process_control_frame(
     TickType_t now,
     const LocalTransportPairingInboundFrame& frame,
@@ -414,38 +455,33 @@ void process_control_frame(
 {
     if (g_pairing.state == LocalTransportSessionState::pairing_window &&
         frame.length == kLocalTransportNoiseMessage1Bytes) {
-        LocalTransportPairingIdentitySecret identity = {};
         uint8_t message2[kLocalTransportNoiseMessage2Bytes] = {};
         uint8_t prologue[
             kLocalTransportNoisePairingProloguePrefixBytes +
             kLocalTransportOpticalPayloadMaxBytes] = {};
         size_t prologue_len = 0;
         size_t message2_len = 0;
-        if (!local_transport_identity_load_secret(*ops.identity_store, &identity) ||
-            memcmp(identity.public_key, g_pairing.identity.public_key, sizeof(identity.public_key)) != 0 ||
-            memcmp(identity.fingerprint, g_pairing.identity.fingerprint, sizeof(identity.fingerprint)) != 0 ||
-            !build_pairing_prologue(prologue, sizeof(prologue), &prologue_len)) {
-            local_transport_wipe_bytes(reinterpret_cast<uint8_t*>(&identity), sizeof(identity));
+        if (!build_pairing_prologue(prologue, sizeof(prologue), &prologue_len)) {
             fail_pairing(ops, LocalTransportPairingEvent::failed);
             return;
         }
-        const LocalTransportNoiseStatus status =
-            local_transport_noise_responder_write_message2(
-                &g_pairing.noise,
-                prologue,
-                prologue_len,
-                identity.secret_key,
-                identity.public_key,
-                identity.fingerprint,
-                frame.payload,
-                frame.length,
-                message2,
-                sizeof(message2),
-                &message2_len,
-                *ops.crypto_ops);
+        Message2IdentityContext identity_context{
+            &frame,
+            &ops,
+            prologue,
+            prologue_len,
+            message2,
+            sizeof(message2),
+            &message2_len,
+            LocalTransportNoiseStatus::invalid_argument,
+        };
+        const bool identity_consumed = local_transport_identity_with_secret(
+            *ops.identity_store,
+            write_message2_with_identity,
+            &identity_context);
         local_transport_wipe_bytes(prologue, sizeof(prologue));
-        local_transport_wipe_bytes(reinterpret_cast<uint8_t*>(&identity), sizeof(identity));
-        if (status != LocalTransportNoiseStatus::ok ||
+        if (!identity_consumed ||
+            identity_context.status != LocalTransportNoiseStatus::ok ||
             !send_control_indication(ops, message2, message2_len)) {
             local_transport_wipe_bytes(message2, sizeof(message2));
             fail_pairing(ops, LocalTransportPairingEvent::failed);

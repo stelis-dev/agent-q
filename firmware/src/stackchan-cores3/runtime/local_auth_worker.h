@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-#include "local_auth.h"
+#include "keystore/encrypted_keystore.h"
 
 namespace signing {
 
@@ -15,13 +15,14 @@ enum class LocalAuthWorkerOwner {
 };
 
 enum class LocalAuthWorkerOperation {
-    verify_pin,
-    prepare_verifier_record,
+    create_keystore,
+    unlock_keystore,
+    authenticate_pin,
+    rewrap_keystore,
 };
 
 enum class LocalAuthWorkerStatus {
-    ok,
-    auth_unavailable,
+    completed,
     worker_unavailable,
 };
 
@@ -30,20 +31,28 @@ struct LocalAuthWorkerResult {
     LocalAuthWorkerOwner owner;
     LocalAuthWorkerOperation operation;
     LocalAuthWorkerStatus status;
-    bool verified;
-    LocalAuthPreparedRecord prepared_record;
+    KeystoreOperationStatus operation_status;
 };
 
 bool local_auth_worker_init();
-bool local_auth_worker_submit_verify(
+bool local_auth_worker_submit_create(
     LocalAuthWorkerOwner owner,
     const char* pin,
     uint32_t* job_id);
-bool local_auth_worker_submit_prepare_verifier(
+bool local_auth_worker_submit_unlock(
     LocalAuthWorkerOwner owner,
     const char* pin,
     uint32_t* job_id);
-bool local_auth_worker_cancel_job(uint32_t job_id);
+bool local_auth_worker_submit_authenticate(
+    LocalAuthWorkerOwner owner,
+    const char* pin,
+    uint32_t* job_id);
+bool local_auth_worker_submit_rewrap(
+    LocalAuthWorkerOwner owner,
+    const char* current_pin,
+    const char* new_pin,
+    uint32_t* job_id);
+bool local_auth_worker_cancel_authentication(uint32_t job_id);
 bool local_auth_worker_poll_result(LocalAuthWorkerResult* result);
 void local_auth_worker_wipe_result(LocalAuthWorkerResult* result);
 

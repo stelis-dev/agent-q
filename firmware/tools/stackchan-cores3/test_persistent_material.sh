@@ -40,13 +40,17 @@ require_pattern() {
 }
 
 require_pattern \
-  "${RUNTIME_DIR}/root_material.cpp" \
-  "kNvsNamespace = kStackChanSigningKeyMaterialNvsNamespace" \
-  "root material must use the protected signing-key namespace"
+  "${RUNTIME_DIR}/stackchan_keystore.cpp" \
+  "kStackChanSigningKeyMaterialNvsNamespace" \
+  "encrypted keyslot and records must use the protected signing-key namespace"
 require_pattern \
-  "${RUNTIME_DIR}/local_auth.cpp" \
-  "kNvsNamespace = kStackChanAuthorityGateNvsNamespace" \
-  "local authentication verifier must use the protected authority-gate namespace"
+  "${RUNTIME_DIR}/stackchan_keystore.cpp" \
+  "constexpr const char* kKeyslotStorageKey = \"keyslot\"" \
+  "StackChan keystore must own the current keyslot"
+if [[ -e "${RUNTIME_DIR}/root_material.cpp" || -e "${RUNTIME_DIR}/local_auth.cpp" ]]; then
+  echo "FAILED: plaintext root or standalone PIN verifier storage source remains" >&2
+  exit 1
+fi
 require_pattern \
   "${RUNTIME_DIR}/protocol_request_server.cpp" \
   "kNvsNamespace = signing::kStackChanDeviceIdentityNvsNamespace" \
@@ -104,14 +108,13 @@ cat >"${TMP_DIR}/persistent_material_test.cpp" <<'CPP'
 #include <string.h>
 
 #include "human_approval_settings.h"
-#include "local_auth_test.h"
 #include "persistent_material.h"
 
 namespace {
 
 bool g_root_present = false;
 bool g_policy_present = false;
-bool g_auth_present = false;
+bool g_keystore_present = false;
 bool g_human_approval_setting_present = false;
 bool g_approval_history_present = false;
 bool g_policy_update_marker_present = false;
@@ -121,7 +124,6 @@ bool g_signing_mode_present = false;
 bool g_sui_account_settings_present = false;
 bool g_root_store_fails = false;
 bool g_policy_store_fails = false;
-bool g_auth_store_fails = false;
 bool g_human_approval_setting_store_fails = false;
 bool g_signing_mode_store_fails = false;
 bool g_sui_account_settings_store_fails = false;
@@ -133,8 +135,10 @@ bool g_policy_update_marker_wipe_fails = false;
 bool g_zklogin_proof_wipe_fails = false;
 bool g_pairing_store_wipe_fails = false;
 bool g_persist_state_fails = false;
+bool g_persist_state_applies_then_fails = false;
 signing::PolicyStoreStatus g_policy_status = signing::PolicyStoreStatus::missing;
-signing::LocalAuthStatus g_auth_status = signing::LocalAuthStatus::missing;
+signing::StackChanKeystoreMaterialStatus g_keystore_status = signing::StackChanKeystoreMaterialStatus::missing;
+signing::StackChanKeystoreMaterialStatus g_root_status = signing::StackChanKeystoreMaterialStatus::active;
 signing::AuthorizationModeStatus g_signing_mode_status =
     signing::AuthorizationModeStatus::missing;
 signing::AuthorizationMode g_signing_mode =
@@ -170,7 +174,7 @@ void reset_stubs()
 {
     g_root_present = false;
     g_policy_present = false;
-    g_auth_present = false;
+    g_keystore_present = false;
     g_human_approval_setting_present = false;
     g_approval_history_present = false;
     g_policy_update_marker_present = false;
@@ -180,7 +184,6 @@ void reset_stubs()
     g_sui_account_settings_present = false;
     g_root_store_fails = false;
     g_policy_store_fails = false;
-    g_auth_store_fails = false;
     g_human_approval_setting_store_fails = false;
     g_signing_mode_store_fails = false;
     g_sui_account_settings_store_fails = false;
@@ -192,8 +195,10 @@ void reset_stubs()
     g_zklogin_proof_wipe_fails = false;
     g_pairing_store_wipe_fails = false;
     g_persist_state_fails = false;
+    g_persist_state_applies_then_fails = false;
     g_policy_status = signing::PolicyStoreStatus::missing;
-    g_auth_status = signing::LocalAuthStatus::missing;
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::missing;
+    g_root_status = signing::StackChanKeystoreMaterialStatus::active;
     g_signing_mode_status = signing::AuthorizationModeStatus::missing;
     g_signing_mode = signing::AuthorizationMode::user;
     g_sui_account_settings = signing::kDefaultSuiAccountSettings;
@@ -210,6 +215,10 @@ void reset_stubs()
 
 bool persist_state(signing::ProvisioningPersistedState state)
 {
+    if (g_persist_state_applies_then_fails) {
+        g_persisted_state = state;
+        return false;
+    }
     if (g_persist_state_fails) {
         return false;
     }
@@ -230,6 +239,18 @@ signing::PersistentMaterialOps ops()
     };
 }
 
+signing::PersistentMaterialCommitResult commit_setup(
+    const uint8_t* root,
+    size_t root_size)
+{
+    g_keystore_present = true;
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::active;
+    return signing::persistent_material_commit_setup(
+        root,
+        root_size,
+        ops());
+}
+
 }  // namespace
 
 namespace signing {
@@ -243,41 +264,45 @@ void wipe_sensitive_buffer(void* data, size_t size)
     }
 }
 
-bool has_root_material()
+StackChanKeystoreMaterialStatus stackchan_keystore_status()
 {
-    return g_root_present;
+    return g_keystore_status;
 }
 
-bool store_root_material(const uint8_t*, size_t size)
+StackChanKeystoreMaterialStatus stackchan_keystore_root_status()
 {
-    if (g_root_store_fails || size != kRootMaterialBytes) {
-        return false;
+    return g_root_present ? g_root_status : StackChanKeystoreMaterialStatus::missing;
+}
+
+KeystoreOperationStatus stackchan_keystore_replace_root(
+    const uint8_t root[kStackChanRootMaterialBytes])
+{
+    if (root == nullptr) {
+        return KeystoreOperationStatus::invalid_input;
+    }
+    if (!g_keystore_present ||
+        g_keystore_status != StackChanKeystoreMaterialStatus::active) {
+        return KeystoreOperationStatus::locked;
+    }
+    if (g_root_store_fails) {
+        return KeystoreOperationStatus::storage_error;
     }
     g_root_present = true;
-    return true;
+    g_root_status = StackChanKeystoreMaterialStatus::active;
+    return KeystoreOperationStatus::success;
 }
 
-bool wipe_root_material()
+KeystoreOperationStatus stackchan_keystore_erase()
 {
-    if (g_root_wipe_fails) {
-        return false;
+    if (g_root_wipe_fails || g_pairing_store_wipe_fails) {
+        return KeystoreOperationStatus::storage_error;
     }
     g_root_present = false;
-    return true;
-}
-
-bool local_transport_pairing_wipe_identity()
-{
-    if (g_pairing_store_wipe_fails) {
-        return false;
-    }
+    g_root_status = StackChanKeystoreMaterialStatus::missing;
     g_pairing_store_present = false;
-    return true;
-}
-
-bool read_root_material(uint8_t*, size_t)
-{
-    return false;
+    g_keystore_present = false;
+    g_keystore_status = StackChanKeystoreMaterialStatus::missing;
+    return KeystoreOperationStatus::success;
 }
 
 bool store_default_policy()
@@ -305,69 +330,6 @@ PolicyStoreStatus active_policy_status()
 bool read_active_policy_summary(StoredPolicySummary*)
 {
     return false;
-}
-
-bool is_valid_local_pin(const char* pin)
-{
-    return pin != nullptr && strlen(pin) == kLocalPinDigits;
-}
-
-bool store_local_pin_verifier(const char* pin)
-{
-    if (g_auth_store_fails || !is_valid_local_pin(pin)) {
-        return false;
-    }
-    g_auth_present = true;
-    g_auth_status = LocalAuthStatus::active;
-    return true;
-}
-
-bool prepare_local_pin_verifier_record(const char* pin, LocalAuthPreparedRecord* out)
-{
-    if (!is_valid_local_pin(pin) || out == nullptr) {
-        return false;
-    }
-    memset(out->bytes, 0, sizeof(out->bytes));
-    memcpy(out->bytes, pin, kLocalPinBufferSize);
-    return true;
-}
-
-bool store_prepared_local_pin_verifier(const LocalAuthPreparedRecord* prepared)
-{
-    if (prepared == nullptr || g_auth_store_fails) {
-        return false;
-    }
-    const char* pin = reinterpret_cast<const char*>(prepared->bytes);
-    if (!is_valid_local_pin(pin)) {
-        return false;
-    }
-    g_auth_present = true;
-    g_auth_status = LocalAuthStatus::active;
-    return true;
-}
-
-void wipe_local_pin_verifier_record(LocalAuthPreparedRecord* prepared)
-{
-    if (prepared != nullptr) {
-        memset(prepared->bytes, 0, sizeof(prepared->bytes));
-    }
-}
-
-bool verify_local_pin(const char*, bool*)
-{
-    return false;
-}
-
-bool clear_local_auth()
-{
-    g_auth_present = false;
-    g_auth_status = LocalAuthStatus::missing;
-    return true;
-}
-
-LocalAuthStatus local_auth_status()
-{
-    return g_auth_status;
 }
 
 bool read_signing_authorization_mode(AuthorizationMode* mode)
@@ -572,8 +534,40 @@ int main()
     using Wipe = signing::PersistentMaterialWalletEraseResult;
     using SettingsReset = signing::PersistentMaterialSettingsResetResult;
 
-    uint8_t root[signing::kRootMaterialBytes] = {};
+    uint8_t root[signing::kStackChanRootMaterialBytes] = {};
     State effective = State::unprovisioned;
+
+    reset_stubs();
+    g_keystore_present = true;
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::active;
+    g_policy_present = true;
+    expect(signing::persistent_material_commit_setup(
+               nullptr, sizeof(root), ops()) == Commit::missing_input,
+           "missing setup input is rejected");
+    expect(!signing::persistent_material_exists(),
+           "missing setup input invokes the shared setup rollback");
+
+    reset_stubs();
+    expect(signing::persistent_material_commit_setup(
+               root, sizeof(root), ops()) == Commit::root_storage_error,
+           "setup cannot commit a root without an opened encrypted keyslot");
+    expect(!signing::persistent_material_exists(),
+           "missing-keyslot setup failure leaves no product state");
+
+    reset_stubs();
+    g_root_store_fails = true;
+    expect(commit_setup(root, sizeof(root)) == Commit::root_storage_error,
+           "encrypted root storage failure is reported");
+    expect(!g_root_present && !g_keystore_present,
+           "encrypted root storage failure rolls back the created keyslot");
+
+    reset_stubs();
+    g_root_store_fails = true;
+    g_root_wipe_fails = true;
+    expect(commit_setup(root, sizeof(root)) == Commit::root_storage_error,
+           "root failure remains the primary setup result when rollback fails");
+    expect(signing::persistent_material_consistency_error_active(),
+           "failed keyslot rollback latches a persistent-material error");
 
     reset_stubs();
     expect(signing::persistent_material_record_runtime_failure(
@@ -582,17 +576,17 @@ int main()
            "runtime material failure is recorded as consistency error");
     expect(signing::persistent_material_consistency_error_active(),
            "runtime material failure latches consistency error");
-    expect(signing::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+    expect(commit_setup(root, sizeof(root)) ==
                Commit::ok,
            "setup commit succeeds after runtime failure is resolved");
     expect(!signing::persistent_material_consistency_error_active(),
            "setup commit success clears consistency error latch");
 
     reset_stubs();
-    expect(signing::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+    expect(commit_setup(root, sizeof(root)) ==
                Commit::ok,
            "setup commit succeeds");
-    expect(g_root_present && g_policy_present && g_auth_present &&
+    expect(g_root_present && g_policy_present && g_keystore_present &&
                g_signing_mode_present && g_human_approval_setting_present &&
                g_sui_account_settings_present,
            "setup commit stores all required material, signing mode, human approval default, and Sui account settings");
@@ -606,10 +600,21 @@ int main()
            "setup commit persists provisioned after material");
 
     reset_stubs();
+    g_persist_state_applies_then_fails = true;
+    expect(commit_setup(root, sizeof(root)) == Commit::state_storage_error,
+           "ambiguous provisioning-state write fails setup");
+    expect(!signing::persistent_material_exists(),
+           "ambiguous provisioning-state write rolls back setup material");
+    expect(g_persisted_state == PersistedState::unprovisioned,
+           "setup rollback restores unprovisioned state after an applied write error");
+    expect(signing::persistent_material_consistency_error_active(),
+           "reported rollback-state write failure remains fail closed");
+
+    reset_stubs();
     g_signing_mode_present = true;
     g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_signing_mode = signing::AuthorizationMode::policy;
-    expect(signing::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+    expect(commit_setup(root, sizeof(root)) ==
                Commit::ok,
            "setup commit succeeds over stale signing mode material");
     expect(g_signing_mode_present && g_signing_mode == signing::AuthorizationMode::user,
@@ -618,7 +623,7 @@ int main()
     reset_stubs();
     g_human_approval_setting_present = true;
     g_human_approval_input_mode = signing::HumanApprovalInputMode::confirm;
-    expect(signing::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+    expect(commit_setup(root, sizeof(root)) ==
                Commit::ok,
            "setup commit succeeds over stale human approval input mode material");
     expect(g_human_approval_setting_present &&
@@ -629,7 +634,7 @@ int main()
     g_sui_account_settings_present = true;
     g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
     g_sui_account_settings.accept_gas_sponsor = true;
-    expect(signing::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+    expect(commit_setup(root, sizeof(root)) ==
                Commit::ok,
            "setup commit succeeds over stale Sui account settings material");
     expect(g_sui_account_settings_present && !g_sui_account_settings.accept_gas_sponsor,
@@ -637,10 +642,10 @@ int main()
 
     reset_stubs();
     g_policy_store_fails = true;
-    expect(signing::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+    expect(commit_setup(root, sizeof(root)) ==
                Commit::policy_storage_error,
            "policy storage failure is reported");
-    expect(!g_root_present && !g_policy_present && !g_auth_present &&
+    expect(!g_root_present && !g_policy_present && !g_keystore_present &&
                !g_signing_mode_present && !g_human_approval_setting_present &&
                !g_sui_account_settings_present,
            "policy failure rolls back partial setup material");
@@ -649,10 +654,10 @@ int main()
 
     reset_stubs();
     g_signing_mode_store_fails = true;
-    expect(signing::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+    expect(commit_setup(root, sizeof(root)) ==
                Commit::signing_mode_storage_error,
            "signing mode storage failure is reported");
-    expect(!g_root_present && !g_policy_present && !g_auth_present &&
+    expect(!g_root_present && !g_policy_present && !g_keystore_present &&
                !g_signing_mode_present && !g_sui_account_settings_present,
            "signing mode failure rolls back partial setup material");
     expect(g_consistency_error_count == 0,
@@ -660,10 +665,10 @@ int main()
 
     reset_stubs();
     g_human_approval_setting_store_fails = true;
-    expect(signing::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+    expect(commit_setup(root, sizeof(root)) ==
                Commit::human_approval_setting_storage_error,
            "human approval input mode storage failure is reported");
-    expect(!g_root_present && !g_policy_present && !g_auth_present &&
+    expect(!g_root_present && !g_policy_present && !g_keystore_present &&
                !g_signing_mode_present && !g_human_approval_setting_present &&
                !g_sui_account_settings_present,
            "human approval input mode failure rolls back partial setup material");
@@ -672,10 +677,10 @@ int main()
 
     reset_stubs();
     g_sui_account_settings_store_fails = true;
-    expect(signing::persistent_material_commit_setup(root, sizeof(root), "123456", ops()) ==
+    expect(commit_setup(root, sizeof(root)) ==
                Commit::sui_account_settings_storage_error,
            "Sui account settings storage failure is reported");
-    expect(!g_root_present && !g_policy_present && !g_auth_present &&
+    expect(!g_root_present && !g_policy_present && !g_keystore_present &&
                !g_signing_mode_present && !g_human_approval_setting_present &&
                !g_sui_account_settings_present,
            "Sui account settings failure rolls back partial setup material");
@@ -686,8 +691,8 @@ int main()
     g_root_present = true;
     g_policy_present = true;
     g_policy_status = signing::PolicyStoreStatus::active;
-    g_auth_present = true;
-    g_auth_status = signing::LocalAuthStatus::active;
+    g_keystore_present = true;
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::active;
     g_signing_mode_present = true;
     g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_sui_account_settings_present = true;
@@ -700,12 +705,12 @@ int main()
     g_zklogin_proof_status = signing::SuiZkLoginProofRecordStatus::active;
     g_pairing_store_present = true;
     expect(signing::persistent_material_record_runtime_failure(
-               signing::PersistentMaterialRuntimeFailure::wallet_erase_root_wipe_failed, ops()) ==
+               signing::PersistentMaterialRuntimeFailure::wallet_erase_keystore_wipe_failed, ops()) ==
                Consistency::consistency_error,
            "storage maintenance material failure latches consistency error before wipe");
     expect(signing::persistent_material_wallet_erase() == Wipe::ok,
            "Device reset succeeds");
-    expect(!g_root_present && !g_policy_present && !g_auth_present &&
+    expect(!g_root_present && !g_policy_present && !g_keystore_present &&
                !g_signing_mode_present && !g_sui_account_settings_present &&
                !g_human_approval_setting_present && !g_approval_history_present &&
                !g_policy_update_marker_present && !g_zklogin_proof_present &&
@@ -718,8 +723,8 @@ int main()
     g_root_present = true;
     g_policy_present = true;
     g_policy_status = signing::PolicyStoreStatus::active;
-    g_auth_present = true;
-    g_auth_status = signing::LocalAuthStatus::active;
+    g_keystore_present = true;
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::active;
     g_signing_mode_present = true;
     g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_sui_account_settings_present = true;
@@ -733,8 +738,8 @@ int main()
     g_root_present = true;
     g_policy_present = true;
     g_policy_status = signing::PolicyStoreStatus::active;
-    g_auth_present = true;
-    g_auth_status = signing::LocalAuthStatus::active;
+    g_keystore_present = true;
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::active;
     g_signing_mode_present = true;
     g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_signing_mode = signing::AuthorizationMode::policy;
@@ -749,11 +754,11 @@ int main()
     g_zklogin_proof_present = true;
     g_zklogin_proof_status = signing::SuiZkLoginProofRecordStatus::active;
     expect(signing::persistent_material_can_reset_recoverable_settings(),
-           "settings repair is available when root and local auth are valid");
+           "settings repair is available when encrypted root and keyslot are valid");
     expect(signing::persistent_material_reset_recoverable_settings() == SettingsReset::ok,
-           "settings repair succeeds with root and local auth");
-    expect(g_root_present && g_auth_present,
-           "settings repair preserves signing key material and local auth verifier");
+           "settings repair succeeds with encrypted root and keyslot");
+    expect(g_root_present && g_keystore_present,
+           "settings repair preserves encrypted signing material and keyslot");
     expect(g_policy_present && g_policy_status == signing::PolicyStoreStatus::active,
            "settings repair restores active default policy");
     expect(g_signing_mode_present && g_signing_mode == signing::AuthorizationMode::user,
@@ -768,14 +773,14 @@ int main()
 
     reset_stubs();
     g_root_present = true;
-    g_auth_present = true;
-    g_auth_status = signing::LocalAuthStatus::active;
+    g_keystore_present = true;
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::active;
     expect(signing::persistent_material_can_reset_recoverable_settings(),
-           "settings repair is available with protected key and PIN verifier only");
+           "settings repair is available with encrypted root and keyslot only");
     expect(signing::persistent_material_reset_recoverable_settings() == SettingsReset::ok,
-           "settings repair rebuilds missing mutable settings from protected key and PIN verifier");
-    expect(g_root_present && g_auth_present,
-           "settings repair still preserves protected key and PIN verifier when mutable settings were missing");
+           "settings repair rebuilds missing mutable settings from encrypted root and keyslot");
+    expect(g_root_present && g_keystore_present,
+           "settings repair still preserves encrypted root and keyslot when mutable settings were missing");
     expect(g_policy_present && g_policy_status == signing::PolicyStoreStatus::active &&
                g_signing_mode_present && g_sui_account_settings_present &&
                g_human_approval_setting_present,
@@ -783,14 +788,14 @@ int main()
 
     reset_stubs();
     g_root_present = true;
-    g_auth_present = true;
-    g_auth_status = signing::LocalAuthStatus::invalid;
+    g_keystore_present = true;
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::invalid;
     expect(!signing::persistent_material_can_reset_recoverable_settings(),
-           "settings repair is unavailable when local auth verifier is invalid");
+           "settings repair is unavailable when the keyslot is invalid");
     expect(signing::persistent_material_reset_recoverable_settings() == SettingsReset::auth_unavailable,
-           "settings repair does not recreate a missing or invalid local auth verifier");
-    expect(g_root_present && g_auth_present,
-           "failed settings repair preserves key and invalid auth material for fail-closed handling");
+           "settings repair does not recreate a missing or invalid keyslot");
+    expect(g_root_present && g_keystore_present,
+           "failed settings repair preserves root and invalid keyslot for fail-closed handling");
 
     reset_stubs();
     g_policy_update_marker_status = signing::PolicyUpdateMarkerStatus::pending;
@@ -821,8 +826,8 @@ int main()
     g_root_present = true;
     g_policy_present = true;
     g_policy_status = signing::PolicyStoreStatus::active;
-    g_auth_present = true;
-    g_auth_status = signing::LocalAuthStatus::active;
+    g_keystore_present = true;
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::active;
     g_signing_mode_present = true;
     g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_sui_account_settings_present = true;
@@ -856,8 +861,8 @@ int main()
     reset_stubs();
     g_pairing_store_present = true;
     g_pairing_store_wipe_fails = true;
-    expect(signing::persistent_material_wallet_erase() == Wipe::pairing_store_wipe_error,
-           "local transport identity wipe failure is reported");
+    expect(signing::persistent_material_wallet_erase() == Wipe::keystore_wipe_error,
+           "encrypted transport identity wipe failure is reported as keystore failure");
     expect(g_pairing_store_present,
            "failed local transport identity wipe remains visible to caller-owned fail-closed handling");
 
@@ -948,8 +953,8 @@ int main()
     g_root_present = true;
     g_policy_present = true;
     g_policy_status = signing::PolicyStoreStatus::active;
-    g_auth_present = true;
-    g_auth_status = signing::LocalAuthStatus::active;
+    g_keystore_present = true;
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::active;
     g_signing_mode_present = true;
     g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_sui_account_settings_present = true;
@@ -965,8 +970,8 @@ int main()
     g_root_present = true;
     g_policy_present = true;
     g_policy_status = signing::PolicyStoreStatus::active;
-    g_auth_present = true;
-    g_auth_status = signing::LocalAuthStatus::active;
+    g_keystore_present = true;
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::active;
     g_signing_mode_present = true;
     g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_sui_account_settings_present = true;
@@ -982,8 +987,8 @@ int main()
     g_root_present = true;
     g_policy_present = true;
     g_policy_status = signing::PolicyStoreStatus::active;
-    g_auth_present = true;
-    g_auth_status = signing::LocalAuthStatus::active;
+    g_keystore_present = true;
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::active;
     g_signing_mode_present = true;
     g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_sui_account_settings_present = true;
@@ -999,8 +1004,8 @@ int main()
     g_root_present = true;
     g_policy_present = true;
     g_policy_status = signing::PolicyStoreStatus::active;
-    g_auth_present = true;
-    g_auth_status = signing::LocalAuthStatus::active;
+    g_keystore_present = true;
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::active;
     g_signing_mode_present = true;
     g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_sui_account_settings_present = true;
@@ -1018,8 +1023,8 @@ int main()
     g_root_present = true;
     g_policy_present = true;
     g_policy_status = signing::PolicyStoreStatus::active;
-    g_auth_present = true;
-    g_auth_status = signing::LocalAuthStatus::active;
+    g_keystore_present = true;
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::active;
     g_sui_account_settings_present = true;
     g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
     expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
@@ -1032,8 +1037,8 @@ int main()
     g_root_present = true;
     g_policy_present = true;
     g_policy_status = signing::PolicyStoreStatus::active;
-    g_auth_present = true;
-    g_auth_status = signing::LocalAuthStatus::active;
+    g_keystore_present = true;
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::active;
     g_signing_mode_present = true;
     g_signing_mode_status = signing::AuthorizationModeStatus::active;
     expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
@@ -1046,8 +1051,8 @@ int main()
     g_root_present = true;
     g_policy_present = true;
     g_policy_status = signing::PolicyStoreStatus::active;
-    g_auth_present = true;
-    g_auth_status = signing::LocalAuthStatus::active;
+    g_keystore_present = true;
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::active;
     g_signing_mode_present = true;
     g_signing_mode_status = signing::AuthorizationModeStatus::invalid;
     g_sui_account_settings_present = true;
@@ -1060,23 +1065,23 @@ int main()
 
     reset_stubs();
     g_root_present = true;
-    g_auth_present = true;
-    g_auth_status = signing::LocalAuthStatus::active;
+    g_keystore_present = true;
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::active;
     g_signing_mode_present = true;
     g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_sui_account_settings_present = true;
     g_sui_account_settings_status = signing::SuiAccountSettingsStatus::active;
     expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "provisioned", &effective, ops()) ==
                Consistency::consistency_error,
-           "provisioned root plus auth without active policy fails closed");
+           "provisioned root plus keyslot without active policy fails closed");
     expect(g_consistency_error_count == 1,
            "missing active policy reports consistency error");
 
     reset_stubs();
     g_root_present = true;
     g_policy_status = signing::PolicyStoreStatus::invalid;
-    g_auth_present = true;
-    g_auth_status = signing::LocalAuthStatus::active;
+    g_keystore_present = true;
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::active;
     g_signing_mode_present = true;
     g_signing_mode_status = signing::AuthorizationModeStatus::active;
     g_sui_account_settings_present = true;
@@ -1089,9 +1094,35 @@ int main()
 
     reset_stubs();
     g_root_present = true;
+    g_root_status = signing::StackChanKeystoreMaterialStatus::active;
     expect(signing::persistent_material_validate_loaded_storage_state(Storage::present, "unprovisioned", &effective, ops()) ==
                Consistency::consistency_error,
            "material outside provisioned state fails closed");
+
+    reset_stubs();
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::invalid;
+    expect(signing::persistent_material_validate_loaded_storage_state(
+               Storage::present, "unprovisioned", &effective, ops()) ==
+               Consistency::consistency_error,
+           "invalid keyslot outside provisioned state fails closed");
+    expect(g_consistency_error_count == 1,
+           "invalid keyslot outside provisioned state reports consistency error");
+
+    reset_stubs();
+    g_root_present = true;
+    g_root_status = signing::StackChanKeystoreMaterialStatus::invalid;
+    expect(signing::persistent_material_validate_loaded_storage_state(
+               Storage::present, "unprovisioned", &effective, ops()) ==
+               Consistency::consistency_error,
+           "invalid protected root outside provisioned state fails closed");
+
+    reset_stubs();
+    g_keystore_status = signing::StackChanKeystoreMaterialStatus::storage_error;
+    expect(!signing::persistent_material_validate_runtime_state(
+               State::unprovisioned, ops()),
+           "runtime revalidation rejects unreadable keyslot outside provisioned state");
+    expect(g_consistency_error_count == 1,
+           "runtime unreadable keyslot reports consistency error");
 
     reset_stubs();
     g_persisted_state = PersistedState::provisioned;

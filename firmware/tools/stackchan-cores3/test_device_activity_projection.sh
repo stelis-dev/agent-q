@@ -116,6 +116,7 @@ signing::DeviceActivityFacts idle_facts()
     return {
         false,
         true,
+        false,
         true,
         false,
         false,
@@ -169,6 +170,24 @@ int main()
     expect(!signing::device_activity_blocks_user_signing_ingress(activity),
            "idle activity allows user signing ingress");
     expect_usb_block(activity, false, false, false, nullptr);
+
+    facts = idle_facts();
+    facts.keystore_locked = true;
+    activity = project(facts);
+    expect(activity.device_state == signing::ProjectedDeviceState::locked,
+           "locked keystore projects to locked");
+    expect(!signing::device_activity_allows_local_settings_touch_entry(activity),
+           "locked keystore blocks touch settings entry");
+    expect(!signing::device_activity_allows_local_settings_start(activity),
+           "locked keystore blocks local settings start");
+    expect(signing::device_activity_allows_local_error_recovery(activity),
+           "locked keystore keeps destructive local recovery available");
+    expect(signing::device_activity_blocks_user_signing_ingress(activity),
+           "locked keystore blocks user signing ingress");
+    expect_usb_block(activity, false, false, true, "Device is locked.");
+
+    facts = idle_facts();
+    activity = project(facts);
     expect(signing::operation_is_retained_response_read_cleanup(
                signing::OperationType::get_result),
            "get_result is a retained-response read route");

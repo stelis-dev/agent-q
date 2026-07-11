@@ -75,7 +75,6 @@ cat >"${TMP_DIR}/stubs.cpp" <<'CPP'
 #include "bip39.h"
 #include "bip39_wordlist.h"
 #include "entropy.h"
-#include "local_auth.h"
 #include "local_auth_worker.h"
 
 namespace {
@@ -152,12 +151,12 @@ Bip39EntropyDecodeResult decode_bip39_entropy_12_words(
     return Bip39EntropyDecodeResult::ok;
 }
 
-bool is_valid_local_pin(const char* pin)
+bool keystore_pin_valid(const char* pin)
 {
-    if (pin == nullptr || strlen(pin) != kLocalPinDigits) {
+    if (pin == nullptr || strlen(pin) != kKeystorePinDigits) {
         return false;
     }
-    for (size_t index = 0; index < kLocalPinDigits; ++index) {
+    for (size_t index = 0; index < kKeystorePinDigits; ++index) {
         if (!isdigit(static_cast<unsigned char>(pin[index]))) {
             return false;
         }
@@ -165,12 +164,12 @@ bool is_valid_local_pin(const char* pin)
     return true;
 }
 
-bool local_auth_worker_submit_prepare_verifier(
+bool local_auth_worker_submit_create(
     LocalAuthWorkerOwner,
     const char* pin,
     uint32_t* job_id)
 {
-    if (!g_test_worker_accepts_jobs || !is_valid_local_pin(pin) || job_id == nullptr) {
+    if (!g_test_worker_accepts_jobs || !keystore_pin_valid(pin) || job_id == nullptr) {
         return false;
     }
     *job_id = 7;
@@ -178,15 +177,7 @@ bool local_auth_worker_submit_prepare_verifier(
     return true;
 }
 
-bool local_auth_worker_submit_verify(
-    LocalAuthWorkerOwner owner,
-    const char* pin,
-    uint32_t* job_id)
-{
-    return local_auth_worker_submit_prepare_verifier(owner, pin, job_id);
-}
-
-bool local_auth_worker_cancel_job(uint32_t)
+bool local_auth_worker_cancel_authentication(uint32_t)
 {
     return true;
 }
@@ -222,6 +213,7 @@ int g_show_message_calls = 0;
 int g_log_info_calls = 0;
 int g_log_warn_calls = 0;
 int g_commit_calls = 0;
+int g_rollback_calls = 0;
 const char* g_last_message = nullptr;
 const char* g_last_pin_notice = nullptr;
 signing::MessageKind g_last_kind = signing::MessageKind::info;
@@ -253,6 +245,7 @@ void reset_harness()
     g_log_info_calls = 0;
     g_log_warn_calls = 0;
     g_commit_calls = 0;
+    g_rollback_calls = 0;
     g_last_message = nullptr;
     g_last_pin_notice = nullptr;
     g_last_kind = signing::MessageKind::info;
@@ -331,14 +324,18 @@ void show_message(const char* message, signing::MessageKind kind)
 
 signing::ProvisioningFlowCommitResult commit_setup(
     const uint8_t* root_material,
-    size_t root_material_size,
-    const signing::LocalAuthPreparedRecord* prepared_auth)
+    size_t root_material_size)
 {
     g_commit_calls += 1;
     expect(root_material != nullptr, "commit has root material");
     expect(root_material_size == signing::kBip39EntropyBytes, "commit root material size");
-    expect(prepared_auth != nullptr, "commit has prepared auth");
     return g_commit_result;
+}
+
+bool rollback_setup()
+{
+    ++g_rollback_calls;
+    return true;
 }
 
 void log_info(const char*)
@@ -367,13 +364,13 @@ const signing::ProvisioningUiFlowOps& ops()
         clear_overlay,
         show_message,
         commit_setup,
+        rollback_setup,
         log_info,
         log_warn,
         100,
         100,
         100,
         5,
-        20,
     };
     return value;
 }
@@ -406,10 +403,10 @@ void complete_generated_setup_with_commit_result(
 
     signing::LocalAuthWorkerResult result = {};
     result.owner = signing::LocalAuthWorkerOwner::provisioning_setup;
-    result.operation = signing::LocalAuthWorkerOperation::prepare_verifier_record;
-    result.status = signing::LocalAuthWorkerStatus::ok;
+    result.operation = signing::LocalAuthWorkerOperation::create_keystore;
+    result.status = signing::LocalAuthWorkerStatus::completed;
+    result.operation_status = signing::KeystoreOperationStatus::success;
     result.job_id = signing::g_last_worker_job_id;
-    memset(result.prepared_record.bytes, 0x42, sizeof(result.prepared_record.bytes));
 
     g_commit_result = commit_result;
     signing::provisioning_ui_handle_setup_auth_worker_result(result, ops());

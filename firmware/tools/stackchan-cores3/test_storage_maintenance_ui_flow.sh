@@ -330,11 +330,12 @@ StorageMaintenanceOperation storage_maintenance_error_recovery_operation()
                : StorageMaintenanceOperation::wallet_erase;
 }
 
-void storage_maintenance_clear_flow()
+bool storage_maintenance_clear_flow()
 {
     ++g_wipe_calls;
     g_stage = StorageMaintenanceStage::none;
     g_operation = StorageMaintenanceOperation::none;
+    return true;
 }
 
 bool storage_maintenance_flow_active()
@@ -682,10 +683,9 @@ int main()
         signing::LocalAuthWorkerResult{
             1,
             signing::LocalAuthWorkerOwner::storage_maintenance,
-            signing::LocalAuthWorkerOperation::verify_pin,
-            signing::LocalAuthWorkerStatus::ok,
-            true,
-            {},
+            signing::LocalAuthWorkerOperation::authenticate_pin,
+            signing::LocalAuthWorkerStatus::completed,
+            signing::KeystoreOperationStatus::success,
         },
         ops());
     expect(g_stage == signing::StorageMaintenanceStage::committing,

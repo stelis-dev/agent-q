@@ -548,6 +548,28 @@ expect_order "${PROTOCOL_TICK_SNIPPET}" 'run_protocol_request_server_local_ui_ph
 expect_order "${PROTOCOL_TICK_SNIPPET}" 'run_protocol_request_server_connect_response_phase' 'run_protocol_request_server_usb_input_phase' \
   "protocol request server tick must resolve connect responses before USB input"
 
+SHOW_IDLE_SIGNING_UI_SNIPPET="${TMP_DIR}/show-idle-signing-ui.cpp"
+awk '
+  /void show_idle_signing_ui_for_current_state/ { capture = 1 }
+  capture { print }
+  /bool clear_signing_panel_if_kind/ { capture = 0 }
+' "${PROTOCOL_SERVER}" >"${SHOW_IDLE_SIGNING_UI_SNIPPET}"
+expect_present "${SHOW_IDLE_SIGNING_UI_SNIPPET}" 'drawing_surface_ready' \
+  "boot unlock must require the target UI surface before starting local PIN authorization"
+expect_order "${SHOW_IDLE_SIGNING_UI_SNIPPET}" 'drawing_surface_ready' 'local_pin_auth_ui_start_unlock' \
+  "boot unlock must check target UI readiness before starting local PIN authorization"
+
+UI_EVENT_DRAIN_SNIPPET="${TMP_DIR}/ui-event-drain.cpp"
+awk '
+  /void drain_ui_events/ { capture = 1 }
+  capture { print }
+  /void show_policy_signing_notification/ { capture = 0 }
+' "${PROTOCOL_SERVER}" >"${UI_EVENT_DRAIN_SNIPPET}"
+expect_present "${UI_EVENT_DRAIN_SNIPPET}" 'UiEventKind::ui_surface_ready' \
+  "target UI readiness must remain an explicit local UI event"
+expect_present "${UI_EVENT_DRAIN_SNIPPET}" 'show_idle_signing_ui_for_current_state' \
+  "target UI readiness must retry the idle signing UI transition"
+
 PROTOCOL_CONNECT_RESPONSE_PHASE_SNIPPET="${TMP_DIR}/usb-connect-response-phase.cpp"
 awk '
   /void run_protocol_request_server_connect_response_phase/ { capture = 1 }

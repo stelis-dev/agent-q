@@ -67,7 +67,7 @@ check_modal_transition_next_panel_order() {
 check_settings_completion_uses_transition_owner() {
   local settings_snippet="${TMP_DIR}/complete_local_pin_processing_to_settings.cpp"
   local commit_snippet="${TMP_DIR}/local_pin_auth_ui_commit_setting_if_ready.cpp"
-  local prepare_snippet="${TMP_DIR}/local_pin_auth_ui_handle_prepare_worker_result.cpp"
+  local prepare_snippet="${TMP_DIR}/local_pin_auth_ui_handle_pin_change_worker_result.cpp"
 
   awk '
     /void complete_local_pin_processing_to_settings\(/ { in_fn = 1 }
@@ -87,7 +87,7 @@ check_settings_completion_uses_transition_owner() {
   ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${commit_snippet}"
 
   awk '
-    /void local_pin_auth_ui_handle_prepare_worker_result\(/ { in_fn = 1 }
+    /void local_pin_auth_ui_handle_pin_change_worker_result\(/ { in_fn = 1 }
     in_fn { print }
     in_fn && /^}/ { exit }
   ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${prepare_snippet}"
@@ -176,7 +176,7 @@ check_local_pin_ui_handler_timeout_order() {
   fi
 }
 
-check_local_pin_worker_timeout_order() {
+check_local_pin_worker_result_ownership_order() {
   local snippet="${TMP_DIR}/handle_local_pin_auth_verify_worker_result.cpp"
   local timeout_line
   local complete_line
@@ -188,10 +188,10 @@ check_local_pin_worker_timeout_order() {
   ' "${LOCAL_PIN_AUTH_UI_SOURCE}" >"${snippet}"
 
   complete_line="$(grep -En 'local_pin_auth_complete_verify_job\(' "${snippet}" | head -n 1 | cut -d: -f1 || true)"
-  timeout_line="$(grep -En 'finish_request_backed_local_pin_input_timeout_if_reached' "${snippet}" | awk -F: -v complete="${complete_line:-0}" '$1 < complete { line = $1 } END { print line }')"
+  timeout_line="$(grep -En 'finish_request_backed_local_pin_input_timeout_if_reached' "${snippet}" | awk -F: -v complete="${complete_line:-0}" '$1 > complete { print $1; exit }')"
 
-  if [[ -z "${timeout_line}" || -z "${complete_line}" || "${timeout_line}" -ge "${complete_line}" ]]; then
-    echo "FAILED: protocol-backed PIN worker completion must check input timeout before local PIN verify result" >&2
+  if [[ -z "${timeout_line}" || -z "${complete_line}" || "${complete_line}" -ge "${timeout_line}" ]]; then
+    echo "FAILED: protocol-backed PIN completion must own the terminal worker result before timeout cleanup" >&2
     echo "timeout_line=${timeout_line:-missing} complete_line=${complete_line:-missing}" >&2
     exit 1
   fi
@@ -917,7 +917,7 @@ check_local_pin_ui_handler_timeout_order \
   local_pin_auth_ui_cancel \
   'return_policy_update_review_from_pin|usb_response_write_connect_rejected|user_signing_confirmation_return_to_review_from_pin' \
   "request-backed PIN cancel handler must timeout before cancel/back action"
-check_local_pin_worker_timeout_order
+check_local_pin_worker_result_ownership_order
 check_settings_policy_reset_keeps_panel_until_completion
 check_settings_sui_clear_keeps_panel_until_completion
 check_connect_pin_completion_uses_connect_callbacks

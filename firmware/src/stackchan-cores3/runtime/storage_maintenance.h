@@ -36,16 +36,14 @@ enum class StorageMaintenanceCommitResult {
     missing_state,
     key_unavailable,
     auth_unavailable,
-    root_wipe_error,
+    keystore_wipe_error,
     policy_wipe_error,
-    local_auth_wipe_error,
     human_approval_setting_wipe_error,
     signing_mode_wipe_error,
     sui_account_settings_wipe_error,
     approval_history_wipe_error,
     policy_update_marker_wipe_error,
     zklogin_proof_wipe_error,
-    pairing_store_wipe_error,
     material_remaining_error,
     material_incomplete_error,
     action_marker_storage_error,
@@ -133,7 +131,7 @@ StorageMaintenanceLockoutReleaseResult storage_maintenance_release_lockout_if_el
 bool storage_maintenance_commit_ready(TickType_t now);
 StorageMaintenanceOperation storage_maintenance_error_recovery_operation();
 
-void storage_maintenance_clear_flow();
+bool storage_maintenance_clear_flow();
 bool storage_maintenance_flow_active();
 void storage_maintenance_begin_settings(TimeoutWindow input_window);
 void storage_maintenance_begin_error_recovery_prompt(

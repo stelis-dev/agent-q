@@ -7,7 +7,7 @@
 #include "bip39_wordlist.h"
 #include "human_approval_settings.h"
 #include "display_power.h"
-#include "local_auth.h"
+#include "keystore/encrypted_keystore.h"
 #include "local_pin_auth.h"
 #include "storage_maintenance.h"
 #include "policy/policy_update_flow.h"
@@ -1555,8 +1555,8 @@ bool modal_draw_pin_setup_panel(const char* notice)
     lv_obj_set_style_text_color(message, lv_color_hex(theme::kWarning), 0);
     lv_obj_align(message, LV_ALIGN_TOP_MID, 0, kModalDescriptionY);
 
-    char pin_mask[signing::kLocalPinDigits + 1] = {};
-    for (size_t index = 0; index < signing::kLocalPinDigits; ++index) {
+    char pin_mask[signing::kKeystorePinBufferBytes] = {};
+    for (size_t index = 0; index < signing::kKeystorePinDigits; ++index) {
         pin_mask[index] = index < flow.pin_entry_length ? '*' : '_';
     }
     char pin_text[16] = {};
@@ -2291,8 +2291,8 @@ bool modal_draw_action_pin_panel(const char* notice)
     lv_obj_set_style_text_color(message, lv_color_hex(theme::kWarning), 0);
     lv_obj_align(message, LV_ALIGN_TOP_MID, 0, kModalDescriptionY);
 
-    char pin_mask[signing::kLocalPinDigits + 1] = {};
-    for (size_t index = 0; index < signing::kLocalPinDigits; ++index) {
+    char pin_mask[signing::kKeystorePinBufferBytes] = {};
+    for (size_t index = 0; index < signing::kKeystorePinDigits; ++index) {
         pin_mask[index] = index < maintenance.pin_entry_length ? '*' : '_';
     }
     char pin_text[16] = {};
@@ -2364,6 +2364,9 @@ static const char* local_pin_auth_default_message(
     if (snapshot.processing) {
         return "Processing. Please wait.";
     }
+    if (snapshot.purpose == LocalPinAuthPurpose::unlock) {
+        return "Enter local PIN to unlock.";
+    }
     if (snapshot.purpose == LocalPinAuthPurpose::connect) {
         return "Enter local PIN to connect.";
     }
@@ -2401,6 +2404,9 @@ static const char* local_pin_auth_title(const signing::LocalPinAuthSnapshot& sna
 {
     if (snapshot.processing) {
         return "Processing PIN";
+    }
+    if (snapshot.purpose == LocalPinAuthPurpose::unlock) {
+        return "Unlock Device";
     }
     if (snapshot.purpose == LocalPinAuthPurpose::connect) {
         return "Connect PIN";
@@ -2929,8 +2935,8 @@ bool modal_draw_local_pin_auth_panel(const char* notice)
     lv_obj_set_style_text_color(message, lv_color_hex(theme::kWarning), 0);
     lv_obj_align(message, LV_ALIGN_TOP_MID, 0, kModalDescriptionY);
 
-    char pin_mask[signing::kLocalPinDigits + 1] = {};
-    for (size_t index = 0; index < signing::kLocalPinDigits; ++index) {
+    char pin_mask[signing::kKeystorePinBufferBytes] = {};
+    for (size_t index = 0; index < signing::kKeystorePinDigits; ++index) {
         pin_mask[index] = index < snapshot.pin_entry_length ? '*' : '_';
     }
     char pin_text[16] = {};
@@ -2973,7 +2979,8 @@ bool modal_draw_local_pin_auth_panel(const char* notice)
             lv_color_hex(theme::kSecondary),
             g_callbacks.on_pin_cancel_clicked,
             nullptr,
-            !snapshot.processing) ||
+            !snapshot.processing &&
+                snapshot.purpose != LocalPinAuthPurpose::unlock) ||
         !make_setup_button(
             panel,
             "Confirm",

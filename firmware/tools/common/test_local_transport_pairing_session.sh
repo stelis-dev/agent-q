@@ -244,23 +244,24 @@ signing::LocalTransportIdentityRecordReadStatus read_public_identity(
     return signing::LocalTransportIdentityRecordReadStatus::found;
 }
 
-signing::LocalTransportIdentityRecordReadStatus read_identity_pair(
-    uint8_t* secret_key,
-    uint8_t* public_key,
+signing::LocalTransportIdentityRecordReadStatus with_identity_pair(
+    signing::LocalTransportStoredKeyPairConsumer consumer,
+    void* consumer_context,
     void*)
 {
     ++g_runtime.secret_identity_reads;
-    if (secret_key == nullptr || public_key == nullptr) {
+    if (consumer == nullptr) {
         return signing::LocalTransportIdentityRecordReadStatus::error;
     }
-    memset(secret_key, 0, signing::kLocalTransportStaticKeyBytes);
-    memset(public_key, 0, signing::kLocalTransportStaticKeyBytes);
     if (!g_runtime.identity_available) {
         return signing::LocalTransportIdentityRecordReadStatus::error;
     }
-    memcpy(secret_key, g_runtime.identity_secret, sizeof(g_runtime.identity_secret));
-    memcpy(public_key, g_runtime.identity_public, sizeof(g_runtime.identity_public));
-    return signing::LocalTransportIdentityRecordReadStatus::found;
+    return consumer(
+               g_runtime.identity_secret,
+               g_runtime.identity_public,
+               consumer_context)
+        ? signing::LocalTransportIdentityRecordReadStatus::found
+        : signing::LocalTransportIdentityRecordReadStatus::error;
 }
 
 bool write_identity_pair(const uint8_t* secret_key, const uint8_t* public_key, void*)
@@ -289,7 +290,7 @@ const signing::LocalTransportIdentityStoreOps& identity_store_ops()
     static const signing::LocalTransportIdentityStoreOps ops{
         signing::LocalTransportIdentityStorageOps{
             read_public_identity,
-            read_identity_pair,
+            with_identity_pair,
             write_identity_pair,
             erase_identity_pair,
             nullptr,

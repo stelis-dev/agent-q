@@ -1,7 +1,7 @@
 #include "sui_account_store.h"
 
 #include "bip39.h"
-#include "root_material.h"
+#include "stackchan_keystore.h"
 
 #include <string.h>
 
@@ -18,6 +18,44 @@ void clear_public_account_outputs(uint8_t* public_key_out, char* address_out, si
     }
 }
 
+struct AccountDerivationContext {
+    uint8_t* public_key_out;
+    char* address_out;
+    size_t address_out_size;
+    SuiAccountDerivationResult result;
+};
+
+bool derive_account_with_root(
+    const uint8_t* root_material,
+    size_t root_material_size,
+    void* context_ptr)
+{
+    auto* context = static_cast<AccountDerivationContext*>(context_ptr);
+    if (context == nullptr || root_material == nullptr ||
+        root_material_size != kStackChanRootMaterialBytes) {
+        return false;
+    }
+
+    char mnemonic[kBip39MnemonicMaxChars] = {};
+    if (!make_bip39_mnemonic_12_words(
+            root_material, mnemonic, sizeof(mnemonic))) {
+        wipe_sensitive_buffer(mnemonic, sizeof(mnemonic));
+        context->result = SuiAccountDerivationResult::mnemonic_error;
+        return true;
+    }
+
+    const bool account_ok = derive_sui_ed25519_account(
+        mnemonic,
+        context->public_key_out,
+        context->address_out,
+        context->address_out_size);
+    wipe_sensitive_buffer(mnemonic, sizeof(mnemonic));
+    context->result = account_ok
+        ? SuiAccountDerivationResult::ok
+        : SuiAccountDerivationResult::derivation_error;
+    return true;
+}
+
 }  // namespace
 
 SuiAccountDerivationResult derive_sui_ed25519_account_from_stored_root(
@@ -30,25 +68,17 @@ SuiAccountDerivationResult derive_sui_ed25519_account_from_stored_root(
         return SuiAccountDerivationResult::derivation_error;
     }
 
-    uint8_t root_material[kRootMaterialBytes] = {};
-    if (!read_root_material(root_material, sizeof(root_material))) {
-        wipe_sensitive_buffer(root_material, sizeof(root_material));
+    AccountDerivationContext context{
+        public_key_out,
+        address_out,
+        address_out_size,
+        SuiAccountDerivationResult::derivation_error,
+    };
+    if (stackchan_keystore_with_root(derive_account_with_root, &context) !=
+        KeystoreOperationStatus::success) {
         return SuiAccountDerivationResult::root_material_unavailable;
     }
-
-    char mnemonic[kBip39MnemonicMaxChars] = {};
-    const bool mnemonic_ok =
-        make_bip39_mnemonic_12_words(root_material, mnemonic, sizeof(mnemonic));
-    wipe_sensitive_buffer(root_material, sizeof(root_material));
-    if (!mnemonic_ok) {
-        wipe_sensitive_buffer(mnemonic, sizeof(mnemonic));
-        return SuiAccountDerivationResult::mnemonic_error;
-    }
-
-    const bool account_ok =
-        derive_sui_ed25519_account(mnemonic, public_key_out, address_out, address_out_size);
-    wipe_sensitive_buffer(mnemonic, sizeof(mnemonic));
-    return account_ok ? SuiAccountDerivationResult::ok : SuiAccountDerivationResult::derivation_error;
+    return context.result;
 }
 
 }  // namespace signing

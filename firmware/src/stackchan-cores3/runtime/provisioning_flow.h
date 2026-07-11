@@ -61,6 +61,7 @@ enum class ProvisioningFlowPinSubmitResult {
 enum class ProvisioningFlowCleanupResult {
     inactive,
     wiped,
+    commit_in_progress,
 };
 
 enum class ProvisioningFlowPanelLifetimeResult {
@@ -114,11 +115,11 @@ struct ProvisioningFlowCommitFinishResult {
     ProvisioningFlowCommitResult commit_result;
 };
 
-using ProvisioningFlowCommitSetupWithPreparedAuth =
+using ProvisioningFlowCommitSetup =
     ProvisioningFlowCommitResult (*)(
         const uint8_t* root_material,
-        size_t root_material_size,
-        const LocalAuthPreparedRecord* prepared_auth);
+        size_t root_material_size);
+using ProvisioningFlowRollbackSetup = bool (*)();
 
 struct ProvisioningFlowSnapshot {
     ProvisioningFlowStage stage;
@@ -139,7 +140,7 @@ bool provisioning_flow_stage_is(ProvisioningFlowStage stage);
 bool provisioning_flow_stage_expired(TickType_t now);
 bool provisioning_flow_commit_job_active(uint32_t job_id);
 
-void provisioning_flow_wipe();
+bool provisioning_flow_wipe();
 ProvisioningFlowCleanupResult provisioning_flow_wipe_active();
 void provisioning_flow_wipe_displayed_phrase_text();
 bool provisioning_flow_handle_panel_deleted(ProvisioningFlowPanel panel);
@@ -192,11 +193,11 @@ bool provisioning_flow_clear_pin_entry(TimeoutWindow input_window);
 bool provisioning_flow_backspace_pin(TimeoutWindow input_window);
 ProvisioningFlowPinSubmitResult provisioning_flow_submit_pin(
     TimeoutWindow retry_window,
-    TickType_t commit_ready_at,
-    TickType_t worker_deadline);
+    TickType_t commit_ready_at);
 
 ProvisioningFlowCommitFinishResult provisioning_flow_finish_commit_worker_result(
     const LocalAuthWorkerResult& result,
-    ProvisioningFlowCommitSetupWithPreparedAuth commit_setup);
+    ProvisioningFlowCommitSetup commit_setup,
+    ProvisioningFlowRollbackSetup rollback_setup);
 
 }  // namespace signing

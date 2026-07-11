@@ -82,19 +82,31 @@ for target_pairing in \
     'local_transport_ble_send_indication(' \
     "target-local BLE send process"
 done
+expect_present "${STACKCHAN}/local_transport_pairing.cpp" \
+  'stackchan_transport_identity_storage_ops' \
+  "StackChan encrypted identity-storage adapter"
+expect_absent "${STACKCHAN}/local_transport_pairing.cpp" \
+  'local_transport_nvs_identity_storage_ops' \
+  "StackChan plaintext NVS identity adapter"
+expect_absent "${STACKCHAN}/stackchan_keystore.h" \
+  'stackchan_keystore_with_transport_identity' \
+  "generic StackChan private identity-record consumer"
+expect_absent "${STACKCHAN}/stackchan_keystore.h" \
+  'stackchan_keystore_replace_transport_identity' \
+  "generic StackChan private identity-record writer"
+expect_present "${STOPWATCH}/runtime/local_transport_pairing.cpp" \
+  'local_transport_nvs_identity_storage_ops' \
+  "StopWatch current parameterized NVS identity-storage process"
 for target_storage_consumer in \
   "${STACKCHAN}/local_transport_pairing.cpp" \
   "${STOPWATCH}/runtime/local_transport_pairing.cpp"; do
-  expect_present "${target_storage_consumer}" \
-    'local_transport_nvs_identity_storage_ops' \
-    "shared parameterized NVS identity-storage process"
   expect_absent "${target_storage_consumer}" \
     'nvs_open(' \
     "target-local duplicate NVS identity-storage process"
 done
 expect_present "${COMMON}/transport/local_transport_pairing_session.cpp" \
-  'local_transport_identity_load_secret(*ops.identity_store, &identity)' \
-  "private identity read constrained to the common pairing state owner"
+  'local_transport_identity_with_secret(' \
+  "private identity callback constrained to the common pairing state owner"
 for target_pairing in \
   "${STACKCHAN}/local_transport_pairing.cpp" \
   "${STOPWATCH}/runtime/local_transport_pairing.cpp"; do
@@ -102,7 +114,7 @@ for target_pairing in \
     '&identity_store_ops()' \
     "target identity-store composition"
   expect_absent "${target_pairing}" \
-    'local_transport_identity_load_secret' \
+    'local_transport_identity_with_secret' \
     "target-local private identity wrapper"
 done
 secret_header_surface="$(

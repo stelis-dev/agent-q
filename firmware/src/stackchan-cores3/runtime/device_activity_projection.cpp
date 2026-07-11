@@ -64,6 +64,8 @@ DeviceActivityProjection project_device_activity(
     ProjectedDeviceState state = ProjectedDeviceState::idle;
     if (facts.persistent_material_consistency_error) {
         state = ProjectedDeviceState::error;
+    } else if (facts.keystore_locked) {
+        state = ProjectedDeviceState::locked;
     } else if (
         facts.connect_approval_active ||
         facts.protocol_pin_approval_active ||
@@ -86,6 +88,7 @@ DeviceActivityProjection project_device_activity(
         state,
         facts.persistent_material_consistency_error,
         facts.provisioned,
+        facts.keystore_locked,
         facts.ui_idle_for_local_settings,
         facts.identification_display_active,
         facts.connect_approval_active,
@@ -113,6 +116,8 @@ const char* device_activity_state_name(ProjectedDeviceState state)
     switch (state) {
         case ProjectedDeviceState::idle:
             return "idle";
+        case ProjectedDeviceState::locked:
+            return "locked";
         case ProjectedDeviceState::busy:
             return "busy";
         case ProjectedDeviceState::awaiting_approval:
@@ -126,7 +131,8 @@ const char* device_activity_state_name(ProjectedDeviceState state)
 bool device_activity_blocks_user_signing_ingress(
     const DeviceActivityProjection& activity)
 {
-    return activity.connect_approval_active ||
+    return activity.keystore_locked ||
+           activity.connect_approval_active ||
            activity.protocol_pin_approval_active ||
            activity.policy_update_active ||
            activity.sui_zklogin_proposal_active ||
@@ -141,6 +147,7 @@ bool device_activity_allows_local_settings_touch_entry(
     const DeviceActivityProjection& activity)
 {
     return activity.provisioned &&
+           !activity.keystore_locked &&
            !local_settings_common_blocked(activity) &&
            activity.ui_idle_for_local_settings;
 }
@@ -148,7 +155,8 @@ bool device_activity_allows_local_settings_touch_entry(
 bool device_activity_allows_local_settings_start(
     const DeviceActivityProjection& activity)
 {
-    return !local_settings_common_blocked(activity) &&
+    return !activity.keystore_locked &&
+           !local_settings_common_blocked(activity) &&
            activity.ui_idle_for_local_settings;
 }
 
@@ -162,6 +170,9 @@ DeviceActivityRequestBlock device_activity_request_block(
     const DeviceActivityProjection& activity,
     DeviceActivityRequestOptions options)
 {
+    if (activity.keystore_locked) {
+        return { true, "invalid_state", "Device is locked." };
+    }
     if (activity.connect_approval_active) {
         return { true, "busy", "Device is awaiting local input." };
     }

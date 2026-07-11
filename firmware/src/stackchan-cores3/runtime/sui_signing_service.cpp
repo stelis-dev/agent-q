@@ -3,7 +3,7 @@
 #include <string.h>
 
 #include "bip39.h"
-#include "root_material.h"
+#include "stackchan_keystore.h"
 #include "sui/signing_limits.h"
 #include "sui_key_derivation.h"
 #include "sui_zklogin_proof_store.h"
@@ -175,6 +175,72 @@ SuiSigningStatus build_zklogin_signature_for_active_identity(
                : SuiSigningStatus::zklogin_envelope_error;
 }
 
+struct StoredRootTransactionContext {
+    const uint8_t* tx_bytes;
+    size_t tx_bytes_size;
+    uint8_t* signature_out;
+    SuiSigningStatus result;
+};
+
+bool sign_transaction_with_root(
+    const uint8_t* root_material,
+    size_t root_material_size,
+    void* context_ptr)
+{
+    auto* context = static_cast<StoredRootTransactionContext*>(context_ptr);
+    if (context == nullptr || root_material == nullptr ||
+        root_material_size != kStackChanRootMaterialBytes) {
+        return false;
+    }
+    char mnemonic[kBip39MnemonicMaxChars] = {};
+    if (!make_bip39_mnemonic_12_words(
+            root_material, mnemonic, sizeof(mnemonic))) {
+        wipe_sensitive_buffer(mnemonic, sizeof(mnemonic));
+        context->result = SuiSigningStatus::mnemonic_error;
+        return true;
+    }
+    context->result = sign_sui_ed25519_transaction_from_mnemonic(
+        mnemonic,
+        context->tx_bytes,
+        context->tx_bytes_size,
+        context->signature_out);
+    wipe_sensitive_buffer(mnemonic, sizeof(mnemonic));
+    return true;
+}
+
+struct StoredRootPersonalMessageContext {
+    const uint8_t* message;
+    size_t message_size;
+    uint8_t* signature_out;
+    SuiSigningStatus result;
+};
+
+bool sign_personal_message_with_root(
+    const uint8_t* root_material,
+    size_t root_material_size,
+    void* context_ptr)
+{
+    auto* context = static_cast<StoredRootPersonalMessageContext*>(context_ptr);
+    if (context == nullptr || root_material == nullptr ||
+        root_material_size != kStackChanRootMaterialBytes) {
+        return false;
+    }
+    char mnemonic[kBip39MnemonicMaxChars] = {};
+    if (!make_bip39_mnemonic_12_words(
+            root_material, mnemonic, sizeof(mnemonic))) {
+        wipe_sensitive_buffer(mnemonic, sizeof(mnemonic));
+        context->result = SuiSigningStatus::mnemonic_error;
+        return true;
+    }
+    context->result = sign_sui_ed25519_personal_message_from_mnemonic(
+        mnemonic,
+        context->message,
+        context->message_size,
+        context->signature_out);
+    wipe_sensitive_buffer(mnemonic, sizeof(mnemonic));
+    return true;
+}
+
 }  // namespace
 
 SuiSigningStatus sign_sui_ed25519_transaction_from_stored_root(
@@ -187,26 +253,17 @@ SuiSigningStatus sign_sui_ed25519_transaction_from_stored_root(
         return SuiSigningStatus::invalid_input;
     }
 
-    uint8_t root_material[kRootMaterialBytes] = {};
-    if (!read_root_material(root_material, sizeof(root_material))) {
-        wipe_sensitive_buffer(root_material, sizeof(root_material));
+    StoredRootTransactionContext context{
+        tx_bytes,
+        tx_bytes_size,
+        signature_out,
+        SuiSigningStatus::signing_error,
+    };
+    if (stackchan_keystore_with_root(sign_transaction_with_root, &context) !=
+        KeystoreOperationStatus::success) {
         return SuiSigningStatus::root_material_unavailable;
     }
-
-    char mnemonic[kBip39MnemonicMaxChars] = {};
-    const bool mnemonic_ok =
-        make_bip39_mnemonic_12_words(root_material, mnemonic, sizeof(mnemonic));
-    wipe_sensitive_buffer(root_material, sizeof(root_material));
-    if (!mnemonic_ok) {
-        wipe_sensitive_buffer(mnemonic, sizeof(mnemonic));
-        return SuiSigningStatus::mnemonic_error;
-    }
-
-    const SuiSigningStatus result =
-        sign_sui_ed25519_transaction_from_mnemonic(
-            mnemonic, tx_bytes, tx_bytes_size, signature_out);
-    wipe_sensitive_buffer(mnemonic, sizeof(mnemonic));
-    return result;
+    return context.result;
 }
 
 SuiSigningStatus sign_sui_transaction_from_active_identity(
@@ -273,29 +330,17 @@ SuiSigningStatus sign_sui_ed25519_personal_message_from_stored_root(
         return SuiSigningStatus::invalid_input;
     }
 
-    uint8_t root_material[kRootMaterialBytes] = {};
-    if (!read_root_material(root_material, sizeof(root_material))) {
-        wipe_sensitive_buffer(root_material, sizeof(root_material));
+    StoredRootPersonalMessageContext context{
+        message,
+        message_size,
+        signature_out,
+        SuiSigningStatus::signing_error,
+    };
+    if (stackchan_keystore_with_root(sign_personal_message_with_root, &context) !=
+        KeystoreOperationStatus::success) {
         return SuiSigningStatus::root_material_unavailable;
     }
-
-    char mnemonic[kBip39MnemonicMaxChars] = {};
-    const bool mnemonic_ok =
-        make_bip39_mnemonic_12_words(root_material, mnemonic, sizeof(mnemonic));
-    wipe_sensitive_buffer(root_material, sizeof(root_material));
-    if (!mnemonic_ok) {
-        wipe_sensitive_buffer(mnemonic, sizeof(mnemonic));
-        return SuiSigningStatus::mnemonic_error;
-    }
-
-    const SuiSigningStatus result =
-        sign_sui_ed25519_personal_message_from_mnemonic(
-            mnemonic,
-            message,
-            message_size,
-            signature_out);
-    wipe_sensitive_buffer(mnemonic, sizeof(mnemonic));
-    return result;
+    return context.result;
 }
 
 SuiSigningStatus sign_sui_personal_message_from_active_identity(

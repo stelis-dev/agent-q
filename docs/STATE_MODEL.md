@@ -42,7 +42,11 @@ stateDiagram-v2
     [*] --> Unprovisioned: boot, no root signing material
     Unprovisioned --> Provisioning: local setup or import starts
     Provisioning --> Unprovisioned: local cancel, timeout, failure + scratch wipe
-    Provisioning --> Provisioned: backup confirm or import verify + PIN repeat + root/policy/PIN verifier stored
+    Provisioning --> Locked: backup confirm or import verify + PIN repeat + encrypted root/keyslot/policy stored
+    Locked --> Provisioned: local PIN unlock authenticates keyslot and mandatory records
+    Locked --> Locked: wrong PIN or failed unlock
+    Provisioned --> Locked: reboot or explicit target relock
+    Locked --> Unprovisioned: device reset + destructive confirmation + keystore erased
     Provisioned --> Unprovisioned: device reset + destructive confirmation + signing material erased
     Provisioned --> PolicyUpdatePending: valid policy update proposal + local approval requested
     Provisioned --> Provisioned: invalid policy proposal rejected before pending approval
@@ -54,22 +58,25 @@ stateDiagram-v2
     Unprovisioned: target-owned material-install bootstrap when a target has local setup but missing target-owned material
     Provisioning: get_status
     Provisioning: device-local cancel
+    Locked: get_status, identify_device, local unlock, destructive device reset
     Provisioned: get_status, identify_device, connect, disconnect
     Provisioned: get_capabilities, get_accounts, policy_get, get_approval_history (read-only, session-scoped)
     Provisioned: Sign API runtime; Firmware-local signing mode selects supported signing gate
 ```
 
-Current StackChan CoreS3 persistent root material flow starts from
+Current StackChan CoreS3 encrypted root-material flow starts from
 `unprovisioned`. It generates backup phrase scratch in RAM, displays only
 up-to-4-letter BIP-39 word prefixes on the device in a 3-column by 4-row grid,
-stores the binary BIP-39 root entropy and an active policy record only
-after physical backup confirmation and local 6-digit PIN setup, and wipes
+stores the binary BIP-39 root entropy only in an authenticated encrypted record,
+creates a PIN-wrapped random master-key slot, and stores an active policy record
+only after physical backup confirmation and local 6-digit PIN setup. It wipes
 scratch on confirmation, cancellation, timeout, failure, or display expiry.
 Three-letter BIP-39 words are displayed as the full word. `provisioned` may be
-reported only when the persisted state, stored root material, stored active
-policy, stored local PIN verifier, and stored signing authorization mode all
-exist. The PIN verifier is a DEV_PROFILE local UX gate only; it does not encrypt
-root material.
+reported only when the persisted state, structurally valid encrypted root and
+keyslot, stored active policy, stored signing authorization mode, and account
+settings all exist. The encrypted keyslot is the sole PIN verifier. A rebooted
+provisioned target projects device state `locked` until local unlock
+authenticates the keyslot and mandatory encrypted records.
 
 Firmware recognizes only the current tracked persistent material layout as
 product state. The current StackChan CoreS3 persisted provisioning-state schema
@@ -77,15 +84,15 @@ accepts only `unprovisioned` and `provisioned`; transient or unsupported
 persisted values such as `provisioning` are not normalized into product state.
 If Firmware boots with an unsupported `prov_state`, or with
 `prov_state = provisioned` but no valid active policy record, signing
-authorization mode, Sui account settings, or local PIN verifier, the device
+authorization mode, Sui account settings, encrypted root, or keyslot, the device
 enters persistent material consistency error until device-local settings repair,
 Device reset, or a development flash-erase workflow resolves the unsupported
 material set according to the remaining authority-gate material. After Device
 reset or development flash erase, local setup or import can
 reprovision the device.
 
-If persisted state disagrees with stored root material, stored active policy,
-signing authorization mode, Sui account settings, or stored local PIN verifier
+If persisted state disagrees with the encrypted root, keyslot, stored active
+policy, signing authorization mode, or Sui account settings
 while `provisioned`,
 Firmware reports device `error` and fails closed for normal setup and session
 requests. Detecting the consistency error also clears any active RAM session
@@ -97,19 +104,21 @@ material inconsistency and clearing stale session state. The current StackChan
 CoreS3 source does not expose a USB
 reset or debug recovery request. Its local settings paths are device-local UX
 only: provisioned devices can enter local settings, verify the stored local PIN
-to change the local PIN verifier, or choose Device reset. Device reset is the
-normal destructive local action; it erases root material, active policy, PIN verifier, signing authorization mode,
+against the current keyslot to rewrap the unchanged master key, or choose Device
+reset. Device reset is the normal destructive local action; it erases the
+keyslot, encrypted root and private transport identity, active policy, signing authorization mode,
 Sui account settings, Sui zkLogin proof material, approval history,
 policy-update terminal marker, human approval input mode setting, runtime
 session, and provisioning state before returning to `unprovisioned`. Firmware
 records an internal storage-action marker before internal settings repair or
 Device reset commits so an interrupted action can resume at boot. Device-local
-recovery from the `error` state uses settings repair when root material and a
-valid PIN verifier remain. That repair preserves root material and the PIN
-verifier while restoring recoverable mutable settings, including zkLogin proof
-state, to current defaults. When the authority gate is unavailable, recovery
-uses Device reset. Device reset recovery has no PIN requirement because the PIN
-verifier may be unreadable, but it still requires on-device confirmation and is
+recovery from the `error` state uses settings repair when the keyslot and
+encrypted root remain structurally valid. That repair requires successful local
+unlock, preserves the keyslot and encrypted root, and restores recoverable
+mutable settings, including zkLogin proof state, to current defaults. When the
+authority gate is unavailable, recovery uses Device reset. Device reset
+recovery has no PIN requirement because the keyslot or encrypted root may be
+unreadable, but it still requires on-device confirmation and is
 not exposed as a USB, host process, MCP, or host-triggered API.
 
 ## State Layers And Owners
@@ -126,7 +135,7 @@ proven.
 
 | Layer | Examples | Owner | May gate protocol APIs? |
 |---|---|---|---:|
-| Persistent device state | provisioning state, stored root material, policy, local PIN verifier, signing authorization mode, approval history, policy-update terminal marker, Sui zkLogin proof record, active Sui identity, account availability | Firmware | Yes |
+| Persistent device state | provisioning state, encrypted keyslot and protected records, policy, signing authorization mode, approval history, policy-update terminal marker, Sui zkLogin proof record, active Sui identity, account availability | Firmware | Yes |
 | Volatile sensitive scratch | generated backup phrase, setup entropy, pending backup confirmation, typed PIN digits, signable payload transfer bytes, finalized payload descriptors | Firmware | Yes |
 | Local PIN authorization state | connect/settings/policy-update/storage-maintenance PIN entry purpose, verification stage, Firmware-owned input deadline, RAM-only lockout | Firmware | Yes |
 | Pending approval state | active Firmware-owned device-local approval request, such as physical Confirm or local PIN approval; Firmware-owned deadline; requested action | Firmware | Yes |
@@ -176,8 +185,8 @@ Allowed:
 Rejected unless the material-install bootstrap below applies:
 
 - `connect` in the current StackChan root-material flow until persistent root
-  material, active policy, local PIN verifier, and signing authorization mode
-  exist and the device is `provisioned`
+  material is encrypted, a valid keyslot, active policy, and signing
+  authorization mode exist, and the device is unlocked and `provisioned`
 - `get_capabilities`
 - `get_accounts`
 - `policy_get`
@@ -202,7 +211,8 @@ Material-install bootstrap:
 Current mnemonic setup and mnemonic import are volatile substates under
 `unprovisioned` until the user physically confirms backup or completes local
 word entry, enters and repeats a 6-digit local PIN, and Firmware stores root
-material, active policy, and the PIN verifier. The host never receives the
+material in an encrypted record, creates the PIN-wrapped keyslot, and stores the
+active policy. The host never receives the
 phrase, its up-to-4-letter prefixes, entered imported words, or the PIN.
 
 ### `provisioning`
@@ -247,9 +257,9 @@ material consistency error rather than silently resetting it to
 ### `provisioned`
 
 Root signing material and a committed active policy exist in device-local
-storage. In the current StackChan CoreS3 DEV_PROFILE implementation this means a
-binary BIP-39 entropy blob and a local 6-digit PIN verifier record are stored in
-protected authority storage, canonical active policy, device-local signing
+storage. In the current StackChan CoreS3 DEV_PROFILE implementation this means
+the binary BIP-39 entropy is stored in an authenticated encrypted record and a
+random master key is stored in a PIN-wrapped keyslot. Canonical active policy, device-local signing
 authorization mode, Sui account settings, and zkLogin proof state are stored in
 mutable settings storage, and `prov_state` is `provisioned`;
 the normal product flow installs the default-reject policy and initializes Sui
@@ -291,11 +301,11 @@ Allowed:
   `user_timed_out`, or `signing_failed`; policy mode fails closed with
   `unsupported_method`)
 - device-local Device reset after destructive confirmation; successful reset
-  erases root material, the local PIN verifier, recoverable mutable settings
+  erases the keyslot and encrypted private-material records, recoverable mutable settings
   including Sui zkLogin proof material, approval history, and the policy-update
   terminal marker, and returns to `unprovisioned`
 - device-local settings repair from persistent material consistency `error`;
-  successful repair preserves root material and the local PIN verifier, restores
+  successful repair preserves the keyslot and encrypted root, restores
   recoverable mutable settings to current defaults, clears Sui zkLogin proof
   material, approval history, and the policy-update terminal marker, and remains
   `provisioned`
@@ -368,8 +378,8 @@ active session and returns the next account projection to the native identity.
 The host process must not evaluate policy. A corrupt, unreadable, missing,
 or invalid current active policy is a persistent-material consistency
 error, not a normal `provisioned` state. Provisioned DEV_PROFILE devices that
-lack a valid local PIN verifier fail closed because the authority gate cannot
-be proven. Devices that retain root material and a valid local PIN verifier but
+have an invalid keyslot or encrypted root fail closed because the authority gate
+cannot be proven. Devices that retain a structurally valid keyslot and encrypted root but
 lose mutable settings such as active canonical policy, signing authorization
 mode, Sui account settings, or zkLogin proof state can enter root-preserving
 settings repair instead of erasing root material.
@@ -438,7 +448,12 @@ local destructive operations.
 | `sign_personal_message` in policy authorization mode | unsupported | no | fail closed |
 | `policy_propose` | sensitive write proposal | no | always review -> PIN |
 | Settings changes | local sensitive operation | no | always PIN |
-| Device reset or Change PIN | local sensitive operation | no | always PIN |
+| Settings Device reset or Change PIN | local sensitive operation | no | always PIN |
+
+Error-state Device reset is the recovery path when the keyslot or encrypted
+root cannot authenticate local authority. It therefore cannot require that PIN,
+but still requires on-device destructive confirmation and is not exposed as a
+protocol operation.
 
 This setting is not a signing authorization mode. Protocol requests and adapter
 surfaces still cannot choose the signing authorization mode or the human
@@ -446,8 +461,8 @@ approval input mode.
 
 Required owners for the device-confirmed signing pending state:
 
-- persistent device state: Firmware-owned root material, active policy, local
-  PIN verifier, signing authorization mode, and approval history;
+- persistent device state: Firmware-owned encrypted keyslot and protected
+  signing material, active policy, signing authorization mode, and approval history;
 - volatile sensitive scratch: Firmware-owned signable payload bytes, a request
   summary derived from the same signable payload bytes, the Firmware-derived
   sender and gas owner account binding, signature scratch, and any local PIN
@@ -688,7 +703,7 @@ Allowed:
 - `disconnect` only as session lifecycle cleanup; if the session was already
   cleared, Firmware returns `invalid_session`
 - device-local erase-only recovery after destructive on-device confirmation;
-  this wipes root material, active policy, PIN verifier, signing authorization
+  this wipes the keyslot, encrypted private-material records, active policy, signing authorization
   mode, Sui zkLogin proof material, human approval input mode setting, approval
   history, policy-update terminal marker, runtime session, and provisioning
   state before returning to `unprovisioned`
@@ -705,8 +720,8 @@ Rejected:
 - policy update
 - signing
 
-This recovery is destructive and cannot read, export, repair, or
-unlock root material. It exists only to return a fail-closed device to the
+This recovery is destructive and cannot read, export, repair, or unlock private
+material. It exists only to return a fail-closed device to the
 normal local setup path when the stored material set is inconsistent. USB,
 host process, and MCP clients still cannot trigger reset or recovery.
 
@@ -719,6 +734,7 @@ Allowed:
 - `get_status`
 - `identify_device`
 - unlock flow
+- device-local Device reset after destructive confirmation
 
 Rejected until unlocked:
 
@@ -731,8 +747,10 @@ Rejected until unlocked:
 
 Targets use this projection only after they implement a target-local unlock
 model. While locked, status and identification remain available when the target
-allows those read-like operations, but account, policy, credential, and signing
-methods fail closed until the target-local unlock gate succeeds.
+allows those read-like operations, but connect, account, policy, credential,
+private local-transport, and signing methods fail closed until the target-local
+unlock gate succeeds. Unlock authenticates storage authority; it does not count
+as connect approval or signing authorization.
 
 ## API / State Matrix
 
@@ -791,14 +809,15 @@ except for its material-consistency fail-closed path.
 The host process may hide unavailable operations, but Firmware must still reject them.
 
 The current StackChan CoreS3 target has an explicit `local_pin_auth` runtime
-substate for local PIN authorization. It records `purpose` (`connect`,
-`settings_human_approval_input`, `settings_change_pin`, `policy_update`, or the
+substate for local PIN authorization. It records `purpose` (`unlock`, `connect`,
+human-approval input, signing-mode, policy-reset, PIN-change, Sui gas-sponsor,
+Sui zkLogin-clear settings, `policy_update`, `sui_zklogin_proposal`, or the
 internal device-confirmed signing verifier purpose), `stage`
 (`pin_entry`, `pin_verifying`, `new_pin_entry`, `repeat_pin_entry`,
 `committing_setting`, or `committing_pin_change`), typed PIN scratch, new-PIN
 scratch where applicable, input deadline, and the RAM-only stored-PIN attempt
-budget shared with storage-maintenance PIN verification. Submitting a complete PIN pauses
-the input deadline while stored-PIN verification runs. A wrong PIN result
+budget shared with storage-maintenance PIN authentication. Submitting a complete PIN pauses
+the input deadline while encrypted-keyslot authentication runs. A wrong PIN result
 returns to the same PIN-entry state by resuming the remaining paused input
 window, unless the shared lockout is active. While that lockout is active, PIN
 input, delete, and submit stay unavailable until lockout release. On the
@@ -809,8 +828,8 @@ flows keep their request-backed PIN input window paused while lockout is active.
 After lockout release, the owner resumes the remaining PIN input window when
 the request/session state is still valid; otherwise the owner closes through its
 normal timeout, session, or cleanup path. The input pause does not pause the
-local-auth worker watchdog; a stalled or lost worker result fails closed as
-local authentication unavailable.
+state owner's PIN-authentication processing deadline; a stalled or lost worker
+result fails closed as local authentication unavailable.
 Protocol-backed PIN purposes (`connect`, `policy_update`, and device-confirmed
 signing) also have an immutable outer request window owned by their protocol
 state owner. That request window is the admission boundary for review/PIN entry
@@ -819,8 +838,8 @@ sensitive flow owner stores a timeout window only when it is structurally valid
 and currently open at the owner-observed tick; callers may create candidate
 windows, but caller freshness is not the state authority. After a complete PIN
 has been submitted, the request window is not the terminal timeout authority
-for stored-PIN cryptographic processing; the local-auth worker watchdog,
-session/material checks, and the next state guards
+for encrypted-keyslot processing; the state owner's PIN-authentication
+processing deadline, session/material checks, and the next state guards
 remain authoritative. For policy updates,
 `local_pin_auth` owns
 only PIN verification; the pending proposal summary, policy hash, commit stage,
@@ -850,8 +869,8 @@ Boot
 -> show up-to-4-letter prefixes once on device
 -> user confirms backup or cancels on device
 -> if confirmed, enter and repeat a 6-digit local PIN on device
--> if PINs match, store root material, active policy, PIN verifier, and signing authorization mode locally
--> only after storage succeeds, provisioned
+-> if PINs match, create the keyslot and encrypted root, then store active policy and signing authorization mode locally
+-> only after storage succeeds, provisioned and unlocked for the current boot
 -> wipe volatile scratch
 -> ready
 ```
@@ -861,8 +880,10 @@ Reboot after provisioning:
 ```text
 Boot
 -> load provisioning state
--> verify root signing material, active policy, local PIN verifier, and signing authorization mode exist
--> provisioned
+-> verify encrypted root/keyslot shape, active policy, and signing authorization mode exist
+-> locked
+-> local PIN unlock authenticates keyslot and mandatory encrypted records
+-> provisioned and unlocked
 -> welcome
 -> ready
 ```

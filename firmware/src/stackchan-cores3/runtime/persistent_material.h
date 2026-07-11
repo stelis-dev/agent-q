@@ -5,11 +5,10 @@
 
 #include "protocol/approval_history.h"
 #include "human_approval_settings.h"
-#include "local_auth.h"
 #include "policy/policy_store.h"
 #include "policy/policy_update_marker.h"
-#include "root_material.h"
 #include "protocol/signing_mode.h"
+#include "stackchan_keystore.h"
 #include "sui_account_settings.h"
 #include "sui_zklogin_proof_store.h"
 
@@ -36,16 +35,14 @@ enum class PersistentMaterialRuntimeFailure {
     root_material_unreadable,
     active_policy_unavailable,
     pending_storage_action_resume_failed,
-    wallet_erase_root_wipe_failed,
+    wallet_erase_keystore_wipe_failed,
     wallet_erase_policy_wipe_failed,
-    wallet_erase_local_auth_wipe_failed,
     wallet_erase_human_approval_setting_wipe_failed,
     wallet_erase_signing_mode_wipe_failed,
     wallet_erase_sui_account_settings_wipe_failed,
     wallet_erase_approval_history_wipe_failed,
     wallet_erase_policy_update_marker_wipe_failed,
     wallet_erase_zklogin_proof_wipe_failed,
-    wallet_erase_pairing_store_wipe_failed,
     wallet_erase_material_remaining,
     wallet_erase_state_storage_failed,
     wallet_erase_marker_clear_failed,
@@ -70,7 +67,6 @@ enum class PersistentMaterialCommitResult {
     missing_input,
     root_storage_error,
     policy_storage_error,
-    local_auth_storage_error,
     signing_mode_storage_error,
     human_approval_setting_storage_error,
     sui_account_settings_storage_error,
@@ -79,16 +75,14 @@ enum class PersistentMaterialCommitResult {
 
 enum class PersistentMaterialWalletEraseResult {
     ok,
-    root_wipe_error,
+    keystore_wipe_error,
     policy_wipe_error,
-    local_auth_wipe_error,
     human_approval_setting_wipe_error,
     signing_mode_wipe_error,
     sui_account_settings_wipe_error,
     approval_history_wipe_error,
     policy_update_marker_wipe_error,
     zklogin_proof_wipe_error,
-    pairing_store_wipe_error,
     material_remaining_error,
 };
 
@@ -107,9 +101,9 @@ enum class PersistentMaterialSettingsResetResult {
 };
 
 struct PersistentMaterialStatus {
-    bool root_present;
+    StackChanKeystoreMaterialStatus keystore_status;
+    StackChanKeystoreMaterialStatus root_status;
     PolicyStoreStatus policy_status;
-    LocalAuthStatus local_auth_status;
     HumanApprovalInputModeStatus human_approval_setting_status;
     AuthorizationModeStatus signing_mode_status;
     SuiAccountSettingsStatus sui_account_settings_status;
@@ -155,15 +149,10 @@ PersistentMaterialConsistencyResult persistent_material_validate_loaded_storage_
 bool persistent_material_validate_runtime_state(
     ProvisioningRuntimeState current_state,
     const PersistentMaterialOps& ops);
+bool persistent_material_rollback_setup(const PersistentMaterialOps& ops);
 PersistentMaterialCommitResult persistent_material_commit_setup(
     const uint8_t* root_material,
     size_t root_material_size,
-    const char* setup_pin,
-    const PersistentMaterialOps& ops);
-PersistentMaterialCommitResult persistent_material_commit_setup_with_prepared_auth(
-    const uint8_t* root_material,
-    size_t root_material_size,
-    const LocalAuthPreparedRecord* prepared_auth,
     const PersistentMaterialOps& ops);
 PersistentMaterialWalletEraseResult persistent_material_wallet_erase();
 PersistentMaterialSettingsResetResult persistent_material_reset_recoverable_settings();

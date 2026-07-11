@@ -14,10 +14,4 @@ struct LocalTransportPairingIdentity {
     uint8_t fingerprint[kLocalTransportIdentityFingerprintBytes];
 };
 
-struct LocalTransportPairingIdentitySecret {
-    uint8_t secret_key[kLocalTransportStaticKeyBytes];
-    uint8_t public_key[kLocalTransportStaticKeyBytes];
-    uint8_t fingerprint[kLocalTransportIdentityFingerprintBytes];
-};
-
 }  // namespace signing

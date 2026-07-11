@@ -5,22 +5,21 @@
 
 #include "bip39_wordlist.h"
 #include "entropy.h"
-#include "local_auth.h"
-#include "root_material.h"
+#include "stackchan_keystore.h"
 
 namespace signing {
 namespace {
 
 struct ProvisioningFlowState {
-    uint8_t root_material[kRootMaterialBytes] = {};
+    uint8_t root_material[kStackChanRootMaterialBytes] = {};
     char backup_phrase[kBip39MnemonicMaxChars] = {};
     char backup_phrase_prefix_cells[kProvisioningFlowPhrasePrefixCellCount]
                                      [kProvisioningFlowPhrasePrefixCellSize] = {};
     uint16_t import_word_indices[kBip39MnemonicWordCount] = {};
     bool import_word_selected[kBip39MnemonicWordCount] = {};
     char import_prefixes[kBip39MnemonicWordCount][kProvisioningFlowImportPrefixBufferSize] = {};
-    char pin_first[kLocalPinBufferSize] = {};
-    char pin_entry[kLocalPinBufferSize] = {};
+    char pin_first[kKeystorePinBufferBytes] = {};
+    char pin_entry[kKeystorePinBufferBytes] = {};
     size_t pin_entry_length = 0;
     uint32_t pin_commit_job_id = 0;
     uint8_t import_page = 0;
@@ -31,12 +30,11 @@ struct ProvisioningFlowState {
     TimeoutWindow import_word_window = kTimeoutWindowNone;
     TimeoutWindow pin_window = kTimeoutWindowNone;
     TickType_t pin_commit_ready_at = 0;
-    TickType_t pin_commit_deadline = 0;
 
-    void wipe_pin_only()
+    bool wipe_pin_only()
     {
         if (pin_commit_job_id != 0) {
-            local_auth_worker_cancel_job(pin_commit_job_id);
+            return false;
         }
         wipe_sensitive_buffer(pin_first, sizeof(pin_first));
         wipe_sensitive_buffer(pin_entry, sizeof(pin_entry));
@@ -44,7 +42,7 @@ struct ProvisioningFlowState {
         pin_commit_job_id = 0;
         pin_window = kTimeoutWindowNone;
         pin_commit_ready_at = 0;
-        pin_commit_deadline = 0;
+        return true;
     }
 
     void wipe_displayed_phrase_text()
@@ -65,24 +63,22 @@ struct ProvisioningFlowState {
         import_word_window = kTimeoutWindowNone;
     }
 
-    void wipe()
+    bool wipe()
     {
+        if (!wipe_pin_only()) {
+            return false;
+        }
         wipe_sensitive_buffer(root_material, sizeof(root_material));
         wipe_displayed_phrase_text();
         wipe_import_word_entry();
-        wipe_pin_only();
         stage = ProvisioningFlowStage::none;
         setup_choice_window = kTimeoutWindowNone;
         backup_phrase_window = kTimeoutWindowNone;
+        return true;
     }
 };
 
 ProvisioningFlowState g_state;
-
-bool deadline_reached(TickType_t now, TickType_t deadline)
-{
-    return deadline != 0 && static_cast<int32_t>(now - deadline) >= 0;
-}
 
 TimeoutWindow current_input_window()
 {
@@ -257,16 +253,6 @@ bool provisioning_flow_stage_expired(TickType_t now)
     return false;
 }
 
-static bool provisioning_flow_fail_pin_commit_if_expired(TickType_t now)
-{
-    if (g_state.stage != ProvisioningFlowStage::pin_committing ||
-        !deadline_reached(now, g_state.pin_commit_deadline)) {
-        return false;
-    }
-    g_state.wipe();
-    return true;
-}
-
 bool provisioning_flow_commit_job_active(uint32_t job_id)
 {
     return job_id != 0 &&
@@ -274,17 +260,19 @@ bool provisioning_flow_commit_job_active(uint32_t job_id)
            g_state.pin_commit_job_id == job_id;
 }
 
-void provisioning_flow_wipe()
+bool provisioning_flow_wipe()
 {
-    g_state.wipe();
+    return g_state.wipe();
 }
 
 ProvisioningFlowCleanupResult provisioning_flow_wipe_active()
 {
     const bool active = provisioning_flow_active();
-    g_state.wipe();
-    return active ? ProvisioningFlowCleanupResult::wiped
-                  : ProvisioningFlowCleanupResult::inactive;
+    if (!active) {
+        return ProvisioningFlowCleanupResult::inactive;
+    }
+    return g_state.wipe() ? ProvisioningFlowCleanupResult::wiped
+                          : ProvisioningFlowCleanupResult::commit_in_progress;
 }
 
 void provisioning_flow_wipe_displayed_phrase_text()
@@ -297,8 +285,7 @@ bool provisioning_flow_handle_panel_deleted(ProvisioningFlowPanel panel)
     if (!panel_matches_current_stage(panel)) {
         return false;
     }
-    g_state.wipe();
-    return true;
+    return g_state.wipe();
 }
 
 ProvisioningFlowPanelLifetimeResult provisioning_flow_handle_panel_lifetime(
@@ -318,7 +305,9 @@ ProvisioningFlowPanelLifetimeResult provisioning_flow_handle_panel_lifetime(
         return ProvisioningFlowPanelLifetimeResult::clear_panel_timeout;
     }
 
-    g_state.wipe();
+    if (!g_state.wipe()) {
+        return ProvisioningFlowPanelLifetimeResult::unchanged;
+    }
     return expired ? ProvisioningFlowPanelLifetimeResult::wiped_panel_lost_timeout
                    : ProvisioningFlowPanelLifetimeResult::wiped_panel_lost;
 }
@@ -328,10 +317,7 @@ ProvisioningFlowPanelLifetimeResult provisioning_flow_handle_pin_setup_lifetime(
     TickType_t now)
 {
     if (g_state.stage == ProvisioningFlowStage::pin_committing) {
-        if (!provisioning_flow_fail_pin_commit_if_expired(now)) {
-            return ProvisioningFlowPanelLifetimeResult::unchanged;
-        }
-        return ProvisioningFlowPanelLifetimeResult::clear_panel_preserve_timeout;
+        return ProvisioningFlowPanelLifetimeResult::unchanged;
     }
 
     if (!pin_setup_stage()) {
@@ -353,7 +339,9 @@ ProvisioningFlowPanelLifetimeResult provisioning_flow_handle_pin_setup_lifetime(
 
 bool provisioning_flow_begin_setup_choice(TimeoutWindow input_window)
 {
-    g_state.wipe();
+    if (!g_state.wipe()) {
+        return false;
+    }
     if (!timeout_window_valid(input_window)) {
         return false;
     }
@@ -726,7 +714,7 @@ bool provisioning_flow_add_pin_digit(char digit, TimeoutWindow input_window)
         !timeout_window_valid(input_window)) {
         return false;
     }
-    if (g_state.pin_entry_length >= kLocalPinDigits) {
+    if (g_state.pin_entry_length >= kKeystorePinDigits) {
         g_state.pin_window = input_window;
         return true;
     }
@@ -759,8 +747,7 @@ bool provisioning_flow_backspace_pin(TimeoutWindow input_window)
 
 ProvisioningFlowPinSubmitResult provisioning_flow_submit_pin(
     TimeoutWindow retry_window,
-    TickType_t commit_ready_at,
-    TickType_t worker_deadline)
+    TickType_t commit_ready_at)
 {
     if (!pin_setup_stage()) {
         return ProvisioningFlowPinSubmitResult::inactive;
@@ -768,7 +755,8 @@ ProvisioningFlowPinSubmitResult provisioning_flow_submit_pin(
     if (!timeout_window_valid(retry_window)) {
         return ProvisioningFlowPinSubmitResult::inactive;
     }
-    if (g_state.pin_entry_length != kLocalPinDigits || !is_valid_local_pin(g_state.pin_entry)) {
+    if (g_state.pin_entry_length != kKeystorePinDigits ||
+        !keystore_pin_valid(g_state.pin_entry)) {
         g_state.pin_window = retry_window;
         return ProvisioningFlowPinSubmitResult::invalid_pin;
     }
@@ -792,9 +780,9 @@ ProvisioningFlowPinSubmitResult provisioning_flow_submit_pin(
     }
 
     uint32_t job_id = 0;
-    if (!local_auth_worker_submit_prepare_verifier(
+    if (!local_auth_worker_submit_create(
             LocalAuthWorkerOwner::provisioning_setup,
-                g_state.pin_entry,
+            g_state.pin_entry,
             &job_id)) {
         g_state.pin_window = retry_window;
         return ProvisioningFlowPinSubmitResult::worker_unavailable;
@@ -803,7 +791,6 @@ ProvisioningFlowPinSubmitResult provisioning_flow_submit_pin(
     g_state.stage = ProvisioningFlowStage::pin_committing;
     g_state.pin_commit_job_id = job_id;
     g_state.pin_commit_ready_at = commit_ready_at;
-    g_state.pin_commit_deadline = worker_deadline;
     g_state.pin_window = kTimeoutWindowNone;
     wipe_sensitive_buffer(g_state.pin_first, sizeof(g_state.pin_first));
     wipe_sensitive_buffer(g_state.pin_entry, sizeof(g_state.pin_entry));
@@ -811,32 +798,10 @@ ProvisioningFlowPinSubmitResult provisioning_flow_submit_pin(
     return ProvisioningFlowPinSubmitResult::commit_started;
 }
 
-static bool provisioning_flow_commit_worker_result(
-    const LocalAuthWorkerResult& result,
-    const uint8_t** root_material,
-    size_t* root_material_size,
-    const LocalAuthPreparedRecord** prepared_auth)
-{
-    if (root_material == nullptr || root_material_size == nullptr || prepared_auth == nullptr ||
-        result.owner != LocalAuthWorkerOwner::provisioning_setup ||
-        result.operation != LocalAuthWorkerOperation::prepare_verifier_record ||
-        !provisioning_flow_commit_job_active(result.job_id)) {
-        return false;
-    }
-    g_state.pin_commit_job_id = 0;
-    g_state.pin_commit_deadline = 0;
-    if (result.status != LocalAuthWorkerStatus::ok) {
-        return false;
-    }
-    *root_material = g_state.root_material;
-    *root_material_size = sizeof(g_state.root_material);
-    *prepared_auth = &result.prepared_record;
-    return true;
-}
-
 ProvisioningFlowCommitFinishResult provisioning_flow_finish_commit_worker_result(
     const LocalAuthWorkerResult& result,
-    ProvisioningFlowCommitSetupWithPreparedAuth commit_setup)
+    ProvisioningFlowCommitSetup commit_setup,
+    ProvisioningFlowRollbackSetup rollback_setup)
 {
     if (!provisioning_flow_commit_job_active(result.job_id)) {
         return {
@@ -845,14 +810,16 @@ ProvisioningFlowCommitFinishResult provisioning_flow_finish_commit_worker_result
         };
     }
 
-    const uint8_t* root_material = nullptr;
-    size_t root_material_size = 0;
-    const LocalAuthPreparedRecord* prepared_auth = nullptr;
-    if (!provisioning_flow_commit_worker_result(
-            result,
-            &root_material,
-            &root_material_size,
-            &prepared_auth)) {
+    g_state.pin_commit_job_id = 0;
+    const bool worker_succeeded =
+        result.owner == LocalAuthWorkerOwner::provisioning_setup &&
+        result.operation == LocalAuthWorkerOperation::create_keystore &&
+        result.status == LocalAuthWorkerStatus::completed &&
+        result.operation_status == KeystoreOperationStatus::success;
+    if (!worker_succeeded) {
+        if (rollback_setup != nullptr) {
+            rollback_setup();
+        }
         g_state.wipe();
         return {
             ProvisioningFlowCommitFinishStatus::failed,
@@ -861,6 +828,9 @@ ProvisioningFlowCommitFinishResult provisioning_flow_finish_commit_worker_result
     }
 
     if (commit_setup == nullptr) {
+        if (rollback_setup != nullptr) {
+            rollback_setup();
+        }
         g_state.wipe();
         return {
             ProvisioningFlowCommitFinishStatus::failed,
@@ -869,7 +839,7 @@ ProvisioningFlowCommitFinishResult provisioning_flow_finish_commit_worker_result
     }
 
     const ProvisioningFlowCommitResult commit_result =
-        commit_setup(root_material, root_material_size, prepared_auth);
+        commit_setup(g_state.root_material, sizeof(g_state.root_material));
     g_state.wipe();
     return {
         ProvisioningFlowCommitFinishStatus::committed,

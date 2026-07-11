@@ -46,27 +46,31 @@ Implemented today:
   input mode then selects local 6-digit PIN entry or physical Confirm. Changing
   that input mode is a local Settings action and requires PIN verification.
 - A material-backed provisioning state on the StackChan CoreS3 target. It
-  reports `provisioned` only when the persisted state, valid DEV_PROFILE root
-  entropy blob, committed active policy record, and local PIN verifier all
-  exist. This is not signing readiness and stores no account data. The current
-  build stores that DEV_PROFILE root entropy, active policy record, and PIN
-  verifier in ordinary NVS; Secure Boot, Flash Encryption, and NVS Encryption
-  are not configured.
+  reports provisioning state `provisioned` only when the persisted state,
+  authenticated encrypted root record, valid PIN-wrapped master-key slot,
+  committed active policy record, signing authorization mode, and account
+  settings all exist. A rebooted provisioned device still reports device state
+  `locked` until local unlock succeeds. This is not signing readiness and stores
+  no account data. The encrypted records and active policy are stored in
+  ordinary NVS; Secure Boot, Flash Encryption, and NVS Encryption are not
+  configured.
 - A DEV_PROFILE backup phrase setup path in StackChan CoreS3 source. It can
   generate BIP-39 root entropy into RAM from an Agent-Q CSPRNG seeded from
   early boot entropy, display only up-to-4-letter word prefixes on the device,
   accept device-local BIP-39 import word entry with checksum verification,
   require a local 6-digit PIN entry/repeat after backup confirmation or
-  successful import verification, store root entropy plus a salt + PIN
-  verifier after the PIN matches, and wipe volatile scratch on local cancel,
-  confirmation, display expiry, PIN setup timeout, or failure. Firmware build
-  verification is required for each change. Hardware smoke coverage exists for
-  StackChan CoreS3 Generate setup, PIN entry, and Import entry.
+  successful import verification, create a PIN-wrapped random master-key slot,
+  store root entropy only in an authenticated encrypted record after the PIN
+  matches, and wipe volatile scratch on local cancel, confirmation, display
+  expiry, PIN setup timeout, or failure. Firmware build verification is required
+  for each change. Current-tree hardware verification covers encrypted-keystore
+  provisioning and locked boot/unlock; Generate and Import remain separate
+  device-local setup choices.
   This is not USER_PROFILE key provisioning.
 - Local settings paths are implemented for provisioned StackChan CoreS3 devices.
-  They are device-local UX only: Change PIN verifies the stored PIN and replaces
-  only the local PIN verifier after repeated new PIN entry. The normal Settings
-  menu exposes one destructive Device reset action. Device reset erases root material, active policy, PIN verifier,
+  They are device-local UX only: Change PIN authenticates the current keyslot
+  and rewraps the unchanged master key after repeated new PIN entry. The normal
+  Settings menu exposes one destructive Device reset action. Device reset erases the keyslot, encrypted root and private transport identity, active policy,
   signing authorization mode, Sui account settings, Sui zkLogin proof material,
   approval history, policy-update terminal marker, human approval input mode
   setting, session state, and returns to `unprovisioned`.
@@ -77,14 +81,15 @@ Implemented today:
   interrupted internal settings repair or Device reset. A pending marker controls
   the next recovery operation before live repairability is re-evaluated.
   Host-triggered reset/debug protocol paths are not implemented. StackChan CoreS3 source also uses
-  device-local storage-error recovery: when root material and a valid PIN
-  verifier remain, the recovery action is settings repair after local PIN
-  verification. That repair preserves root material and the PIN verifier while
+  device-local storage-error recovery: when the keyslot and encrypted root
+  remain structurally valid, the recovery action is settings repair after local
+  PIN unlock. That repair preserves the keyslot and encrypted root while
   restoring recoverable mutable settings, including zkLogin proof state, to
   current defaults. When the authority gate is unavailable, the recovery action
   is PIN-less Device reset after on-device destructive confirmation. Neither path
-  can read, unlock, or export material, and neither is exposed as a
-  host-triggered recovery API. Hardware coverage level is tracked in
+  exposes private material or a host-triggered unlock or reset command; settings
+  repair performs its required keyslot unlock only inside the device-local
+  recovery state. Hardware coverage level is tracked in
   `docs/IMPLEMENTATION_STATUS.md`.
 - Read-only Sui account and public-key discovery over an approved runtime
   session. Firmware returns exactly one active Sui identity: native Ed25519
@@ -339,13 +344,20 @@ DEV_PROFILE - the default development path:
 - Free, reversible flashing and debugging.
 - Test signing material only; no real assets.
 - No Secure Boot or Flash Encryption requirement.
-- Current StackChan CoreS3 DEV_PROFILE root entropy persistence uses ordinary
-  NVS unless the platform build is separately configured for encrypted storage.
-- The current StackChan CoreS3 local PIN verifier is also stored in ordinary
-  NVS. It is a local UX gate for connect approval when enabled, settings
-  changes, storage maintenance actions, the current policy-update proposal flow,
-  and sensitive local writes, not root material encryption or physical
-  extraction defense.
+- Current StackChan CoreS3 DEV_PROFILE stores root entropy and the persistent
+  local-transport private identity only in authenticated encrypted records. A
+  random master key is wrapped by a key derived from the six-digit PIN with the
+  target's fixed measured Argon2id profile. The encrypted records remain in
+  ordinary NVS unless the platform build is separately configured for encrypted
+  storage.
+- The encrypted keyslot is the sole current PIN verifier for boot unlock and
+  PIN-authorized local actions. Unlock is necessary for secret use but does not
+  count as connect approval or signing authorization.
+- This software layer removes direct plaintext private material from a normal
+  NVS dump, but a six-digit PIN has only one million values. A determined
+  attacker with a copied flash image can perform practical offline exhaustive
+  search using the keyslot confirmation value as an oracle. It is defense in
+  depth and a logical locked-state gate, not physical extraction defense.
 - Makes no security claim. Tools and docs must show a "do not use with real
   assets" warning.
 

@@ -69,7 +69,6 @@ cat >"${TMP_DIR}/stubs.cpp" <<'CPP'
 #include <string.h>
 
 #include "human_approval_settings.h"
-#include "local_auth_test.h"
 #include "local_auth_worker.h"
 #include "protocol/signing_mode.h"
 #include "sui_account_settings.h"
@@ -78,7 +77,7 @@ cat >"${TMP_DIR}/stubs.cpp" <<'CPP'
 namespace {
 
 TickType_t g_now = 1;
-char g_current_pin[signing::kLocalPinBufferSize] = "123456";
+char g_current_pin[signing::kKeystorePinBufferBytes] = "123456";
 signing::HumanApprovalInputMode g_human_approval_input_mode =
     signing::HumanApprovalInputMode::pin;
 signing::SuiAccountSettings g_sui_account_settings =
@@ -86,6 +85,8 @@ signing::SuiAccountSettings g_sui_account_settings =
 bool g_store_sui_account_settings_result = true;
 uint32_t g_last_worker_job_id = 0;
 uint32_t g_last_cancelled_worker_job_id = 0;
+uint32_t g_worker_cancel_attempt_count = 0;
+bool g_worker_job_cancellable = false;
 
 }  // namespace
 
@@ -121,6 +122,13 @@ void test_set_store_sui_account_settings_result(bool result)
     g_store_sui_account_settings_result = result;
 }
 
+void test_set_current_pin(const char* pin)
+{
+    if (pin != nullptr && keystore_pin_valid(pin)) {
+        strcpy(g_current_pin, pin);
+    }
+}
+
 uint32_t test_last_worker_job_id()
 {
     return g_last_worker_job_id;
@@ -129,6 +137,16 @@ uint32_t test_last_worker_job_id()
 uint32_t test_last_cancelled_worker_job_id()
 {
     return g_last_cancelled_worker_job_id;
+}
+
+uint32_t test_worker_cancel_attempt_count()
+{
+    return g_worker_cancel_attempt_count;
+}
+
+void test_mark_worker_result_delivered()
+{
+    g_worker_job_cancellable = false;
 }
 
 void wipe_sensitive_buffer(void* data, size_t size)
@@ -140,75 +158,17 @@ void wipe_sensitive_buffer(void* data, size_t size)
     }
 }
 
-bool is_valid_local_pin(const char* pin)
+bool keystore_pin_valid(const char* pin)
 {
-    if (pin == nullptr || strlen(pin) != kLocalPinDigits) {
+    if (pin == nullptr || strlen(pin) != kKeystorePinDigits) {
         return false;
     }
-    for (size_t index = 0; index < kLocalPinDigits; ++index) {
+    for (size_t index = 0; index < kKeystorePinDigits; ++index) {
         if (!isdigit(static_cast<unsigned char>(pin[index]))) {
             return false;
         }
     }
     return true;
-}
-
-bool store_local_pin_verifier(const char* pin)
-{
-    if (!is_valid_local_pin(pin)) {
-        return false;
-    }
-    strcpy(g_current_pin, pin);
-    return true;
-}
-
-bool prepare_local_pin_verifier_record(const char* pin, LocalAuthPreparedRecord* out)
-{
-    if (!is_valid_local_pin(pin) || out == nullptr) {
-        return false;
-    }
-    wipe_sensitive_buffer(out->bytes, sizeof(out->bytes));
-    memcpy(out->bytes, pin, kLocalPinBufferSize);
-    return true;
-}
-
-bool store_prepared_local_pin_verifier(const LocalAuthPreparedRecord* prepared)
-{
-    if (prepared == nullptr) {
-        return false;
-    }
-    const char* pin = reinterpret_cast<const char*>(prepared->bytes);
-    if (!is_valid_local_pin(pin)) {
-        return false;
-    }
-    strcpy(g_current_pin, pin);
-    return true;
-}
-
-void wipe_local_pin_verifier_record(LocalAuthPreparedRecord* prepared)
-{
-    if (prepared != nullptr) {
-        wipe_sensitive_buffer(prepared->bytes, sizeof(prepared->bytes));
-    }
-}
-
-bool verify_local_pin(const char* pin, bool* verified)
-{
-    if (verified == nullptr) {
-        return false;
-    }
-    *verified = pin != nullptr && strcmp(pin, g_current_pin) == 0;
-    return true;
-}
-
-bool clear_local_auth()
-{
-    return true;
-}
-
-LocalAuthStatus local_auth_status()
-{
-    return LocalAuthStatus::active;
 }
 
 bool read_human_approval_input_mode(HumanApprovalInputMode* mode)
@@ -259,31 +219,49 @@ bool wipe_human_approval_input_mode()
     return true;
 }
 
-bool local_auth_worker_submit_verify(
+bool local_auth_worker_submit_authenticate(
     LocalAuthWorkerOwner owner,
     const char* pin,
     uint32_t* job_id)
 {
     (void)owner;
     static uint32_t next_job_id = 1;
-    if (job_id == nullptr || !is_valid_local_pin(pin)) {
+    if (job_id == nullptr || !keystore_pin_valid(pin)) {
         return false;
     }
     *job_id = next_job_id++;
     g_last_worker_job_id = *job_id;
+    g_worker_job_cancellable = true;
     return true;
 }
 
-bool local_auth_worker_submit_prepare_verifier(
+bool local_auth_worker_submit_unlock(
     LocalAuthWorkerOwner owner,
     const char* pin,
     uint32_t* job_id)
 {
-    return local_auth_worker_submit_verify(owner, pin, job_id);
+    return local_auth_worker_submit_authenticate(owner, pin, job_id);
 }
 
-bool local_auth_worker_cancel_job(uint32_t)
+bool local_auth_worker_submit_rewrap(
+    LocalAuthWorkerOwner owner,
+    const char* current_pin,
+    const char* new_pin,
+    uint32_t* job_id)
 {
+    if (!keystore_pin_valid(new_pin)) {
+        return false;
+    }
+    return local_auth_worker_submit_authenticate(owner, current_pin, job_id);
+}
+
+bool local_auth_worker_cancel_authentication(uint32_t job_id)
+{
+    ++g_worker_cancel_attempt_count;
+    if (!g_worker_job_cancellable || job_id != g_last_worker_job_id) {
+        return false;
+    }
+    g_worker_job_cancellable = false;
     g_last_cancelled_worker_job_id = g_last_worker_job_id;
     return true;
 }
@@ -305,8 +283,11 @@ bool test_current_pin_is(const char* pin);
 HumanApprovalInputMode test_human_approval_input_mode();
 SuiAccountSettings test_sui_account_settings();
 void test_set_store_sui_account_settings_result(bool result);
+void test_set_current_pin(const char* pin);
 uint32_t test_last_worker_job_id();
 uint32_t test_last_cancelled_worker_job_id();
+uint32_t test_worker_cancel_attempt_count();
+void test_mark_worker_result_delivered();
 }
 
 namespace {
@@ -352,25 +333,38 @@ void expect_stage(
     expect(snapshot.stage == stage, label);
 }
 
-signing::LocalAuthWorkerResult make_verify_result(bool verified)
+signing::LocalAuthWorkerResult make_verify_result(
+    bool verified,
+    signing::LocalAuthWorkerOperation operation =
+        signing::LocalAuthWorkerOperation::authenticate_pin)
 {
+    signing::test_mark_worker_result_delivered();
     signing::LocalAuthWorkerResult worker_result = {};
     worker_result.job_id = signing::test_last_worker_job_id();
     worker_result.owner = signing::LocalAuthWorkerOwner::local_pin_auth;
-    worker_result.operation = signing::LocalAuthWorkerOperation::verify_pin;
-    worker_result.status = signing::LocalAuthWorkerStatus::ok;
-    worker_result.verified = verified;
+    worker_result.operation = operation;
+    worker_result.status = signing::LocalAuthWorkerStatus::completed;
+    worker_result.operation_status = verified
+        ? signing::KeystoreOperationStatus::success
+        : signing::KeystoreOperationStatus::wrong_pin;
     return worker_result;
 }
 
-signing::LocalAuthWorkerResult make_prepare_result(const char* pin)
+signing::LocalAuthWorkerResult make_rewrap_result(
+    const char* pin,
+    signing::KeystoreOperationStatus operation_status =
+        signing::KeystoreOperationStatus::success)
 {
+    signing::test_mark_worker_result_delivered();
     signing::LocalAuthWorkerResult worker_result = {};
     worker_result.job_id = signing::test_last_worker_job_id();
     worker_result.owner = signing::LocalAuthWorkerOwner::local_pin_auth;
-    worker_result.operation = signing::LocalAuthWorkerOperation::prepare_verifier_record;
-    worker_result.status = signing::LocalAuthWorkerStatus::ok;
-    signing::prepare_local_pin_verifier_record(pin, &worker_result.prepared_record);
+    worker_result.operation = signing::LocalAuthWorkerOperation::rewrap_keystore;
+    worker_result.status = signing::LocalAuthWorkerStatus::completed;
+    worker_result.operation_status = operation_status;
+    if (operation_status == signing::KeystoreOperationStatus::success) {
+        signing::test_set_current_pin(pin);
+    }
     return worker_result;
 }
 
@@ -471,6 +465,69 @@ int main()
                    200,
                    pin_window(220, 260)),
                "future Sui gas sponsor setting PIN window is rejected by state owner");
+    }
+
+    {
+        signing::test_set_tick(210);
+        expect(signing::local_pin_auth_begin_unlock(210, pin_window(210, 270)),
+               "locked boot begins a dedicated unlock flow");
+        expect_stage(
+            signing::LocalPinAuthPurpose::unlock,
+            signing::LocalPinAuthStage::pin_entry,
+            "unlock owns PIN-entry state");
+        enter_pin("123456");
+        expect(signing::local_pin_auth_submit(215, 0, test_input_window(270), 260) ==
+                   signing::LocalPinAuthSubmitResult::started_verification,
+               "unlock submits keystore-open work");
+        expect(!signing::local_pin_auth_clear_flow(),
+               "unlock owner cannot be cleared before exact worker result");
+        expect(signing::local_pin_auth_snapshot(215).flow_active,
+               "unlock remains active after attempted cleanup");
+        expect(!signing::local_pin_auth_begin_connect(216, pin_window(216, 270)),
+               "another PIN flow cannot replace pending unlock");
+        signing::LocalAuthWorkerResult wrong_operation = make_verify_result(true);
+        expect(signing::local_pin_auth_complete_verify_job(
+                   wrong_operation,
+                   pin_window(215, 270),
+                   0,
+                   0) == signing::LocalPinAuthVerifyResult::not_ready,
+               "unlock rejects an authentication-only worker result");
+        signing::LocalAuthWorkerResult unlock_result = make_verify_result(
+            true,
+            signing::LocalAuthWorkerOperation::unlock_keystore);
+        expect(signing::local_pin_auth_complete_verify_job(
+                   unlock_result,
+                   pin_window(215, 270),
+                   0,
+                   0) == signing::LocalPinAuthVerifyResult::unlocked,
+               "successful keystore-open work completes unlock");
+        expect(!signing::local_pin_auth_snapshot(215).flow_active,
+               "unlock success clears only the unlock flow");
+    }
+
+    {
+        signing::test_set_tick(220);
+        expect(signing::local_pin_auth_begin_unlock(220, pin_window(220, 280)),
+               "unlock can restart after a completed unlock flow");
+        enter_pin("000000");
+        expect(signing::local_pin_auth_submit(225, 0, test_input_window(280), 270) ==
+                   signing::LocalPinAuthSubmitResult::started_verification,
+               "wrong unlock PIN still enters worker verification");
+        signing::LocalAuthWorkerResult unlock_result = make_verify_result(
+            false,
+            signing::LocalAuthWorkerOperation::unlock_keystore);
+        expect(signing::local_pin_auth_complete_verify_job(
+                   unlock_result,
+                   pin_window(225, 280),
+                   0,
+                   0) == signing::LocalPinAuthVerifyResult::wrong_pin,
+               "wrong unlock PIN resumes the unlock input state");
+        expect_stage(
+            signing::LocalPinAuthPurpose::unlock,
+            signing::LocalPinAuthStage::pin_entry,
+            "wrong unlock PIN does not become connect authorization");
+        signing::local_pin_auth_clear_flow();
+        signing::pin_attempt_clear();
     }
 
     {
@@ -931,10 +988,16 @@ int main()
         expect(signing::local_pin_auth_submit(0, 405, test_input_window(460), 430) ==
                    signing::LocalPinAuthSubmitResult::started_pin_change_commit,
                "change PIN matching repeat starts commit");
-        signing::LocalAuthWorkerResult prepare_result = make_prepare_result("654321");
+        expect(!signing::local_pin_auth_clear_flow(),
+               "PIN rewrap owner cannot be cleared before exact worker result");
+        expect(!signing::local_pin_auth_fail_processing_if_expired(500),
+               "PIN rewrap is not discarded by a display-processing deadline");
+        expect(signing::local_pin_auth_snapshot(500).flow_active,
+               "PIN rewrap remains active until its result is reconciled");
+        signing::LocalAuthWorkerResult prepare_result = make_rewrap_result("654321");
         expect(signing::local_pin_auth_complete_pin_change_job(prepare_result) ==
                    signing::LocalPinAuthCommitResult::pin_changed,
-               "change PIN stores new verifier");
+               "change PIN activates the rewrapped keyslot");
         expect(signing::test_current_pin_is("654321"),
                "change PIN persisted the new PIN");
         expect(!signing::local_pin_auth_snapshot(405).flow_active,
@@ -987,10 +1050,15 @@ int main()
                    signing::LocalPinAuthSubmitResult::started_verification,
                "connect PIN late-result test starts verification");
         signing::test_set_tick(721);
+        const uint32_t cancel_attempts_before_result =
+            signing::test_worker_cancel_attempt_count();
         signing::LocalAuthWorkerResult verify_result = make_verify_result(true);
         expect(signing::local_pin_auth_complete_verify_job(verify_result, pin_window(721, 760), 0, 0) ==
                    signing::LocalPinAuthVerifyResult::auth_unavailable,
                "late connect PIN verification result fails closed");
+        expect(signing::test_worker_cancel_attempt_count() ==
+                   cancel_attempts_before_result,
+               "late terminal result cleanup does not cancel an ended worker job");
         expect(!signing::local_pin_auth_snapshot(721).flow_active,
                "late connect PIN verification result clears flow");
     }
@@ -1017,12 +1085,18 @@ int main()
                "change PIN commit starts before commit timeout");
         expect(!signing::local_pin_auth_fail_processing_if_expired(619),
                "change PIN commit stays active before worker deadline");
-        expect(signing::local_pin_auth_fail_processing_if_expired(620),
-               "change PIN commit timeout closes flow");
-        expect(signing::test_last_cancelled_worker_job_id() == signing::test_last_worker_job_id(),
-               "change PIN commit timeout cancels worker job");
-        expect(!signing::local_pin_auth_snapshot(620).flow_active,
-               "change PIN commit timeout clears flow");
+        const uint32_t cancelled_before_commit =
+            signing::test_last_cancelled_worker_job_id();
+        expect(!signing::local_pin_auth_fail_processing_if_expired(620),
+               "change PIN commit is not discarded at the display deadline");
+        expect(signing::test_last_cancelled_worker_job_id() == cancelled_before_commit,
+               "change PIN commit does not request discard-style cancellation");
+        expect(signing::local_pin_auth_snapshot(620).flow_active,
+               "change PIN commit remains owned until its exact result");
+        signing::LocalAuthWorkerResult rewrap_result = make_rewrap_result("123456");
+        expect(signing::local_pin_auth_complete_pin_change_job(rewrap_result) ==
+                   signing::LocalPinAuthCommitResult::pin_changed,
+               "change PIN commit result remains authoritative after the display deadline");
     }
 
     if (failures != 0) {
@@ -1038,6 +1112,7 @@ CPP
   -I"${TMP_DIR}/stubs" \
   -I"${TMP_DIR}" \
   -I"${TMP_DIR}/firmware_common" \
+  -I"${COMMON_ROOT}" \
   -I"${RUNTIME_DIR}" \
   "${TMP_DIR}/local_pin_auth_test.cpp" \
   "${TMP_DIR}/stubs.cpp" \

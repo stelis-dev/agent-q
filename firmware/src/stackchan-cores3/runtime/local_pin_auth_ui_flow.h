@@ -163,7 +163,8 @@ struct LocalPinAuthUserSigningOps {
     UserSigningConfirmationResult (*complete_user_signing_pin_verify_from_pin)(
         const LocalAuthWorkerResult& worker_result,
         TickType_t now,
-        TickType_t lockout_until);
+        TickType_t lockout_until,
+        bool authorization_available);
     bool (*user_signing_terminal_pending_from_pin)();
     void (*execute_user_signing_from_pin)(const char* request_id);
     void (*finish_user_signing_terminal)(const char* request_id);
@@ -187,6 +188,7 @@ struct LocalPinAuthUiFlowOps {
 
 bool local_pin_auth_ui_panel_matches_stage(UiPanelKind kind);
 bool local_pin_auth_ui_accepts_keypad_input();
+bool local_pin_auth_ui_start_unlock(const LocalPinAuthUiFlowOps& ops);
 bool local_pin_auth_ui_begin_connect(
     const char* request_id,
     const LocalPinAuthUiFlowOps& ops);
@@ -219,7 +221,7 @@ void local_pin_auth_ui_commit_setting_if_ready(
 void local_pin_auth_ui_handle_verify_worker_result(
     const LocalAuthWorkerResult& worker_result,
     const LocalPinAuthUiFlowOps& ops);
-void local_pin_auth_ui_handle_prepare_worker_result(
+void local_pin_auth_ui_handle_pin_change_worker_result(
     const LocalAuthWorkerResult& worker_result,
     const LocalPinAuthUiFlowOps& ops);
 void local_pin_auth_ui_clear_if_needed(const LocalPinAuthUiFlowOps& ops);

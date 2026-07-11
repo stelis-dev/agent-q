@@ -38,6 +38,7 @@ user_signing_confirmation_complete_pin_verify_job_and_write_history(
     const LocalAuthWorkerResult& worker_result,
     TickType_t now,
     TickType_t lockout_until,
+    bool authorization_available,
     UserSigningHistoryWriteFn write_fn,
     void* context);
 UserSigningConfirmationResult

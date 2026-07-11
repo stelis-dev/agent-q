@@ -9,6 +9,7 @@ namespace signing {
 
 enum class ProjectedDeviceState {
     idle,
+    locked,
     busy,
     awaiting_approval,
     error,
@@ -17,6 +18,7 @@ enum class ProjectedDeviceState {
 struct DeviceActivityFacts {
     bool persistent_material_consistency_error;
     bool provisioned;
+    bool keystore_locked;
     bool ui_idle_for_local_settings;
     bool identification_display_active;
     bool connect_approval_active;
@@ -35,6 +37,7 @@ struct DeviceActivityProjection {
     ProjectedDeviceState device_state;
     bool persistent_material_consistency_error;
     bool provisioned;
+    bool keystore_locked;
     bool ui_idle_for_local_settings;
     bool identification_display_active;
     bool connect_approval_active;

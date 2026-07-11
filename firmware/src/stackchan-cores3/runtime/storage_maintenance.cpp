@@ -1,6 +1,7 @@
 #include "storage_maintenance.h"
 
-#include "local_auth.h"
+#include "keystore/encrypted_keystore.h"
+#include "stackchan_keystore.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "freertos/task.h"
@@ -23,39 +24,57 @@ enum class PinEntryOrigin {
 };
 
 struct StorageMaintenanceState {
-    char pin_entry[kLocalPinBufferSize] = {};
+    char pin_entry[kKeystorePinBufferBytes] = {};
     size_t pin_entry_length = 0;
     StorageMaintenanceStage stage = StorageMaintenanceStage::none;
     StorageMaintenanceOperation operation = StorageMaintenanceOperation::none;
     PinEntryOrigin pin_entry_origin = PinEntryOrigin::none;
     uint32_t auth_job_id = 0;
+    LocalAuthWorkerOperation auth_operation =
+        LocalAuthWorkerOperation::authenticate_pin;
     TimeoutWindow input_window = kTimeoutWindowNone;
     PausedTimeoutWindow paused_input_window = kPausedTimeoutWindowNone;
     TickType_t verify_ready_at = 0;
     TickType_t commit_ready_at = 0;
     TickType_t worker_deadline = 0;
 
-    void wipe()
+    bool effectful_worker_job_active() const
     {
-        wipe_pin_only();
+        return auth_job_id != 0 &&
+               auth_operation == LocalAuthWorkerOperation::unlock_keystore;
+    }
+
+    bool wipe()
+    {
+        if (!wipe_pin_only()) {
+            return false;
+        }
         stage = StorageMaintenanceStage::none;
         operation = StorageMaintenanceOperation::none;
         pin_entry_origin = PinEntryOrigin::none;
+        return true;
     }
 
-    void wipe_pin_only()
+    bool wipe_pin_only()
     {
+        if (effectful_worker_job_active()) {
+            return false;
+        }
         if (auth_job_id != 0) {
-            local_auth_worker_cancel_job(auth_job_id);
+            if (!local_auth_worker_cancel_authentication(auth_job_id)) {
+                return false;
+            }
         }
         wipe_sensitive_buffer(pin_entry, sizeof(pin_entry));
         pin_entry_length = 0;
         auth_job_id = 0;
+        auth_operation = LocalAuthWorkerOperation::authenticate_pin;
         input_window = kTimeoutWindowNone;
         paused_input_window = kPausedTimeoutWindowNone;
         verify_ready_at = 0;
         commit_ready_at = 0;
         worker_deadline = 0;
+        return true;
     }
 
     void clear_lockout()
@@ -189,15 +208,14 @@ StorageMaintenanceCommitResult erase_wallet_material(
     switch (persistent_material_wallet_erase()) {
         case PersistentMaterialWalletEraseResult::ok:
             break;
-        case PersistentMaterialWalletEraseResult::root_wipe_error:
-            record_material_failure(ops, PersistentMaterialRuntimeFailure::wallet_erase_root_wipe_failed);
-            return StorageMaintenanceCommitResult::root_wipe_error;
+        case PersistentMaterialWalletEraseResult::keystore_wipe_error:
+            record_material_failure(
+                ops,
+                PersistentMaterialRuntimeFailure::wallet_erase_keystore_wipe_failed);
+            return StorageMaintenanceCommitResult::keystore_wipe_error;
         case PersistentMaterialWalletEraseResult::policy_wipe_error:
             record_material_failure(ops, PersistentMaterialRuntimeFailure::wallet_erase_policy_wipe_failed);
             return StorageMaintenanceCommitResult::policy_wipe_error;
-        case PersistentMaterialWalletEraseResult::local_auth_wipe_error:
-            record_material_failure(ops, PersistentMaterialRuntimeFailure::wallet_erase_local_auth_wipe_failed);
-            return StorageMaintenanceCommitResult::local_auth_wipe_error;
         case PersistentMaterialWalletEraseResult::human_approval_setting_wipe_error:
             record_material_failure(ops, PersistentMaterialRuntimeFailure::wallet_erase_human_approval_setting_wipe_failed);
             return StorageMaintenanceCommitResult::human_approval_setting_wipe_error;
@@ -216,9 +234,6 @@ StorageMaintenanceCommitResult erase_wallet_material(
         case PersistentMaterialWalletEraseResult::zklogin_proof_wipe_error:
             record_material_failure(ops, PersistentMaterialRuntimeFailure::wallet_erase_zklogin_proof_wipe_failed);
             return StorageMaintenanceCommitResult::zklogin_proof_wipe_error;
-        case PersistentMaterialWalletEraseResult::pairing_store_wipe_error:
-            record_material_failure(ops, PersistentMaterialRuntimeFailure::wallet_erase_pairing_store_wipe_failed);
-            return StorageMaintenanceCommitResult::pairing_store_wipe_error;
         case PersistentMaterialWalletEraseResult::material_remaining_error:
         default:
             record_material_failure(ops, PersistentMaterialRuntimeFailure::wallet_erase_material_remaining);
@@ -313,6 +328,8 @@ bool storage_maintenance_deadline_expired(TickType_t now)
 static bool storage_maintenance_processing_deadline_expired(TickType_t now)
 {
     return g_storage_maintenance.stage == StorageMaintenanceStage::pin_verifying &&
+           g_storage_maintenance.auth_operation ==
+               LocalAuthWorkerOperation::authenticate_pin &&
            timeout_window_tick_reached(now, g_storage_maintenance.worker_deadline);
 }
 
@@ -321,8 +338,7 @@ bool storage_maintenance_fail_processing_if_expired(TickType_t now)
     if (!storage_maintenance_processing_deadline_expired(now)) {
         return false;
     }
-    g_storage_maintenance.wipe();
-    return true;
+    return g_storage_maintenance.wipe();
 }
 
 StorageMaintenanceLockoutReleaseResult storage_maintenance_release_lockout_if_elapsed(TickType_t now)
@@ -356,9 +372,9 @@ bool storage_maintenance_commit_ready(TickType_t now)
            timeout_window_tick_reached(now, g_storage_maintenance.commit_ready_at);
 }
 
-void storage_maintenance_clear_flow()
+bool storage_maintenance_clear_flow()
 {
-    g_storage_maintenance.wipe();
+    return g_storage_maintenance.wipe();
 }
 
 bool storage_maintenance_flow_active()
@@ -368,7 +384,9 @@ bool storage_maintenance_flow_active()
 
 void storage_maintenance_begin_settings(TimeoutWindow input_window)
 {
-    g_storage_maintenance.wipe();
+    if (!g_storage_maintenance.wipe()) {
+        return;
+    }
     if (!timeout_window_valid(input_window)) {
         return;
     }
@@ -381,7 +399,9 @@ void storage_maintenance_begin_error_recovery_prompt(
     TimeoutWindow input_window,
     StorageMaintenanceOperation operation)
 {
-    g_storage_maintenance.wipe();
+    if (!g_storage_maintenance.wipe()) {
+        return;
+    }
     if (!timeout_window_valid(input_window) ||
         !valid_storage_operation(operation)) {
         return;
@@ -395,7 +415,9 @@ void storage_maintenance_begin_error_recovery_confirm(
     TimeoutWindow input_window,
     StorageMaintenanceOperation operation)
 {
-    g_storage_maintenance.wipe();
+    if (!g_storage_maintenance.wipe()) {
+        return;
+    }
     if (!timeout_window_valid(input_window) ||
         !valid_storage_operation(operation)) {
         return;
@@ -413,7 +435,9 @@ bool storage_maintenance_begin_pin_entry(TimeoutWindow input_window)
     }
 
     pin_attempt_release_if_elapsed(xTaskGetTickCount());
-    g_storage_maintenance.wipe_pin_only();
+    if (!g_storage_maintenance.wipe_pin_only()) {
+        return false;
+    }
     g_storage_maintenance.stage = StorageMaintenanceStage::pin_entry;
     g_storage_maintenance.operation = StorageMaintenanceOperation::settings_reset;
     g_storage_maintenance.pin_entry_origin = PinEntryOrigin::settings_menu;
@@ -436,7 +460,9 @@ bool storage_maintenance_begin_error_recovery_wallet_erase(TickType_t commit_rea
         g_storage_maintenance.operation != StorageMaintenanceOperation::wallet_erase) {
         return false;
     }
-    g_storage_maintenance.wipe_pin_only();
+    if (!g_storage_maintenance.wipe_pin_only()) {
+        return false;
+    }
     g_storage_maintenance.clear_lockout();
     g_storage_maintenance.stage = StorageMaintenanceStage::committing;
     g_storage_maintenance.operation = StorageMaintenanceOperation::wallet_erase;
@@ -454,7 +480,9 @@ bool storage_maintenance_begin_error_recovery_settings_repair(TimeoutWindow inpu
     }
 
     pin_attempt_release_if_elapsed(xTaskGetTickCount());
-    g_storage_maintenance.wipe_pin_only();
+    if (!g_storage_maintenance.wipe_pin_only()) {
+        return false;
+    }
     g_storage_maintenance.stage = StorageMaintenanceStage::pin_entry;
     g_storage_maintenance.operation = StorageMaintenanceOperation::settings_reset;
     g_storage_maintenance.pin_entry_origin = PinEntryOrigin::error_recovery;
@@ -467,8 +495,7 @@ bool storage_maintenance_close_settings()
     if (g_storage_maintenance.stage != StorageMaintenanceStage::settings_menu) {
         return false;
     }
-    g_storage_maintenance.wipe();
-    return true;
+    return g_storage_maintenance.wipe();
 }
 
 StorageMaintenanceCancelPinResult storage_maintenance_cancel_pin_entry(
@@ -488,7 +515,9 @@ StorageMaintenanceCancelPinResult storage_maintenance_cancel_pin_entry(
                    : StorageMaintenanceCancelPinResult::failed;
     }
     if (origin != PinEntryOrigin::settings_menu) {
-        g_storage_maintenance.wipe();
+        if (!g_storage_maintenance.wipe()) {
+            return StorageMaintenanceCancelPinResult::failed;
+        }
         return StorageMaintenanceCancelPinResult::failed;
     }
     storage_maintenance_begin_settings(input_window);
@@ -503,8 +532,7 @@ bool storage_maintenance_cancel_error_recovery()
         g_storage_maintenance.stage != StorageMaintenanceStage::error_recovery_confirm) {
         return false;
     }
-    g_storage_maintenance.wipe();
-    return true;
+    return g_storage_maintenance.wipe();
 }
 
 bool storage_maintenance_begin_settings_pin_auth_handoff()
@@ -512,8 +540,7 @@ bool storage_maintenance_begin_settings_pin_auth_handoff()
     if (g_storage_maintenance.stage != StorageMaintenanceStage::settings_menu) {
         return false;
     }
-    g_storage_maintenance.wipe();
-    return true;
+    return g_storage_maintenance.wipe();
 }
 
 bool storage_maintenance_begin_error_recovery_prompt_if_idle(
@@ -562,8 +589,7 @@ bool storage_maintenance_abort_pin_verification()
     if (g_storage_maintenance.stage != StorageMaintenanceStage::pin_verifying) {
         return false;
     }
-    g_storage_maintenance.wipe();
-    return true;
+    return g_storage_maintenance.wipe();
 }
 
 StorageMaintenanceUiMaintenanceResult storage_maintenance_handle_ui_maintenance(
@@ -629,7 +655,7 @@ bool storage_maintenance_add_pin_digit(char digit)
         digit < '0' || digit > '9') {
         return false;
     }
-    if (g_storage_maintenance.pin_entry_length >= kLocalPinDigits) {
+    if (g_storage_maintenance.pin_entry_length >= kKeystorePinDigits) {
         return false;
     }
 
@@ -680,19 +706,39 @@ StorageMaintenancePinSubmitResult storage_maintenance_submit_pin_for_verificatio
     if (storage_maintenance_pin_locked_at(now)) {
         return StorageMaintenancePinSubmitResult::locked;
     }
-    if (g_storage_maintenance.pin_entry_length != kLocalPinDigits ||
-        !is_valid_local_pin(g_storage_maintenance.pin_entry)) {
+    if (g_storage_maintenance.pin_entry_length != kKeystorePinDigits ||
+        !keystore_pin_valid(g_storage_maintenance.pin_entry)) {
         return StorageMaintenancePinSubmitResult::invalid_pin;
+    }
+
+    const KeystoreState keystore_state = stackchan_keystore_state();
+    LocalAuthWorkerOperation worker_operation =
+        LocalAuthWorkerOperation::authenticate_pin;
+    if (g_storage_maintenance.pin_entry_origin == PinEntryOrigin::error_recovery) {
+        if (keystore_state == KeystoreState::locked) {
+            worker_operation = LocalAuthWorkerOperation::unlock_keystore;
+        } else if (keystore_state != KeystoreState::unlocked) {
+            return StorageMaintenancePinSubmitResult::worker_unavailable;
+        }
+    } else if (keystore_state != KeystoreState::unlocked) {
+        return StorageMaintenancePinSubmitResult::worker_unavailable;
     }
 
     uint32_t job_id = 0;
     if (!g_storage_maintenance.pause_input_window(now)) {
         return StorageMaintenancePinSubmitResult::unavailable_stage;
     }
-    if (!local_auth_worker_submit_verify(
-            LocalAuthWorkerOwner::storage_maintenance,
-            g_storage_maintenance.pin_entry,
-            &job_id)) {
+    const bool submitted =
+        worker_operation == LocalAuthWorkerOperation::unlock_keystore
+            ? local_auth_worker_submit_unlock(
+                  LocalAuthWorkerOwner::storage_maintenance,
+                  g_storage_maintenance.pin_entry,
+                  &job_id)
+            : local_auth_worker_submit_authenticate(
+                  LocalAuthWorkerOwner::storage_maintenance,
+                  g_storage_maintenance.pin_entry,
+                  &job_id);
+    if (!submitted) {
         g_storage_maintenance.resume_paused_input_window(now);
         return StorageMaintenancePinSubmitResult::worker_unavailable;
     }
@@ -701,6 +747,7 @@ StorageMaintenancePinSubmitResult storage_maintenance_submit_pin_for_verificatio
     g_storage_maintenance.pin_entry_length = 0;
     g_storage_maintenance.stage = StorageMaintenanceStage::pin_verifying;
     g_storage_maintenance.auth_job_id = job_id;
+    g_storage_maintenance.auth_operation = worker_operation;
     g_storage_maintenance.input_window = kTimeoutWindowNone;
     g_storage_maintenance.verify_ready_at = verify_ready_at;
     g_storage_maintenance.commit_ready_at = 0;
@@ -717,23 +764,31 @@ StorageMaintenancePinVerifyResult storage_maintenance_complete_pin_verify_job(
         g_storage_maintenance.auth_job_id == 0 ||
         result.job_id != g_storage_maintenance.auth_job_id ||
         result.owner != LocalAuthWorkerOwner::storage_maintenance ||
-        result.operation != LocalAuthWorkerOperation::verify_pin) {
+        result.operation != g_storage_maintenance.auth_operation) {
         return StorageMaintenancePinVerifyResult::not_ready;
     }
-    if (storage_maintenance_processing_deadline_expired(xTaskGetTickCount())) {
-        g_storage_maintenance.wipe();
-        return StorageMaintenancePinVerifyResult::auth_unavailable;
-    }
-
+    const bool processing_deadline_expired =
+        storage_maintenance_processing_deadline_expired(xTaskGetTickCount());
     g_storage_maintenance.auth_job_id = 0;
+    g_storage_maintenance.auth_operation =
+        LocalAuthWorkerOperation::authenticate_pin;
     g_storage_maintenance.verify_ready_at = 0;
     g_storage_maintenance.worker_deadline = 0;
-    if (result.status != LocalAuthWorkerStatus::ok) {
+    if (processing_deadline_expired) {
         g_storage_maintenance.wipe();
         return StorageMaintenancePinVerifyResult::auth_unavailable;
     }
 
-    if (!result.verified) {
+    if (result.status != LocalAuthWorkerStatus::completed) {
+        g_storage_maintenance.wipe();
+        return StorageMaintenancePinVerifyResult::auth_unavailable;
+    }
+
+    if (result.operation_status != KeystoreOperationStatus::success) {
+        if (result.operation_status != KeystoreOperationStatus::wrong_pin) {
+            g_storage_maintenance.wipe();
+            return StorageMaintenancePinVerifyResult::auth_unavailable;
+        }
         const TickType_t now = xTaskGetTickCount();
         g_storage_maintenance.stage = StorageMaintenanceStage::pin_entry;
         wipe_sensitive_buffer(g_storage_maintenance.pin_entry, sizeof(g_storage_maintenance.pin_entry));

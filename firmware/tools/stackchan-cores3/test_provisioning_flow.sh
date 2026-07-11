@@ -56,7 +56,6 @@ cat >"${TMP_DIR}/stubs.cpp" <<'CPP'
 #include "bip39.h"
 #include "bip39_wordlist.h"
 #include "entropy.h"
-#include "local_auth.h"
 #include "local_auth_worker.h"
 
 namespace {
@@ -73,7 +72,6 @@ namespace signing {
 
 bool g_test_worker_accepts_jobs = true;
 uint32_t g_last_worker_job_id = 0;
-uint32_t g_last_cancelled_worker_job_id = 0;
 
 void wipe_sensitive_buffer(void* data, size_t size)
 {
@@ -136,12 +134,12 @@ Bip39EntropyDecodeResult decode_bip39_entropy_12_words(
     return Bip39EntropyDecodeResult::ok;
 }
 
-bool is_valid_local_pin(const char* pin)
+bool keystore_pin_valid(const char* pin)
 {
-    if (pin == nullptr || strlen(pin) != kLocalPinDigits) {
+    if (pin == nullptr || strlen(pin) != kKeystorePinDigits) {
         return false;
     }
-    for (size_t index = 0; index < kLocalPinDigits; ++index) {
+    for (size_t index = 0; index < kKeystorePinDigits; ++index) {
         if (!isdigit(static_cast<unsigned char>(pin[index]))) {
             return false;
         }
@@ -149,30 +147,16 @@ bool is_valid_local_pin(const char* pin)
     return true;
 }
 
-bool local_auth_worker_submit_prepare_verifier(
+bool local_auth_worker_submit_create(
     LocalAuthWorkerOwner,
     const char* pin,
     uint32_t* job_id)
 {
-    if (!g_test_worker_accepts_jobs || !is_valid_local_pin(pin) || job_id == nullptr) {
+    if (!g_test_worker_accepts_jobs || !keystore_pin_valid(pin) || job_id == nullptr) {
         return false;
     }
     *job_id = 1;
     g_last_worker_job_id = *job_id;
-    return true;
-}
-
-bool local_auth_worker_submit_verify(
-    LocalAuthWorkerOwner owner,
-    const char* pin,
-    uint32_t* job_id)
-{
-    return local_auth_worker_submit_prepare_verifier(owner, pin, job_id);
-}
-
-bool local_auth_worker_cancel_job(uint32_t)
-{
-    g_last_cancelled_worker_job_id = g_last_worker_job_id;
     return true;
 }
 
@@ -188,7 +172,6 @@ cat >"${TMP_DIR}/provisioning_flow_test.cpp" <<'CPP'
 namespace signing {
 extern bool g_test_worker_accepts_jobs;
 extern uint32_t g_last_worker_job_id;
-extern uint32_t g_last_cancelled_worker_job_id;
 }
 
 namespace {
@@ -221,19 +204,23 @@ void enter_setup_choice(signing::TimeoutWindow input_window)
 }
 
 int g_commit_calls = 0;
+int g_rollback_calls = 0;
 bool g_commit_root_shape = false;
-bool g_commit_prepared_shape = false;
 
 signing::ProvisioningFlowCommitResult commit_setup(
     const uint8_t* root_material,
-    size_t root_material_size,
-    const signing::LocalAuthPreparedRecord* prepared_auth)
+    size_t root_material_size)
 {
     ++g_commit_calls;
     g_commit_root_shape =
         root_material != nullptr && root_material_size == signing::kBip39EntropyBytes;
-    g_commit_prepared_shape = prepared_auth != nullptr;
     return signing::ProvisioningFlowCommitResult::ok;
+}
+
+bool rollback_setup()
+{
+    ++g_rollback_calls;
+    return true;
 }
 
 }  // namespace
@@ -299,31 +286,33 @@ int main()
     expect(signing::provisioning_flow_backup_phrase()[0] == '\0', "phrase text wiped before PIN");
 
     enter_pin("123456", pin_window(300, 310));
-    expect(signing::provisioning_flow_submit_pin(pin_window(310, 320), 400, 420) == PinSubmitResult::advanced_to_repeat,
+    expect(signing::provisioning_flow_submit_pin(pin_window(310, 320), 400) == PinSubmitResult::advanced_to_repeat,
            "first PIN advances to repeat");
     enter_pin("000000", pin_window(320, 330));
-    expect(signing::provisioning_flow_submit_pin(pin_window(330, 340), 400, 420) == PinSubmitResult::mismatch_restart,
+    expect(signing::provisioning_flow_submit_pin(pin_window(330, 340), 400) == PinSubmitResult::mismatch_restart,
            "mismatch restarts first PIN");
     expect(signing::provisioning_flow_stage_is(Stage::pin_first_entry), "mismatch stage");
 
     enter_pin("123456", pin_window(340, 350));
-    expect(signing::provisioning_flow_submit_pin(pin_window(350, 360), 450, 480) == PinSubmitResult::advanced_to_repeat,
+    expect(signing::provisioning_flow_submit_pin(pin_window(350, 360), 450) == PinSubmitResult::advanced_to_repeat,
            "first PIN accepted after mismatch");
     enter_pin("123456", pin_window(360, 370));
-    expect(signing::provisioning_flow_submit_pin(pin_window(370, 380), 450, 480) == PinSubmitResult::commit_started,
+    expect(signing::provisioning_flow_submit_pin(pin_window(370, 380), 450) == PinSubmitResult::commit_started,
            "matching repeat starts commit");
     expect(signing::provisioning_flow_commit_job_active(1), "commit waits for worker result");
     signing::LocalAuthWorkerResult worker_result = {};
     worker_result.job_id = 1;
     worker_result.owner = signing::LocalAuthWorkerOwner::provisioning_setup;
-    worker_result.operation = signing::LocalAuthWorkerOperation::prepare_verifier_record;
-    worker_result.status = signing::LocalAuthWorkerStatus::ok;
+    worker_result.operation = signing::LocalAuthWorkerOperation::create_keystore;
+    worker_result.status = signing::LocalAuthWorkerStatus::completed;
+    worker_result.operation_status = signing::KeystoreOperationStatus::success;
     const signing::ProvisioningFlowCommitFinishResult commit_finish =
-        signing::provisioning_flow_finish_commit_worker_result(worker_result, commit_setup);
+        signing::provisioning_flow_finish_commit_worker_result(
+            worker_result, commit_setup, rollback_setup);
     expect(commit_finish.status == CommitFinishStatus::committed, "commit worker result commits setup");
     expect(g_commit_calls == 1, "commit callback called once");
+    expect(g_rollback_calls == 0, "successful setup does not invoke rollback");
     expect(g_commit_root_shape, "root input shape");
-    expect(g_commit_prepared_shape, "prepared auth input shape");
 
     enter_setup_choice(pin_window(280, 330));
     expect(signing::provisioning_flow_begin_generate(290, pin_window(290, 340)) == GenerateResult::ok,
@@ -332,18 +321,48 @@ int main()
                ConfirmBackupResult::started,
            "confirm before missing commit callback");
     enter_pin("123456", pin_window(350, 360));
-    expect(signing::provisioning_flow_submit_pin(pin_window(360, 370), 380, 420) == PinSubmitResult::advanced_to_repeat,
+    expect(signing::provisioning_flow_submit_pin(pin_window(360, 370), 380) == PinSubmitResult::advanced_to_repeat,
            "first PIN accepted before missing commit callback");
     enter_pin("123456", pin_window(380, 390));
-    expect(signing::provisioning_flow_submit_pin(pin_window(390, 400), 410, 420) == PinSubmitResult::commit_started,
+    expect(signing::provisioning_flow_submit_pin(pin_window(390, 400), 410) == PinSubmitResult::commit_started,
            "matching repeat starts commit before missing commit callback");
-    expect(signing::provisioning_flow_finish_commit_worker_result(worker_result, nullptr).status ==
+    expect(signing::provisioning_flow_finish_commit_worker_result(
+               worker_result, nullptr, rollback_setup).status ==
                CommitFinishStatus::failed,
            "missing commit callback fails closed");
     expect(!signing::provisioning_flow_active(),
            "missing commit callback clears provisioning flow");
     expect(g_commit_calls == 1,
            "missing commit callback does not call commit callback");
+    expect(g_rollback_calls == 1,
+           "missing commit callback invokes setup rollback");
+
+    enter_setup_choice(pin_window(330, 390));
+    expect(signing::provisioning_flow_begin_generate(
+               340, pin_window(340, 440)) == GenerateResult::ok,
+           "generate before failed keystore creation");
+    expect(signing::provisioning_flow_confirm_backup_phrase(
+               pin_window(440, 450)) == ConfirmBackupResult::started,
+           "confirm before failed keystore creation");
+    enter_pin("123456", pin_window(450, 460));
+    expect(signing::provisioning_flow_submit_pin(
+               pin_window(460, 470), 480) == PinSubmitResult::advanced_to_repeat,
+           "first PIN accepted before failed keystore creation");
+    enter_pin("123456", pin_window(470, 480));
+    expect(signing::provisioning_flow_submit_pin(
+               pin_window(480, 490), 500) == PinSubmitResult::commit_started,
+           "matching repeat starts failed keystore creation test");
+    signing::LocalAuthWorkerResult failed_worker_result = worker_result;
+    failed_worker_result.operation_status =
+        signing::KeystoreOperationStatus::storage_error;
+    expect(signing::provisioning_flow_finish_commit_worker_result(
+               failed_worker_result, commit_setup, rollback_setup).status ==
+               CommitFinishStatus::failed,
+           "failed keystore creation closes setup as a failure");
+    expect(g_rollback_calls == 2,
+           "failed keystore creation invokes setup rollback");
+    expect(!signing::provisioning_flow_active(),
+           "failed keystore creation releases setup state after rollback");
 
     signing::provisioning_flow_wipe();
     enter_setup_choice(pin_window(390, 450));
@@ -352,11 +371,11 @@ int main()
                ConfirmBackupResult::started,
            "confirm before worker busy");
     enter_pin("123456", pin_window(510, 520));
-    expect(signing::provisioning_flow_submit_pin(pin_window(520, 530), 540, 590) == PinSubmitResult::advanced_to_repeat,
+    expect(signing::provisioning_flow_submit_pin(pin_window(520, 530), 540) == PinSubmitResult::advanced_to_repeat,
            "first PIN accepted before worker busy");
     enter_pin("123456", pin_window(540, 550));
     signing::g_test_worker_accepts_jobs = false;
-    expect(signing::provisioning_flow_submit_pin(pin_window(550, 560), 570, 590) == PinSubmitResult::worker_unavailable,
+    expect(signing::provisioning_flow_submit_pin(pin_window(550, 560), 570) == PinSubmitResult::worker_unavailable,
            "worker failure is not reported as invalid PIN");
     expect(signing::provisioning_flow_stage_is(Stage::pin_repeat_entry),
            "worker failure keeps repeat stage for retry");
@@ -370,25 +389,24 @@ int main()
                ConfirmBackupResult::started,
            "confirm before commit panel loss");
     enter_pin("123456", pin_window(610, 620));
-    expect(signing::provisioning_flow_submit_pin(pin_window(620, 630), 640, 690) == PinSubmitResult::advanced_to_repeat,
+    expect(signing::provisioning_flow_submit_pin(pin_window(620, 630), 640) == PinSubmitResult::advanced_to_repeat,
            "first PIN accepted before commit panel loss");
     enter_pin("123456", pin_window(640, 650));
-    expect(signing::provisioning_flow_submit_pin(pin_window(650, 660), 670, 690) == PinSubmitResult::commit_started,
+    expect(signing::provisioning_flow_submit_pin(pin_window(650, 660), 670) == PinSubmitResult::commit_started,
            "matching repeat starts commit before panel loss");
     expect(signing::provisioning_flow_stage_is(Stage::pin_committing),
            "panel loss scenario reaches commit stage");
-    expect(signing::provisioning_flow_handle_panel_deleted(Panel::pin_entry),
-           "panel delete wipes setup PIN commit");
-    expect(signing::g_last_cancelled_worker_job_id == signing::g_last_worker_job_id,
-           "PIN commit panel delete cancels worker job");
-    expect(!signing::provisioning_flow_active(),
-           "PIN commit panel delete clears provisioning flow");
+    expect(!signing::provisioning_flow_handle_panel_deleted(Panel::pin_entry),
+           "panel delete cannot erase setup PIN commit owner");
+    expect(signing::provisioning_flow_active(),
+           "PIN commit remains active after panel delete");
     const int commit_calls_after_panel_delete = g_commit_calls;
-    expect(signing::provisioning_flow_finish_commit_worker_result(worker_result, commit_setup).status ==
-               CommitFinishStatus::stale,
-           "stale PIN commit worker result ignored after panel delete");
-    expect(g_commit_calls == commit_calls_after_panel_delete,
-           "stale worker result does not commit after panel delete");
+    expect(signing::provisioning_flow_finish_commit_worker_result(
+               worker_result, commit_setup, rollback_setup).status ==
+               CommitFinishStatus::committed,
+           "PIN commit result remains authoritative after panel delete");
+    expect(g_commit_calls == commit_calls_after_panel_delete + 1,
+           "panel loss cannot discard completed setup commit result");
 
     enter_setup_choice(pin_window(590, 650));
     expect(signing::provisioning_flow_begin_generate(600, pin_window(600, 700)) == GenerateResult::ok,
@@ -397,21 +415,23 @@ int main()
                ConfirmBackupResult::started,
            "confirm before commit timeout");
     enter_pin("123456", pin_window(710, 720));
-    expect(signing::provisioning_flow_submit_pin(pin_window(720, 730), 740, 760) == PinSubmitResult::advanced_to_repeat,
+    expect(signing::provisioning_flow_submit_pin(pin_window(720, 730), 740) == PinSubmitResult::advanced_to_repeat,
            "first PIN accepted before commit timeout");
     enter_pin("123456", pin_window(740, 750));
-    expect(signing::provisioning_flow_submit_pin(pin_window(750, 755), 780, 790) == PinSubmitResult::commit_started,
+    expect(signing::provisioning_flow_submit_pin(pin_window(750, 755), 780) == PinSubmitResult::commit_started,
            "matching repeat starts commit before timeout");
     expect(signing::provisioning_flow_handle_pin_setup_lifetime(true, 789) ==
                PanelLifetimeResult::unchanged,
            "PIN commit stays active before worker deadline");
     expect(signing::provisioning_flow_handle_pin_setup_lifetime(true, 790) ==
-               PanelLifetimeResult::clear_panel_preserve_timeout,
-           "PIN commit timeout wipes flow");
-    expect(signing::g_last_cancelled_worker_job_id == signing::g_last_worker_job_id,
-           "PIN commit timeout cancels worker job");
-    expect(!signing::provisioning_flow_active(),
-           "PIN commit timeout clears provisioning flow");
+               PanelLifetimeResult::unchanged,
+           "display deadline cannot erase setup PIN commit owner");
+    expect(signing::provisioning_flow_active(),
+           "PIN commit remains active until exact worker result");
+    expect(signing::provisioning_flow_finish_commit_worker_result(
+               worker_result, commit_setup, rollback_setup).status ==
+               CommitFinishStatus::committed,
+           "late setup worker result is reconciled instead of discarded");
 
     enter_setup_choice(pin_window(390, 450));
     expect(signing::provisioning_flow_begin_import_phrase(400, pin_window(400, 500)) == ImportStartResult::started,

@@ -82,20 +82,20 @@ bool decrypt(
     const uint8_t*, const uint8_t*, const uint8_t*, size_t, const uint8_t*, size_t,
     const uint8_t*, uint8_t*, void*) { return true; }
 
-LocalTransportIdentityRecordReadStatus read_pair(
-    uint8_t* secret,
-    uint8_t* public_value,
-    void* context)
+LocalTransportIdentityRecordReadStatus with_pair(
+    LocalTransportStoredKeyPairConsumer consumer,
+    void* consumer_context,
+    void* storage_context)
 {
-    Store* store = static_cast<Store*>(context);
+    Store* store = static_cast<Store*>(storage_context);
     ++store->pair_reads;
-    memset(secret, 0, kLocalTransportStaticKeyBytes);
-    memset(public_value, 0, kLocalTransportStaticKeyBytes);
-    if (store->status == LocalTransportIdentityRecordReadStatus::found) {
-        memcpy(secret, store->secret, sizeof(store->secret));
-        memcpy(public_value, store->public_key, sizeof(store->public_key));
+    if (store->status != LocalTransportIdentityRecordReadStatus::found) {
+        return store->status;
     }
-    return store->status;
+    return consumer != nullptr &&
+                   consumer(store->secret, store->public_key, consumer_context)
+               ? LocalTransportIdentityRecordReadStatus::found
+               : LocalTransportIdentityRecordReadStatus::error;
 }
 
 LocalTransportIdentityRecordReadStatus read_public(
@@ -146,13 +146,33 @@ LocalTransportIdentityStoreOps make_ops(Store* store)
     return LocalTransportIdentityStoreOps{
         LocalTransportIdentityStorageOps{
             read_public,
-            read_pair,
+            with_pair,
             write_pair,
             erase_pair,
             store,
         },
         &crypto,
     };
+}
+
+struct SecretObservation {
+    bool called = false;
+    uint8_t secret[kLocalTransportStaticKeyBytes] = {};
+};
+
+bool observe_secret(
+    const uint8_t* secret,
+    const uint8_t*,
+    const uint8_t*,
+    void* context)
+{
+    auto* observation = static_cast<SecretObservation*>(context);
+    if (observation == nullptr || secret == nullptr) {
+        return false;
+    }
+    observation->called = true;
+    memcpy(observation->secret, secret, sizeof(observation->secret));
+    return true;
 }
 
 }  // namespace
@@ -174,30 +194,30 @@ int main()
     assert(store.writes == 1 && random_calls == 1);
     assert(memcmp(&identity, &second, sizeof(identity)) == 0);
 
-    LocalTransportPairingIdentitySecret secret = {};
-    assert(local_transport_identity_load_secret(ops, &secret));
+    SecretObservation secret = {};
+    assert(local_transport_identity_with_secret(ops, observe_secret, &secret));
     assert(store.pair_reads == 1);
-    assert(memcmp(secret.secret_key, store.secret, sizeof(secret.secret_key)) == 0);
+    assert(secret.called);
+    assert(memcmp(secret.secret, store.secret, sizeof(secret.secret)) == 0);
 
     store.public_key[0] ^= 1U;
     LocalTransportPairingIdentity projected = {};
     assert(local_transport_identity_load_or_create(ops, &projected));
     assert(store.public_reads == 3 && store.pair_reads == 1);
-    memset(&secret, 0xa5, sizeof(secret));
-    assert(!local_transport_identity_load_secret(ops, &secret));
+    secret = {};
+    assert(!local_transport_identity_with_secret(ops, observe_secret, &secret));
     assert(store.pair_reads == 2);
-    for (uint8_t value : secret.secret_key) {
-        assert(value == 0);
-    }
+    assert(!secret.called);
     assert(store.writes == 1 && random_calls == 1);
 
     LocalTransportIdentityStoreOps invalid_ops = {};
     memset(&projected, 0xa5, sizeof(projected));
     assert(!local_transport_identity_load_or_create(invalid_ops, &projected));
     assert(all_zero(reinterpret_cast<const uint8_t*>(&projected), sizeof(projected)));
-    memset(&secret, 0xa5, sizeof(secret));
-    assert(!local_transport_identity_load_secret(invalid_ops, &secret));
-    assert(all_zero(reinterpret_cast<const uint8_t*>(&secret), sizeof(secret)));
+    secret = {};
+    assert(!local_transport_identity_with_secret(
+        invalid_ops, observe_secret, &secret));
+    assert(!secret.called);
 
     LocalTransportIdentityStoreOps wipe_only = {};
     wipe_only.storage.erase_key_pair = erase_pair;

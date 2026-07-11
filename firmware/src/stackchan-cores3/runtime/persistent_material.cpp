@@ -4,7 +4,6 @@
 
 #include "protocol/approval_history.h"
 #include "human_approval_settings.h"
-#include "local_transport_pairing.h"
 #include "policy/policy_update_marker.h"
 #include "protocol/signing_mode.h"
 #include "sui_account_settings.h"
@@ -48,17 +47,6 @@ bool parse_persisted_provisioning_state(const char* value, ProvisioningPersisted
     return false;
 }
 
-void rollback_setup_material()
-{
-    wipe_sui_zklogin_proof_record();
-    wipe_human_approval_input_mode();
-    wipe_signing_authorization_mode();
-    wipe_sui_account_settings();
-    clear_local_auth();
-    wipe_policy();
-    wipe_root_material();
-}
-
 const char* runtime_failure_message(PersistentMaterialRuntimeFailure failure)
 {
     switch (failure) {
@@ -68,12 +56,10 @@ const char* runtime_failure_message(PersistentMaterialRuntimeFailure failure)
             return "Active policy unavailable while provisioned; failing closed";
         case PersistentMaterialRuntimeFailure::pending_storage_action_resume_failed:
             return "Pending storage action could not be completed during boot; failing closed";
-        case PersistentMaterialRuntimeFailure::wallet_erase_root_wipe_failed:
-            return "Device reset could not wipe root material; failing closed";
+        case PersistentMaterialRuntimeFailure::wallet_erase_keystore_wipe_failed:
+            return "Device reset could not wipe encrypted keystore; failing closed";
         case PersistentMaterialRuntimeFailure::wallet_erase_policy_wipe_failed:
             return "Device reset could not wipe active policy; failing closed";
-        case PersistentMaterialRuntimeFailure::wallet_erase_local_auth_wipe_failed:
-            return "Device reset could not wipe local PIN verifier; failing closed";
         case PersistentMaterialRuntimeFailure::wallet_erase_human_approval_setting_wipe_failed:
             return "Device reset could not wipe human approval input mode; failing closed";
         case PersistentMaterialRuntimeFailure::wallet_erase_signing_mode_wipe_failed:
@@ -86,8 +72,6 @@ const char* runtime_failure_message(PersistentMaterialRuntimeFailure failure)
             return "Device reset could not wipe policy update marker; failing closed";
         case PersistentMaterialRuntimeFailure::wallet_erase_zklogin_proof_wipe_failed:
             return "Device reset could not wipe Sui zkLogin proof record; failing closed";
-        case PersistentMaterialRuntimeFailure::wallet_erase_pairing_store_wipe_failed:
-            return "Device reset could not wipe local transport pairing store; failing closed";
         case PersistentMaterialRuntimeFailure::wallet_erase_material_remaining:
             return "Device reset reported success but persistent material remains; failing closed";
         case PersistentMaterialRuntimeFailure::wallet_erase_state_storage_failed:
@@ -119,9 +103,9 @@ const char* runtime_failure_message(PersistentMaterialRuntimeFailure failure)
         case PersistentMaterialRuntimeFailure::settings_reset_auth_unavailable:
             return "Settings repair could not verify stored PIN; failing closed";
         case PersistentMaterialRuntimeFailure::local_pin_auth_unavailable:
-            return "Local PIN verifier unavailable during PIN authorization; failing closed";
+            return "Encrypted keystore unavailable during PIN authorization; failing closed";
         case PersistentMaterialRuntimeFailure::pin_change_auth_unavailable:
-            return "Change PIN failed and local PIN verifier is unavailable; failing closed";
+            return "Change PIN failed and encrypted keystore is unavailable; failing closed";
         default:
             return "Persistent material runtime failure; failing closed";
     }
@@ -147,12 +131,12 @@ PersistentMaterialConsistencyResult validate_loaded_runtime_state(
         if (!status.authority_gate_active()) {
             latch_consistency_error(
                 ops,
-                "Stored signing key material exists without valid local authentication verifier; failing closed");
+                "Stored signing key material exists without a valid encrypted keyslot; failing closed");
             return PersistentMaterialConsistencyResult::consistency_error;
         }
         latch_consistency_error(
             ops,
-            "Stored signing key material and local authentication verifier exist without valid recoverable settings; failing closed");
+            "Stored encrypted key material exists without valid recoverable settings; failing closed");
         return PersistentMaterialConsistencyResult::consistency_error;
     }
 
@@ -163,10 +147,10 @@ PersistentMaterialConsistencyResult validate_loaded_runtime_state(
         return PersistentMaterialConsistencyResult::consistency_error;
     }
 
-    if (status.authority_gate_active() || status.recoverable_settings_material_present()) {
+    if (status.any_material()) {
         latch_consistency_error(
             ops,
-            "Persistent settings or authority-gate material exists without signing key material; failing closed");
+            "Invalid or incomplete persistent material exists outside provisioned state; failing closed");
         return PersistentMaterialConsistencyResult::consistency_error;
     }
 
@@ -185,9 +169,9 @@ bool PersistentMaterialStatus::complete() const
 
 bool PersistentMaterialStatus::any_material() const
 {
-    return root_present ||
+    return keystore_status != StackChanKeystoreMaterialStatus::missing ||
+           root_status != StackChanKeystoreMaterialStatus::missing ||
            policy_status != PolicyStoreStatus::missing ||
-           local_auth_status != LocalAuthStatus::missing ||
            human_approval_setting_status != HumanApprovalInputModeStatus::missing ||
            signing_mode_status != AuthorizationModeStatus::missing ||
            sui_account_settings_status != SuiAccountSettingsStatus::missing ||
@@ -198,12 +182,14 @@ bool PersistentMaterialStatus::any_material() const
 
 bool PersistentMaterialStatus::signing_key_material_present() const
 {
-    return root_present;
+    return root_status == StackChanKeystoreMaterialStatus::active ||
+           root_status == StackChanKeystoreMaterialStatus::busy;
 }
 
 bool PersistentMaterialStatus::authority_gate_active() const
 {
-    return local_auth_status == LocalAuthStatus::active;
+    return keystore_status == StackChanKeystoreMaterialStatus::active ||
+           keystore_status == StackChanKeystoreMaterialStatus::busy;
 }
 
 bool PersistentMaterialStatus::recoverable_settings_complete() const
@@ -257,9 +243,9 @@ const char* provisioning_persisted_state_to_string(ProvisioningPersistedState st
 PersistentMaterialStatus persistent_material_status()
 {
     return PersistentMaterialStatus{
-        has_root_material(),
+        stackchan_keystore_status(),
+        stackchan_keystore_root_status(),
         active_policy_status(),
-        local_auth_status(),
         human_approval_input_mode_status(),
         authorization_mode_status(),
         sui_account_settings_status(),
@@ -359,12 +345,12 @@ bool persistent_material_validate_runtime_state(
         if (!status.authority_gate_active()) {
             latch_consistency_error(
                 ops,
-                "Provisioned state has signing key material without valid local authentication verifier; failing closed");
+                "Provisioned state has signing key material without a valid encrypted keyslot; failing closed");
             return false;
         }
         latch_consistency_error(
             ops,
-            "Provisioned state has signing key material and local authentication verifier without valid recoverable settings; failing closed");
+            "Provisioned state has encrypted key material without valid recoverable settings; failing closed");
         return false;
     }
 
@@ -374,10 +360,35 @@ bool persistent_material_validate_runtime_state(
             "Signing key material exists outside provisioned state; failing closed");
         return false;
     }
-    if (status.authority_gate_active() || status.recoverable_settings_material_present()) {
+    if (status.any_material()) {
         latch_consistency_error(
             ops,
-            "Persistent settings or authority-gate material exists without signing key material; failing closed");
+            "Invalid or incomplete persistent material exists outside provisioned state; failing closed");
+        return false;
+    }
+    return true;
+}
+
+bool persistent_material_rollback_setup(const PersistentMaterialOps& ops)
+{
+    wipe_sui_zklogin_proof_record();
+    wipe_human_approval_input_mode();
+    wipe_signing_authorization_mode();
+    wipe_sui_account_settings();
+    wipe_policy();
+    stackchan_keystore_erase();
+    const bool state_restored =
+        persist_state(ops, ProvisioningPersistedState::unprovisioned);
+    if (persistent_material_exists()) {
+        latch_consistency_error(
+            ops,
+            "Setup rollback left persistent material; failing closed");
+        return false;
+    }
+    if (!state_restored) {
+        latch_consistency_error(
+            ops,
+            "Setup rollback could not persist unprovisioned state; failing closed");
         return false;
     }
     return true;
@@ -386,106 +397,42 @@ bool persistent_material_validate_runtime_state(
 PersistentMaterialCommitResult persistent_material_commit_setup(
     const uint8_t* root_material,
     size_t root_material_size,
-    const char* setup_pin,
     const PersistentMaterialOps& ops)
 {
-    if (root_material == nullptr || root_material_size != kRootMaterialBytes ||
-        setup_pin == nullptr || setup_pin[0] == '\0') {
+    if (root_material == nullptr ||
+        root_material_size != kStackChanRootMaterialBytes) {
+        persistent_material_rollback_setup(ops);
         return PersistentMaterialCommitResult::missing_input;
     }
 
-    LocalAuthPreparedRecord prepared_auth = {};
-    if (!prepare_local_pin_verifier_record(setup_pin, &prepared_auth)) {
-        return PersistentMaterialCommitResult::local_auth_storage_error;
-    }
-    const PersistentMaterialCommitResult result =
-        persistent_material_commit_setup_with_prepared_auth(
-            root_material,
-            root_material_size,
-            &prepared_auth,
-            ops);
-    wipe_local_pin_verifier_record(&prepared_auth);
-    return result;
-}
-
-PersistentMaterialCommitResult persistent_material_commit_setup_with_prepared_auth(
-    const uint8_t* root_material,
-    size_t root_material_size,
-    const LocalAuthPreparedRecord* prepared_auth,
-    const PersistentMaterialOps& ops)
-{
-    if (root_material == nullptr || root_material_size != kRootMaterialBytes ||
-        prepared_auth == nullptr) {
-        return PersistentMaterialCommitResult::missing_input;
-    }
-
-    if (!store_root_material(root_material, root_material_size)) {
-        rollback_setup_material();
-        if (persistent_material_exists()) {
-            latch_consistency_error(
-                ops,
-                "Root material storage left partial persistent setup material; failing closed");
-        }
+    if (stackchan_keystore_replace_root(root_material) !=
+        KeystoreOperationStatus::success) {
+        persistent_material_rollback_setup(ops);
         return PersistentMaterialCommitResult::root_storage_error;
     }
 
     if (!store_default_policy()) {
-        rollback_setup_material();
-        if (persistent_material_exists()) {
-            latch_consistency_error(
-                ops,
-                "Policy storage failed with persistent setup material present; failing closed");
-        }
+        persistent_material_rollback_setup(ops);
         return PersistentMaterialCommitResult::policy_storage_error;
     }
 
-    if (!store_prepared_local_pin_verifier(prepared_auth)) {
-        rollback_setup_material();
-        if (persistent_material_exists()) {
-            latch_consistency_error(
-                ops,
-                "Local PIN verifier storage failed with persistent setup material present; failing closed");
-        }
-        return PersistentMaterialCommitResult::local_auth_storage_error;
-    }
-
     if (!store_signing_authorization_mode(AuthorizationMode::user)) {
-        rollback_setup_material();
-        if (persistent_material_exists()) {
-            latch_consistency_error(
-                ops,
-                "Signing mode storage failed with persistent setup material present; failing closed");
-        }
+        persistent_material_rollback_setup(ops);
         return PersistentMaterialCommitResult::signing_mode_storage_error;
     }
 
     if (!store_human_approval_input_mode(HumanApprovalInputMode::pin)) {
-        rollback_setup_material();
-        if (persistent_material_exists()) {
-            latch_consistency_error(
-                ops,
-                "Human approval input mode storage failed with persistent setup material present; failing closed");
-        }
+        persistent_material_rollback_setup(ops);
         return PersistentMaterialCommitResult::human_approval_setting_storage_error;
     }
 
     if (!store_sui_account_settings(kDefaultSuiAccountSettings)) {
-        rollback_setup_material();
-        if (persistent_material_exists()) {
-            latch_consistency_error(
-                ops,
-                "Sui account settings storage failed with persistent setup material present; failing closed");
-        }
+        persistent_material_rollback_setup(ops);
         return PersistentMaterialCommitResult::sui_account_settings_storage_error;
     }
 
     if (!persist_state(ops, ProvisioningPersistedState::provisioned)) {
-        rollback_setup_material();
-        if (persistent_material_exists()) {
-            latch_consistency_error(
-                ops,
-                "Provisioning state storage failed with persistent setup material present; failing closed");
-        }
+        persistent_material_rollback_setup(ops);
         return PersistentMaterialCommitResult::state_storage_error;
     }
 
@@ -495,25 +442,21 @@ PersistentMaterialCommitResult persistent_material_commit_setup_with_prepared_au
 
 PersistentMaterialWalletEraseResult persistent_material_wallet_erase()
 {
-    const bool root_wiped = wipe_root_material();
+    const bool keystore_wiped =
+        stackchan_keystore_erase() == KeystoreOperationStatus::success;
     const bool policy_wiped = wipe_policy();
-    const bool local_auth_wiped = clear_local_auth();
     const bool human_approval_setting_wiped = wipe_human_approval_input_mode();
     const bool signing_mode_wiped = wipe_signing_authorization_mode();
     const bool sui_account_settings_wiped = wipe_sui_account_settings();
     const bool approval_history_wiped = approval_history_wipe();
     const bool policy_update_marker_wiped = policy_update_marker_clear();
     const bool zklogin_proof_wiped = wipe_sui_zklogin_proof_record();
-    const bool pairing_store_wiped = local_transport_pairing_wipe_identity();
 
-    if (!root_wiped) {
-        return PersistentMaterialWalletEraseResult::root_wipe_error;
+    if (!keystore_wiped) {
+        return PersistentMaterialWalletEraseResult::keystore_wipe_error;
     }
     if (!policy_wiped) {
         return PersistentMaterialWalletEraseResult::policy_wipe_error;
-    }
-    if (!local_auth_wiped) {
-        return PersistentMaterialWalletEraseResult::local_auth_wipe_error;
     }
     if (!human_approval_setting_wiped) {
         return PersistentMaterialWalletEraseResult::human_approval_setting_wipe_error;
@@ -532,9 +475,6 @@ PersistentMaterialWalletEraseResult persistent_material_wallet_erase()
     }
     if (!zklogin_proof_wiped) {
         return PersistentMaterialWalletEraseResult::zklogin_proof_wipe_error;
-    }
-    if (!pairing_store_wiped) {
-        return PersistentMaterialWalletEraseResult::pairing_store_wipe_error;
     }
     if (persistent_material_exists()) {
         return PersistentMaterialWalletEraseResult::material_remaining_error;
