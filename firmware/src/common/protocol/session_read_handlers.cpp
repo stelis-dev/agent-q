@@ -78,7 +78,7 @@ bool write_capabilities_response(
     const char* id,
     const ResponseWriter& writer,
     AuthorizationMode signing_mode,
-    const SuiActiveIdentity& active_identity,
+    const SuiPublicIdentity& active_identity,
     bool sui_zklogin_credential_available)
 {
     JsonDocument result;
@@ -133,16 +133,13 @@ bool write_accounts_response(
     const char* id,
     const ResponseWriter& writer,
     const SessionReadHandlerOps& ops,
+    const SuiSessionReadProjection& projection,
     SuiActiveIdentityError* active_identity_error)
 {
     if (active_identity_error != nullptr) {
         *active_identity_error = SuiActiveIdentityError::none;
     }
-    if (ops.resolve_active_sui_identity == nullptr) {
-        return false;
-    }
-
-    const SuiActiveIdentity active_identity = ops.resolve_active_sui_identity();
+    const SuiPublicIdentity& active_identity = projection.identity;
     if (active_identity.kind == SuiActiveIdentityKind::error) {
         if (active_identity_error != nullptr) {
             *active_identity_error = active_identity.error;
@@ -220,11 +217,16 @@ void handle_protocol_get_capabilities_request(
         writer.write_error(id, "invalid_state");
         return;
     }
-    if (ops.resolve_active_sui_identity == nullptr) {
+    if (ops.project_sui_identity == nullptr) {
         writer.write_error(id, "account_unavailable");
         return;
     }
-    const SuiActiveIdentity active_identity = ops.resolve_active_sui_identity();
+    SuiSessionReadProjection projection = {};
+    if (!ops.project_sui_identity(&projection)) {
+        writer.write_error(id, "account_unavailable");
+        return;
+    }
+    const SuiPublicIdentity& active_identity = projection.identity;
     if (active_identity.kind == SuiActiveIdentityKind::error) {
         if (active_identity.error == SuiActiveIdentityError::native_account_unavailable &&
             ops.record_root_material_unreadable != nullptr) {
@@ -233,15 +235,12 @@ void handle_protocol_get_capabilities_request(
         writer.write_error(id, "account_unavailable");
         return;
     }
-    const bool sui_zklogin_credential_available =
-        ops.sui_zklogin_credential_available != nullptr &&
-        ops.sui_zklogin_credential_available();
     if (write_capabilities_response(
             id,
             writer,
             signing_mode,
             active_identity,
-            sui_zklogin_credential_available)) {
+            projection.sui_zklogin_credential_available)) {
         return;
     }
     writer.log_write_failure("get_capabilities", id);
@@ -266,7 +265,16 @@ void handle_protocol_get_accounts_request(
     (void)session_id;
 
     SuiActiveIdentityError active_identity_error = SuiActiveIdentityError::none;
-    if (write_accounts_response(id, writer, ops, &active_identity_error)) {
+    if (ops.project_sui_identity == nullptr) {
+        writer.write_error(id, "account_unavailable");
+        return;
+    }
+    SuiSessionReadProjection projection = {};
+    if (!ops.project_sui_identity(&projection)) {
+        writer.write_error(id, "account_unavailable");
+        return;
+    }
+    if (write_accounts_response(id, writer, ops, projection, &active_identity_error)) {
         return;
     }
     if (active_identity_error == SuiActiveIdentityError::native_account_unavailable &&

@@ -32,6 +32,7 @@ SuiZkLoginProofRecordStatus read_sui_zklogin_proof_record(
 SuiZkLoginProofRecordWriteResult store_sui_zklogin_proof_record(
     const SuiZkLoginProofRecord* record);
 bool wipe_sui_zklogin_proof_record();
+SuiPublicIdentity resolve_public_sui_identity();
 SuiActiveIdentity resolve_active_sui_identity();
 
 }  // namespace signing

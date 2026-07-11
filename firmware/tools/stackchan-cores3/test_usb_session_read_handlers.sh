@@ -39,6 +39,23 @@ for required in \
   fi
 done
 
+if grep -q 'SuiActiveIdentity[[:space:]]*(\*resolve' "${COMMON_PROTOCOL_DIR}/session_read_handlers.h"; then
+  echo "Session-read contract must not accept signing-grade active identity" >&2
+  exit 1
+fi
+if grep -Eq 'sui/(active_identity|zklogin_proof_record)\.h' "${COMMON_PROTOCOL_DIR}/session_read_handlers.h"; then
+  echo "Session-read contract must not include signing-grade identity or proof types" >&2
+  exit 1
+fi
+if grep -q '(\*sui_zklogin_credential_available)' "${COMMON_PROTOCOL_DIR}/session_read_handlers.h"; then
+  echo "Session-read contract must derive credential availability from one projection" >&2
+  exit 1
+fi
+if ! grep -q 'project_sui_identity' "${COMMON_PROTOCOL_DIR}/session_read_handlers.h"; then
+  echo "Session-read contract must own one public identity projection callback" >&2
+  exit 1
+fi
+
 CXX_BIN="${CXX:-c++}"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-usb-session-read-handlers.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
@@ -84,6 +101,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 #include <string.h>
 
 #include "protocol/session_read_handlers.h"
+#include "sui/signature_scheme.h"
 
 namespace {
 
@@ -95,8 +113,7 @@ int g_payload_admission_calls = 0;
 int g_require_session_calls = 0;
 int g_read_mode_calls = 0;
 int g_read_sui_account_settings_calls = 0;
-int g_sui_zklogin_credential_available_calls = 0;
-int g_resolve_active_identity_calls = 0;
+int g_project_sui_identity_calls = 0;
 int g_record_root_material_unreadable_calls = 0;
 int g_write_json_calls = 0;
 bool g_material_ready = true;
@@ -105,6 +122,7 @@ bool g_payload_admission_error = false;
 bool g_session_valid = true;
 bool g_read_mode_ok = true;
 bool g_read_sui_account_settings_ok = true;
+bool g_project_sui_identity_ok = true;
 bool g_accept_gas_sponsor = false;
 bool g_sui_zklogin_credential_available = true;
 signing::SuiActiveIdentityKind g_active_identity_kind =
@@ -148,8 +166,7 @@ void reset_state()
     g_require_session_calls = 0;
     g_read_mode_calls = 0;
     g_read_sui_account_settings_calls = 0;
-    g_sui_zklogin_credential_available_calls = 0;
-    g_resolve_active_identity_calls = 0;
+    g_project_sui_identity_calls = 0;
     g_record_root_material_unreadable_calls = 0;
     g_write_json_calls = 0;
     g_material_ready = true;
@@ -158,6 +175,7 @@ void reset_state()
     g_session_valid = true;
     g_read_mode_ok = true;
     g_read_sui_account_settings_ok = true;
+    g_project_sui_identity_ok = true;
     g_accept_gas_sponsor = false;
     g_sui_zklogin_credential_available = true;
     g_active_identity_kind = signing::SuiActiveIdentityKind::native;
@@ -343,18 +361,21 @@ bool read_sui_account_settings(signing::SuiAccountSettings* settings)
     return g_read_sui_account_settings_ok;
 }
 
-bool sui_zklogin_credential_available()
+bool project_sui_identity(signing::SuiSessionReadProjection* projection)
 {
-    g_sui_zklogin_credential_available_calls += 1;
-    return g_sui_zklogin_credential_available;
-}
-
-signing::SuiActiveIdentity resolve_active_identity()
-{
-    g_resolve_active_identity_calls += 1;
-    signing::SuiActiveIdentity identity = {};
+    g_project_sui_identity_calls += 1;
+    if (projection == nullptr) {
+        return false;
+    }
+    *projection = signing::SuiSessionReadProjection{};
+    if (!g_project_sui_identity_ok) {
+        return false;
+    }
+    signing::SuiPublicIdentity& identity = projection->identity;
     identity.kind = g_active_identity_kind;
     identity.error = g_active_identity_error;
+    projection->sui_zklogin_credential_available =
+        g_sui_zklogin_credential_available;
     if (identity.kind == signing::SuiActiveIdentityKind::native) {
         snprintf(
             identity.address,
@@ -372,7 +393,7 @@ signing::SuiActiveIdentity resolve_active_identity()
         memset(identity.public_key + 1, 1, 59);
         identity.public_key_size = 60;
     }
-    return identity;
+    return true;
 }
 
 void record_root_material_unreadable()
@@ -398,8 +419,7 @@ signing::SessionReadHandlerOps make_ops()
         require_session,
         read_signing_mode,
         read_sui_account_settings,
-        sui_zklogin_credential_available,
-        resolve_active_identity,
+        project_sui_identity,
         record_root_material_unreadable,
     };
 }
@@ -427,7 +447,7 @@ int main()
         assert(g_payload_admission_calls == 0);
         assert(g_require_session_calls == 0);
         assert(g_read_mode_calls == 0);
-        assert(g_sui_zklogin_credential_available_calls == 0);
+        assert(g_project_sui_identity_calls == 0);
     }
 
     {
@@ -499,8 +519,7 @@ int main()
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_state") == 0);
         assert(g_write_json_calls == 0);
-        assert(g_sui_zklogin_credential_available_calls == 0);
-        assert(g_resolve_active_identity_calls == 0);
+        assert(g_project_sui_identity_calls == 0);
     }
 
     {
@@ -510,8 +529,7 @@ int main()
         assert(g_write_error_calls == 0);
         assert(g_payload_admission_calls == 1);
         assert(g_read_mode_calls == 1);
-        assert(g_resolve_active_identity_calls == 1);
-        assert(g_sui_zklogin_credential_available_calls == 1);
+        assert(g_project_sui_identity_calls == 1);
         assert(g_write_json_calls == 1);
         assert(strcmp(g_last_json_type, "get_capabilities") == 0);
         assert(strcmp(g_last_json_auth, "policy") == 0);
@@ -529,13 +547,23 @@ int main()
 
     {
         reset_state();
+        g_project_sui_identity_ok = false;
+        JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_capabilities\",\"sessionId\":\"session\"}");
+        signing::handle_protocol_get_capabilities_request("req", request, make_writer(), make_ops());
+        assert(g_project_sui_identity_calls == 1);
+        assert(g_write_json_calls == 0);
+        assert(g_write_error_calls == 1);
+        assert(strcmp(g_last_error_code, "account_unavailable") == 0);
+    }
+
+    {
+        reset_state();
         g_active_identity_kind = signing::SuiActiveIdentityKind::zklogin;
         g_sui_zklogin_credential_available = false;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_capabilities\",\"sessionId\":\"session\"}");
         signing::handle_protocol_get_capabilities_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
-        assert(g_resolve_active_identity_calls == 1);
-        assert(g_sui_zklogin_credential_available_calls == 1);
+        assert(g_project_sui_identity_calls == 1);
         assert(g_write_json_calls == 1);
         assert(strcmp(g_last_json_capability_key_scheme, "zklogin") == 0);
         assert(strcmp(g_last_json_capability_derivation_path, "") == 0);
@@ -550,8 +578,7 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_capabilities\",\"sessionId\":\"session\"}");
         signing::handle_protocol_get_capabilities_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
-        assert(g_resolve_active_identity_calls == 1);
-        assert(g_sui_zklogin_credential_available_calls == 1);
+        assert(g_project_sui_identity_calls == 1);
         assert(g_write_json_calls == 1);
         assert(strcmp(g_last_json_capability_key_scheme, "") == 0);
         assert(strcmp(g_last_json_auth, "") == 0);
@@ -567,8 +594,7 @@ int main()
         g_active_identity_error = signing::SuiActiveIdentityError::proof_storage_error;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_capabilities\",\"sessionId\":\"session\"}");
         signing::handle_protocol_get_capabilities_request("req", request, make_writer(), make_ops());
-        assert(g_resolve_active_identity_calls == 1);
-        assert(g_sui_zklogin_credential_available_calls == 0);
+        assert(g_project_sui_identity_calls == 1);
         assert(g_write_json_calls == 0);
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "account_unavailable") == 0);
@@ -591,7 +617,7 @@ int main()
         signing::handle_protocol_get_accounts_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
         assert(g_payload_admission_calls == 1);
-        assert(g_resolve_active_identity_calls == 1);
+        assert(g_project_sui_identity_calls == 1);
         assert(g_read_sui_account_settings_calls == 1);
         assert(g_write_json_calls == 1);
         assert(strcmp(g_last_json_type, "get_accounts") == 0);
@@ -610,7 +636,7 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_accounts\",\"sessionId\":\"session\"}");
         signing::handle_protocol_get_accounts_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
-        assert(g_resolve_active_identity_calls == 1);
+        assert(g_project_sui_identity_calls == 1);
         assert(g_read_sui_account_settings_calls == 1);
         assert(g_write_json_calls == 1);
         assert(strcmp(g_last_json_account_address, "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890") == 0);
@@ -629,7 +655,7 @@ int main()
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_accounts\",\"sessionId\":\"session\"}");
         signing::handle_protocol_get_accounts_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 0);
-        assert(g_resolve_active_identity_calls == 1);
+        assert(g_project_sui_identity_calls == 1);
         assert(g_read_sui_account_settings_calls == 0);
         assert(g_write_json_calls == 1);
         assert(strcmp(g_last_json_account_address, "") == 0);
@@ -643,7 +669,7 @@ int main()
         g_active_identity_error = signing::SuiActiveIdentityError::proof_storage_error;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_accounts\",\"sessionId\":\"session\"}");
         signing::handle_protocol_get_accounts_request("req", request, make_writer(), make_ops());
-        assert(g_resolve_active_identity_calls == 1);
+        assert(g_project_sui_identity_calls == 1);
         assert(g_read_sui_account_settings_calls == 0);
         assert(g_record_root_material_unreadable_calls == 0);
         assert(g_write_error_calls == 1);
@@ -656,7 +682,7 @@ int main()
         g_active_identity_error = signing::SuiActiveIdentityError::native_account_unavailable;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_accounts\",\"sessionId\":\"session\"}");
         signing::handle_protocol_get_accounts_request("req", request, make_writer(), make_ops());
-        assert(g_resolve_active_identity_calls == 1);
+        assert(g_project_sui_identity_calls == 1);
         assert(g_read_sui_account_settings_calls == 0);
         assert(g_record_root_material_unreadable_calls == 1);
         assert(g_write_error_calls == 1);
@@ -668,7 +694,7 @@ int main()
         g_read_sui_account_settings_ok = false;
         JsonDocument request = parse_request("{\"id\":\"req\",\"version\":1,\"method\":\"get_accounts\",\"sessionId\":\"session\"}");
         signing::handle_protocol_get_accounts_request("req", request, make_writer(), make_ops());
-        assert(g_resolve_active_identity_calls == 1);
+        assert(g_project_sui_identity_calls == 1);
         assert(g_read_sui_account_settings_calls == 1);
         assert(g_write_json_calls == 0);
         assert(g_write_error_calls == 1);
@@ -681,7 +707,7 @@ int main()
         signing::handle_protocol_get_accounts_request("req", request, make_writer(), make_ops());
         assert(g_write_error_calls == 1);
         assert(strcmp(g_last_error_code, "invalid_request") == 0);
-        assert(g_resolve_active_identity_calls == 0);
+        assert(g_project_sui_identity_calls == 0);
     }
 
     printf("USB session-read handler tests passed\n");

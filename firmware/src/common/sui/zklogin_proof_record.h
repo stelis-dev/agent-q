@@ -6,11 +6,10 @@
 #include "sui/transaction_facts.h"
 #include "sui/signature_scheme.h"
 #include "sui/network.h"
+#include "sui/public_identity.h"
 
 namespace signing {
 
-constexpr size_t kSuiZkLoginPublicKeyMinBytes = 34;
-constexpr size_t kSuiZkLoginPublicKeyMaxBytes = 288;
 constexpr size_t kSuiZkLoginAddressBufferSize = kSuiAddressStringBufferSize;
 constexpr size_t kSuiZkLoginIssuerBufferSize = 513;   // 512 + NUL.
 constexpr size_t kSuiZkLoginAddressSeedBufferSize = 79;  // uint256 decimal + NUL.

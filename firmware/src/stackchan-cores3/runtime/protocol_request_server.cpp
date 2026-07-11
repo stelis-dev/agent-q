@@ -4399,10 +4399,17 @@ void record_active_policy_unavailable_for_session_read()
         persistent_material_ops());
 }
 
-bool sui_zklogin_credential_available_for_session_read()
+bool project_sui_identity_for_session_read(
+    signing::SuiSessionReadProjection* projection)
 {
-    return signing::resolve_active_sui_identity().kind ==
-           signing::SuiActiveIdentityKind::native;
+    if (projection == nullptr) {
+        return false;
+    }
+    *projection = signing::SuiSessionReadProjection{};
+    projection->identity = signing::resolve_public_sui_identity();
+    projection->sui_zklogin_credential_available =
+        projection->identity.kind == signing::SuiActiveIdentityKind::native;
+    return true;
 }
 
 const signing::SessionReadHandlerOps& session_read_handler_ops()
@@ -4414,8 +4421,7 @@ const signing::SessionReadHandlerOps& session_read_handler_ops()
         require_active_matching_session,
         signing::read_signing_authorization_mode,
         signing::read_sui_account_settings,
-        sui_zklogin_credential_available_for_session_read,
-        signing::resolve_active_sui_identity,
+        project_sui_identity_for_session_read,
         record_root_material_unreadable_for_session_read,
     };
     return ops;

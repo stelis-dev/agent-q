@@ -53,6 +53,62 @@ void clear_identity(SuiActiveIdentity* identity)
     }
 }
 
+void clear_public_identity(SuiPublicIdentity* identity)
+{
+    if (identity != nullptr) {
+        memset(identity, 0, sizeof(*identity));
+        identity->kind = SuiActiveIdentityKind::error;
+        identity->error = SuiActiveIdentityError::native_account_unavailable;
+    }
+}
+
+SuiZkLoginProofRecordStatus project_stored_zklogin_public_identity(
+    SuiPublicIdentity* identity)
+{
+    SuiZkLoginProofRecord proof = {};
+    const SuiZkLoginProofRecordStatus status =
+        read_sui_zklogin_proof_record(&proof);
+    if (status == SuiZkLoginProofRecordStatus::active && identity != nullptr) {
+        identity->kind = SuiActiveIdentityKind::zklogin;
+        identity->error = SuiActiveIdentityError::none;
+        memcpy(identity->address, proof.address, sizeof(identity->address));
+        memcpy(identity->public_key, proof.public_key, proof.public_key_size);
+        identity->public_key_size = proof.public_key_size;
+    }
+    wipe_sensitive_buffer(&proof, sizeof(proof));
+    return status;
+}
+
+bool derive_native_public_fields(
+    char* address,
+    size_t address_size,
+    uint8_t* public_key,
+    size_t public_key_size,
+    size_t* public_key_size_written)
+{
+    if (address == nullptr || address_size < kSuiAddressBufferSize ||
+        public_key == nullptr || public_key_size < kSuiSchemePrefixedEd25519PublicKeyBytes ||
+        public_key_size_written == nullptr) {
+        return false;
+    }
+    *public_key_size_written = 0;
+    uint8_t raw_public_key[kSuiEd25519PublicKeyBytes] = {};
+    const SuiAccountDerivationResult account_result =
+        derive_sui_ed25519_account_from_stored_root(
+            raw_public_key,
+            address,
+            address_size);
+    if (account_result != SuiAccountDerivationResult::ok) {
+        wipe_sensitive_buffer(raw_public_key, sizeof(raw_public_key));
+        return false;
+    }
+    public_key[0] = kSuiSignatureSchemeFlagEd25519;
+    memcpy(public_key + 1, raw_public_key, sizeof(raw_public_key));
+    *public_key_size_written = kSuiSchemePrefixedEd25519PublicKeyBytes;
+    wipe_sensitive_buffer(raw_public_key, sizeof(raw_public_key));
+    return true;
+}
+
 void set_u16_be(uint16_t value, uint8_t out[2])
 {
     out[0] = static_cast<uint8_t>((value >> 8) & 0xFF);
@@ -278,6 +334,39 @@ bool wipe_sui_zklogin_proof_record()
     return true;
 }
 
+SuiPublicIdentity resolve_public_sui_identity()
+{
+    SuiPublicIdentity identity = {};
+    clear_public_identity(&identity);
+
+    const SuiZkLoginProofRecordStatus proof_status =
+        project_stored_zklogin_public_identity(&identity);
+    if (proof_status == SuiZkLoginProofRecordStatus::active) {
+        return identity;
+    }
+    if (proof_status == SuiZkLoginProofRecordStatus::invalid ||
+        proof_status == SuiZkLoginProofRecordStatus::storage_error) {
+        identity.kind = SuiActiveIdentityKind::error;
+        identity.error = SuiActiveIdentityError::proof_storage_error;
+        return identity;
+    }
+
+    if (!derive_native_public_fields(
+            identity.address,
+            sizeof(identity.address),
+            identity.public_key,
+            sizeof(identity.public_key),
+            &identity.public_key_size)) {
+        identity.kind = SuiActiveIdentityKind::error;
+        identity.error = SuiActiveIdentityError::native_account_unavailable;
+        return identity;
+    }
+
+    identity.kind = SuiActiveIdentityKind::native;
+    identity.error = SuiActiveIdentityError::none;
+    return identity;
+}
+
 SuiActiveIdentity resolve_active_sui_identity()
 {
     SuiActiveIdentity identity = {};
@@ -293,24 +382,24 @@ SuiActiveIdentity resolve_active_sui_identity()
         memcpy(identity.public_key, proof.public_key, proof.public_key_size);
         identity.public_key_size = proof.public_key_size;
         memcpy(&identity.zklogin, &proof, sizeof(identity.zklogin));
+        wipe_sensitive_buffer(&proof, sizeof(proof));
         return identity;
     }
     if (proof_status == SuiZkLoginProofRecordStatus::invalid ||
         proof_status == SuiZkLoginProofRecordStatus::storage_error) {
+        wipe_sensitive_buffer(&proof, sizeof(proof));
         identity.kind = SuiActiveIdentityKind::error;
         identity.error = SuiActiveIdentityError::proof_storage_error;
         return identity;
     }
+    wipe_sensitive_buffer(&proof, sizeof(proof));
 
-    uint8_t raw_public_key[kSuiEd25519PublicKeyBytes] = {};
-    char address[kSuiAddressBufferSize] = {};
-    const SuiAccountDerivationResult account_result =
-        derive_sui_ed25519_account_from_stored_root(
-            raw_public_key,
-            address,
-            sizeof(address));
-    if (account_result != SuiAccountDerivationResult::ok) {
-        wipe_sensitive_buffer(raw_public_key, sizeof(raw_public_key));
+    if (!derive_native_public_fields(
+            identity.address,
+            sizeof(identity.address),
+            identity.public_key,
+            sizeof(identity.public_key),
+            &identity.public_key_size)) {
         identity.kind = SuiActiveIdentityKind::error;
         identity.error = SuiActiveIdentityError::native_account_unavailable;
         return identity;
@@ -318,11 +407,6 @@ SuiActiveIdentity resolve_active_sui_identity()
 
     identity.kind = SuiActiveIdentityKind::native;
     identity.error = SuiActiveIdentityError::none;
-    memcpy(identity.address, address, sizeof(identity.address));
-    identity.public_key[0] = kSuiSignatureSchemeFlagEd25519;
-    memcpy(identity.public_key + 1, raw_public_key, sizeof(raw_public_key));
-    identity.public_key_size = kSuiSchemePrefixedEd25519PublicKeyBytes;
-    wipe_sensitive_buffer(raw_public_key, sizeof(raw_public_key));
     return identity;
 }
 

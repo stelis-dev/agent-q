@@ -274,6 +274,20 @@ void expect_native_identity(const char* label)
         "native identity public key has Ed25519 scheme flag");
 }
 
+void expect_native_public_identity(const char* label)
+{
+    const signing::SuiPublicIdentity identity = signing::resolve_public_sui_identity();
+    expect(identity.kind == signing::SuiActiveIdentityKind::native, label);
+    expect(identity.error == signing::SuiActiveIdentityError::none, "native public identity has no error");
+    expect(std::strcmp(identity.address, kNativeAddress) == 0, "native public identity returns account address");
+    expect(
+        identity.public_key_size == signing::kSuiSchemePrefixedEd25519PublicKeyBytes,
+        "native public identity returns scheme-prefixed public key length");
+    expect(
+        identity.public_key[0] == signing::kSuiSignatureSchemeFlagEd25519,
+        "native public identity has Ed25519 scheme flag");
+}
+
 void expect_proof_storage_error(const char* label)
 {
     const signing::SuiActiveIdentity identity = signing::resolve_active_sui_identity();
@@ -281,6 +295,15 @@ void expect_proof_storage_error(const char* label)
     expect(
         identity.error == signing::SuiActiveIdentityError::proof_storage_error,
         "proof storage errors do not fall back to native identity");
+}
+
+void expect_public_proof_storage_error(const char* label)
+{
+    const signing::SuiPublicIdentity identity = signing::resolve_public_sui_identity();
+    expect(identity.kind == signing::SuiActiveIdentityKind::error, label);
+    expect(
+        identity.error == signing::SuiActiveIdentityError::proof_storage_error,
+        "public proof storage errors do not fall back to native identity");
 }
 
 void store_valid_record(signing::SuiZkLoginProofRecord* out)
@@ -438,6 +461,7 @@ int main()
     reset_stubs();
     expect(signing::sui_zklogin_proof_record_status() == Status::missing, "empty store reports missing proof");
     expect_native_identity("missing proof resolves native identity");
+    expect_native_public_identity("missing proof resolves native public identity");
 
     reset_stubs();
     signing::SuiZkLoginProofRecord original = {};
@@ -457,12 +481,22 @@ int main()
         zklogin_identity.public_key_size == original.public_key_size &&
             zklogin_identity.public_key[0] == signing::kSuiSignatureSchemeFlagZkLogin,
         "zkLogin identity returns scheme-prefixed public key");
+    const signing::SuiPublicIdentity zklogin_public_identity =
+        signing::resolve_public_sui_identity();
+    expect(
+        zklogin_public_identity.kind == signing::SuiActiveIdentityKind::zklogin,
+        "active proof resolves zkLogin public identity");
+    expect(
+        std::strcmp(zklogin_public_identity.address, original.address) == 0 &&
+            zklogin_public_identity.public_key_size == original.public_key_size,
+        "zkLogin public identity contains only the public account projection");
 
     reset_stubs();
     store_valid_record(nullptr);
     g_blob[0] ^= 0x7F;
     expect(signing::sui_zklogin_proof_record_status() == Status::invalid, "corrupt stored proof reports invalid");
     expect_proof_storage_error("corrupt proof makes active identity fail closed");
+    expect_public_proof_storage_error("corrupt proof makes public identity fail closed");
 
     reset_stubs();
     store_valid_record(nullptr);
@@ -471,6 +505,7 @@ int main()
         signing::sui_zklogin_proof_record_status() == Status::storage_error,
         "unreadable proof reports storage error");
     expect_proof_storage_error("unreadable proof makes active identity fail closed");
+    expect_public_proof_storage_error("unreadable proof makes public identity fail closed");
 
     reset_stubs();
     signing::SuiZkLoginProofRecord invalid = make_valid_record();
@@ -510,6 +545,7 @@ int main()
     expect(signing::wipe_sui_zklogin_proof_record(), "proof wipe succeeds");
     expect(signing::sui_zklogin_proof_record_status() == Status::missing, "proof wipe clears record");
     expect_native_identity("cleared proof resolves native identity again");
+    expect_native_public_identity("cleared proof resolves native public identity again");
 
     reset_stubs();
     g_native_derivation_fails = true;
@@ -520,6 +556,11 @@ int main()
     expect(
         missing_native.error == signing::SuiActiveIdentityError::native_account_unavailable,
         "missing proof preserves native account unavailable error");
+    const signing::SuiPublicIdentity missing_public = signing::resolve_public_sui_identity();
+    expect(
+        missing_public.kind == signing::SuiActiveIdentityKind::error &&
+            missing_public.error == signing::SuiActiveIdentityError::native_account_unavailable,
+        "public identity preserves native account unavailable error");
 
     if (g_failures != 0) {
         std::fprintf(stderr, "Sui zkLogin proof store tests FAILED: %d\n", g_failures);

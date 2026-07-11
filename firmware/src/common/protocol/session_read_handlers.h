@@ -3,12 +3,17 @@
 #include <ArduinoJson.h>
 
 #include "sui/account_settings_types.h"
-#include "sui/active_identity.h"
+#include "sui/public_identity.h"
 #include "protocol/signing_mode.h"
 #include "protocol/operation_type.h"
 #include "protocol/response_writer.h"
 
 namespace signing {
+
+struct SuiSessionReadProjection {
+    SuiPublicIdentity identity;
+    bool sui_zklogin_credential_available;
+};
 
 struct SessionReadHandlerOps {
     bool (*material_ready)();
@@ -25,8 +30,7 @@ struct SessionReadHandlerOps {
         const ResponseWriter& writer);
     bool (*read_signing_mode)(AuthorizationMode* mode);
     bool (*read_sui_account_settings)(SuiAccountSettings* settings);
-    bool (*sui_zklogin_credential_available)();
-    SuiActiveIdentity (*resolve_active_sui_identity)();
+    bool (*project_sui_identity)(SuiSessionReadProjection* projection);
     void (*record_root_material_unreadable)();
 };
 

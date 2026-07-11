@@ -42,7 +42,7 @@
 #include "protocol/session_read_handlers.h"
 #include "protocol/sui_zklogin_credential_handlers.h"
 #include "sui/network.h"
-#include "sui/active_identity.h"
+#include "sui/public_identity.h"
 #include "sui/account_settings_types.h"
 #include "sui/account_binding.h"
 #include "sui/sign_transaction_adapter.h"
@@ -2933,20 +2933,22 @@ bool read_stopwatch_sui_account_settings(signing::SuiAccountSettings* settings)
     return true;
 }
 
-bool stopwatch_zklogin_credential_available_for_session_read()
+bool project_stopwatch_sui_identity_for_session_read(
+    signing::SuiSessionReadProjection* projection)
 {
-    return credential_status_allows_install(sui_zklogin_credential_status());
-}
-
-signing::SuiActiveIdentity resolve_stopwatch_active_sui_identity()
-{
-    signing::SuiActiveIdentity identity = {};
+    if (projection == nullptr) {
+        return false;
+    }
+    *projection = signing::SuiSessionReadProjection{};
+    signing::SuiPublicIdentity& identity = projection->identity;
     identity.kind = signing::SuiActiveIdentityKind::none;
     identity.error = signing::SuiActiveIdentityError::none;
 
     const SuiZkLoginAccountProjection account_projection = sui_zklogin_account_projection();
+    projection->sui_zklogin_credential_available =
+        credential_status_allows_install(account_projection.status);
     if (account_projection.status == SuiZkLoginCredentialStatus::missing) {
-        return identity;
+        return true;
     }
     if (credential_status_is_error(account_projection.status) ||
         !account_projection.active ||
@@ -2955,14 +2957,15 @@ signing::SuiActiveIdentity resolve_stopwatch_active_sui_identity()
         account_projection.public_key_size > sizeof(identity.public_key)) {
         identity.kind = signing::SuiActiveIdentityKind::error;
         identity.error = signing::SuiActiveIdentityError::proof_storage_error;
-        return identity;
+        projection->sui_zklogin_credential_available = false;
+        return true;
     }
 
     identity.kind = signing::SuiActiveIdentityKind::zklogin;
     strlcpy(identity.address, account_projection.address, sizeof(identity.address));
     memcpy(identity.public_key, account_projection.public_key, account_projection.public_key_size);
     identity.public_key_size = account_projection.public_key_size;
-    return identity;
+    return true;
 }
 
 const signing::SessionReadHandlerOps& session_read_handler_ops()
@@ -2974,8 +2977,7 @@ const signing::SessionReadHandlerOps& session_read_handler_ops()
         require_active_matching_session_for_common,
         signing::read_signing_authorization_mode,
         read_stopwatch_sui_account_settings,
-        stopwatch_zklogin_credential_available_for_session_read,
-        resolve_stopwatch_active_sui_identity,
+        project_stopwatch_sui_identity_for_session_read,
         nullptr,
     };
     return ops;
