@@ -1,15 +1,11 @@
 #include "local_transport_pairing.h"
 
-#include <string.h>
-
 #include "esp_attr.h"
-#include "esp_err.h"
-#include "esp_log.h"
-#include "nvs.h"
 #include "secure_random.h"
 #include "transport/local_transport_identity_store.h"
 #include "transport/local_transport_mbedtls_crypto.h"
 #include "transport/local_transport_nimble_pairing_session.h"
+#include "transport/local_transport_nvs_identity_storage.h"
 
 namespace stopwatch_target {
 namespace {
@@ -47,136 +43,26 @@ const signing::LocalTransportCryptoOps& crypto_ops()
     return ops;
 }
 
-signing::LocalTransportIdentityRecordReadStatus read_key_pair(
-    uint8_t secret_key[signing::kLocalTransportStaticKeyBytes],
-    uint8_t public_key[signing::kLocalTransportStaticKeyBytes],
-    void*)
+const signing::LocalTransportIdentityStorageOps& identity_storage_ops()
 {
-    if (secret_key == nullptr || public_key == nullptr) {
-        return signing::LocalTransportIdentityRecordReadStatus::error;
-    }
-    nvs_handle_t nvs = 0;
-    const esp_err_t open_result = nvs_open(kIdentityNamespace, NVS_READONLY, &nvs);
-    if (open_result == ESP_ERR_NVS_NOT_FOUND) {
-        return signing::LocalTransportIdentityRecordReadStatus::missing;
-    }
-    if (open_result != ESP_OK) {
-        ESP_LOGW(kTag, "identity NVS open failed: %s", esp_err_to_name(open_result));
-        return signing::LocalTransportIdentityRecordReadStatus::error;
-    }
-    size_t secret_size = signing::kLocalTransportStaticKeyBytes;
-    size_t public_size = signing::kLocalTransportStaticKeyBytes;
-    const esp_err_t secret_result = nvs_get_blob(
-        nvs, kIdentityPrivateKey, secret_key, &secret_size);
-    const esp_err_t public_result = nvs_get_blob(
-        nvs, kIdentityPublicKey, public_key, &public_size);
-    nvs_close(nvs);
-    if (secret_result == ESP_ERR_NVS_NOT_FOUND &&
-        public_result == ESP_ERR_NVS_NOT_FOUND) {
-        return signing::LocalTransportIdentityRecordReadStatus::missing;
-    }
-    if (secret_result != ESP_OK || public_result != ESP_OK ||
-        secret_size != signing::kLocalTransportStaticKeyBytes ||
-        public_size != signing::kLocalTransportStaticKeyBytes) {
-        signing::local_transport_wipe_bytes(
-            secret_key, signing::kLocalTransportStaticKeyBytes);
-        signing::local_transport_wipe_bytes(
-            public_key, signing::kLocalTransportStaticKeyBytes);
-        ESP_LOGW(kTag, "identity record invalid");
-        return signing::LocalTransportIdentityRecordReadStatus::error;
-    }
-    return signing::LocalTransportIdentityRecordReadStatus::found;
-}
-
-bool erase_key(const char* key)
-{
-    nvs_handle_t nvs = 0;
-    esp_err_t result = nvs_open(kIdentityNamespace, NVS_READWRITE, &nvs);
-    if (result == ESP_ERR_NVS_NOT_FOUND) {
-        return true;
-    }
-    if (result != ESP_OK) {
-        return false;
-    }
-    result = nvs_erase_key(nvs, key);
-    if (result == ESP_ERR_NVS_NOT_FOUND) {
-        result = ESP_OK;
-    }
-    if (result == ESP_OK) {
-        result = nvs_commit(nvs);
-    }
-    nvs_close(nvs);
-    return result == ESP_OK;
-}
-
-bool erase_key_pair(void*)
-{
-    const bool private_erased = erase_key(kIdentityPrivateKey);
-    const bool public_erased = erase_key(kIdentityPublicKey);
-    if (!private_erased || !public_erased) {
-        ESP_LOGW(kTag, "identity wipe incomplete");
-        return false;
-    }
-    return true;
-}
-
-bool write_key_pair(
-    const uint8_t secret_key[signing::kLocalTransportStaticKeyBytes],
-    const uint8_t public_key[signing::kLocalTransportStaticKeyBytes],
-    void*)
-{
-    nvs_handle_t nvs = 0;
-    esp_err_t result = nvs_open(kIdentityNamespace, NVS_READWRITE, &nvs);
-    if (result != ESP_OK) {
-        ESP_LOGW(kTag, "identity NVS open for write failed: %s", esp_err_to_name(result));
-        return false;
-    }
-    result = nvs_set_blob(
-        nvs,
+    static const signing::LocalTransportNvsIdentityStorageConfig config{
+        kIdentityNamespace,
         kIdentityPrivateKey,
-        secret_key,
-        signing::kLocalTransportStaticKeyBytes);
-    if (result == ESP_OK) {
-        result = nvs_set_blob(
-            nvs,
-            kIdentityPublicKey,
-            public_key,
-            signing::kLocalTransportStaticKeyBytes);
-    }
-    if (result == ESP_OK) {
-        result = nvs_commit(nvs);
-    }
-    nvs_close(nvs);
-    if (result != ESP_OK) {
-        ESP_LOGW(kTag, "identity write failed: %s", esp_err_to_name(result));
-        erase_key_pair(nullptr);
-        return false;
-    }
-    return true;
+        kIdentityPublicKey,
+        kTag,
+    };
+    static const signing::LocalTransportIdentityStorageOps ops =
+        signing::local_transport_nvs_identity_storage_ops(&config);
+    return ops;
 }
 
 const signing::LocalTransportIdentityStoreOps& identity_store_ops()
 {
     static const signing::LocalTransportIdentityStoreOps ops{
-        signing::LocalTransportIdentityStorageOps{
-            read_key_pair,
-            write_key_pair,
-            erase_key_pair,
-            nullptr,
-        },
+        identity_storage_ops(),
         &crypto_ops(),
     };
     return ops;
-}
-
-bool load_or_create_identity(signing::LocalTransportPairingIdentity* identity, void*)
-{
-    return signing::local_transport_identity_load_or_create(identity_store_ops(), identity);
-}
-
-bool load_identity_secret(signing::LocalTransportPairingIdentitySecret* identity, void*)
-{
-    return signing::local_transport_identity_load_secret(identity_store_ops(), identity);
 }
 
 void notify(signing::LocalTransportPairingEvent event, void*)
@@ -201,8 +87,7 @@ signing::LocalTransportPairingSessionOps session_ops(
     g_request_handler = handler;
     return signing::local_transport_nimble_pairing_session_ops({
         &g_ble_inbound_frame,
-        load_or_create_identity,
-        load_identity_secret,
+        &identity_store_ops(),
         notify,
         handle_request_line,
         &crypto_ops(),

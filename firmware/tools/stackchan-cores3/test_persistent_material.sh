@@ -82,7 +82,7 @@ done
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/signing-persistent-material.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-mkdir -p "${TMP_DIR}/firmware_common" "${TMP_DIR}/stubs"
+mkdir -p "${TMP_DIR}/firmware_common" "${TMP_DIR}/stubs/freertos"
 ln -s "${COMMON_ROOT}/policy" "${TMP_DIR}/firmware_common/policy"
 
 cat >"${TMP_DIR}/stubs/esp_log.h" <<'H'
@@ -91,6 +91,12 @@ cat >"${TMP_DIR}/stubs/esp_log.h" <<'H'
 #define ESP_LOGI(tag, format, ...) do { (void)(tag); } while (0)
 #define ESP_LOGW(tag, format, ...) do { (void)(tag); } while (0)
 #define ESP_LOGE(tag, format, ...) do { (void)(tag); } while (0)
+H
+
+cat >"${TMP_DIR}/stubs/freertos/FreeRTOS.h" <<'H'
+#pragma once
+#include <stdint.h>
+using TickType_t = uint32_t;
 H
 
 cat >"${TMP_DIR}/persistent_material_test.cpp" <<'CPP'
@@ -260,7 +266,7 @@ bool wipe_root_material()
     return true;
 }
 
-bool local_transport_wipe_pairing_store()
+bool local_transport_pairing_wipe_identity()
 {
     if (g_pairing_store_wipe_fails) {
         return false;

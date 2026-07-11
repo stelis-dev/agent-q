@@ -12,7 +12,7 @@ LOCAL_TRANSPORT_CONFIG="${REPO_ROOT}/firmware/tools/common/configure_local_trans
 if grep -R -nE \
   'StackChan|stackchan|StopWatch|stopwatch|CoreS3|cores3|M5Stack|m5stack|M5Unified' \
   "${COMMON_ROOT}"; then
-  echo "Hardware-target name leaked into common Firmware source" >&2
+  echo "Target-specific name leaked into common Firmware source" >&2
   exit 1
 fi
 
@@ -60,6 +60,31 @@ if [[ "$(grep -c 'g_pairing\.clear();' "${PAIRING_SESSION}")" -ne 3 ]] ||
   echo "Common pairing terminal paths must use the complete session cleanup owner" >&2
   exit 1
 fi
+if ! grep -Fq 'g_pairing.state != LocalTransportSessionState::idle' "${PAIRING_SESSION}"; then
+  echo "Common pairing state must reject begin outside idle" >&2
+  exit 1
+fi
+pairing_ready_block="$(sed -n '/local_transport_noise_responder_read_message3/,/notify(ops, LocalTransportPairingEvent::connected)/p' "${PAIRING_SESSION}")"
+if ! awk '/g_pairing.session_keys =/ { keys = NR } /g_pairing.clear_pairing_material/ { clear = NR } /LocalTransportSessionState::ready/ { ready = NR } END { exit !(keys < clear && clear < ready) }' <<<"${pairing_ready_block}"; then
+  echo "Common pairing state must wipe pairing-window material before ready" >&2
+  exit 1
+fi
+
+if grep -REq 'local_transport_parse_optical_payload|local_transport_ble_advertising\(' \
+  "${COMMON_ROOT}/transport"; then
+  echo "Unused local-transport parser or carrier-state surface remains" >&2
+  exit 1
+fi
+
+while IFS= read -r source; do
+  if grep -nE \
+    'StackChan|stackchan|StopWatch|stopwatch|CoreS3|cores3|M5|lv_|EXT_RAM|"(pairing_id|static_priv|static_pub)"' \
+    "${source}"; then
+    echo "Target, UI, storage-layout, or memory-placement detail leaked into common local transport: ${source}" >&2
+    exit 1
+  fi
+done < <(find "${COMMON_ROOT}/transport" -type f \
+  \( -name 'local_transport_*.cpp' -o -name 'local_transport_*.h' \) -print)
 
 for memory_config in \
   '--malloc-always-internal 512' \
@@ -96,4 +121,4 @@ for expected_config in \
   fi
 done
 
-echo "Common Firmware hardware-neutrality tests passed"
+echo "Common Firmware target-neutrality tests passed"

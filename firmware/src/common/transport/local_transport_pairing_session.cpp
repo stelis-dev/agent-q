@@ -36,17 +36,22 @@ struct LocalTransportPairingState {
     uint64_t tx_counter = 0;
     LocalTransportReassemblyState reassembly = {};
 
-    void clear()
+    void clear_pairing_material()
     {
-        state = LocalTransportSessionState::idle;
         memset(payload, 0, sizeof(payload));
         memset(fingerprint_hex, 0, sizeof(fingerprint_hex));
         local_transport_wipe_bytes(nonce, sizeof(nonce));
         pairing_deadline = 0;
-        phase_deadline = 0;
         memset(&identity, 0, sizeof(identity));
         local_transport_noise_clear_responder_state(&noise);
         local_transport_noise_clear_session_keys(&pending_keys);
+    }
+
+    void clear()
+    {
+        state = LocalTransportSessionState::idle;
+        clear_pairing_material();
+        phase_deadline = 0;
         local_transport_noise_clear_session_keys(&session_keys);
         rx_counter = 0;
         tx_counter = 0;
@@ -87,8 +92,7 @@ void wipe_transport_buffers(const LocalTransportPairingSessionOps& ops)
 
 bool ops_valid(const LocalTransportPairingSessionOps& ops)
 {
-    return ops.load_or_create_identity != nullptr &&
-           ops.load_identity_secret != nullptr &&
+    return ops.identity_store != nullptr &&
            ops.start_advertising != nullptr &&
            ops.stop_advertising != nullptr &&
            ops.poll_carrier != nullptr &&
@@ -417,7 +421,7 @@ void process_control_frame(
             kLocalTransportOpticalPayloadMaxBytes] = {};
         size_t prologue_len = 0;
         size_t message2_len = 0;
-        if (!ops.load_identity_secret(&identity, ops.context) ||
+        if (!local_transport_identity_load_secret(*ops.identity_store, &identity) ||
             memcmp(identity.public_key, g_pairing.identity.public_key, sizeof(identity.public_key)) != 0 ||
             memcmp(identity.fingerprint, g_pairing.identity.fingerprint, sizeof(identity.fingerprint)) != 0 ||
             !build_pairing_prologue(prologue, sizeof(prologue), &prologue_len)) {
@@ -477,7 +481,7 @@ void process_control_frame(
             sizeof(gateway_static_public));
         ops.stop_advertising(ops.context);
         g_pairing.session_keys = g_pairing.pending_keys;
-        local_transport_noise_clear_session_keys(&g_pairing.pending_keys);
+        g_pairing.clear_pairing_material();
         g_pairing.rx_counter = 0;
         g_pairing.tx_counter = 0;
         local_transport_reassembly_reset(&g_pairing.reassembly);
@@ -566,13 +570,13 @@ bool local_transport_pairing_session_begin(
     TickType_t now,
     const LocalTransportPairingSessionOps& ops)
 {
-    if (!ops_valid(ops)) {
+    if (!ops_valid(ops) || g_pairing.state != LocalTransportSessionState::idle) {
         return false;
     }
     clear_pairing_session_state(ops);
 
     LocalTransportPairingIdentity identity = {};
-    if (!ops.load_or_create_identity(&identity, ops.context)) {
+    if (!local_transport_identity_load_or_create(*ops.identity_store, &identity)) {
         notify(ops, LocalTransportPairingEvent::unavailable);
         return false;
     }

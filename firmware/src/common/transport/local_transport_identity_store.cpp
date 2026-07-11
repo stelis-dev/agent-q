@@ -7,11 +7,53 @@ namespace {
 
 bool ops_valid(const LocalTransportIdentityStoreOps& ops)
 {
-    return ops.storage.read_key_pair != nullptr &&
+    return ops.storage.read_public_key != nullptr &&
+           ops.storage.read_key_pair != nullptr &&
            ops.storage.write_key_pair != nullptr &&
            ops.storage.erase_key_pair != nullptr &&
            ops.crypto != nullptr &&
            local_transport_crypto_ops_valid(*ops.crypto);
+}
+
+bool compute_fingerprint(
+    const LocalTransportCryptoOps& crypto,
+    const uint8_t public_key[kLocalTransportStaticKeyBytes],
+    uint8_t fingerprint[kLocalTransportIdentityFingerprintBytes]);
+
+LocalTransportIdentityRecordReadStatus read_public_identity(
+    const LocalTransportIdentityStoreOps& ops,
+    LocalTransportPairingIdentity* identity)
+{
+    if (identity == nullptr) {
+        return LocalTransportIdentityRecordReadStatus::error;
+    }
+    local_transport_wipe_bytes(
+        reinterpret_cast<uint8_t*>(identity),
+        sizeof(*identity));
+    if (!ops_valid(ops)) {
+        return LocalTransportIdentityRecordReadStatus::error;
+    }
+
+    const LocalTransportIdentityRecordReadStatus status =
+        ops.storage.read_public_key(
+            identity->public_key,
+            ops.storage.context);
+    if (status != LocalTransportIdentityRecordReadStatus::found) {
+        local_transport_wipe_bytes(
+            reinterpret_cast<uint8_t*>(identity),
+            sizeof(*identity));
+        return status;
+    }
+    if (!compute_fingerprint(
+            *ops.crypto,
+            identity->public_key,
+            identity->fingerprint)) {
+        local_transport_wipe_bytes(
+            reinterpret_cast<uint8_t*>(identity),
+            sizeof(*identity));
+        return LocalTransportIdentityRecordReadStatus::error;
+    }
+    return LocalTransportIdentityRecordReadStatus::found;
 }
 
 bool compute_fingerprint(
@@ -39,12 +81,15 @@ LocalTransportIdentityRecordReadStatus read_validated_identity(
     const LocalTransportIdentityStoreOps& ops,
     LocalTransportPairingIdentitySecret* identity)
 {
-    if (!ops_valid(ops) || identity == nullptr) {
+    if (identity == nullptr) {
         return LocalTransportIdentityRecordReadStatus::error;
     }
     local_transport_wipe_bytes(
         reinterpret_cast<uint8_t*>(identity),
         sizeof(*identity));
+    if (!ops_valid(ops)) {
+        return LocalTransportIdentityRecordReadStatus::error;
+    }
 
     const LocalTransportIdentityRecordReadStatus status =
         ops.storage.read_key_pair(
@@ -87,25 +132,26 @@ bool local_transport_identity_load_or_create(
     const LocalTransportIdentityStoreOps& ops,
     LocalTransportPairingIdentity* identity)
 {
-    if (!ops_valid(ops) || identity == nullptr) {
+    if (identity == nullptr) {
         return false;
     }
-    memset(identity, 0, sizeof(*identity));
+    local_transport_wipe_bytes(
+        reinterpret_cast<uint8_t*>(identity),
+        sizeof(*identity));
+    if (!ops_valid(ops)) {
+        return false;
+    }
 
-    LocalTransportPairingIdentitySecret stored = {};
+    LocalTransportPairingIdentity stored = {};
     const LocalTransportIdentityRecordReadStatus status =
-        read_validated_identity(ops, &stored);
+        read_public_identity(ops, &stored);
     if (status == LocalTransportIdentityRecordReadStatus::found) {
         memcpy(identity->public_key, stored.public_key, sizeof(identity->public_key));
         memcpy(identity->fingerprint, stored.fingerprint, sizeof(identity->fingerprint));
-        local_transport_wipe_bytes(
-            reinterpret_cast<uint8_t*>(&stored),
-            sizeof(stored));
+        local_transport_wipe_bytes(reinterpret_cast<uint8_t*>(&stored), sizeof(stored));
         return true;
     }
-    local_transport_wipe_bytes(
-        reinterpret_cast<uint8_t*>(&stored),
-        sizeof(stored));
+    local_transport_wipe_bytes(reinterpret_cast<uint8_t*>(&stored), sizeof(stored));
     if (status != LocalTransportIdentityRecordReadStatus::missing) {
         return false;
     }
@@ -121,11 +167,7 @@ bool local_transport_identity_load_or_create(
             public_key,
             secret_key,
             ops.crypto->context);
-    if (!generated ||
-        !ops.storage.write_key_pair(
-            secret_key,
-            public_key,
-            ops.storage.context)) {
+    if (!generated) {
         local_transport_wipe_bytes(secret_key, sizeof(secret_key));
         local_transport_wipe_bytes(public_key, sizeof(public_key));
         return false;
@@ -136,11 +178,15 @@ bool local_transport_identity_load_or_create(
         *ops.crypto,
         identity->public_key,
         identity->fingerprint);
+    const bool stored_pair = fingerprinted &&
+        ops.storage.write_key_pair(
+            secret_key,
+            public_key,
+            ops.storage.context);
     local_transport_wipe_bytes(secret_key, sizeof(secret_key));
     local_transport_wipe_bytes(public_key, sizeof(public_key));
-    if (!fingerprinted) {
+    if (!stored_pair) {
         memset(identity, 0, sizeof(*identity));
-        ops.storage.erase_key_pair(ops.storage.context);
         return false;
     }
     return true;
@@ -156,7 +202,8 @@ bool local_transport_identity_load_secret(
 
 bool local_transport_identity_wipe(const LocalTransportIdentityStoreOps& ops)
 {
-    return ops_valid(ops) && ops.storage.erase_key_pair(ops.storage.context);
+    return ops.storage.erase_key_pair != nullptr &&
+           ops.storage.erase_key_pair(ops.storage.context);
 }
 
 }  // namespace signing

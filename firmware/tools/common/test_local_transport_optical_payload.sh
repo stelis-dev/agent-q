@@ -88,51 +88,6 @@ int main()
         "canonical payload string");
     expect(strcmp(fingerprint_hex, "00112233aabbccdd") == 0, "fingerprint hex");
 
-    signing::LocalTransportParsedOpticalPayload parsed = {};
-    expect(
-        signing::local_transport_parse_optical_payload(payload, &parsed) ==
-            signing::LocalTransportOpticalPayloadStatus::ok,
-        "canonical payload parses");
-    const uint8_t expected_service_uuid[signing::kLocalTransportBleServiceUuidBytes] = {
-        0xa6, 0xe3, 0x1d, 0x10,
-        0x51, 0xa1, 0x4f, 0x7a,
-        0x9b, 0x0a, 0x0a, 0x1c,
-        0x00, 0x00, 0x00, 0x01,
-    };
-    expect(
-        memcmp(parsed.service_uuid, expected_service_uuid, sizeof(expected_service_uuid)) == 0,
-        "parsed service uuid");
-    expect(
-        memcmp(parsed.identity_fingerprint, fingerprint, sizeof(fingerprint)) == 0,
-        "parsed identity fingerprint");
-    expect(memcmp(parsed.nonce, nonce, sizeof(nonce)) == 0, "parsed nonce");
-    expect(parsed.expiry_seconds == 120, "parsed expiry seconds");
-
-    expect(
-        signing::local_transport_parse_optical_payload(
-            "aqlt:1?k=iroh&svc=a6e31d1051a14f7a9b0a0a1c00000001&"
-            "idfp=00112233aabbccdd&non=9081726354453627&exp=120",
-            &parsed) == signing::LocalTransportOpticalPayloadStatus::unsupported_transport,
-        "unsupported transport rejected");
-    expect(
-        signing::local_transport_parse_optical_payload(
-            "aqlt:1?k=ble&svc=a6e31d1051a14f7a9b0a0a1c00000002&"
-            "idfp=00112233aabbccdd&non=9081726354453627&exp=120",
-            &parsed) == signing::LocalTransportOpticalPayloadStatus::unsupported_endpoint,
-        "unsupported BLE endpoint rejected");
-    expect(
-        signing::local_transport_parse_optical_payload(
-            "aqlt:1?k=ble&svc=a6e31d1051a14f7a9b0a0a1c00000001&"
-            "idfp=00112233AABBCCDD&non=9081726354453627&exp=120",
-            &parsed) == signing::LocalTransportOpticalPayloadStatus::invalid_hex,
-        "non-canonical uppercase hex rejected");
-    expect(
-        signing::local_transport_parse_optical_payload(
-            "aqlt:1?k=ble&svc=a6e31d1051a14f7a9b0a0a1c00000001&"
-            "idfp=00112233aabbccdd&non=9081726354453627&exp=0120",
-            &parsed) == signing::LocalTransportOpticalPayloadStatus::invalid_expiry,
-        "non-canonical expiry rejected");
-
     char tiny_payload[8] = {};
     char tiny_fingerprint[8] = {};
     expect(

@@ -87,6 +87,7 @@ idf_component_register(
         "firmware_common/transport/local_transport_frame.cpp"
         "firmware_common/transport/local_transport_identity_store.cpp"
         "firmware_common/transport/local_transport_mbedtls_crypto.cpp"
+        "firmware_common/transport/local_transport_nvs_identity_storage.cpp"
         "firmware_common/transport/local_transport_nimble_peripheral.cpp"
         "firmware_common/transport/local_transport_nimble_pairing_session.cpp"
         "firmware_common/transport/local_transport_noise.cpp"

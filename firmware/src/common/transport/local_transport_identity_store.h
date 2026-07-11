@@ -12,6 +12,11 @@ enum class LocalTransportIdentityRecordReadStatus {
 };
 
 struct LocalTransportIdentityStorageOps {
+    // Returns found only for a complete current key-pair record, but copies
+    // only the public key so QR preparation does not load private key bytes.
+    LocalTransportIdentityRecordReadStatus (*read_public_key)(
+        uint8_t public_key[kLocalTransportStaticKeyBytes],
+        void* context);
     LocalTransportIdentityRecordReadStatus (*read_key_pair)(
         uint8_t secret_key[kLocalTransportStaticKeyBytes],
         uint8_t public_key[kLocalTransportStaticKeyBytes],

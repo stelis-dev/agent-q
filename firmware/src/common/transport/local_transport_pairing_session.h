@@ -8,6 +8,7 @@
 #include "transport/local_transport_crypto.h"
 #include "transport/local_transport_frame.h"
 #include "transport/local_transport_identity.h"
+#include "transport/local_transport_identity_store.h"
 #include "transport/local_transport_optical_payload.h"
 #include "transport/local_transport_profile.h"
 
@@ -55,8 +56,8 @@ struct LocalTransportPairingSessionOps {
     const char* transport_kind;
     const char* endpoint_descriptor_hex;
     uint32_t optical_payload_exp_seconds;
-    bool (*load_or_create_identity)(LocalTransportPairingIdentity* identity, void* context);
-    bool (*load_identity_secret)(LocalTransportPairingIdentitySecret* identity, void* context);
+    // The store and its referenced target configuration outlive the session.
+    const LocalTransportIdentityStoreOps* identity_store;
     bool (*start_advertising)(
         const uint8_t fingerprint[kLocalTransportIdentityFingerprintBytes],
         void* context);

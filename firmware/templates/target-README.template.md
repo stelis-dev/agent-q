@@ -89,7 +89,7 @@ implements:
   implemented;
 - approval-history record shape when approval history is implemented.
 
-This target must not fork hardware-independent product state, transition order,
+This target must not fork target-independent product state, transition order,
 error precedence, scratch-wipe rules, or shared protocol schemas for the same
 operation.
 

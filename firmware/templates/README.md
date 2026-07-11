@@ -20,7 +20,7 @@ The templates exist to prevent target fragmentation:
 
 - shared protocol methods, request schemas, response schemas, status fields,
   public error codes, and method result schemas stay global;
-- hardware-independent product state, transition order, error precedence, and
+- target-independent product state, transition order, error precedence, and
   sensitive scratch cleanup use common modules once the shared contract is
   proven;
 - target directories own only target composition and real target adapters:

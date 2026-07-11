@@ -33,6 +33,7 @@ for common_source in \
   transport/transport_exclusivity.h \
   transport/local_transport_identity_store.cpp \
   transport/local_transport_mbedtls_crypto.cpp \
+  transport/local_transport_nvs_identity_storage.cpp \
   transport/local_transport_nimble_peripheral.cpp \
   transport/local_transport_nimble_pairing_session.cpp \
   transport/local_transport_pairing_session.cpp; do
@@ -42,16 +43,15 @@ for common_source in \
   }
 done
 
-if grep -En "StackChan|StopWatch|stackchan|stopwatch|M5|lv_|pairing_id|static_priv|static_pub|EXT_RAM" \
-  "${COMMON}/transport/local_transport_identity_store.cpp" \
-  "${COMMON}/transport/local_transport_identity_store.h" \
-  "${COMMON}/transport/local_transport_mbedtls_crypto.cpp" \
-  "${COMMON}/transport/local_transport_mbedtls_crypto.h" \
-  "${COMMON}/transport/local_transport_nimble_peripheral.cpp" \
-  "${COMMON}/transport/local_transport_nimble_peripheral.h"; then
-  echo "Target, UI, storage-layout, or memory-placement detail leaked into common local transport" >&2
-  exit 1
-fi
+while IFS= read -r common_source; do
+  if grep -En \
+    'StackChan|stackchan|StopWatch|stopwatch|M5|lv_|EXT_RAM|"(pairing_id|static_priv|static_pub)"' \
+    "${common_source}"; then
+    echo "Target, UI, storage-layout, or memory-placement detail leaked into common local transport: ${common_source}" >&2
+    exit 1
+  fi
+done < <(find "${COMMON}/transport" -type f \
+  \( -name 'local_transport_*.cpp' -o -name 'local_transport_*.h' \) -print)
 if grep -En "draw_pairing_panel|modal_|lv_" \
   "${COMMON}/transport/local_transport_pairing_session.cpp" \
   "${COMMON}/transport/local_transport_pairing_session.h"; then
@@ -82,13 +82,45 @@ for target_pairing in \
     'local_transport_ble_send_indication(' \
     "target-local BLE send process"
 done
-expect_present "${STOPWATCH}/runtime/local_transport_pairing.cpp" \
-  'local_transport_identity_load_secret(identity_store_ops(), identity)' \
-  "private identity read constrained to pairing composition"
-if grep -R "load_identity_secret" "${STOPWATCH}/runtime"/*.h; then
-  echo "StopWatch target header exposes a private-identity read function" >&2
+for target_storage_consumer in \
+  "${STACKCHAN}/local_transport_pairing.cpp" \
+  "${STOPWATCH}/runtime/local_transport_pairing.cpp"; do
+  expect_present "${target_storage_consumer}" \
+    'local_transport_nvs_identity_storage_ops' \
+    "shared parameterized NVS identity-storage process"
+  expect_absent "${target_storage_consumer}" \
+    'nvs_open(' \
+    "target-local duplicate NVS identity-storage process"
+done
+expect_present "${COMMON}/transport/local_transport_pairing_session.cpp" \
+  'local_transport_identity_load_secret(*ops.identity_store, &identity)' \
+  "private identity read constrained to the common pairing state owner"
+for target_pairing in \
+  "${STACKCHAN}/local_transport_pairing.cpp" \
+  "${STOPWATCH}/runtime/local_transport_pairing.cpp"; do
+  expect_present "${target_pairing}" \
+    '&identity_store_ops()' \
+    "target identity-store composition"
+  expect_absent "${target_pairing}" \
+    'local_transport_identity_load_secret' \
+    "target-local private identity wrapper"
+done
+secret_header_surface="$(
+  while IFS= read -r target_header; do
+    grep -HnE 'load_identity_secret|PairingIdentitySecret' "${target_header}" || true
+  done < <(find "${STACKCHAN}" "${STOPWATCH}/runtime" -maxdepth 1 \
+    -type f -name 'local_transport*.h' -print)
+)"
+if [[ -n "${secret_header_surface}" ]]; then
+  printf '%s\n' "${secret_header_surface}"
+  echo "Target header exposes a private-identity read surface" >&2
   exit 1
 fi
+[[ ! -e "${STACKCHAN}/local_transport_pairing_store.cpp" &&
+   ! -e "${STACKCHAN}/local_transport_pairing_store.h" ]] || {
+  echo "StackChan retains a duplicate pairing identity-store wrapper" >&2
+  exit 1
+}
 
 expect_present "${STOPWATCH}/runtime/app.cpp" \
   'case input::KeyEvent::GoPrevious:' \

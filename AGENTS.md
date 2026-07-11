@@ -91,7 +91,7 @@ Non-negotiable boundaries:
   public error codes, and method result schemas are global protocol contracts,
   not target-specific contracts. Firmware targets may use different storage
   layouts, UI, input devices, transports, identity adapters, signing-material
-  adapters, and capability sets, but they must not fork hardware-independent
+  adapters, and capability sets, but they must not fork target-independent
   product state, transition order, error precedence, or scratch-wipe rules for
   the same shared operation. They may return different state values, capability
   values, account values, or shared error codes only according to their current
@@ -653,14 +653,19 @@ Project-specific rules:
   display/touch/button/haptic/power behavior, board runtime, and
   hardware-specific storage or identity adapters. They do not own a separate
   product-state contract merely because the target hardware is different.
-- Firmware common source owns hardware-independent product contracts and proven
-  reusable capability modules, not whole hardware product flows by default.
+- Firmware common source owns target-independent product contracts and proven
+  reusable capability or platform modules, not whole hardware product flows by
+  default. A common module may depend on a concrete SDK, transport stack,
+  cryptographic provider, or storage API when that dependency is explicit in
+  the module name or contract and at least two completed targets prove the same
+  implementation boundary. Common ownership does not make that implementation
+  portable to unrelated platforms.
   Examples include protocol envelopes, method/error tables, request/session id
   validation, payload transport primitives, timeout/deadline helpers, approval
   state cores, local-authentication cores, policy parsers, signing validators,
   and sensitive scratch cleanup helpers when their contract is independent of
   display, input, power, and board runtime.
-- Firmware common source owns hardware-independent product state and state
+- Firmware common source owns target-independent product state and state
   transitions once their contract is proven. Target directories may compose
   those common state modules with target-specific UI, power behavior, storage
   adapters, identity adapters, and signing-material adapters, but must not keep
@@ -669,9 +674,10 @@ Project-specific rules:
   first target or transport that happened to use it. Do not use target,
   transport, display, touch, button, haptic, power, or board-specific names in
   common source unless that dependency is part of the common contract itself.
-- A target may differ in UI/input/power composition, storage adapters, identity
+- A target may differ in UI/input/power composition, storage layout and names,
+  memory placement, identity
   adapters, signing-material adapters, and the availability of shared
-  capabilities. It may not redefine hardware-independent product state,
+  capabilities. It may not redefine target-independent product state,
   transition order, error precedence, or scratch-wipe rules for a shared
   operation. Promote the shared state core instead, then keep only the real
   target adapter at the target boundary.
@@ -681,7 +687,8 @@ Project-specific rules:
   contract and owner boundary. Record any exception as a plan failure and
   replacement baseline before implementation continues.
 - Treat Admin as a host process capability, not a separate product area.
-- Avoid hardware-specific wording in common documents.
+- Avoid target-specific wording in common documents. Concrete shared platform
+  dependencies may be named when they are part of the common contract.
 - Use concrete hardware names only in hardware-specific source, plans, or notes.
 
 Avoid unless explicitly requested:

@@ -4,7 +4,7 @@
 
 #include "protocol/approval_history.h"
 #include "human_approval_settings.h"
-#include "local_transport_pairing_store.h"
+#include "local_transport_pairing.h"
 #include "policy/policy_update_marker.h"
 #include "protocol/signing_mode.h"
 #include "sui_account_settings.h"
@@ -504,7 +504,7 @@ PersistentMaterialWalletEraseResult persistent_material_wallet_erase()
     const bool approval_history_wiped = approval_history_wipe();
     const bool policy_update_marker_wiped = policy_update_marker_clear();
     const bool zklogin_proof_wiped = wipe_sui_zklogin_proof_record();
-    const bool pairing_store_wiped = local_transport_wipe_pairing_store();
+    const bool pairing_store_wiped = local_transport_pairing_wipe_identity();
 
     if (!root_wiped) {
         return PersistentMaterialWalletEraseResult::root_wipe_error;

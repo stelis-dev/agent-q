@@ -22,12 +22,23 @@ struct Store {
         LocalTransportIdentityRecordReadStatus::missing;
     uint8_t secret[kLocalTransportStaticKeyBytes] = {};
     uint8_t public_key[kLocalTransportStaticKeyBytes] = {};
-    int reads = 0;
+    int public_reads = 0;
+    int pair_reads = 0;
     int writes = 0;
     int erases = 0;
 };
 
 int random_calls = 0;
+
+bool all_zero(const uint8_t* bytes, size_t size)
+{
+    for (size_t index = 0; index < size; ++index) {
+        if (bytes[index] != 0) {
+            return false;
+        }
+    }
+    return true;
+}
 
 bool random_bytes(uint8_t* output, size_t size, void*)
 {
@@ -77,9 +88,24 @@ LocalTransportIdentityRecordReadStatus read_pair(
     void* context)
 {
     Store* store = static_cast<Store*>(context);
-    ++store->reads;
+    ++store->pair_reads;
+    memset(secret, 0, kLocalTransportStaticKeyBytes);
+    memset(public_value, 0, kLocalTransportStaticKeyBytes);
     if (store->status == LocalTransportIdentityRecordReadStatus::found) {
         memcpy(secret, store->secret, sizeof(store->secret));
+        memcpy(public_value, store->public_key, sizeof(store->public_key));
+    }
+    return store->status;
+}
+
+LocalTransportIdentityRecordReadStatus read_public(
+    uint8_t* public_value,
+    void* context)
+{
+    Store* store = static_cast<Store*>(context);
+    ++store->public_reads;
+    memset(public_value, 0, kLocalTransportStaticKeyBytes);
+    if (store->status == LocalTransportIdentityRecordReadStatus::found) {
         memcpy(public_value, store->public_key, sizeof(store->public_key));
     }
     return store->status;
@@ -118,7 +144,13 @@ LocalTransportIdentityStoreOps make_ops(Store* store)
         nullptr,
     };
     return LocalTransportIdentityStoreOps{
-        LocalTransportIdentityStorageOps{read_pair, write_pair, erase_pair, store},
+        LocalTransportIdentityStorageOps{
+            read_public,
+            read_pair,
+            write_pair,
+            erase_pair,
+            store,
+        },
         &crypto,
     };
 }
@@ -131,25 +163,46 @@ int main()
     const LocalTransportIdentityStoreOps ops = make_ops(&store);
     LocalTransportPairingIdentity identity = {};
     assert(local_transport_identity_load_or_create(ops, &identity));
-    assert(store.reads == 1 && store.writes == 1 && random_calls == 1);
+    assert(store.public_reads == 1 && store.pair_reads == 0);
+    assert(store.writes == 1 && random_calls == 1);
     assert(memcmp(identity.public_key, store.public_key, sizeof(identity.public_key)) == 0);
     assert(memcmp(identity.fingerprint, store.public_key, sizeof(identity.fingerprint)) == 0);
 
     LocalTransportPairingIdentity second = {};
     assert(local_transport_identity_load_or_create(ops, &second));
-    assert(store.reads == 2 && store.writes == 1 && random_calls == 1);
+    assert(store.public_reads == 2 && store.pair_reads == 0);
+    assert(store.writes == 1 && random_calls == 1);
     assert(memcmp(&identity, &second, sizeof(identity)) == 0);
 
     LocalTransportPairingIdentitySecret secret = {};
     assert(local_transport_identity_load_secret(ops, &secret));
+    assert(store.pair_reads == 1);
     assert(memcmp(secret.secret_key, store.secret, sizeof(secret.secret_key)) == 0);
 
     store.public_key[0] ^= 1U;
-    LocalTransportPairingIdentity invalid = {};
-    assert(!local_transport_identity_load_or_create(ops, &invalid));
+    LocalTransportPairingIdentity projected = {};
+    assert(local_transport_identity_load_or_create(ops, &projected));
+    assert(store.public_reads == 3 && store.pair_reads == 1);
+    memset(&secret, 0xa5, sizeof(secret));
+    assert(!local_transport_identity_load_secret(ops, &secret));
+    assert(store.pair_reads == 2);
+    for (uint8_t value : secret.secret_key) {
+        assert(value == 0);
+    }
     assert(store.writes == 1 && random_calls == 1);
 
-    assert(local_transport_identity_wipe(ops));
+    LocalTransportIdentityStoreOps invalid_ops = {};
+    memset(&projected, 0xa5, sizeof(projected));
+    assert(!local_transport_identity_load_or_create(invalid_ops, &projected));
+    assert(all_zero(reinterpret_cast<const uint8_t*>(&projected), sizeof(projected)));
+    memset(&secret, 0xa5, sizeof(secret));
+    assert(!local_transport_identity_load_secret(invalid_ops, &secret));
+    assert(all_zero(reinterpret_cast<const uint8_t*>(&secret), sizeof(secret)));
+
+    LocalTransportIdentityStoreOps wipe_only = {};
+    wipe_only.storage.erase_key_pair = erase_pair;
+    wipe_only.storage.context = &store;
+    assert(local_transport_identity_wipe(wipe_only));
     assert(store.erases == 1);
     return 0;
 }

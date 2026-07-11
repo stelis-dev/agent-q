@@ -709,14 +709,6 @@ void local_transport_ble_poll()
     }
 }
 
-bool local_transport_ble_advertising()
-{
-    portENTER_CRITICAL(&g_state_lock);
-    const bool active = g_advertising_active || g_advertising_requested;
-    portEXIT_CRITICAL(&g_state_lock);
-    return active;
-}
-
 bool local_transport_ble_advertising_active()
 {
     portENTER_CRITICAL(&g_state_lock);

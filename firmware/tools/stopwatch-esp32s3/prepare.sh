@@ -154,6 +154,7 @@ fi
 for required_common_sui in \
   account_settings_types.h \
   active_identity.h \
+  public_identity.h \
   account_binding.cpp \
   account_binding.h \
   offline_policy_facts.cpp \
@@ -196,6 +197,8 @@ for required_common_transport in \
   local_transport_identity_store.h \
   local_transport_mbedtls_crypto.cpp \
   local_transport_mbedtls_crypto.h \
+  local_transport_nvs_identity_storage.cpp \
+  local_transport_nvs_identity_storage.h \
   local_transport_nimble_peripheral.cpp \
   local_transport_nimble_peripheral.h \
   local_transport_nimble_pairing_session.cpp \

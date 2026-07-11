@@ -29,7 +29,6 @@ bool local_transport_ble_configure(const LocalTransportBlePeripheralConfig& conf
 bool local_transport_ble_start_pairing_advertising(const uint8_t fingerprint[8]);
 void local_transport_ble_stop_pairing_advertising();
 void local_transport_ble_poll();
-bool local_transport_ble_advertising();
 bool local_transport_ble_advertising_active();
 bool local_transport_ble_connected();
 void local_transport_ble_disconnect();

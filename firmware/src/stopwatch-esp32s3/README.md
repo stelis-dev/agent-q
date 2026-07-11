@@ -119,9 +119,11 @@ Firmware protocol method or app-owned product state transition.
 ## Boundary
 
 This target keeps display, touch, buttons, vibration, power behavior, physical
-USB integration, BLE memory and storage adapters, QR composition, credential
-storage, proposal state, and hardware glue target-local. The BLE peripheral and
-encrypted carrier process are shared Firmware owners.
+USB integration, BLE memory buffers, identity-storage layout and configuration,
+QR composition, credential storage, proposal state, reset composition, and
+hardware glue target-local. The parameterized NVS identity-storage mechanism,
+BLE peripheral, encrypted carrier, and pairing state process are shared
+Firmware owners.
 Protocol method and error rows are shared through
 `firmware/src/common/protocol/device_contract.{h,cpp}`. Protocol version,
 request-id validation, JSON input helpers, USB request line framing, session id

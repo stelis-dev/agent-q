@@ -31,7 +31,7 @@ target composition diagram. Firmware targets use this top-level flow and shared
 state vocabulary at the protocol boundary. A target may compose the shared
 state flow with target-specific UI, input, power behavior, storage adapters,
 identity adapters, and signing-material adapters before it projects into the
-shared states, but it must not redefine hardware-independent product state or
+shared states, but it must not redefine target-independent product state or
 transition order for the same shared operation.
 The host process, MCP clients, and Admin Page requests may submit requests, but
 they are not authority. Firmware state transitions occur only as consequences

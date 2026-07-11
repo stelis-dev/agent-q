@@ -304,7 +304,7 @@ bool wipe_root_material()
     return true;
 }
 
-bool local_transport_wipe_pairing_store()
+bool local_transport_pairing_wipe_identity()
 {
     if (g_pairing_store_wipe_fails) {
         return false;

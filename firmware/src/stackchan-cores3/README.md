@@ -508,6 +508,10 @@ In the hardware firmware tree:
 
 ## Persistent Storage
 
+Local-transport identity storage uses the shared parameterized NVS mechanism.
+This target owns its namespace and key names, random source, reset composition,
+memory placement, UI, and target-specific storage-failure projection.
+
 This target stores root signing material and the local PIN verifier separately
 from mutable settings. The current `signing` NVS namespace holds protected
 authority material: DEV_PROFILE root entropy and the local PIN verifier. The

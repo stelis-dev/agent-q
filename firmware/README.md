@@ -71,14 +71,17 @@ or rejects, and the hardware smoke evidence required for completion.
 
 ### `src/common/`
 
-Hardware-independent firmware source shared by targets.
+Target-independent firmware source shared by proven consumers.
 
 Common source may include protocol parsers, chain transaction decoders, pure
 data-format helpers, product-state cores, transport-independent request
-lifecycle modules, and test fixtures when they do not depend on a hardware
-runtime. Common modules must not include target UI, board-specific USB driver
-integration, NVS layout adapters, display power, posture, or other
-hardware-specific integration code.
+lifecycle modules, test fixtures, and concrete shared platform implementations
+when at least two completed targets use the same contract. A concrete platform
+dependency such as NimBLE, NVS, or a cryptographic provider must be explicit in
+the module name or contract; placing it in `common/` does not claim portability
+to unrelated platforms. Common modules must not include target UI, board-only
+driver composition, target storage namespace or key names, target memory
+placement, display power, posture, or other target-specific integration code.
 
 ### `src/<hardware-id>/`
 
@@ -212,7 +215,7 @@ implements the corresponding capability. A target may compose common product
 state with a different user experience, transport adapter, power behavior,
 storage adapter, identity adapter, signing-material adapter, or capability
 subset when its hardware or product variant requires it. It must not fork the
-hardware-independent state machine, transition order, error precedence, or
+target-independent state machine, transition order, error precedence, or
 scratch-wipe rules for the same shared operation. Target-local composition
 details must be documented in the target `SPEC.md` and must still enforce the
 shared protocol and state gates for every capability it implements.

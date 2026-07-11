@@ -7,8 +7,7 @@ namespace signing {
 
 struct LocalTransportNimblePairingSessionConfig {
     LocalTransportBleInboundFrame* inbound_frame;
-    bool (*load_or_create_identity)(LocalTransportPairingIdentity* identity, void* context);
-    bool (*load_identity_secret)(LocalTransportPairingIdentitySecret* identity, void* context);
+    const LocalTransportIdentityStoreOps* identity_store;
     void (*notify)(LocalTransportPairingEvent event, void* context);
     void (*handle_request_line)(
         const char* line,
