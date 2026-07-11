@@ -15,6 +15,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 SOURCE_ROOT="${REPO_ROOT}/firmware/src/stopwatch-esp32s3"
 OVERLAY_MAIN="${SOURCE_ROOT}/overlay/main"
 COMMON_ROOT="${REPO_ROOT}/firmware/src/common"
+COMMON_KEYSTORE="${COMMON_ROOT}/keystore"
 COMMON_NUMERIC="${COMMON_ROOT}/numeric"
 COMMON_POLICY="${COMMON_ROOT}/policy"
 COMMON_PROTOCOL="${COMMON_ROOT}/protocol"
@@ -42,6 +43,16 @@ if [[ ! -f "${OVERLAY_MAIN}/main.cpp" || ! -f "${OVERLAY_MAIN}/CMakeLists.txt" |
   echo "Missing tracked StopWatch overlay source: ${OVERLAY_MAIN}" >&2
   exit 1
 fi
+for required_common_keystore in \
+  encrypted_keystore.cpp \
+  encrypted_keystore.h \
+  encrypted_keystore_nvs.cpp \
+  encrypted_keystore_nvs.h; do
+  if [[ ! -f "${COMMON_KEYSTORE}/${required_common_keystore}" ]]; then
+    echo "Missing tracked common keystore source: ${COMMON_KEYSTORE}/${required_common_keystore}" >&2
+    exit 1
+  fi
+done
 for required_common_protocol in \
   approval_history.cpp \
   approval_history_json_writer.cpp \
@@ -197,8 +208,6 @@ for required_common_transport in \
   local_transport_identity_store.h \
   local_transport_mbedtls_crypto.cpp \
   local_transport_mbedtls_crypto.h \
-  local_transport_nvs_identity_storage.cpp \
-  local_transport_nvs_identity_storage.h \
   local_transport_nimble_peripheral.cpp \
   local_transport_nimble_peripheral.h \
   local_transport_nimble_pairing_session.cpp \
@@ -330,6 +339,9 @@ if grep -R "nvs_flash_erase" "${CHECKOUT_DIR}/main" "${CHECKOUT_DIR}/components"
   echo "Unsafe nvs_flash_erase remains in prepared StopWatch firmware tree." >&2
   exit 1
 fi
+rm -rf "${CHECKOUT_DIR}/main/firmware_common/keystore"
+mkdir -p "${CHECKOUT_DIR}/main/firmware_common/keystore"
+cp -R "${COMMON_KEYSTORE}/." "${CHECKOUT_DIR}/main/firmware_common/keystore/"
 rm -rf "${CHECKOUT_DIR}/main/firmware_common/protocol"
 mkdir -p "${CHECKOUT_DIR}/main/firmware_common/protocol"
 cp -R "${COMMON_PROTOCOL}/." "${CHECKOUT_DIR}/main/firmware_common/protocol/"

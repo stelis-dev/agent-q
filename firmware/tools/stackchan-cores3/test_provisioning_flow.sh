@@ -134,25 +134,15 @@ Bip39EntropyDecodeResult decode_bip39_entropy_12_words(
     return Bip39EntropyDecodeResult::ok;
 }
 
-bool keystore_pin_valid(const char* pin)
-{
-    if (pin == nullptr || strlen(pin) != kKeystorePinDigits) {
-        return false;
-    }
-    for (size_t index = 0; index < kKeystorePinDigits; ++index) {
-        if (!isdigit(static_cast<unsigned char>(pin[index]))) {
-            return false;
-        }
-    }
-    return true;
-}
-
 bool local_auth_worker_submit_create(
     LocalAuthWorkerOwner,
     const char* pin,
     uint32_t* job_id)
 {
-    if (!g_test_worker_accepts_jobs || !keystore_pin_valid(pin) || job_id == nullptr) {
+    if (!g_test_worker_accepts_jobs ||
+        !keystore_pin_valid(
+            pin, kLocalAuthMinDigits, kLocalAuthMaxDigits) ||
+        job_id == nullptr) {
         return false;
     }
     *job_id = 1;

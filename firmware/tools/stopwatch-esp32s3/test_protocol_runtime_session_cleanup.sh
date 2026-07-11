@@ -545,11 +545,6 @@ bool local_transport_pairing_connected()
     return g_local_transport_connected;
 }
 
-bool local_transport_pairing_wipe_identity()
-{
-    return true;
-}
-
 bool local_transport_pairing_take_event(signing::LocalTransportPairingEvent*)
 {
     return false;
@@ -608,17 +603,15 @@ bool validate_sui_zklogin_credential_record(const SuiZkLoginCredentialRecord*)
 {
     return false;
 }
-SuiZkLoginCredentialStatus read_sui_zklogin_credential(SuiZkLoginCredentialRecord*)
+SuiZkLoginCredentialAccessResult with_sui_zklogin_credential(
+    SuiZkLoginCredentialConsumer,
+    void*)
 {
-    return SuiZkLoginCredentialStatus::missing;
+    return SuiZkLoginCredentialAccessResult::missing;
 }
 SuiZkLoginCredentialWriteResult store_sui_zklogin_credential(const SuiZkLoginCredentialRecord*)
 {
     return SuiZkLoginCredentialWriteResult::storage_error;
-}
-bool wipe_sui_zklogin_credential()
-{
-    return true;
 }
 CredentialPreparationBeginResult credential_preparation_begin(
     const char*,

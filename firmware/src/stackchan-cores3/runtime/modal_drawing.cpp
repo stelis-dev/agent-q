@@ -1556,7 +1556,7 @@ bool modal_draw_pin_setup_panel(const char* notice)
     lv_obj_align(message, LV_ALIGN_TOP_MID, 0, kModalDescriptionY);
 
     char pin_mask[signing::kKeystorePinBufferBytes] = {};
-    for (size_t index = 0; index < signing::kKeystorePinDigits; ++index) {
+    for (size_t index = 0; index < signing::kLocalAuthMaxDigits; ++index) {
         pin_mask[index] = index < flow.pin_entry_length ? '*' : '_';
     }
     char pin_text[16] = {};
@@ -2292,7 +2292,7 @@ bool modal_draw_action_pin_panel(const char* notice)
     lv_obj_align(message, LV_ALIGN_TOP_MID, 0, kModalDescriptionY);
 
     char pin_mask[signing::kKeystorePinBufferBytes] = {};
-    for (size_t index = 0; index < signing::kKeystorePinDigits; ++index) {
+    for (size_t index = 0; index < signing::kLocalAuthMaxDigits; ++index) {
         pin_mask[index] = index < maintenance.pin_entry_length ? '*' : '_';
     }
     char pin_text[16] = {};
@@ -2936,7 +2936,7 @@ bool modal_draw_local_pin_auth_panel(const char* notice)
     lv_obj_align(message, LV_ALIGN_TOP_MID, 0, kModalDescriptionY);
 
     char pin_mask[signing::kKeystorePinBufferBytes] = {};
-    for (size_t index = 0; index < signing::kKeystorePinDigits; ++index) {
+    for (size_t index = 0; index < signing::kLocalAuthMaxDigits; ++index) {
         pin_mask[index] = index < snapshot.pin_entry_length ? '*' : '_';
     }
     char pin_text[16] = {};

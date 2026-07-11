@@ -4,22 +4,11 @@
 
 #include "sensitive_memory.h"
 
-#ifdef STOPWATCH_ZKLOGIN_CREDENTIAL_STORE_HOST_TEST
-#include <vector>
-#else
-#include "esp_err.h"
-#include "esp_log.h"
-#include "nvs.h"
-#endif
+#include "stopwatch_keystore.h"
 
 namespace stopwatch_target {
 namespace {
 
-#ifndef STOPWATCH_ZKLOGIN_CREDENTIAL_STORE_HOST_TEST
-constexpr const char* kTag = "StopWatchZkLogin";
-constexpr const char* kNvsNamespace = "sui_credential";
-constexpr const char* kCredentialKey = "active";
-#endif
 constexpr uint8_t kStoredRecordMagic[4] = {'S', 'W', 'Z', 'L'};
 constexpr uint8_t kStoredRecordVersion = 1;
 
@@ -40,16 +29,9 @@ struct StoredSuiZkLoginCredentialRecord {
 };
 
 static_assert(
-    sizeof(StoredSuiZkLoginCredentialRecord) <= kSuiZkLoginCredentialRecordMaxBytes,
+    sizeof(StoredSuiZkLoginCredentialRecord) <= kStopWatchCredentialPlaintextMaxBytes,
     "StopWatch zkLogin credential record must stay within the SS-3 storage cap");
-
-#ifdef STOPWATCH_ZKLOGIN_CREDENTIAL_STORE_HOST_TEST
-std::vector<uint8_t> g_test_store;
-bool g_test_write_failure = false;
-bool g_test_read_failure = false;
-#endif
 StoredSuiZkLoginCredentialRecord g_stored_work = {};
-StoredSuiZkLoginCredentialRecord g_readback_work = {};
 SuiZkLoginCredentialRecord g_credential_work = {};
 
 void clear_credential(SuiZkLoginCredentialRecord* record)
@@ -144,108 +126,81 @@ bool stored_to_credential(
     return true;
 }
 
-#ifdef STOPWATCH_ZKLOGIN_CREDENTIAL_STORE_HOST_TEST
-SuiZkLoginCredentialStatus read_stored_record(
-    StoredSuiZkLoginCredentialRecord* stored,
-    bool)
-{
-    if (stored == nullptr || g_test_read_failure) {
-        return SuiZkLoginCredentialStatus::storage_error;
-    }
-    memset(stored, 0, sizeof(*stored));
-    if (g_test_store.empty()) {
-        return SuiZkLoginCredentialStatus::missing;
-    }
-    if (g_test_store.size() != sizeof(*stored)) {
-        return SuiZkLoginCredentialStatus::invalid;
-    }
-    memcpy(stored, g_test_store.data(), sizeof(*stored));
-    return SuiZkLoginCredentialStatus::active;
-}
+struct CredentialConsumerContext {
+    SuiZkLoginCredentialConsumer consumer = nullptr;
+    void* consumer_context = nullptr;
+    bool decoded = false;
+    bool consumer_called = false;
+};
 
-bool write_stored_record(const StoredSuiZkLoginCredentialRecord& stored)
+bool consume_encrypted_credential(
+    const uint8_t* plaintext,
+    size_t plaintext_size,
+    void* context_ptr)
 {
-    if (g_test_write_failure) {
+    auto* context = static_cast<CredentialConsumerContext*>(context_ptr);
+    clear_stored_record(&g_stored_work);
+    clear_credential(&g_credential_work);
+    if (context == nullptr || context->consumer == nullptr ||
+        plaintext == nullptr ||
+        plaintext_size != sizeof(StoredSuiZkLoginCredentialRecord)) {
         return false;
     }
-    g_test_store.assign(
-        reinterpret_cast<const uint8_t*>(&stored),
-        reinterpret_cast<const uint8_t*>(&stored) + sizeof(stored));
+    memcpy(&g_stored_work, plaintext, sizeof(g_stored_work));
+    context->decoded = stored_to_credential(g_stored_work, &g_credential_work);
+    clear_stored_record(&g_stored_work);
+    if (!context->decoded) {
+        clear_credential(&g_credential_work);
+        return false;
+    }
+    context->consumer_called = true;
+    const bool consumed = context->consumer(
+        g_credential_work,
+        context->consumer_context);
+    clear_credential(&g_credential_work);
+    return consumed;
+}
+
+bool validate_credential_consumer(
+    const SuiZkLoginCredentialRecord& credential,
+    void*)
+{
+    return validate_sui_zklogin_credential_record(&credential);
+}
+
+bool project_credential_consumer(
+    const SuiZkLoginCredentialRecord& credential,
+    void* context)
+{
+    auto* projection = static_cast<SuiZkLoginAccountProjection*>(context);
+    if (projection == nullptr) {
+        return false;
+    }
+    projection->active = true;
+    memcpy(projection->address, credential.proof.address, sizeof(projection->address));
+    memcpy(
+        projection->public_key,
+        credential.proof.public_key,
+        credential.proof.public_key_size);
+    projection->public_key_size = credential.proof.public_key_size;
     return true;
 }
-#else
-SuiZkLoginCredentialStatus read_stored_record(
-    StoredSuiZkLoginCredentialRecord* stored,
-    bool log_failures)
+
+SuiZkLoginCredentialStatus map_structural_status(
+    signing::KeystoreOperationStatus status)
 {
-    if (stored == nullptr) {
-        return SuiZkLoginCredentialStatus::storage_error;
+    switch (status) {
+        case signing::KeystoreOperationStatus::success:
+            return SuiZkLoginCredentialStatus::active;
+        case signing::KeystoreOperationStatus::missing:
+            return SuiZkLoginCredentialStatus::missing;
+        case signing::KeystoreOperationStatus::invalid_record:
+        case signing::KeystoreOperationStatus::invalid_input:
+            return SuiZkLoginCredentialStatus::invalid;
+        default:
+            return SuiZkLoginCredentialStatus::storage_error;
     }
-    memset(stored, 0, sizeof(*stored));
-
-    nvs_handle_t nvs = 0;
-    esp_err_t result = nvs_open(kNvsNamespace, NVS_READONLY, &nvs);
-    if (result == ESP_ERR_NVS_NOT_FOUND) {
-        return SuiZkLoginCredentialStatus::missing;
-    }
-    if (result != ESP_OK) {
-        if (log_failures) {
-            ESP_LOGW(kTag, "NVS open failed while reading zkLogin credential: %s", esp_err_to_name(result));
-        }
-        return SuiZkLoginCredentialStatus::storage_error;
-    }
-
-    size_t blob_size = 0;
-    result = nvs_get_blob(nvs, kCredentialKey, nullptr, &blob_size);
-    if (result == ESP_ERR_NVS_NOT_FOUND) {
-        nvs_close(nvs);
-        return SuiZkLoginCredentialStatus::missing;
-    }
-    if (result != ESP_OK) {
-        nvs_close(nvs);
-        if (log_failures) {
-            ESP_LOGW(kTag, "zkLogin credential size read failed: %s", esp_err_to_name(result));
-        }
-        return SuiZkLoginCredentialStatus::storage_error;
-    }
-    if (blob_size != sizeof(*stored)) {
-        nvs_close(nvs);
-        return SuiZkLoginCredentialStatus::invalid;
-    }
-
-    result = nvs_get_blob(nvs, kCredentialKey, stored, &blob_size);
-    nvs_close(nvs);
-    if (result != ESP_OK || blob_size != sizeof(*stored)) {
-        memset(stored, 0, sizeof(*stored));
-        if (log_failures) {
-            ESP_LOGW(kTag, "zkLogin credential read failed: %s", esp_err_to_name(result));
-        }
-        return SuiZkLoginCredentialStatus::storage_error;
-    }
-    return SuiZkLoginCredentialStatus::active;
 }
-
-bool write_stored_record(const StoredSuiZkLoginCredentialRecord& stored)
-{
-    nvs_handle_t nvs = 0;
-    esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
-    if (result != ESP_OK) {
-        ESP_LOGW(kTag, "NVS open failed while storing zkLogin credential: %s", esp_err_to_name(result));
-        return false;
-    }
-
-    result = nvs_set_blob(nvs, kCredentialKey, &stored, sizeof(stored));
-    if (result == ESP_OK) {
-        result = nvs_commit(nvs);
-    }
-    nvs_close(nvs);
-    if (result != ESP_OK) {
-        ESP_LOGW(kTag, "zkLogin credential write failed: %s", esp_err_to_name(result));
-        return false;
-    }
-    return true;
-}
-#endif
 
 }  // namespace
 
@@ -262,39 +217,55 @@ bool validate_sui_zklogin_credential_record(const SuiZkLoginCredentialRecord* re
 
 SuiZkLoginCredentialStatus sui_zklogin_credential_status()
 {
-    clear_stored_record(&g_stored_work);
-    clear_credential(&g_credential_work);
-    const SuiZkLoginCredentialStatus status = read_stored_record(&g_stored_work, false);
-    if (status != SuiZkLoginCredentialStatus::active) {
-        clear_stored_record(&g_stored_work);
-        return status;
+    const SuiZkLoginCredentialStatus structural = map_structural_status(
+        stopwatch_keystore_credential_status());
+    if (structural != SuiZkLoginCredentialStatus::active ||
+        stopwatch_keystore_state() != signing::KeystoreState::unlocked) {
+        return structural;
     }
-    const bool valid = stored_to_credential(g_stored_work, &g_credential_work);
-    clear_stored_record(&g_stored_work);
-    clear_credential(&g_credential_work);
-    return valid ? SuiZkLoginCredentialStatus::active : SuiZkLoginCredentialStatus::invalid;
+    switch (with_sui_zklogin_credential(validate_credential_consumer, nullptr)) {
+        case SuiZkLoginCredentialAccessResult::consumed:
+            return SuiZkLoginCredentialStatus::active;
+        case SuiZkLoginCredentialAccessResult::missing:
+            return SuiZkLoginCredentialStatus::missing;
+        case SuiZkLoginCredentialAccessResult::invalid:
+        case SuiZkLoginCredentialAccessResult::consumer_failed:
+            return SuiZkLoginCredentialStatus::invalid;
+        case SuiZkLoginCredentialAccessResult::locked:
+        case SuiZkLoginCredentialAccessResult::storage_error:
+            return SuiZkLoginCredentialStatus::storage_error;
+    }
+    return SuiZkLoginCredentialStatus::storage_error;
 }
 
-SuiZkLoginCredentialStatus read_sui_zklogin_credential(
-    SuiZkLoginCredentialRecord* out)
+SuiZkLoginCredentialAccessResult with_sui_zklogin_credential(
+    SuiZkLoginCredentialConsumer consumer,
+    void* consumer_context)
 {
-    clear_credential(out);
-    if (out == nullptr) {
-        return SuiZkLoginCredentialStatus::storage_error;
+    if (consumer == nullptr) {
+        return SuiZkLoginCredentialAccessResult::consumer_failed;
     }
-
-    clear_stored_record(&g_stored_work);
-    const SuiZkLoginCredentialStatus status = read_stored_record(&g_stored_work, true);
-    if (status != SuiZkLoginCredentialStatus::active) {
-        clear_stored_record(&g_stored_work);
-        return status;
+    CredentialConsumerContext context{consumer, consumer_context, false, false};
+    const signing::KeystoreOperationStatus status =
+        stopwatch_keystore_with_credential(
+            consume_encrypted_credential,
+            &context);
+    switch (status) {
+        case signing::KeystoreOperationStatus::success:
+            return SuiZkLoginCredentialAccessResult::consumed;
+        case signing::KeystoreOperationStatus::missing:
+            return SuiZkLoginCredentialAccessResult::missing;
+        case signing::KeystoreOperationStatus::locked:
+            return SuiZkLoginCredentialAccessResult::locked;
+        case signing::KeystoreOperationStatus::invalid_record:
+            return SuiZkLoginCredentialAccessResult::invalid;
+        case signing::KeystoreOperationStatus::consumer_failed:
+            return context.decoded && context.consumer_called
+                ? SuiZkLoginCredentialAccessResult::consumer_failed
+                : SuiZkLoginCredentialAccessResult::invalid;
+        default:
+            return SuiZkLoginCredentialAccessResult::storage_error;
     }
-    if (!stored_to_credential(g_stored_work, out)) {
-        clear_stored_record(&g_stored_work);
-        return SuiZkLoginCredentialStatus::invalid;
-    }
-    clear_stored_record(&g_stored_work);
-    return SuiZkLoginCredentialStatus::active;
 }
 
 SuiZkLoginCredentialWriteResult store_sui_zklogin_credential(
@@ -305,58 +276,26 @@ SuiZkLoginCredentialWriteResult store_sui_zklogin_credential(
     }
 
     clear_stored_record(&g_stored_work);
-    clear_stored_record(&g_readback_work);
     if (!credential_to_stored(*record, &g_stored_work)) {
         clear_stored_record(&g_stored_work);
         return SuiZkLoginCredentialWriteResult::invalid_record;
     }
-    if (!write_stored_record(g_stored_work)) {
-        clear_stored_record(&g_stored_work);
-        return SuiZkLoginCredentialWriteResult::storage_error;
-    }
-
-    if (read_stored_record(&g_readback_work, true) != SuiZkLoginCredentialStatus::active ||
-        memcmp(&g_readback_work, &g_stored_work, sizeof(g_stored_work)) != 0) {
-        clear_stored_record(&g_stored_work);
-        clear_stored_record(&g_readback_work);
-        return SuiZkLoginCredentialWriteResult::consistency_error;
-    }
+    const signing::KeystoreOperationStatus status =
+        stopwatch_keystore_replace_credential(
+            reinterpret_cast<const uint8_t*>(&g_stored_work),
+            sizeof(g_stored_work));
     clear_stored_record(&g_stored_work);
-    clear_stored_record(&g_readback_work);
-    return SuiZkLoginCredentialWriteResult::stored;
-}
-
-bool wipe_sui_zklogin_credential()
-{
-#ifdef STOPWATCH_ZKLOGIN_CREDENTIAL_STORE_HOST_TEST
-    g_test_store.clear();
-    return true;
-#else
-    nvs_handle_t nvs = 0;
-    esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
-    if (result == ESP_ERR_NVS_NOT_FOUND) {
-        return true;
+    switch (status) {
+        case signing::KeystoreOperationStatus::success:
+            return SuiZkLoginCredentialWriteResult::stored;
+        case signing::KeystoreOperationStatus::unchanged:
+            return SuiZkLoginCredentialWriteResult::consistency_error;
+        case signing::KeystoreOperationStatus::invalid_input:
+        case signing::KeystoreOperationStatus::invalid_record:
+            return SuiZkLoginCredentialWriteResult::invalid_record;
+        default:
+            return SuiZkLoginCredentialWriteResult::storage_error;
     }
-    if (result != ESP_OK) {
-        ESP_LOGW(kTag, "NVS open failed while clearing zkLogin credential: %s", esp_err_to_name(result));
-        return false;
-    }
-
-    result = nvs_erase_key(nvs, kCredentialKey);
-    if (result == ESP_ERR_NVS_NOT_FOUND) {
-        nvs_close(nvs);
-        return true;
-    }
-    if (result == ESP_OK) {
-        result = nvs_commit(nvs);
-    }
-    nvs_close(nvs);
-    if (result != ESP_OK) {
-        ESP_LOGW(kTag, "zkLogin credential wipe failed: %s", esp_err_to_name(result));
-        return false;
-    }
-    return true;
-#endif
 }
 
 SuiZkLoginAccountProjection sui_zklogin_account_projection()
@@ -364,43 +303,25 @@ SuiZkLoginAccountProjection sui_zklogin_account_projection()
     SuiZkLoginAccountProjection projection = {};
     clear_projection(&projection);
 
-    clear_credential(&g_credential_work);
-    const SuiZkLoginCredentialStatus status = read_sui_zklogin_credential(&g_credential_work);
-    projection.status = status;
-    if (status != SuiZkLoginCredentialStatus::active) {
-        clear_credential(&g_credential_work);
-        return projection;
+    const SuiZkLoginCredentialAccessResult access =
+        with_sui_zklogin_credential(project_credential_consumer, &projection);
+    switch (access) {
+        case SuiZkLoginCredentialAccessResult::consumed:
+            projection.status = SuiZkLoginCredentialStatus::active;
+            break;
+        case SuiZkLoginCredentialAccessResult::missing:
+            projection.status = SuiZkLoginCredentialStatus::missing;
+            break;
+        case SuiZkLoginCredentialAccessResult::invalid:
+        case SuiZkLoginCredentialAccessResult::consumer_failed:
+            projection.status = SuiZkLoginCredentialStatus::invalid;
+            break;
+        case SuiZkLoginCredentialAccessResult::locked:
+        case SuiZkLoginCredentialAccessResult::storage_error:
+            projection.status = SuiZkLoginCredentialStatus::storage_error;
+            break;
     }
-    projection.active = true;
-    memcpy(projection.address, g_credential_work.proof.address, sizeof(projection.address));
-    memcpy(projection.public_key, g_credential_work.proof.public_key, g_credential_work.proof.public_key_size);
-    projection.public_key_size = g_credential_work.proof.public_key_size;
-    clear_credential(&g_credential_work);
     return projection;
 }
-
-#ifdef STOPWATCH_ZKLOGIN_CREDENTIAL_STORE_HOST_TEST
-void sui_zklogin_credential_test_reset_store()
-{
-    g_test_store.clear();
-    g_test_write_failure = false;
-    g_test_read_failure = false;
-}
-
-void sui_zklogin_credential_test_corrupt_store()
-{
-    g_test_store.assign(sizeof(StoredSuiZkLoginCredentialRecord), 0xA5);
-}
-
-void sui_zklogin_credential_test_set_write_failure(bool enabled)
-{
-    g_test_write_failure = enabled;
-}
-
-void sui_zklogin_credential_test_set_read_failure(bool enabled)
-{
-    g_test_read_failure = enabled;
-}
-#endif
 
 }  // namespace stopwatch_target

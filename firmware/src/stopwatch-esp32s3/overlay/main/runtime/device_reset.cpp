@@ -11,6 +11,7 @@
 #include "protocol/signing_response_store.h"
 #include "sui_zklogin_credential_store.h"
 #include "sui_zklogin_proposal_state.h"
+#include "stopwatch_keystore.h"
 #include "transport/payload_delivery_store.h"
 #include "protocol_runtime.h"
 
@@ -27,9 +28,10 @@ bool device_reset_all()
     signing::signing_response_clear_all();
 
     bool wiped = true;
-    wiped = wipe_sui_zklogin_credential() && wiped;
+    wiped = stopwatch_keystore_erase() ==
+             signing::KeystoreOperationStatus::success &&
+             wiped;
     wiped = local_auth_clear() && wiped;
-    wiped = local_transport_pairing_wipe_identity() && wiped;
     wiped = signing::wipe_policy() && wiped;
     wiped = signing::wipe_signing_authorization_mode() && wiped;
     wiped = signing::approval_history_wipe() && wiped;
@@ -37,6 +39,7 @@ bool device_reset_all()
 
     const bool reset_complete =
         wiped &&
+        stopwatch_keystore_state() == signing::KeystoreState::absent &&
         sui_zklogin_credential_status() == SuiZkLoginCredentialStatus::missing &&
         local_auth_snapshot(0).status == LocalAuthStoreStatus::missing;
     if (reset_complete) {

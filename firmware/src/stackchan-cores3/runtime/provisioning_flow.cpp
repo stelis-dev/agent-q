@@ -714,7 +714,7 @@ bool provisioning_flow_add_pin_digit(char digit, TimeoutWindow input_window)
         !timeout_window_valid(input_window)) {
         return false;
     }
-    if (g_state.pin_entry_length >= kKeystorePinDigits) {
+    if (g_state.pin_entry_length >= kLocalAuthMaxDigits) {
         g_state.pin_window = input_window;
         return true;
     }
@@ -755,8 +755,9 @@ ProvisioningFlowPinSubmitResult provisioning_flow_submit_pin(
     if (!timeout_window_valid(retry_window)) {
         return ProvisioningFlowPinSubmitResult::inactive;
     }
-    if (g_state.pin_entry_length != kKeystorePinDigits ||
-        !keystore_pin_valid(g_state.pin_entry)) {
+    if (g_state.pin_entry_length != kLocalAuthMaxDigits ||
+        !keystore_pin_valid(
+            g_state.pin_entry, kLocalAuthMinDigits, kLocalAuthMaxDigits)) {
         g_state.pin_window = retry_window;
         return ProvisioningFlowPinSubmitResult::invalid_pin;
     }

@@ -240,31 +240,19 @@ void wipe_sensitive_buffer(void* data, size_t size)
     }
 }
 
-bool keystore_pin_valid(const char* pin)
-{
-    if (pin == nullptr || strlen(pin) != kKeystorePinDigits) {
-        return false;
-    }
-    for (size_t index = 0; index < kKeystorePinDigits; ++index) {
-        if (!isdigit(static_cast<unsigned char>(pin[index]))) {
-            return false;
-        }
-    }
-    return true;
-}
-
 bool valid_worker_inputs(
     const char* pin,
     void* kdf_work_area,
     size_t kdf_work_area_size)
 {
-    return keystore_pin_valid(pin) &&
+    return keystore_pin_valid(
+               pin, kLocalAuthMinDigits, kLocalAuthMaxDigits) &&
            kdf_work_area == g_kdf_work_area &&
            kdf_work_area_size == kStackChanKeystoreKdfWorkAreaBytes;
 }
 
 KeystoreOperationStatus stackchan_keystore_create(
-    char pin[kKeystorePinDigits + 1],
+    char pin[kLocalAuthMaxDigits + 1],
     void* kdf_work_area,
     size_t kdf_work_area_size)
 {
@@ -275,7 +263,7 @@ KeystoreOperationStatus stackchan_keystore_create(
 }
 
 KeystoreOperationStatus stackchan_keystore_unlock(
-    char pin[kKeystorePinDigits + 1],
+    char pin[kLocalAuthMaxDigits + 1],
     void* kdf_work_area,
     size_t kdf_work_area_size)
 {
@@ -286,7 +274,7 @@ KeystoreOperationStatus stackchan_keystore_unlock(
 }
 
 KeystoreOperationStatus stackchan_keystore_authenticate_pin(
-    char pin[kKeystorePinDigits + 1],
+    char pin[kLocalAuthMaxDigits + 1],
     void* kdf_work_area,
     size_t kdf_work_area_size)
 {
@@ -297,14 +285,15 @@ KeystoreOperationStatus stackchan_keystore_authenticate_pin(
 }
 
 KeystoreOperationStatus stackchan_keystore_rewrap(
-    char current_pin[kKeystorePinDigits + 1],
-    char new_pin[kKeystorePinDigits + 1],
+    char current_pin[kLocalAuthMaxDigits + 1],
+    char new_pin[kLocalAuthMaxDigits + 1],
     void* kdf_work_area,
     size_t kdf_work_area_size)
 {
     ++g_rewrap_keystore_calls;
     return valid_worker_inputs(current_pin, kdf_work_area, kdf_work_area_size) &&
-                   keystore_pin_valid(new_pin)
+                   keystore_pin_valid(
+                       new_pin, kLocalAuthMinDigits, kLocalAuthMaxDigits)
                ? g_operation_status
                : KeystoreOperationStatus::invalid_input;
 }

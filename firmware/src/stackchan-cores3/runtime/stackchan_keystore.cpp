@@ -47,6 +47,8 @@ const EncryptedKeystoreConfig& keystore_config()
         kTargetLabel,
         sizeof(kTargetLabel) - 1,
         kKeyslotStorageKey,
+        kLocalAuthMinDigits,
+        kLocalAuthMaxDigits,
         kStackChanKeystoreKdfProfile,
         encrypted_keystore_nvs_storage_ops(&nvs_config),
         {fill_random, nullptr},
@@ -304,7 +306,7 @@ StackChanKeystoreMaterialStatus stackchan_keystore_root_status()
 }
 
 KeystoreOperationStatus stackchan_keystore_create(
-    char pin[kKeystorePinDigits + 1],
+    char pin[kKeystorePinBufferBytes],
     void* kdf_work_area,
     size_t kdf_work_area_size)
 {
@@ -313,7 +315,7 @@ KeystoreOperationStatus stackchan_keystore_create(
 }
 
 KeystoreOperationStatus stackchan_keystore_unlock(
-    char pin[kKeystorePinDigits + 1],
+    char pin[kKeystorePinBufferBytes],
     void* kdf_work_area,
     size_t kdf_work_area_size)
 {
@@ -331,7 +333,7 @@ KeystoreOperationStatus stackchan_keystore_unlock(
 }
 
 KeystoreOperationStatus stackchan_keystore_authenticate_pin(
-    char pin[kKeystorePinDigits + 1],
+    char pin[kKeystorePinBufferBytes],
     void* kdf_work_area,
     size_t kdf_work_area_size)
 {
@@ -340,8 +342,8 @@ KeystoreOperationStatus stackchan_keystore_authenticate_pin(
 }
 
 KeystoreOperationStatus stackchan_keystore_rewrap(
-    char current_pin[kKeystorePinDigits + 1],
-    char new_pin[kKeystorePinDigits + 1],
+    char current_pin[kKeystorePinBufferBytes],
+    char new_pin[kKeystorePinBufferBytes],
     void* kdf_work_area,
     size_t kdf_work_area_size)
 {

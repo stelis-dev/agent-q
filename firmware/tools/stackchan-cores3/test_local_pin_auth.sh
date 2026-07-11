@@ -124,7 +124,8 @@ void test_set_store_sui_account_settings_result(bool result)
 
 void test_set_current_pin(const char* pin)
 {
-    if (pin != nullptr && keystore_pin_valid(pin)) {
+    if (pin != nullptr && keystore_pin_valid(
+            pin, kLocalAuthMinDigits, kLocalAuthMaxDigits)) {
         strcpy(g_current_pin, pin);
     }
 }
@@ -156,19 +157,6 @@ void wipe_sensitive_buffer(void* data, size_t size)
         *cursor++ = 0;
         --size;
     }
-}
-
-bool keystore_pin_valid(const char* pin)
-{
-    if (pin == nullptr || strlen(pin) != kKeystorePinDigits) {
-        return false;
-    }
-    for (size_t index = 0; index < kKeystorePinDigits; ++index) {
-        if (!isdigit(static_cast<unsigned char>(pin[index]))) {
-            return false;
-        }
-    }
-    return true;
 }
 
 bool read_human_approval_input_mode(HumanApprovalInputMode* mode)
@@ -226,7 +214,8 @@ bool local_auth_worker_submit_authenticate(
 {
     (void)owner;
     static uint32_t next_job_id = 1;
-    if (job_id == nullptr || !keystore_pin_valid(pin)) {
+    if (job_id == nullptr || !keystore_pin_valid(
+            pin, kLocalAuthMinDigits, kLocalAuthMaxDigits)) {
         return false;
     }
     *job_id = next_job_id++;
@@ -249,7 +238,8 @@ bool local_auth_worker_submit_rewrap(
     const char* new_pin,
     uint32_t* job_id)
 {
-    if (!keystore_pin_valid(new_pin)) {
+    if (!keystore_pin_valid(
+            new_pin, kLocalAuthMinDigits, kLocalAuthMaxDigits)) {
         return false;
     }
     return local_auth_worker_submit_authenticate(owner, current_pin, job_id);

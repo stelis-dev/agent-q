@@ -655,7 +655,7 @@ bool storage_maintenance_add_pin_digit(char digit)
         digit < '0' || digit > '9') {
         return false;
     }
-    if (g_storage_maintenance.pin_entry_length >= kKeystorePinDigits) {
+    if (g_storage_maintenance.pin_entry_length >= kLocalAuthMaxDigits) {
         return false;
     }
 
@@ -706,8 +706,11 @@ StorageMaintenancePinSubmitResult storage_maintenance_submit_pin_for_verificatio
     if (storage_maintenance_pin_locked_at(now)) {
         return StorageMaintenancePinSubmitResult::locked;
     }
-    if (g_storage_maintenance.pin_entry_length != kKeystorePinDigits ||
-        !keystore_pin_valid(g_storage_maintenance.pin_entry)) {
+    if (g_storage_maintenance.pin_entry_length != kLocalAuthMaxDigits ||
+        !keystore_pin_valid(
+            g_storage_maintenance.pin_entry,
+            kLocalAuthMinDigits,
+            kLocalAuthMaxDigits)) {
         return StorageMaintenancePinSubmitResult::invalid_pin;
     }
 

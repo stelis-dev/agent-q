@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "keystore/encrypted_keystore.h"
+#include "pin_policy.h"
 
 namespace signing {
 

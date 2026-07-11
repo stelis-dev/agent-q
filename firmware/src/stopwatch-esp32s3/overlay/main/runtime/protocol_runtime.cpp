@@ -148,7 +148,6 @@ SigningNotice g_signing_notice{false, SigningNoticeKind::info, {}};
 uint32_t g_signing_notice_deadline_ms = 0;
 signing::UsbGraceState g_usb_session_grace;
 signing::UserSigningFlowSnapshot g_user_signing_snapshot_scratch = {};
-SuiZkLoginCredentialRecord g_signing_credential_scratch = {};
 char g_signing_preflight_retry_stored_response[signing::kResponseMaxSize] = {};
 
 bool reject_line(const char* id, const char* method, const char* code);
@@ -1598,6 +1597,85 @@ void record_account_unavailable_runtime_failure()
     // record is missing, invalid, or unreadable.
 }
 
+struct TransactionAccountCheckContext {
+    const signing::SuiPolicySubjectFacts* facts = nullptr;
+    const char* network = nullptr;
+    signing::SuiSigningPreparationResult result =
+        signing::SuiSigningPreparationResult::account_unavailable;
+};
+
+bool check_transaction_account_with_credential(
+    const SuiZkLoginCredentialRecord& credential,
+    void* context_ptr)
+{
+    auto* context = static_cast<TransactionAccountCheckContext*>(context_ptr);
+    if (context == nullptr || context->facts == nullptr ||
+        context->network == nullptr) {
+        return false;
+    }
+    if (strcmp(credential.proof.network, context->network) != 0) {
+        context->result = signing::SuiSigningPreparationResult::invalid_network;
+        return true;
+    }
+    context->result = signing::verify_sui_transaction_account_binding(
+                          *context->facts,
+                          credential.proof.address,
+                          false) == signing::SuiTransactionAccountBindingResult::ok
+        ? signing::SuiSigningPreparationResult::ok
+        : signing::SuiSigningPreparationResult::account_unavailable;
+    return true;
+}
+
+struct PersonalMessageAccountCheckContext {
+    const char* network = nullptr;
+    char* account_address = nullptr;
+    signing::SuiSigningPreparationResult result =
+        signing::SuiSigningPreparationResult::account_unavailable;
+};
+
+bool check_personal_message_account_with_credential(
+    const SuiZkLoginCredentialRecord& credential,
+    void* context_ptr)
+{
+    auto* context = static_cast<PersonalMessageAccountCheckContext*>(context_ptr);
+    if (context == nullptr || context->network == nullptr ||
+        context->account_address == nullptr) {
+        return false;
+    }
+    if (strcmp(credential.proof.network, context->network) != 0) {
+        context->result = signing::SuiSigningPreparationResult::invalid_network;
+        return true;
+    }
+    context->result = strlcpy(
+                          context->account_address,
+                          credential.proof.address,
+                          signing::kSuiAddressStringBufferSize) <
+            signing::kSuiAddressStringBufferSize
+        ? signing::SuiSigningPreparationResult::ok
+        : signing::SuiSigningPreparationResult::account_unavailable;
+    return true;
+}
+
+struct NetworkCheckContext {
+    const char* network = nullptr;
+    signing::SuiSigningPreparationResult result =
+        signing::SuiSigningPreparationResult::account_unavailable;
+};
+
+bool check_network_with_credential(
+    const SuiZkLoginCredentialRecord& credential,
+    void* context_ptr)
+{
+    auto* context = static_cast<NetworkCheckContext*>(context_ptr);
+    if (context == nullptr || context->network == nullptr) {
+        return false;
+    }
+    context->result = strcmp(credential.proof.network, context->network) == 0
+        ? signing::SuiSigningPreparationResult::ok
+        : signing::SuiSigningPreparationResult::invalid_network;
+    return true;
+}
+
 signing::SuiSigningPreparationResult check_stopwatch_transaction_account(
     const signing::SuiPolicySubjectFacts& facts,
     const char* network,
@@ -1606,34 +1684,12 @@ signing::SuiSigningPreparationResult check_stopwatch_transaction_account(
     if (network == nullptr || network[0] == '\0') {
         return signing::SuiSigningPreparationResult::account_unavailable;
     }
-    wipe_sensitive_buffer(
-        &g_signing_credential_scratch,
-        sizeof(g_signing_credential_scratch));
-    SuiZkLoginCredentialRecord& credential = g_signing_credential_scratch;
-    const SuiZkLoginCredentialStatus status = read_sui_zklogin_credential(&credential);
-    if (status != SuiZkLoginCredentialStatus::active) {
-        wipe_sensitive_buffer(
-            &g_signing_credential_scratch,
-            sizeof(g_signing_credential_scratch));
-        return signing::SuiSigningPreparationResult::account_unavailable;
-    }
-    if (strcmp(credential.proof.network, network) != 0) {
-        wipe_sensitive_buffer(
-            &g_signing_credential_scratch,
-            sizeof(g_signing_credential_scratch));
-        return signing::SuiSigningPreparationResult::invalid_network;
-    }
-    const signing::SuiTransactionAccountBindingResult result =
-        signing::verify_sui_transaction_account_binding(
-            facts,
-            credential.proof.address,
-            false);
-    wipe_sensitive_buffer(
-        &g_signing_credential_scratch,
-        sizeof(g_signing_credential_scratch));
-    return result == signing::SuiTransactionAccountBindingResult::ok
-               ? signing::SuiSigningPreparationResult::ok
-               : signing::SuiSigningPreparationResult::account_unavailable;
+    TransactionAccountCheckContext context{&facts, network};
+    return with_sui_zklogin_credential(
+               check_transaction_account_with_credential,
+               &context) == SuiZkLoginCredentialAccessResult::consumed
+        ? context.result
+        : signing::SuiSigningPreparationResult::account_unavailable;
 }
 
 signing::SuiSigningPreparationResult check_stopwatch_personal_message_account(
@@ -1644,31 +1700,12 @@ signing::SuiSigningPreparationResult check_stopwatch_personal_message_account(
     if (network == nullptr || network[0] == '\0' || account_address == nullptr) {
         return signing::SuiSigningPreparationResult::account_unavailable;
     }
-    wipe_sensitive_buffer(
-        &g_signing_credential_scratch,
-        sizeof(g_signing_credential_scratch));
-    SuiZkLoginCredentialRecord& credential = g_signing_credential_scratch;
-    const SuiZkLoginCredentialStatus status = read_sui_zklogin_credential(&credential);
-    if (status != SuiZkLoginCredentialStatus::active) {
-        wipe_sensitive_buffer(
-            &g_signing_credential_scratch,
-            sizeof(g_signing_credential_scratch));
-        return signing::SuiSigningPreparationResult::account_unavailable;
-    }
-    if (strcmp(credential.proof.network, network) != 0) {
-        wipe_sensitive_buffer(
-            &g_signing_credential_scratch,
-            sizeof(g_signing_credential_scratch));
-        return signing::SuiSigningPreparationResult::invalid_network;
-    }
-    const size_t copied =
-        strlcpy(account_address, credential.proof.address, signing::kSuiAddressStringBufferSize);
-    wipe_sensitive_buffer(
-        &g_signing_credential_scratch,
-        sizeof(g_signing_credential_scratch));
-    return copied < signing::kSuiAddressStringBufferSize
-               ? signing::SuiSigningPreparationResult::ok
-               : signing::SuiSigningPreparationResult::account_unavailable;
+    PersonalMessageAccountCheckContext context{network, account_address};
+    return with_sui_zklogin_credential(
+               check_personal_message_account_with_credential,
+               &context) == SuiZkLoginCredentialAccessResult::consumed
+        ? context.result
+        : signing::SuiSigningPreparationResult::account_unavailable;
 }
 
 signing::SuiSigningPreparationResult check_stopwatch_active_network(
@@ -1678,24 +1715,12 @@ signing::SuiSigningPreparationResult check_stopwatch_active_network(
     if (network == nullptr || network[0] == '\0') {
         return signing::SuiSigningPreparationResult::account_unavailable;
     }
-    wipe_sensitive_buffer(
-        &g_signing_credential_scratch,
-        sizeof(g_signing_credential_scratch));
-    SuiZkLoginCredentialRecord& credential = g_signing_credential_scratch;
-    const SuiZkLoginCredentialStatus status = read_sui_zklogin_credential(&credential);
-    if (status != SuiZkLoginCredentialStatus::active) {
-        wipe_sensitive_buffer(
-            &g_signing_credential_scratch,
-            sizeof(g_signing_credential_scratch));
-        return signing::SuiSigningPreparationResult::account_unavailable;
-    }
-    const bool matched = strcmp(credential.proof.network, network) == 0;
-    wipe_sensitive_buffer(
-        &g_signing_credential_scratch,
-        sizeof(g_signing_credential_scratch));
-    return matched
-               ? signing::SuiSigningPreparationResult::ok
-               : signing::SuiSigningPreparationResult::invalid_network;
+    NetworkCheckContext context{network};
+    return with_sui_zklogin_credential(
+               check_network_with_credential,
+               &context) == SuiZkLoginCredentialAccessResult::consumed
+        ? context.result
+        : signing::SuiSigningPreparationResult::account_unavailable;
 }
 
 constexpr signing::SuiSigningPreparationOps kStopWatchSigningPreparationOps{

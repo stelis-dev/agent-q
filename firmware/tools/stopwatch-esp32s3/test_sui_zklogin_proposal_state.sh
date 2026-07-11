@@ -53,7 +53,10 @@ cat >"${TMP_DIR}/sui_zklogin_proposal_state_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
+#include <vector>
+
 #include "sensitive_memory.h"
+#include "stopwatch_keystore.h"
 #include "sui_zklogin_proposal_state.h"
 
 extern "C" {
@@ -62,6 +65,57 @@ extern "C" {
 
 using namespace signing;
 using namespace stopwatch_target;
+
+namespace stopwatch_target {
+
+std::vector<uint8_t> g_test_credential_blob;
+bool g_test_credential_write_failure = false;
+
+KeystoreState stopwatch_keystore_state()
+{
+    return KeystoreState::unlocked;
+}
+
+KeystoreOperationStatus stopwatch_keystore_credential_status()
+{
+    return g_test_credential_blob.empty()
+        ? KeystoreOperationStatus::missing
+        : KeystoreOperationStatus::success;
+}
+
+KeystoreOperationStatus stopwatch_keystore_with_credential(
+    KeystoreRecordConsumer consumer,
+    void* consumer_context)
+{
+    if (g_test_credential_blob.empty()) {
+        return KeystoreOperationStatus::missing;
+    }
+    if (consumer == nullptr) {
+        return KeystoreOperationStatus::invalid_input;
+    }
+    return consumer(
+               g_test_credential_blob.data(),
+               g_test_credential_blob.size(),
+               consumer_context)
+        ? KeystoreOperationStatus::success
+        : KeystoreOperationStatus::consumer_failed;
+}
+
+KeystoreOperationStatus stopwatch_keystore_replace_credential(
+    const uint8_t* plaintext,
+    size_t plaintext_size)
+{
+    if (g_test_credential_write_failure) {
+        return KeystoreOperationStatus::storage_error;
+    }
+    if (plaintext == nullptr || plaintext_size == 0) {
+        return KeystoreOperationStatus::invalid_input;
+    }
+    g_test_credential_blob.assign(plaintext, plaintext + plaintext_size);
+    return KeystoreOperationStatus::success;
+}
+
+}  // namespace stopwatch_target
 
 namespace {
 
@@ -194,9 +248,26 @@ void begin_valid(JsonDocument& payload, const uint8_t seed[kSuiEd25519SeedBytes]
     assert(strlen(snapshot.proof_hash) == kSuiZkLoginProofHashBufferSize - 1);
 }
 
+void reset_test_credential_store()
+{
+    g_test_credential_blob.clear();
+    g_test_credential_write_failure = false;
+}
+
+bool capture_credential(
+    const SuiZkLoginCredentialRecord& credential,
+    void* context)
+{
+    if (context == nullptr) {
+        return false;
+    }
+    *static_cast<SuiZkLoginCredentialRecord*>(context) = credential;
+    return true;
+}
+
 void valid_commit_flow()
 {
-    sui_zklogin_credential_test_reset_store();
+    reset_test_credential_store();
     sui_zklogin_proposal_state_clear();
     JsonDocument payload;
     build_valid_payload(payload);
@@ -212,7 +283,8 @@ void valid_commit_flow()
            SuiZkLoginProposalTerminalResult::activated);
 
     SuiZkLoginCredentialRecord stored = {};
-    assert(read_sui_zklogin_credential(&stored) == SuiZkLoginCredentialStatus::active);
+    assert(with_sui_zklogin_credential(capture_credential, &stored) ==
+           SuiZkLoginCredentialAccessResult::consumed);
     assert(memcmp(stored.prepared_seed, seed, sizeof(stored.prepared_seed)) == 0);
     assert(strcmp(stored.proof.network, "testnet") == 0);
     assert(strcmp(stored.proof.issuer, kIssuer) == 0);
@@ -222,7 +294,7 @@ void valid_commit_flow()
 
 void invalid_payload_cases()
 {
-    sui_zklogin_credential_test_reset_store();
+    reset_test_credential_store();
     uint8_t seed[kSuiEd25519SeedBytes] = {};
     fill_seed(seed);
 
@@ -303,8 +375,8 @@ void transition_and_failure_cases()
            SuiZkLoginProposalTerminalResult::timed_out);
     sui_zklogin_proposal_state_clear();
 
-    sui_zklogin_credential_test_reset_store();
-    sui_zklogin_credential_test_set_write_failure(true);
+    reset_test_credential_store();
+    g_test_credential_write_failure = true;
     build_valid_payload(payload);
     begin_valid(payload, seed);
     assert(sui_zklogin_proposal_continue_to_auth(101) ==
@@ -313,7 +385,7 @@ void transition_and_failure_cases()
            SuiZkLoginProposalTransitionResult::ok);
     assert(sui_zklogin_proposal_commit() ==
            SuiZkLoginProposalTerminalResult::storage_error);
-    sui_zklogin_credential_test_set_write_failure(false);
+    g_test_credential_write_failure = false;
     sui_zklogin_proposal_state_clear();
 }
 
@@ -357,7 +429,7 @@ void deadline_wrap_cases()
 
 int main()
 {
-    sui_zklogin_credential_test_reset_store();
+    reset_test_credential_store();
     sui_zklogin_proposal_state_init();
     expect_terminal_strings();
     valid_commit_flow();
@@ -385,7 +457,6 @@ CPP
   -o "${TMP_DIR}/platform_util.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
-  -DSTOPWATCH_ZKLOGIN_CREDENTIAL_STORE_HOST_TEST \
   -I"${ARDUINOJSON_ROOT}" \
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_DIR}" \

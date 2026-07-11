@@ -196,6 +196,8 @@ cat >"${TMP_DIR}/protocol_runtime_credential_flow_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
+#include <vector>
+
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
 #include "esp_err.h"
@@ -279,6 +281,7 @@ int64_t esp_timer_get_time(void)
 
 #include "device_reset.h"
 #include "local_auth.h"
+#include "stopwatch_keystore.h"
 #include "protocol_runtime.cpp"
 
 namespace stopwatch_target {
@@ -312,14 +315,78 @@ bool local_transport_pairing_connected()
     return false;
 }
 
-bool local_transport_pairing_wipe_identity()
-{
-    return true;
-}
-
 bool local_transport_pairing_take_event(signing::LocalTransportPairingEvent*)
 {
     return false;
+}
+
+std::vector<uint8_t> g_test_credential_blob;
+signing::KeystoreState g_test_keystore_state = signing::KeystoreState::absent;
+bool g_test_credential_write_failure = false;
+
+signing::KeystoreState stopwatch_keystore_state()
+{
+    return g_test_keystore_state;
+}
+
+signing::KeystoreOperationStatus stopwatch_keystore_lock()
+{
+    if (g_test_keystore_state != signing::KeystoreState::absent) {
+        g_test_keystore_state = signing::KeystoreState::locked;
+    }
+    return signing::KeystoreOperationStatus::success;
+}
+
+signing::KeystoreOperationStatus stopwatch_keystore_credential_status()
+{
+    return g_test_credential_blob.empty()
+        ? signing::KeystoreOperationStatus::missing
+        : signing::KeystoreOperationStatus::success;
+}
+
+signing::KeystoreOperationStatus stopwatch_keystore_with_credential(
+    signing::KeystoreRecordConsumer consumer,
+    void* consumer_context)
+{
+    if (g_test_keystore_state != signing::KeystoreState::unlocked) {
+        return signing::KeystoreOperationStatus::locked;
+    }
+    if (g_test_credential_blob.empty()) {
+        return signing::KeystoreOperationStatus::missing;
+    }
+    if (consumer == nullptr) {
+        return signing::KeystoreOperationStatus::invalid_input;
+    }
+    return consumer(
+               g_test_credential_blob.data(),
+               g_test_credential_blob.size(),
+               consumer_context)
+        ? signing::KeystoreOperationStatus::success
+        : signing::KeystoreOperationStatus::consumer_failed;
+}
+
+signing::KeystoreOperationStatus stopwatch_keystore_replace_credential(
+    const uint8_t* plaintext,
+    size_t plaintext_size)
+{
+    if (g_test_keystore_state != signing::KeystoreState::unlocked) {
+        return signing::KeystoreOperationStatus::locked;
+    }
+    if (g_test_credential_write_failure) {
+        return signing::KeystoreOperationStatus::storage_error;
+    }
+    if (plaintext == nullptr || plaintext_size == 0) {
+        return signing::KeystoreOperationStatus::invalid_input;
+    }
+    g_test_credential_blob.assign(plaintext, plaintext + plaintext_size);
+    return signing::KeystoreOperationStatus::success;
+}
+
+signing::KeystoreOperationStatus stopwatch_keystore_erase()
+{
+    g_test_credential_blob.clear();
+    g_test_keystore_state = signing::KeystoreState::absent;
+    return signing::KeystoreOperationStatus::success;
 }
 
 }  // namespace stopwatch_target
@@ -930,7 +997,8 @@ void create_finalized_payload_for_current_session(const char* payload_json)
 
 void configure_current_setup_for_usb_test()
 {
-    assert(local_auth_store_new_code("1234", 4));
+    g_test_keystore_state = signing::KeystoreState::unlocked;
+    assert(local_auth_store_initial_metadata());
     signing::g_policy_status = signing::PolicyStoreStatus::active;
     signing::g_signing_mode_status = signing::AuthorizationModeStatus::active;
     protocol_runtime_set_state(ProtocolRuntimeState{
@@ -965,7 +1033,9 @@ int main()
     signing::session_init();
     signing::payload_delivery_store_reset();
     credential_preparation_state_init();
-    sui_zklogin_credential_test_reset_store();
+    g_test_credential_blob.clear();
+    g_test_credential_write_failure = false;
+    g_test_keystore_state = signing::KeystoreState::absent;
     sui_zklogin_proposal_state_init();
     protocol_runtime_init();
 
@@ -1862,7 +1932,6 @@ CPP
   -o "${TMP_DIR}/platform_util.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror -Wno-unused-variable -ffunction-sections -fdata-sections \
-  -DSTOPWATCH_ZKLOGIN_CREDENTIAL_STORE_HOST_TEST \
   -DSTOPWATCH_LOCAL_AUTH_HOST_TEST \
   -I"${TMP_DIR}" \
   -I"${ARDUINOJSON_ROOT}" \

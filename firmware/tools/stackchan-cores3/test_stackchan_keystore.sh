@@ -165,7 +165,7 @@ bool capture_key_pair(
 void set_pin(char output[signing::kKeystorePinBufferBytes], const char* pin)
 {
     memset(output, 0, signing::kKeystorePinBufferBytes);
-    memcpy(output, pin, signing::kKeystorePinDigits);
+    memcpy(output, pin, strlen(pin));
 }
 
 }  // namespace
@@ -295,8 +295,24 @@ int main()
                signing::kStackChanKeystoreKdfProfile.passes == 6 &&
                signing::kStackChanKeystoreKdfProfile.lanes == 1,
            "StackChan uses its measured fixed KDF optimization profile");
+    expect(signing::kLocalAuthMinDigits == 6 &&
+               signing::kLocalAuthMaxDigits == 6,
+           "StackChan fixes the target PIN policy to exactly six digits");
     expect(signing::stackchan_keystore_initialize() == KeystoreState::absent,
            "empty NVS initializes an absent keystore");
+
+    set_pin(pin, "1234");
+    expect(signing::stackchan_keystore_create(
+               pin, work_area.data(), work_area.size()) ==
+               KeystoreOperationStatus::invalid_input,
+           "setup rejects a shorter PIN");
+    memset(pin, '1', sizeof(pin));
+    expect(signing::stackchan_keystore_create(
+               pin, work_area.data(), work_area.size()) ==
+               KeystoreOperationStatus::invalid_input,
+           "setup rejects a PIN without a terminator inside the bounded buffer");
+    expect(g_blobs.count("keyslot") == 0,
+           "rejected PINs write no keyslot");
 
     set_pin(pin, "123456");
     expect(signing::stackchan_keystore_create(
@@ -308,7 +324,7 @@ int main()
     expect(!contains_sequence(
                g_blobs.at("keyslot"),
                reinterpret_cast<const uint8_t*>("123456"),
-               signing::kKeystorePinDigits),
+               signing::kLocalAuthMaxDigits),
            "persisted keyslot does not contain the PIN");
     expect(signing::stackchan_keystore_initialize() == KeystoreState::locked,
            "reboot locks an incomplete setup keyslot");

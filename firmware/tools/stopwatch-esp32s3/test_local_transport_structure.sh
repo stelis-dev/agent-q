@@ -33,7 +33,6 @@ for common_source in \
   transport/transport_exclusivity.h \
   transport/local_transport_identity_store.cpp \
   transport/local_transport_mbedtls_crypto.cpp \
-  transport/local_transport_nvs_identity_storage.cpp \
   transport/local_transport_nimble_peripheral.cpp \
   transport/local_transport_nimble_pairing_session.cpp \
   transport/local_transport_pairing_session.cpp; do
@@ -42,6 +41,11 @@ for common_source in \
     exit 1
   }
 done
+[[ ! -e "${COMMON}/transport/local_transport_nvs_identity_storage.cpp" &&
+   ! -e "${COMMON}/transport/local_transport_nvs_identity_storage.h" ]] || {
+  echo "Unused plaintext private-identity storage backend remains in common" >&2
+  exit 1
+}
 
 while IFS= read -r common_source; do
   if grep -En \
@@ -95,8 +99,8 @@ expect_absent "${STACKCHAN}/stackchan_keystore.h" \
   'stackchan_keystore_replace_transport_identity' \
   "generic StackChan private identity-record writer"
 expect_present "${STOPWATCH}/runtime/local_transport_pairing.cpp" \
-  'local_transport_nvs_identity_storage_ops' \
-  "StopWatch current parameterized NVS identity-storage process"
+  'stopwatch_transport_identity_storage_ops' \
+  "StopWatch encrypted identity-storage adapter"
 for target_storage_consumer in \
   "${STACKCHAN}/local_transport_pairing.cpp" \
   "${STOPWATCH}/runtime/local_transport_pairing.cpp"; do
@@ -185,8 +189,8 @@ expect_absent "${STOPWATCH}/runtime/protocol_runtime.cpp" \
   'stopwatch_local_transport_operation_handlers' \
   "transport-specific operation table"
 expect_present "${STOPWATCH}/runtime/device_reset.cpp" \
-  'local_transport_pairing_wipe_identity()' \
-  "Device reset identity wipe"
+  'stopwatch_keystore_erase()' \
+  "Device reset encrypted-keystore wipe"
 
 state_sync_block="$(sed -n '/void RuntimeApp::sync_local_transport_state/,/void RuntimeApp::project_local_transport_scene/p' "${STOPWATCH}/runtime/app.cpp")"
 if grep -Fq 'local_transport_pairing_scene_' <<<"${state_sync_block}"; then

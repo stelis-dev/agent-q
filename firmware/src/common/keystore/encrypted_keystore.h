@@ -16,8 +16,8 @@ constexpr size_t kKeystoreRecordHeaderBytes = 36;
 constexpr size_t kKeystoreRecordOverheadBytes =
     kKeystoreRecordHeaderBytes + kKeystoreTagBytes;
 constexpr size_t kKeystoreMaximumBindingBytes = 32;
-constexpr size_t kKeystorePinDigits = 6;
-constexpr size_t kKeystorePinBufferBytes = kKeystorePinDigits + 1;
+constexpr size_t kKeystoreMaximumPinDigits = 6;
+constexpr size_t kKeystorePinBufferBytes = kKeystoreMaximumPinDigits + 1;
 
 enum class KeystoreState {
     absent,
@@ -80,6 +80,8 @@ struct EncryptedKeystoreConfig {
     const uint8_t* target_label = nullptr;
     size_t target_label_size = 0;
     const char* keyslot_storage_key = nullptr;
+    size_t minimum_pin_digits = 0;
+    size_t maximum_pin_digits = 0;
     KeystoreKdfProfile kdf;
     KeystoreStorageOps storage;
     KeystoreRandomOps random;
@@ -122,8 +124,50 @@ using KeystoreRecordConsumer = bool (*)(
     size_t plaintext_size,
     void* context);
 
+inline bool keystore_pin_policy_valid(
+    size_t minimum_pin_digits,
+    size_t maximum_pin_digits)
+{
+    return minimum_pin_digits > 0 &&
+           minimum_pin_digits <= maximum_pin_digits &&
+           maximum_pin_digits <= kKeystoreMaximumPinDigits;
+}
+
+inline bool keystore_pin_valid(
+    const char* pin,
+    size_t minimum_pin_digits,
+    size_t maximum_pin_digits,
+    size_t* pin_length = nullptr)
+{
+    if (pin == nullptr ||
+        !keystore_pin_policy_valid(
+            minimum_pin_digits, maximum_pin_digits)) {
+        return false;
+    }
+    for (size_t index = 0; index < maximum_pin_digits; ++index) {
+        if (pin[index] == '\0') {
+            if (index < minimum_pin_digits) {
+                return false;
+            }
+            if (pin_length != nullptr) {
+                *pin_length = index;
+            }
+            return true;
+        }
+        if (pin[index] < '0' || pin[index] > '9') {
+            return false;
+        }
+    }
+    if (pin[maximum_pin_digits] != '\0') {
+        return false;
+    }
+    if (pin_length != nullptr) {
+        *pin_length = maximum_pin_digits;
+    }
+    return true;
+}
+
 bool keystore_kdf_profile_valid(const KeystoreKdfProfile& profile);
-bool keystore_pin_valid(const char* pin);
 bool encrypted_keystore_config_valid(const EncryptedKeystoreConfig& config);
 
 KeystoreState encrypted_keystore_initialize(
@@ -134,26 +178,26 @@ KeystoreState encrypted_keystore_state(const EncryptedKeystore* keystore);
 
 KeystoreOperationStatus encrypted_keystore_create(
     EncryptedKeystore* keystore,
-    char pin[kKeystorePinDigits + 1],
+    char pin[kKeystorePinBufferBytes],
     void* kdf_work_area,
     size_t kdf_work_area_size);
 
 KeystoreOperationStatus encrypted_keystore_unlock(
     EncryptedKeystore* keystore,
-    char pin[kKeystorePinDigits + 1],
+    char pin[kKeystorePinBufferBytes],
     void* kdf_work_area,
     size_t kdf_work_area_size);
 
 KeystoreOperationStatus encrypted_keystore_authenticate_pin(
     EncryptedKeystore* keystore,
-    char pin[kKeystorePinDigits + 1],
+    char pin[kKeystorePinBufferBytes],
     void* kdf_work_area,
     size_t kdf_work_area_size);
 
 KeystoreOperationStatus encrypted_keystore_rewrap(
     EncryptedKeystore* keystore,
-    char current_pin[kKeystorePinDigits + 1],
-    char new_pin[kKeystorePinDigits + 1],
+    char current_pin[kKeystorePinBufferBytes],
+    char new_pin[kKeystorePinBufferBytes],
     void* kdf_work_area,
     size_t kdf_work_area_size);
 

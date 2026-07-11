@@ -30,8 +30,6 @@ using signing::SuiZkLoginProofRecord;
 using signing::SuiZkLoginSignatureInputs;
 using signing::validate_sui_zklogin_proof_record;
 
-constexpr size_t kSuiZkLoginCredentialRecordMaxBytes = 4096;
-
 struct SuiZkLoginCredentialRecord {
     SuiZkLoginProofRecord proof;
     uint8_t prepared_seed[kSuiEd25519SeedBytes];
@@ -51,6 +49,19 @@ enum class SuiZkLoginCredentialWriteResult {
     consistency_error,
 };
 
+enum class SuiZkLoginCredentialAccessResult {
+    consumed,
+    missing,
+    locked,
+    invalid,
+    storage_error,
+    consumer_failed,
+};
+
+using SuiZkLoginCredentialConsumer = bool (*)(
+    const SuiZkLoginCredentialRecord& credential,
+    void* context);
+
 struct SuiZkLoginAccountProjection {
     bool active;
     SuiZkLoginCredentialStatus status;
@@ -61,18 +72,11 @@ struct SuiZkLoginAccountProjection {
 
 bool validate_sui_zklogin_credential_record(const SuiZkLoginCredentialRecord* record);
 SuiZkLoginCredentialStatus sui_zklogin_credential_status();
-SuiZkLoginCredentialStatus read_sui_zklogin_credential(
-    SuiZkLoginCredentialRecord* out);
+SuiZkLoginCredentialAccessResult with_sui_zklogin_credential(
+    SuiZkLoginCredentialConsumer consumer,
+    void* consumer_context);
 SuiZkLoginCredentialWriteResult store_sui_zklogin_credential(
     const SuiZkLoginCredentialRecord* record);
-bool wipe_sui_zklogin_credential();
 SuiZkLoginAccountProjection sui_zklogin_account_projection();
-
-#ifdef STOPWATCH_ZKLOGIN_CREDENTIAL_STORE_HOST_TEST
-void sui_zklogin_credential_test_reset_store();
-void sui_zklogin_credential_test_corrupt_store();
-void sui_zklogin_credential_test_set_write_failure(bool enabled);
-void sui_zklogin_credential_test_set_read_failure(bool enabled);
-#endif
 
 }  // namespace stopwatch_target

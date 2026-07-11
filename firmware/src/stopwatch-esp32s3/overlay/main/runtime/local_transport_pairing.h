@@ -16,7 +16,6 @@ signing::LocalTransportPairingSnapshot local_transport_pairing_snapshot();
 bool local_transport_pairing_active();
 bool local_transport_pairing_established();
 bool local_transport_pairing_connected();
-bool local_transport_pairing_wipe_identity();
 bool local_transport_pairing_take_event(signing::LocalTransportPairingEvent* event);
 
 }  // namespace stopwatch_target

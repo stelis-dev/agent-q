@@ -19,6 +19,7 @@ cat >"${TMP_DIR}/test.cpp" <<'CPP'
 
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "keystore/encrypted_keystore.h"
@@ -52,6 +53,19 @@ const uint8_t kExpectedKeyslot[signing::kKeystoreKeyslotBytes] = {
     0x58,0xee,0x58,0x24,0xbb,0xf4,0x94,0x48,0x8b,0x63,0xf0,0x1c,
     0xf7,0x14,0xc3,0x8c,0x8a,0x44,0x90,0x3f,0x26,0x68,0x83,0x75,
     0xbc,0x41,0xc4,0xbb,0x53,0xc6,0x43,0xf0,
+};
+
+const uint8_t kExpectedOneDigitKeyslot[signing::kKeystoreKeyslotBytes] = {
+    0x41,0x51,0x4b,0x53,0x01,0x01,0x01,0x03,0x40,0x00,0x00,0x00,
+    0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1a,0x1b,
+    0x1c,0x1d,0x1e,0x1f,0x50,0x51,0x52,0x53,0x54,0x55,0x56,0x57,
+    0x58,0x59,0x5a,0x5b,0x5c,0x5d,0x5e,0x5f,0x60,0x61,0x62,0x63,
+    0x64,0x65,0x66,0x67,0xf9,0xc3,0x90,0x5b,0x4c,0x0b,0x25,0xee,
+    0x2d,0xe6,0x10,0xc5,0xb4,0x56,0xa4,0x5d,0x46,0x59,0x01,0xb8,
+    0xda,0x80,0x00,0x9b,0x71,0x97,0x21,0x70,0x39,0x65,0xee,0x3a,
+    0x53,0xff,0xec,0xaf,0x83,0x4b,0xb1,0xcd,0x8e,0x57,0x34,0x09,
+    0x9c,0x60,0x76,0x07,0x06,0x7c,0x28,0xcc,0x05,0xd7,0xe9,0x49,
+    0x15,0x58,0xf2,0x13,0x47,0xdc,0x5e,0xfd,
 };
 
 const uint8_t kExpectedRootRecord[kBlobBytes] = {
@@ -213,12 +227,16 @@ EncryptedKeystoreConfig config_for(
     FakeStore* store,
     FakeRandom* random,
     const uint8_t* target = kTargetLabel,
-    size_t target_size = sizeof(kTargetLabel) - 1)
+    size_t target_size = sizeof(kTargetLabel) - 1,
+    size_t minimum_pin_digits = 6,
+    size_t maximum_pin_digits = 6)
 {
     return {
         target,
         target_size,
         "keyslot",
+        minimum_pin_digits,
+        maximum_pin_digits,
         {64, 3, 1},
         {read_blob, write_blob, erase_blob, store},
         {fill_random, random},
@@ -230,9 +248,10 @@ KeystoreRecord record_for(const uint8_t* id = kRecordId, size_t id_size = sizeof
     return {"root", id, id_size, kPlaintextBytes};
 }
 
-void set_pin(char output[signing::kKeystorePinDigits + 1], const char* pin)
+void set_pin(char output[signing::kKeystorePinBufferBytes], const char* pin)
 {
-    memcpy(output, pin, signing::kKeystorePinDigits + 1);
+    memset(output, 0, signing::kKeystorePinBufferBytes);
+    memcpy(output, pin, strlen(pin));
 }
 
 bool capture_consumer(const uint8_t* plaintext, size_t size, void* context)
@@ -261,7 +280,7 @@ bool attempt_reentrant_lock(const uint8_t*, size_t, void* context)
 
 struct ReentrantAuthenticationContext {
     EncryptedKeystore* keystore = nullptr;
-    char pin[signing::kKeystorePinDigits + 1] = {};
+    char pin[signing::kKeystorePinBufferBytes] = {};
     std::vector<uint8_t> work;
     KeystoreOperationStatus status = KeystoreOperationStatus::invalid_input;
 };
@@ -287,6 +306,115 @@ void expect_scratch_wiped(const Scratch& scratch)
 
 int main()
 {
+    assert(!signing::keystore_pin_policy_valid(0, 4));
+    assert(!signing::keystore_pin_policy_valid(4, 3));
+    assert(!signing::keystore_pin_policy_valid(
+        1, signing::kKeystoreMaximumPinDigits + 1));
+    assert(signing::keystore_pin_policy_valid(1, 4));
+    assert(signing::keystore_pin_policy_valid(6, 6));
+    assert(signing::keystore_pin_valid("1", 1, 4));
+    assert(signing::keystore_pin_valid("1234", 1, 4));
+    assert(!signing::keystore_pin_valid("", 1, 4));
+    assert(!signing::keystore_pin_valid("12345", 1, 4));
+    assert(!signing::keystore_pin_valid("12a4", 1, 4));
+    assert(!signing::keystore_pin_valid("1234", 6, 6));
+    assert(signing::keystore_pin_valid("123456", 6, 6));
+
+    for (const char* accepted_pin : {"1", "12", "123", "1234"}) {
+        FakeStore variable_store;
+        FakeRandom variable_random;
+        EncryptedKeystoreConfig variable_config = config_for(
+            &variable_store,
+            &variable_random,
+            kTargetLabel,
+            sizeof(kTargetLabel) - 1,
+            1,
+            4);
+        EncryptedKeystore variable_keystore;
+        assert(signing::encrypted_keystore_initialize(
+                   &variable_keystore, &variable_config) ==
+               KeystoreState::absent);
+        std::vector<uint8_t> variable_work(
+            variable_config.kdf.memory_kib * 1024, 0xA5);
+        char variable_pin[signing::kKeystorePinBufferBytes] = {};
+        set_pin(variable_pin, accepted_pin);
+        assert(signing::encrypted_keystore_create(
+                   &variable_keystore,
+                   variable_pin,
+                   variable_work.data(),
+                   variable_work.size()) == KeystoreOperationStatus::success);
+        assert(all_zero(variable_pin, sizeof(variable_pin)));
+        assert(all_zero(variable_work.data(), variable_work.size()));
+        assert(signing::encrypted_keystore_lock(&variable_keystore) ==
+               KeystoreOperationStatus::success);
+        set_pin(variable_pin, accepted_pin);
+        memset(variable_work.data(), 0xA5, variable_work.size());
+        assert(signing::encrypted_keystore_unlock(
+                   &variable_keystore,
+                   variable_pin,
+                   variable_work.data(),
+                   variable_work.size()) == KeystoreOperationStatus::success);
+    }
+
+    {
+        FakeStore one_digit_store;
+        FakeRandom one_digit_random;
+        EncryptedKeystoreConfig one_digit_config = config_for(
+            &one_digit_store,
+            &one_digit_random,
+            kTargetLabel,
+            sizeof(kTargetLabel) - 1,
+            1,
+            4);
+        EncryptedKeystore one_digit_keystore;
+        assert(signing::encrypted_keystore_initialize(
+                   &one_digit_keystore, &one_digit_config) ==
+               KeystoreState::absent);
+        std::vector<uint8_t> one_digit_work(
+            one_digit_config.kdf.memory_kib * 1024, 0xA5);
+        char one_digit_pin[signing::kKeystorePinBufferBytes] = {};
+        set_pin(one_digit_pin, "1");
+        assert(signing::encrypted_keystore_create(
+                   &one_digit_keystore,
+                   one_digit_pin,
+                   one_digit_work.data(),
+                   one_digit_work.size()) == KeystoreOperationStatus::success);
+        assert(one_digit_store.blobs.at("keyslot").size() ==
+               sizeof(kExpectedOneDigitKeyslot));
+        assert(memcmp(
+                   one_digit_store.blobs.at("keyslot").data(),
+                   kExpectedOneDigitKeyslot,
+                   sizeof(kExpectedOneDigitKeyslot)) == 0);
+        assert(signing::encrypted_keystore_lock(&one_digit_keystore) ==
+               KeystoreOperationStatus::success);
+        set_pin(one_digit_pin, "01");
+        memset(one_digit_work.data(), 0xA5, one_digit_work.size());
+        assert(signing::encrypted_keystore_unlock(
+                   &one_digit_keystore,
+                   one_digit_pin,
+                   one_digit_work.data(),
+                   one_digit_work.size()) == KeystoreOperationStatus::wrong_pin);
+    }
+
+    for (const auto invalid_policy : {
+             std::pair<size_t, size_t>{0, 4},
+             std::pair<size_t, size_t>{4, 3},
+             std::pair<size_t, size_t>{1, 7}}) {
+        FakeStore invalid_policy_store;
+        FakeRandom invalid_policy_random;
+        EncryptedKeystoreConfig invalid_policy_config = config_for(
+            &invalid_policy_store,
+            &invalid_policy_random,
+            kTargetLabel,
+            sizeof(kTargetLabel) - 1,
+            invalid_policy.first,
+            invalid_policy.second);
+        EncryptedKeystore invalid_policy_keystore;
+        assert(signing::encrypted_keystore_initialize(
+                   &invalid_policy_keystore, &invalid_policy_config) ==
+               KeystoreState::storage_error);
+    }
+
     assert(!signing::keystore_kdf_profile_valid({63, 3, 1}));
     assert(signing::keystore_kdf_profile_valid({64, 3, 1}));
     assert(signing::keystore_kdf_profile_valid({512, 255, 1}));
@@ -306,7 +434,7 @@ int main()
                    &failed_keystore, &failed_config) == KeystoreState::absent);
         std::vector<uint8_t> failed_work(
             failed_config.kdf.memory_kib * 1024, 0xA5);
-        char failed_pin[signing::kKeystorePinDigits + 1];
+        char failed_pin[signing::kKeystorePinBufferBytes];
         set_pin(failed_pin, "123456");
         assert(signing::encrypted_keystore_create(
                    &failed_keystore,
@@ -362,7 +490,7 @@ int main()
                    &commit_keystore, &commit_config) == KeystoreState::absent);
         std::vector<uint8_t> commit_work(
             commit_config.kdf.memory_kib * 1024, 0xA5);
-        char commit_pin[signing::kKeystorePinDigits + 1];
+        char commit_pin[signing::kKeystorePinBufferBytes];
         commit_store.next_write = WriteMode::fail_before_write;
         set_pin(commit_pin, "111111");
         assert(signing::encrypted_keystore_create(
@@ -394,7 +522,7 @@ int main()
                KeystoreState::absent);
         std::vector<uint8_t> primary_work(
             primary_config.kdf.memory_kib * 1024, 0xA5);
-        char primary_pin[signing::kKeystorePinDigits + 1];
+        char primary_pin[signing::kKeystorePinBufferBytes];
         set_pin(primary_pin, "111111");
         assert(signing::encrypted_keystore_create(
                    &primary,
@@ -412,7 +540,7 @@ int main()
                KeystoreState::absent);
         std::vector<uint8_t> foreign_work(
             foreign_config.kdf.memory_kib * 1024, 0xA5);
-        char foreign_pin[signing::kKeystorePinDigits + 1];
+        char foreign_pin[signing::kKeystorePinBufferBytes];
         set_pin(foreign_pin, "444444");
         assert(signing::encrypted_keystore_create(
                    &foreign,
@@ -430,7 +558,7 @@ int main()
                KeystoreState::locked);
         std::vector<uint8_t> authentication_work(
             authentication_config.kdf.memory_kib * 1024, 0xA5);
-        char authentication_pin[signing::kKeystorePinDigits + 1];
+        char authentication_pin[signing::kKeystorePinBufferBytes];
         set_pin(authentication_pin, "111111");
         assert(signing::encrypted_keystore_unlock(
                    &authentication_keystore,
@@ -455,7 +583,7 @@ int main()
             authentication_work.data(), authentication_work.size()));
 
         primary_store.blobs["keyslot"] = foreign_store.blobs.at("keyslot");
-        char replacement_pin[signing::kKeystorePinDigits + 1];
+        char replacement_pin[signing::kKeystorePinBufferBytes];
         set_pin(foreign_pin, "444444");
         set_pin(replacement_pin, "555555");
         memset(primary_work.data(), 0xA5, primary_work.size());
@@ -477,7 +605,7 @@ int main()
            KeystoreState::absent);
 
     std::vector<uint8_t> work(config.kdf.memory_kib * 1024, 0xA5);
-    char pin[signing::kKeystorePinDigits + 1];
+    char pin[signing::kKeystorePinBufferBytes];
     set_pin(pin, "123456");
     assert(signing::encrypted_keystore_create(
                &keystore, pin, work.data(), work.size()) ==
@@ -538,7 +666,7 @@ int main()
                KeystoreState::locked);
         std::vector<uint8_t> read_error_work(
             read_error_config.kdf.memory_kib * 1024, 0xA5);
-        char read_error_pin[signing::kKeystorePinDigits + 1];
+        char read_error_pin[signing::kKeystorePinBufferBytes];
         set_pin(read_error_pin, "123456");
         assert(signing::encrypted_keystore_unlock(
                    &read_error_keystore,
@@ -571,7 +699,7 @@ int main()
         EncryptedKeystore mutated_keystore;
         assert(signing::encrypted_keystore_initialize(
                    &mutated_keystore, &mutated_config) == KeystoreState::locked);
-        char mutated_pin[signing::kKeystorePinDigits + 1];
+        char mutated_pin[signing::kKeystorePinBufferBytes];
         set_pin(mutated_pin, "123456");
         std::vector<uint8_t> mutated_work(
             mutated_config.kdf.memory_kib * 1024, 0xA5);
@@ -666,7 +794,7 @@ int main()
         EncryptedKeystore mutated_keystore;
         assert(signing::encrypted_keystore_initialize(
                    &mutated_keystore, &mutated_config) == KeystoreState::locked);
-        char mutated_pin[signing::kKeystorePinDigits + 1];
+        char mutated_pin[signing::kKeystorePinBufferBytes];
         set_pin(mutated_pin, "123456");
         std::vector<uint8_t> mutated_work(
             mutated_config.kdf.memory_kib * 1024, 0xA5);
@@ -702,7 +830,7 @@ int main()
         EncryptedKeystore malformed_keystore;
         assert(signing::encrypted_keystore_initialize(
                    &malformed_keystore, &malformed_config) == KeystoreState::locked);
-        char malformed_pin[signing::kKeystorePinDigits + 1];
+        char malformed_pin[signing::kKeystorePinBufferBytes];
         set_pin(malformed_pin, "123456");
         std::vector<uint8_t> malformed_work(
             malformed_config.kdf.memory_kib * 1024, 0xA5);
@@ -797,7 +925,7 @@ int main()
 
     const std::vector<uint8_t> root_ciphertext = store.blobs.at("root");
     const std::vector<uint8_t> original_keyslot = store.blobs.at("keyslot");
-    char current_pin[signing::kKeystorePinDigits + 1];
+    char current_pin[signing::kKeystorePinBufferBytes];
     set_pin(current_pin, "123456");
     memset(work.data(), 0xA5, work.size());
     assert(signing::encrypted_keystore_rewrap(

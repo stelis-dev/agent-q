@@ -3,11 +3,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "keystore/encrypted_keystore.h"
+#include "pin_policy.h"
+
 namespace stopwatch_target {
 
-constexpr size_t kLocalAuthMinDigits = 1;
-constexpr size_t kLocalAuthMaxDigits = 4;
-constexpr size_t kLocalAuthInputBufferSize = kLocalAuthMaxDigits + 1;
+constexpr size_t kLocalAuthInputBufferSize = signing::kKeystorePinBufferBytes;
 constexpr uint32_t kLocalAuthInputTimeoutMs = 30000;
 
 enum class LocalAuthStoreStatus {
@@ -28,7 +29,6 @@ enum class LocalAuthVerifyResult {
 
 struct LocalAuthSnapshot {
     LocalAuthStoreStatus status;
-    uint8_t code_length;
     uint32_t failed_attempts;
     uint8_t lock_tier;
     bool locked;
@@ -36,16 +36,26 @@ struct LocalAuthSnapshot {
 };
 
 void local_auth_init(uint64_t now_ms);
-bool local_auth_code_shape_valid(const char* code, size_t length);
-bool local_auth_store_new_code(const char* code, size_t length);
-LocalAuthVerifyResult local_auth_verify_code(const char* code, size_t length, uint64_t now_ms);
+inline bool local_auth_code_shape_valid(const char* code, size_t length)
+{
+    size_t validated_length = 0;
+    return signing::keystore_pin_valid(
+               code,
+               kLocalAuthMinDigits,
+               kLocalAuthMaxDigits,
+               &validated_length) &&
+           validated_length == length;
+}
+bool local_auth_store_initial_metadata();
+LocalAuthVerifyResult local_auth_record_keystore_result(
+    signing::KeystoreOperationStatus result,
+    uint64_t now_ms);
 LocalAuthSnapshot local_auth_snapshot(uint64_t now_ms);
 bool local_auth_clear();
 
 #ifdef STOPWATCH_LOCAL_AUTH_HOST_TEST
 void local_auth_test_reset_store();
 void local_auth_test_corrupt_record();
-bool local_auth_test_record_contains(const char* text);
 void local_auth_test_set_write_failure(bool enabled);
 void local_auth_test_reset_io_counters();
 uint32_t local_auth_test_read_count();

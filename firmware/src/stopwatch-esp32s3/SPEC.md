@@ -51,9 +51,9 @@ Legend:
 |---|---:|---|
 | USB JSONL transport | O | Uses ESP32-S3 USB Serial/JTAG. |
 | `get_status` | O | Reports shared status projection for first-run setup, local-authentication lock, neutral idle, active zkLogin proof, and error states. |
-| Local authentication setup | O | User creates a 1-to-4 digit rotary telephone-style passcode on the round display and repeats it before storage. |
-| Local authentication verification | O | Stores a salted verifier, failed-attempt count, lock tier, and lock duration. Raw passcode input is not stored. |
-| Device reset | O | Device-local destructive reset. From idle, KEYB opens reset review and local-authentication confirmation performs Device reset. If the local-authentication record is invalid or unreadable, KEYB on the error screen performs the same Device reset because local authentication cannot be verified. Device reset clears local authentication, the active zkLogin credential, mutable settings, session state, pending state, retained responses, and signing scratch, then returns to first-run local-authentication setup. |
+| Local authentication setup | O | User creates a one-to-four-digit rotary telephone-style PIN on the round display and repeats it before storage. |
+| Local authentication verification | O | A PIN-derived key unwraps a random master key; the encrypted keyslot is the sole PIN verifier. Separate non-secret storage holds failed-attempt count, lock tier, and lock duration. Raw PIN input and a standalone verifier are not stored. |
+| Device reset | O | Device-local destructive reset. From idle, KEYB opens reset review and local-authentication confirmation performs Device reset. If the local-authentication metadata, encrypted keyslot, or protected records are invalid or unreadable, KEYB on the error screen performs the same Device reset because local authentication cannot be verified. Device reset clears the keyslot, encrypted zkLogin credential and local-transport identity, lockout metadata, mutable settings, session state, pending state, retained responses, and signing scratch, then returns to first-run local-authentication setup. |
 | `identify_device` | O | Shows a short temporary identification code on the display and returns the shared identify result. |
 | `connect` | O | Requires local authentication and device-local approval when no session is active. A live same-link session returns the existing session without a second approval. Locked local authentication fails with `auth_unavailable`. |
 | Firmware sessions | O | Sessions are volatile and bound to the USB or encrypted local transport that created them. Exactly one session exists across transports. The advertised `sessionTtlMs` is `4294967295`. Sessions clear on `disconnect`, reset/reboot, Device reset, credential consistency error, confirmed USB removal, or local carrier loss. |
@@ -66,7 +66,7 @@ Legend:
 | Physical button feedback | O | With the display on, KEYA deletes local-authentication input, enters local transport from unlocked idle, or cancels its pairing window according to the current runtime state. KEYB submits or confirms local-authentication input and opens Device reset review from idle. KEYA+KEYB opens signing authorization mode review from idle. With the display off, each physical input wakes the display and is consumed before its normal action. |
 | Vibration feedback | O | Target-local user feedback only; it does not authorize protocol behavior. |
 | Power-button behavior | O | USB-power-present short click toggles display backlight off/on. While the display is off, M5PM1, KEYA, KEYB, or KEYA+KEYB wakes it; touch does not. USB-power-absent short click remains the StopWatch PMIC power-on/reset behavior. Hardware double-click power-off remains PMIC-owned. |
-| zkLogin proof storage | O | Stores one current-format Sui zkLogin proof record with the Ed25519 seed prepared in the same credential session. Invalid or unreadable proof storage projects `error` and fails closed. |
+| zkLogin proof storage | O | Stores one current-format Sui zkLogin proof and the Ed25519 seed prepared in the same credential session as one authenticated encrypted credential record. Invalid or unreadable ciphertext or credential plaintext projects `error` and fails closed. |
 | Firmware-local zkLogin proof verification | X | This ESP32-S3 target does not run the Sui zkLogin proof verifier locally. zkLogin correctness is verified outside Firmware by checking normal zkLogin signatures with the Sui verifier. |
 | zkLogin credential reset | O | StopWatch has no separate proof-clear action. The active zkLogin credential is removed only by Device reset, which also clears local authentication and mutable settings. There is no protocol proof-clear method. |
 | Credential preparation/proposal | O | `credential_prepare` creates session-bound Ed25519 public material for zkLogin proof issuance. `credential_propose` consumes a payload-backed current Sui zkLogin proof shape, shows device-local review, requires local authentication, and activates the proof on successful commit. The session ends after activation. |
@@ -80,9 +80,10 @@ Legend:
 ## State Model
 
 The current target has no mnemonic or native root-material wallet path. It has
-target-local local-authentication state, neutral idle after successful local
-authentication, volatile protocol session state, payload-transfer scratch, and
-one target-local Sui zkLogin credential record.
+target-local local-authentication state, an encrypted keyslot, neutral idle
+after successful local authentication, volatile protocol session state,
+payload-transfer scratch, one encrypted Sui zkLogin credential record, and one
+encrypted local-transport identity record.
 
 Status projection:
 
@@ -98,22 +99,26 @@ Status projection:
   "idle"`;
 - while connect approval, proof review, proof authentication, Device reset, or
   another request overlay is visible: `device.state = "busy"`;
-- if the local-authentication record is invalid or storage cannot be read:
+- if the lockout metadata or encrypted keyslot is invalid or storage cannot be
+  read:
   `provisioning.state = "error"` and `device.state = "error"`.
-- if the local-authentication record is missing while any zkLogin credential or
-  mutable settings record remains, the stored material set is inconsistent:
+- if the keyslot or lockout metadata is missing while any encrypted credential,
+  encrypted transport identity, or mutable settings record remains, the stored
+  material set is inconsistent:
   `provisioning.state = "error"` and `device.state = "error"`.
-- if the zkLogin credential record is invalid or storage cannot be read:
+- if an encrypted credential or transport identity record is invalid or storage
+  cannot be read:
   `provisioning.state = "error"` and `device.state = "error"`.
 - after local authentication setup completes, if the current policy document or
   signing authorization mode is missing, invalid, or unreadable:
   `provisioning.state = "error"` and `device.state = "error"`.
 
 `get_status` is allowed in every state. Successful local authentication shows a
-neutral idle screen with a centered `IDLE` label. USB `connect` is the only
-protocol path that creates a session, and it creates one only after
-device-local approval when no session already exists and the current policy
-document and signing authorization mode are both active. `credential_propose`
+neutral idle screen with a centered `IDLE` label. The shared `connect` method
+over the transport that owns the request is the only protocol path that creates
+a session, and it creates one only after device-local approval when no session
+already exists and the current policy document and signing authorization mode
+are both active. `credential_propose`
 is the only protocol path that installs an active Sui zkLogin credential, and
 it requires a valid session, the session's credential preparation, a
 payload-backed current proof shape, device-local proof review, and local
@@ -144,26 +149,47 @@ The local-authentication UI uses a rotary telephone-style touch dial:
 - press KEYB to submit or confirm;
 - press KEYA to delete a digit.
 
-The passcode is a decimal sequence with a user-selected length from 1 to 4
-digits in the current four-slot layout. Short memorable values are allowed.
-The security control is persistent
-anti-hammering: five failed attempts enter time lock, and later failures raise
-the persistent lock tier. Powered-off time does not reduce a lock because this
-target does not use a trusted wall-clock source for local-authentication
-lockout.
+The PIN is a decimal sequence from one through four digits. One digit is valid.
+Setup and authentication run the common encrypted-keystore process on a
+target-owned worker rather than the UI or transport loop. StopWatch supplies
+the fixed `1,4` PIN-length policy to that common process. The fixed StopWatch
+Argon2id profile is 512 KiB, five passes, and one lane. Both settings are
+compile-time hardware configuration; records, requests, and users cannot select
+or weaken them. The KDF uses the actual PIN length and does not pad or normalize
+short PINs.
 
-The stored local-authentication record contains a current-format salted verifier,
-failed-attempt count, lock tier, and lock duration. Firmware re-anchors the
-current boot's lock deadline from the stored duration when it starts. It does not
-store raw passcode input.
+Setup creates a random master key and stores only its authenticated PIN-wrapped
+keyslot. The active zkLogin proof and prepared Ed25519 seed share one encrypted
+credential record because they activate atomically. The local-transport private
+identity is a separate encrypted record. Decrypted records are available only
+inside bounded consumer callbacks and are wiped after use. The PIN, derived
+wrapping key, and KDF work area are wiped after each operation. No standalone
+PIN verifier or raw PIN is stored.
 
-If the local-authentication record is missing while any zkLogin credential or
-mutable settings record remains, or if the local-authentication record is
-invalid or storage cannot be read, the device fails closed. KEYB performs
-Device reset because local authentication cannot be verified. Device reset
-clears local authentication, the active zkLogin credential, mutable settings,
-session state, pending state, retained responses, and signing scratch, then
-returns to first-run setup.
+Five failed PIN attempts enter a persistent time lock, and later failures raise
+the persistent lock tier. Failed-attempt count, lock tier, and lock duration are
+non-secret metadata and cannot decrypt the keyslot. Firmware re-anchors the
+current boot's lock deadline from the stored duration when it starts. Powered-off
+time does not reduce a lock because this target has no trusted wall-clock
+source for local-authentication lockout.
+
+The keyslot and encrypted records use ordinary NVS. This software encryption
+removes plaintext private material and blocks normal Firmware access before PIN
+unlock, but the one-to-four-digit policy has only 11,110 possible non-empty
+decimal strings. A copied flash image is therefore practically vulnerable to
+offline exhaustive search. It does not claim Secure Boot, Flash or NVS
+Encryption, eFuse-backed protection, anti-rollback, or physical-extraction
+resistance.
+
+The previous verifier, plaintext credential, and plaintext transport-identity
+layouts have no compatibility readers or migration path. A development device
+with an older layout requires a full flash erase and device-local setup. If the
+keyslot, lockout metadata, encrypted credential, or encrypted transport identity
+is missing inconsistently, invalid, or unreadable, the device fails closed.
+KEYB performs Device reset from the error state because local authentication
+cannot be verified. Device reset erases the complete keystore, lockout metadata,
+mutable settings, session state, pending state, retained responses, and signing
+scratch, then returns to first-run setup.
 
 ## Sessions And zkLogin Proof Bootstrap
 

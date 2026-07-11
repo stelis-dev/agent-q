@@ -5,6 +5,7 @@
 
 #include "bip39.h"
 #include "keystore/encrypted_keystore.h"
+#include "pin_policy.h"
 #include "transport/local_transport_identity_store.h"
 
 namespace signing {
@@ -28,20 +29,20 @@ StackChanKeystoreMaterialStatus stackchan_keystore_status();
 StackChanKeystoreMaterialStatus stackchan_keystore_root_status();
 
 KeystoreOperationStatus stackchan_keystore_create(
-    char pin[kKeystorePinDigits + 1],
+    char pin[kKeystorePinBufferBytes],
     void* kdf_work_area,
     size_t kdf_work_area_size);
 KeystoreOperationStatus stackchan_keystore_unlock(
-    char pin[kKeystorePinDigits + 1],
+    char pin[kKeystorePinBufferBytes],
     void* kdf_work_area,
     size_t kdf_work_area_size);
 KeystoreOperationStatus stackchan_keystore_authenticate_pin(
-    char pin[kKeystorePinDigits + 1],
+    char pin[kKeystorePinBufferBytes],
     void* kdf_work_area,
     size_t kdf_work_area_size);
 KeystoreOperationStatus stackchan_keystore_rewrap(
-    char current_pin[kKeystorePinDigits + 1],
-    char new_pin[kKeystorePinDigits + 1],
+    char current_pin[kKeystorePinBufferBytes],
+    char new_pin[kKeystorePinBufferBytes],
     void* kdf_work_area,
     size_t kdf_work_area_size);
 

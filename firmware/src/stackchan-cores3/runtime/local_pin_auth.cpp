@@ -479,7 +479,7 @@ LocalPinAuthInputResult local_pin_auth_add_digit(char digit)
     if (digit < '0' || digit > '9') {
         return LocalPinAuthInputResult::invalid_digit;
     }
-    if (g_state.pin_entry_length >= kKeystorePinDigits) {
+    if (g_state.pin_entry_length >= kLocalAuthMaxDigits) {
         return LocalPinAuthInputResult::full;
     }
 
@@ -535,8 +535,9 @@ LocalPinAuthSubmitResult local_pin_auth_submit(
     if (pin_attempt_locked_at(now)) {
         return LocalPinAuthSubmitResult::locked;
     }
-    if (g_state.pin_entry_length != kKeystorePinDigits ||
-        !keystore_pin_valid(g_state.pin_entry)) {
+    if (g_state.pin_entry_length != kLocalAuthMaxDigits ||
+        !keystore_pin_valid(
+            g_state.pin_entry, kLocalAuthMinDigits, kLocalAuthMaxDigits)) {
         return LocalPinAuthSubmitResult::invalid_pin;
     }
 

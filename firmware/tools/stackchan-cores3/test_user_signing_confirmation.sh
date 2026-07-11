@@ -424,19 +424,6 @@ SuiActiveIdentity resolve_active_sui_identity()
     return identity;
 }
 
-bool keystore_pin_valid(const char* pin)
-{
-    if (pin == nullptr || strlen(pin) != kKeystorePinDigits) {
-        return false;
-    }
-    for (size_t index = 0; index < kKeystorePinDigits; ++index) {
-        if (!isdigit(static_cast<unsigned char>(pin[index]))) {
-            return false;
-        }
-    }
-    return true;
-}
-
 bool local_auth_worker_submit_authenticate(
     LocalAuthWorkerOwner owner,
     const char* pin,
@@ -444,7 +431,8 @@ bool local_auth_worker_submit_authenticate(
 {
     (void)owner;
     static uint32_t next_job_id = 1;
-    if (job_id == nullptr || !keystore_pin_valid(pin)) {
+    if (job_id == nullptr || !keystore_pin_valid(
+            pin, kLocalAuthMinDigits, kLocalAuthMaxDigits)) {
         return false;
     }
     *job_id = next_job_id++;
@@ -467,7 +455,8 @@ bool local_auth_worker_submit_rewrap(
     const char* new_pin,
     uint32_t* job_id)
 {
-    return keystore_pin_valid(new_pin) &&
+    return keystore_pin_valid(
+               new_pin, kLocalAuthMinDigits, kLocalAuthMaxDigits) &&
            local_auth_worker_submit_authenticate(owner, current_pin, job_id);
 }
 

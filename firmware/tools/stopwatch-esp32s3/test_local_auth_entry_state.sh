@@ -18,9 +18,9 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stopwatch-esp32s3/overlay/main/runtime"
+COMMON_DIR="${REPO_ROOT}/firmware/src/common"
 
 for required in \
-  "${RUNTIME_DIR}/local_auth.cpp" \
   "${RUNTIME_DIR}/local_auth.h" \
   "${RUNTIME_DIR}/local_auth_entry_state.cpp" \
   "${RUNTIME_DIR}/local_auth_entry_state.h" \
@@ -83,7 +83,7 @@ int main()
     expect(entry.append('3', 1200), "appends third digit");
     expect(entry.append('4', 1300), "appends fourth digit");
     expect(!entry.append('5', 1400), "rejects fifth digit");
-    expect_text(entry.code(), "1234", "max-length code is stable");
+    expect_text(entry.code(), "1234", "four-digit PIN is stable");
     expect(!entry.append('x', 1400), "rejects non-digit");
 
     expect(entry.delete_last(1500), "delete removes one digit");
@@ -107,8 +107,8 @@ CPP
 "${CXX_BIN}" -std=c++17 \
   -DSTOPWATCH_LOCAL_AUTH_HOST_TEST \
   -I"${RUNTIME_DIR}" \
+  -I"${COMMON_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${RUNTIME_DIR}/local_auth.cpp" \
   "${RUNTIME_DIR}/local_auth_entry_state.cpp" \
   "${RUNTIME_DIR}/sensitive_memory.cpp" \
   -o "${TMP_DIR}/test_local_auth_entry_state"

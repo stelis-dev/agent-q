@@ -155,9 +155,11 @@ bool submit_request(
         *job_id = 0;
     }
     if (g_request_queue == nullptr || g_result_queue == nullptr || g_worker_task == nullptr ||
-        !keystore_pin_valid(pin) ||
+        !keystore_pin_valid(
+            pin, kLocalAuthMinDigits, kLocalAuthMaxDigits) ||
         (operation == LocalAuthWorkerOperation::rewrap_keystore &&
-         !keystore_pin_valid(new_pin))) {
+         !keystore_pin_valid(
+             new_pin, kLocalAuthMinDigits, kLocalAuthMaxDigits))) {
         return false;
     }
 

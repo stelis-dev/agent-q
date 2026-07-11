@@ -21,6 +21,7 @@
 #include "protocol/session_state.h"
 #include "sui_zklogin_credential_store.h"
 #include "sui_zklogin_proposal_state.h"
+#include "stopwatch_keystore.h"
 #include "transport/payload_delivery_store.h"
 
 namespace stopwatch_target {
@@ -103,13 +104,8 @@ bool wipe_setup_settings()
     return policy_wiped && signing_mode_wiped && history_wiped && marker_cleared;
 }
 
-bool store_new_auth_and_default_settings(const char* code, size_t length)
+bool store_new_auth_and_default_settings()
 {
-    if (code == nullptr ||
-        length < kLocalAuthMinDigits ||
-        length > kLocalAuthMaxDigits) {
-        return false;
-    }
     if (!signing::store_default_policy()) {
         return false;
     }
@@ -124,7 +120,7 @@ bool store_new_auth_and_default_settings(const char* code, size_t length)
         protocol_runtime_invalidate_projected_state_cache();
         return false;
     }
-    if (!local_auth_store_new_code(code, length)) {
+    if (!local_auth_store_initial_metadata()) {
         local_auth_clear();
         wipe_setup_settings();
         protocol_runtime_invalidate_projected_state_cache();
@@ -151,12 +147,16 @@ void RuntimeApp::onOpen()
 {
     mclog::tagInfo(kAppName, "on open");
     key_manager_ = std::make_unique<input::KeyManager>();
+    const bool random_ready = secure_random_init();
+    const signing::KeystoreState keystore_state = stopwatch_keystore_initialize();
+    const bool keystore_storage_consistent =
+        stopwatch_keystore_storage_consistent();
+    const bool auth_worker_ready = local_auth_worker_init();
     local_auth_init(GetHAL().millis());
     signing::session_init();
     credential_preparation_state_init();
     signing::payload_delivery_store_reset();
     sui_zklogin_proposal_state_init();
-    secure_random_init();
     protocol_runtime_init();
     display_on_ = true;
     locally_unlocked_ = false;
@@ -169,7 +169,10 @@ void RuntimeApp::onOpen()
     previous_external_power_present_ = external_power_present;
 
     const LocalAuthSnapshot snapshot = local_auth_snapshot(GetHAL().millis());
-    if (snapshot.status == LocalAuthStoreStatus::missing) {
+    if (!random_ready || !auth_worker_ready || !keystore_storage_consistent ||
+        keystore_state == signing::KeystoreState::storage_error) {
+        runtime_state_ = RuntimeState::error;
+    } else if (snapshot.status == LocalAuthStoreStatus::missing) {
         runtime_state_ = RuntimeState::setup_enter;
     } else if (snapshot.status == LocalAuthStoreStatus::active && snapshot.locked) {
         runtime_state_ = RuntimeState::lockout;
@@ -200,6 +203,7 @@ void RuntimeApp::onRunning()
     previous_external_power_present_ = external_power_present;
 
     const uint32_t now = GetHAL().millis();
+    poll_local_auth_worker(now);
 
     if (key_manager_) {
         const input::KeyEvent key_event = key_manager_->update();
@@ -227,7 +231,9 @@ void RuntimeApp::onRunning()
             transition_to(RuntimeState::idle);
         }
     }
-    refresh_auth_mode(snapshot);
+    if (runtime_state_ != RuntimeState::auth_processing) {
+        refresh_auth_mode(snapshot);
+    }
     maybe_enter_watch(now);
     const PendingRequest pending = protocol_runtime_pending_request();
     if (pending.kind == PendingRequestKind::connect) {
@@ -1062,12 +1068,12 @@ void RuntimeApp::refresh_auth_mode(const LocalAuthSnapshot& snapshot)
         cancel_local_transport_carrier();
     }
     if (protocol_runtime_projected_device_state_is_error()) {
-        locally_unlocked_ = false;
+        lock_local_auth();
         transition_to(RuntimeState::error);
         return;
     }
     if (snapshot.status == LocalAuthStoreStatus::missing) {
-        locally_unlocked_ = false;
+        lock_local_auth();
         if (runtime_state_ != RuntimeState::setup_enter && runtime_state_ != RuntimeState::setup_confirm) {
             transition_to(RuntimeState::setup_enter);
         }
@@ -1075,12 +1081,12 @@ void RuntimeApp::refresh_auth_mode(const LocalAuthSnapshot& snapshot)
     }
     if (snapshot.status == LocalAuthStoreStatus::invalid ||
         snapshot.status == LocalAuthStoreStatus::storage_error) {
-        locally_unlocked_ = false;
+        lock_local_auth();
         transition_to(RuntimeState::error);
         return;
     }
     if (snapshot.locked) {
-        locally_unlocked_ = false;
+        lock_local_auth();
         clear_entry();
         const PendingRequest pending = protocol_runtime_pending_request();
         if (pending.kind != PendingRequestKind::credential_propose) {
@@ -1156,9 +1162,10 @@ void RuntimeApp::sync_protocol_runtime_state(const LocalAuthSnapshot& snapshot)
             break;
     }
     if (auth_status != LocalAuthProjectionStatus::active) {
-        locally_unlocked_ = false;
+        lock_local_auth();
     }
     const bool ui_busy = runtime_state_ == RuntimeState::connect_review ||
+                         runtime_state_ == RuntimeState::auth_processing ||
                          runtime_state_ == RuntimeState::local_transport_pairing ||
                          runtime_state_ == RuntimeState::proof_review ||
                          runtime_state_ == RuntimeState::policy_review ||
@@ -1176,9 +1183,233 @@ void RuntimeApp::sync_protocol_runtime_state(const LocalAuthSnapshot& snapshot)
     });
 }
 
-void RuntimeApp::relock()
+bool RuntimeApp::start_local_auth_job(
+    LocalAuthWorkerOperation operation,
+    LocalAuthPurpose purpose,
+    const char* pin,
+    uint32_t now_ms)
+{
+    if (local_auth_job_id_ != 0 || purpose == LocalAuthPurpose::none ||
+        !signing::keystore_pin_valid(
+            pin, kLocalAuthMinDigits, kLocalAuthMaxDigits)) {
+        return false;
+    }
+    uint32_t job_id = 0;
+    if (!local_auth_worker_submit(operation, pin, &job_id) || job_id == 0) {
+        return false;
+    }
+    local_auth_job_id_ = job_id;
+    local_auth_worker_deadline_ms_ = now_ms + kLocalAuthWorkerMaxMs;
+    local_auth_purpose_ = purpose;
+    local_auth_cancel_requested_ = false;
+    clear_entry();
+    transition_to(RuntimeState::auth_processing);
+    return true;
+}
+
+void RuntimeApp::clear_local_auth_job()
+{
+    local_auth_job_id_ = 0;
+    local_auth_worker_deadline_ms_ = 0;
+    local_auth_purpose_ = LocalAuthPurpose::none;
+    local_auth_cancel_requested_ = false;
+}
+
+void RuntimeApp::lock_local_auth()
 {
     locally_unlocked_ = false;
+    if (local_auth_job_id_ == 0) {
+        stopwatch_keystore_lock();
+    }
+}
+
+bool RuntimeApp::unlocked_material_valid()
+{
+    const SuiZkLoginCredentialStatus credential =
+        sui_zklogin_credential_status();
+    if (credential != SuiZkLoginCredentialStatus::active &&
+        credential != SuiZkLoginCredentialStatus::missing) {
+        return false;
+    }
+    return stopwatch_keystore_transport_identity_valid_or_missing();
+}
+
+void RuntimeApp::finish_local_auth_worker_result(
+    const LocalAuthWorkerResult& result,
+    uint32_t now_ms)
+{
+    const LocalAuthPurpose purpose = local_auth_purpose_;
+    const bool cancellation_requested = local_auth_cancel_requested_;
+    const LocalAuthWorkerOperation expected_operation =
+        purpose == LocalAuthPurpose::setup
+            ? LocalAuthWorkerOperation::create_keystore
+            : (purpose == LocalAuthPurpose::unlock
+                   ? LocalAuthWorkerOperation::unlock_keystore
+                   : LocalAuthWorkerOperation::authenticate_pin);
+    clear_local_auth_job();
+
+    if (result.operation != expected_operation ||
+        result.status == LocalAuthWorkerStatus::unavailable) {
+        lock_local_auth();
+        protocol_runtime_reject_pending_request("auth_unavailable");
+        transition_to(RuntimeState::error);
+        record_feedback(80, 100, false);
+        return;
+    }
+    if (result.status == LocalAuthWorkerStatus::cancelled ||
+        cancellation_requested) {
+        lock_local_auth();
+        const LocalAuthSnapshot snapshot = local_auth_snapshot(now_ms);
+        transition_to(
+            snapshot.status == LocalAuthStoreStatus::missing
+                ? RuntimeState::setup_enter
+                : (snapshot.status == LocalAuthStoreStatus::active && snapshot.locked
+                       ? RuntimeState::lockout
+                       : (snapshot.status == LocalAuthStoreStatus::active
+                              ? RuntimeState::unlock
+                              : RuntimeState::error)));
+        return;
+    }
+
+    if (purpose == LocalAuthPurpose::setup) {
+        if (result.operation_status == signing::KeystoreOperationStatus::success &&
+            store_new_auth_and_default_settings()) {
+            locally_unlocked_ = true;
+            transition_to(RuntimeState::idle);
+            protocol_runtime_invalidate_projected_state_cache();
+            record_feedback(45, 75, false);
+            return;
+        }
+        stopwatch_keystore_erase();
+        local_auth_clear();
+        wipe_setup_settings();
+        lock_local_auth();
+        protocol_runtime_invalidate_projected_state_cache();
+        transition_to(RuntimeState::error);
+        record_feedback(80, 100, false);
+        return;
+    }
+
+    const LocalAuthVerifyResult auth_result =
+        local_auth_record_keystore_result(result.operation_status, now_ms);
+    switch (auth_result) {
+        case LocalAuthVerifyResult::verified:
+            locally_unlocked_ = true;
+            if (purpose == LocalAuthPurpose::unlock) {
+                if (!unlocked_material_valid()) {
+                    lock_local_auth();
+                    transition_to(RuntimeState::error);
+                    record_feedback(80, 100, false);
+                    return;
+                }
+                protocol_runtime_invalidate_projected_state_cache();
+                sync_protocol_runtime_state();
+                if (protocol_runtime_projected_device_state_is_error()) {
+                    lock_local_auth();
+                    transition_to(RuntimeState::error);
+                    record_feedback(80, 100, false);
+                    return;
+                }
+                transition_to(RuntimeState::idle);
+                record_feedback(45, 75, false);
+                return;
+            }
+            if (purpose == LocalAuthPurpose::proof_approval ||
+                purpose == LocalAuthPurpose::policy_approval) {
+                const bool approved = protocol_runtime_approve_pending_request();
+                transition_to(RuntimeState::idle);
+                record_feedback(approved ? 45 : 80, approved ? 75 : 100, false);
+                return;
+            }
+            if (purpose == LocalAuthPurpose::signing_mode_change) {
+                const bool stored = signing::store_signing_authorization_mode(
+                    pending_signing_mode_);
+                protocol_runtime_invalidate_projected_state_cache();
+                transition_to(
+                    stored ? RuntimeState::idle
+                           : RuntimeState::signing_mode_review);
+                record_feedback(stored ? 45 : 80, stored ? 75 : 100, false);
+                return;
+            }
+            if (purpose == LocalAuthPurpose::device_reset) {
+                if (complete_device_reset()) {
+                    lock_local_auth();
+                    transition_to(RuntimeState::setup_enter);
+                    record_feedback(45, 75, false);
+                } else {
+                    transition_to(RuntimeState::device_reset_review);
+                    record_feedback(80, 100, false);
+                }
+                return;
+            }
+            break;
+        case LocalAuthVerifyResult::rejected:
+            transition_to(
+                purpose == LocalAuthPurpose::unlock
+                    ? RuntimeState::unlock
+                    : (purpose == LocalAuthPurpose::proof_approval
+                           ? RuntimeState::proof_auth
+                           : (purpose == LocalAuthPurpose::policy_approval
+                                  ? RuntimeState::policy_auth
+                                  : (purpose == LocalAuthPurpose::signing_mode_change
+                                         ? RuntimeState::signing_mode_auth
+                                         : RuntimeState::device_reset_auth))));
+            record_feedback(65, 95, false);
+            return;
+        case LocalAuthVerifyResult::locked:
+            lock_local_auth();
+            transition_to(RuntimeState::lockout);
+            record_feedback(80, 100, false);
+            return;
+        case LocalAuthVerifyResult::missing:
+            lock_local_auth();
+            protocol_runtime_reject_pending_request("auth_unavailable");
+            transition_to(RuntimeState::setup_enter);
+            record_feedback(45, 75, false);
+            return;
+        case LocalAuthVerifyResult::invalid:
+        case LocalAuthVerifyResult::storage_error:
+            lock_local_auth();
+            protocol_runtime_reject_pending_request("auth_unavailable");
+            transition_to(RuntimeState::error);
+            record_feedback(80, 100, false);
+            return;
+    }
+
+    lock_local_auth();
+    transition_to(RuntimeState::error);
+    record_feedback(80, 100, false);
+}
+
+void RuntimeApp::poll_local_auth_worker(uint32_t now_ms)
+{
+    if (runtime_state_ == RuntimeState::auth_processing &&
+        local_auth_job_id_ != 0 && !local_auth_cancel_requested_ &&
+        static_cast<int32_t>(now_ms - local_auth_worker_deadline_ms_) >= 0) {
+        local_auth_cancel_requested_ = true;
+        local_auth_worker_cancel(local_auth_job_id_);
+        lock_local_auth();
+        protocol_runtime_reject_pending_request("auth_unavailable");
+    }
+
+    LocalAuthWorkerResult result = {};
+    while (local_auth_worker_poll_result(&result)) {
+        if (result.job_id == local_auth_job_id_ && local_auth_job_id_ != 0) {
+            finish_local_auth_worker_result(result, now_ms);
+        } else {
+            stopwatch_keystore_lock();
+        }
+        local_auth_worker_wipe_result(&result);
+    }
+}
+
+void RuntimeApp::relock()
+{
+    if (local_auth_job_id_ != 0 && !local_auth_cancel_requested_) {
+        local_auth_cancel_requested_ = true;
+        local_auth_worker_cancel(local_auth_job_id_);
+    }
+    lock_local_auth();
     reset_unlock_watch();
     clear_auth_scratch();
     protocol_runtime_reject_pending_request("user_rejected");
@@ -1245,7 +1476,7 @@ void RuntimeApp::submit_entry(uint32_t now_ms)
     }
     if (runtime_state_ == RuntimeState::error) {
         if (complete_device_reset()) {
-            locally_unlocked_ = false;
+            lock_local_auth();
             transition_to(RuntimeState::setup_enter);
             record_feedback(45, 75, false);
         } else {
@@ -1276,202 +1507,86 @@ void RuntimeApp::submit_entry(uint32_t now_ms)
     if (runtime_state_ == RuntimeState::setup_confirm) {
         const bool matches = setup_state_.matches(auth_entry_.code(), auth_entry_.length());
         setup_state_.clear();
-        if (matches && store_new_auth_and_default_settings(auth_entry_.code(), auth_entry_.length())) {
-            clear_entry();
-            locally_unlocked_ = true;
-            transition_to(RuntimeState::idle);
-            record_feedback(45, 75, false);
+        if (matches && start_local_auth_job(
+                           LocalAuthWorkerOperation::create_keystore,
+                           LocalAuthPurpose::setup,
+                           auth_entry_.code(),
+                           now_ms)) {
+            record_feedback(25, 55, false);
             return;
         }
         clear_entry();
-        transition_to(matches ? RuntimeState::error : RuntimeState::setup_enter);
+        transition_to(matches ? RuntimeState::error
+                              : RuntimeState::setup_enter);
         record_feedback(65, 95, false);
         return;
     }
 
     if (runtime_state_ == RuntimeState::unlock) {
-        const LocalAuthVerifyResult result = local_auth_verify_code(auth_entry_.code(), auth_entry_.length(), now_ms);
-        clear_entry();
-        switch (result) {
-            case LocalAuthVerifyResult::verified:
-                locally_unlocked_ = true;
-                transition_to(RuntimeState::idle);
-                record_feedback(45, 75, false);
-                return;
-            case LocalAuthVerifyResult::rejected:
-                locally_unlocked_ = false;
-                transition_to(RuntimeState::unlock);
-                record_feedback(65, 95, false);
-                return;
-            case LocalAuthVerifyResult::locked:
-                locally_unlocked_ = false;
-                transition_to(RuntimeState::lockout);
-                record_feedback(80, 100, false);
-                return;
-            case LocalAuthVerifyResult::missing:
-                locally_unlocked_ = false;
-                transition_to(RuntimeState::setup_enter);
-                record_feedback(45, 75, false);
-                return;
-            case LocalAuthVerifyResult::invalid:
-            case LocalAuthVerifyResult::storage_error:
-                locally_unlocked_ = false;
-                transition_to(RuntimeState::error);
-                record_feedback(80, 100, false);
-                return;
+        if (!start_local_auth_job(
+                LocalAuthWorkerOperation::unlock_keystore,
+                LocalAuthPurpose::unlock,
+                auth_entry_.code(),
+                now_ms)) {
+            clear_entry();
+            transition_to(RuntimeState::error);
+            record_feedback(80, 100, false);
         }
+        return;
     }
 
     if (runtime_state_ == RuntimeState::proof_auth) {
-        const LocalAuthVerifyResult result = local_auth_verify_code(auth_entry_.code(), auth_entry_.length(), now_ms);
-        clear_entry();
-        switch (result) {
-            case LocalAuthVerifyResult::verified:
-                if (protocol_runtime_approve_pending_request()) {
-                    transition_to(RuntimeState::idle);
-                    record_feedback(45, 75, false);
-                } else {
-                    transition_to(RuntimeState::idle);
-                    record_feedback(80, 100, false);
-                }
-                return;
-            case LocalAuthVerifyResult::rejected:
-                transition_to(RuntimeState::proof_auth);
-                record_feedback(65, 95, false);
-                return;
-            case LocalAuthVerifyResult::locked:
-                locally_unlocked_ = false;
-                transition_to(RuntimeState::lockout);
-                record_feedback(80, 100, false);
-                return;
-            case LocalAuthVerifyResult::missing:
-                locally_unlocked_ = false;
-                protocol_runtime_reject_pending_request("auth_unavailable");
-                transition_to(RuntimeState::setup_enter);
-                record_feedback(45, 75, false);
-                return;
-            case LocalAuthVerifyResult::invalid:
-            case LocalAuthVerifyResult::storage_error:
-                locally_unlocked_ = false;
-                protocol_runtime_reject_pending_request("auth_unavailable");
-                transition_to(RuntimeState::error);
-                record_feedback(80, 100, false);
-                return;
+        if (!start_local_auth_job(
+                LocalAuthWorkerOperation::authenticate_pin,
+                LocalAuthPurpose::proof_approval,
+                auth_entry_.code(),
+                now_ms)) {
+            clear_entry();
+            protocol_runtime_reject_pending_request("auth_unavailable");
+            transition_to(RuntimeState::error);
+            record_feedback(80, 100, false);
         }
+        return;
     }
 
     if (runtime_state_ == RuntimeState::policy_auth) {
-        const LocalAuthVerifyResult result = local_auth_verify_code(auth_entry_.code(), auth_entry_.length(), now_ms);
-        clear_entry();
-        switch (result) {
-            case LocalAuthVerifyResult::verified:
-                if (protocol_runtime_approve_pending_request()) {
-                    transition_to(RuntimeState::idle);
-                    record_feedback(45, 75, false);
-                } else {
-                    transition_to(RuntimeState::idle);
-                    record_feedback(80, 100, false);
-                }
-                return;
-            case LocalAuthVerifyResult::rejected:
-                transition_to(RuntimeState::policy_auth);
-                record_feedback(65, 95, false);
-                return;
-            case LocalAuthVerifyResult::locked:
-                locally_unlocked_ = false;
-                transition_to(RuntimeState::lockout);
-                record_feedback(80, 100, false);
-                return;
-            case LocalAuthVerifyResult::missing:
-                locally_unlocked_ = false;
-                protocol_runtime_reject_pending_request("auth_unavailable");
-                transition_to(RuntimeState::setup_enter);
-                record_feedback(45, 75, false);
-                return;
-            case LocalAuthVerifyResult::invalid:
-            case LocalAuthVerifyResult::storage_error:
-                locally_unlocked_ = false;
-                protocol_runtime_reject_pending_request("auth_unavailable");
-                transition_to(RuntimeState::error);
-                record_feedback(80, 100, false);
-                return;
+        if (!start_local_auth_job(
+                LocalAuthWorkerOperation::authenticate_pin,
+                LocalAuthPurpose::policy_approval,
+                auth_entry_.code(),
+                now_ms)) {
+            clear_entry();
+            protocol_runtime_reject_pending_request("auth_unavailable");
+            transition_to(RuntimeState::error);
+            record_feedback(80, 100, false);
         }
+        return;
     }
 
     if (runtime_state_ == RuntimeState::signing_mode_auth) {
-        const LocalAuthVerifyResult result = local_auth_verify_code(auth_entry_.code(), auth_entry_.length(), now_ms);
-        clear_entry();
-        switch (result) {
-            case LocalAuthVerifyResult::verified:
-                if (signing::store_signing_authorization_mode(pending_signing_mode_)) {
-                    protocol_runtime_invalidate_projected_state_cache();
-                    locally_unlocked_ = true;
-                    transition_to(RuntimeState::idle);
-                    record_feedback(45, 75, false);
-                } else {
-                    protocol_runtime_invalidate_projected_state_cache();
-                    transition_to(RuntimeState::signing_mode_review);
-                    record_feedback(80, 100, false);
-                }
-                return;
-            case LocalAuthVerifyResult::rejected:
-                transition_to(RuntimeState::signing_mode_auth);
-                record_feedback(65, 95, false);
-                return;
-            case LocalAuthVerifyResult::locked:
-                locally_unlocked_ = false;
-                transition_to(RuntimeState::lockout);
-                record_feedback(80, 100, false);
-                return;
-            case LocalAuthVerifyResult::missing:
-                locally_unlocked_ = false;
-                transition_to(RuntimeState::setup_enter);
-                record_feedback(45, 75, false);
-                return;
-            case LocalAuthVerifyResult::invalid:
-            case LocalAuthVerifyResult::storage_error:
-                locally_unlocked_ = false;
-                transition_to(RuntimeState::error);
-                record_feedback(80, 100, false);
-                return;
+        if (!start_local_auth_job(
+                LocalAuthWorkerOperation::authenticate_pin,
+                LocalAuthPurpose::signing_mode_change,
+                auth_entry_.code(),
+                now_ms)) {
+            clear_entry();
+            transition_to(RuntimeState::error);
+            record_feedback(80, 100, false);
         }
+        return;
     }
 
     if (runtime_state_ == RuntimeState::device_reset_auth) {
-        const LocalAuthVerifyResult result = local_auth_verify_code(auth_entry_.code(), auth_entry_.length(), now_ms);
-        clear_entry();
-        switch (result) {
-            case LocalAuthVerifyResult::verified:
-                if (complete_device_reset()) {
-                    locally_unlocked_ = false;
-                    transition_to(RuntimeState::setup_enter);
-                    record_feedback(45, 75, false);
-                } else {
-                    transition_to(RuntimeState::device_reset_review);
-                    record_feedback(80, 100, false);
-                }
-                return;
-            case LocalAuthVerifyResult::rejected:
-                transition_to(RuntimeState::device_reset_auth);
-                record_feedback(65, 95, false);
-                return;
-            case LocalAuthVerifyResult::locked:
-                locally_unlocked_ = false;
-                transition_to(RuntimeState::lockout);
-                record_feedback(80, 100, false);
-                return;
-            case LocalAuthVerifyResult::missing:
-                locally_unlocked_ = false;
-                transition_to(RuntimeState::setup_enter);
-                record_feedback(45, 75, false);
-                return;
-            case LocalAuthVerifyResult::invalid:
-            case LocalAuthVerifyResult::storage_error:
-                locally_unlocked_ = false;
-                transition_to(RuntimeState::error);
-                record_feedback(80, 100, false);
-                return;
+        if (!start_local_auth_job(
+                LocalAuthWorkerOperation::authenticate_pin,
+                LocalAuthPurpose::device_reset,
+                auth_entry_.code(),
+                now_ms)) {
+            clear_entry();
+            transition_to(RuntimeState::error);
+            record_feedback(80, 100, false);
         }
+        return;
     }
 }
 
@@ -1635,6 +1750,10 @@ void RuntimeApp::update_prompt_label()
         case RuntimeState::unlock:
             text = "UNLOCK";
             break;
+        case RuntimeState::auth_processing:
+            text = "CHECKING";
+            color = lv_color_hex(0xB8E3FF);
+            break;
         case RuntimeState::idle:
             text = "IDLE";
             color = lv_color_hex(0x7D8A95);
@@ -1744,6 +1863,9 @@ void RuntimeApp::update_detail_label()
                 color = lv_color_hex(0xB8E3FF);
                 break;
         }
+    } else if (runtime_state_ == RuntimeState::auth_processing) {
+        snprintf(text, sizeof(text), "Please wait");
+        color = lv_color_hex(0xB8E3FF);
     } else if (runtime_state_ == RuntimeState::connect_review) {
         const PendingRequest pending = protocol_runtime_pending_request();
         snprintf(

@@ -1,6 +1,5 @@
 #include "sui_zklogin_signing_service.h"
 
-#include <stdlib.h>
 #include <string.h>
 
 #include "sensitive_memory.h"
@@ -50,33 +49,86 @@ SuiZkLoginSigningResult build_zklogin_signature(
     }
 }
 
-SuiZkLoginSigningResult read_active_credential(SuiZkLoginCredentialRecord* credential)
+struct PersonalMessageSigningContext {
+    const uint8_t* message = nullptr;
+    size_t message_size = 0;
+    uint8_t* signature_out = nullptr;
+    size_t* signature_size_out = nullptr;
+    SuiZkLoginSigningResult result = SuiZkLoginSigningResult::signing_error;
+};
+
+bool sign_personal_message_with_credential(
+    const SuiZkLoginCredentialRecord& credential,
+    void* context_ptr)
 {
-    if (credential == nullptr) {
-        return SuiZkLoginSigningResult::invalid_input;
+    auto* context = static_cast<PersonalMessageSigningContext*>(context_ptr);
+    if (context == nullptr) {
+        return false;
     }
-    const SuiZkLoginCredentialStatus status = read_sui_zklogin_credential(credential);
-    return status == SuiZkLoginCredentialStatus::active
-               ? SuiZkLoginSigningResult::ok
-               : SuiZkLoginSigningResult::account_unavailable;
+    uint8_t secret_key[64] = {};
+    uint8_t public_key[32] = {};
+    uint8_t digest[signing::kSuiPersonalMessageIntentDigestBytes] = {};
+    uint8_t user_signature[signing::kSuiEd25519SignatureBytes] = {};
+    if (microsui_derive_keypair_ed25519(
+            secret_key,
+            public_key,
+            credential.prepared_seed) != 0 ||
+        !signing::build_sui_personal_message_intent_digest(
+            context->message,
+            context->message_size,
+            digest)) {
+        context->result = SuiZkLoginSigningResult::signing_error;
+    } else {
+        microsui_sign_ed25519_from_digest(
+            user_signature,
+            digest,
+            secret_key,
+            public_key);
+        context->result = build_zklogin_signature(
+            credential,
+            user_signature,
+            context->signature_out,
+            context->signature_size_out);
+    }
+    wipe_sensitive_buffer(secret_key, sizeof(secret_key));
+    wipe_sensitive_buffer(public_key, sizeof(public_key));
+    wipe_sensitive_buffer(digest, sizeof(digest));
+    wipe_sensitive_buffer(user_signature, sizeof(user_signature));
+    return true;
 }
 
-SuiZkLoginCredentialRecord* allocate_credential_record()
-{
-    SuiZkLoginCredentialRecord* credential =
-        static_cast<SuiZkLoginCredentialRecord*>(malloc(sizeof(SuiZkLoginCredentialRecord)));
-    if (credential != nullptr) {
-        memset(credential, 0, sizeof(*credential));
-    }
-    return credential;
-}
+struct TransactionSigningContext {
+    const uint8_t* tx_bytes = nullptr;
+    size_t tx_bytes_size = 0;
+    uint8_t* signature_out = nullptr;
+    size_t* signature_size_out = nullptr;
+    SuiZkLoginSigningResult result = SuiZkLoginSigningResult::signing_error;
+};
 
-void wipe_and_free_credential_record(SuiZkLoginCredentialRecord* credential)
+bool sign_transaction_with_credential(
+    const SuiZkLoginCredentialRecord& credential,
+    void* context_ptr)
 {
-    if (credential != nullptr) {
-        wipe_sensitive_buffer(credential, sizeof(*credential));
-        free(credential);
+    auto* context = static_cast<TransactionSigningContext*>(context_ptr);
+    if (context == nullptr) {
+        return false;
     }
+    uint8_t user_signature[signing::kSuiEd25519SignatureBytes] = {};
+    if (microsui_sign_ed25519(
+            user_signature,
+            context->tx_bytes,
+            context->tx_bytes_size,
+            credential.prepared_seed) != 0) {
+        context->result = SuiZkLoginSigningResult::signing_error;
+    } else {
+        context->result = build_zklogin_signature(
+            credential,
+            user_signature,
+            context->signature_out,
+            context->signature_size_out);
+    }
+    wipe_sensitive_buffer(user_signature, sizeof(user_signature));
+    return true;
 }
 
 }  // namespace
@@ -99,50 +151,20 @@ SuiZkLoginSigningResult sign_sui_zklogin_personal_message(
         return SuiZkLoginSigningResult::invalid_input;
     }
 
-    SuiZkLoginCredentialRecord* credential = allocate_credential_record();
-    if (credential == nullptr) {
-        return SuiZkLoginSigningResult::signing_error;
-    }
-    const SuiZkLoginSigningResult credential_result = read_active_credential(credential);
-    if (credential_result != SuiZkLoginSigningResult::ok) {
-        wipe_and_free_credential_record(credential);
-        return credential_result;
-    }
-
-    uint8_t secret_key[64] = {};
-    uint8_t public_key[32] = {};
-    uint8_t digest[signing::kSuiPersonalMessageIntentDigestBytes] = {};
-    uint8_t user_signature[signing::kSuiEd25519SignatureBytes] = {};
-    if (microsui_derive_keypair_ed25519(
-            secret_key,
-            public_key,
-            credential->prepared_seed) != 0 ||
-        !signing::build_sui_personal_message_intent_digest(message, message_size, digest)) {
-        wipe_sensitive_buffer(secret_key, sizeof(secret_key));
-        wipe_sensitive_buffer(public_key, sizeof(public_key));
-        wipe_sensitive_buffer(digest, sizeof(digest));
-        wipe_sensitive_buffer(user_signature, sizeof(user_signature));
-        wipe_and_free_credential_record(credential);
-        return SuiZkLoginSigningResult::signing_error;
-    }
-
-    microsui_sign_ed25519_from_digest(
-        user_signature,
-        digest,
-        secret_key,
-        public_key);
-    const SuiZkLoginSigningResult envelope_result =
-        build_zklogin_signature(
-            *credential,
-            user_signature,
-            signature_out,
-            signature_size_out);
-    wipe_sensitive_buffer(secret_key, sizeof(secret_key));
-    wipe_sensitive_buffer(public_key, sizeof(public_key));
-    wipe_sensitive_buffer(digest, sizeof(digest));
-    wipe_sensitive_buffer(user_signature, sizeof(user_signature));
-    wipe_and_free_credential_record(credential);
-    return envelope_result;
+    PersonalMessageSigningContext context{
+        message,
+        message_size,
+        signature_out,
+        signature_size_out,
+        SuiZkLoginSigningResult::signing_error,
+    };
+    const SuiZkLoginCredentialAccessResult access =
+        with_sui_zklogin_credential(
+            sign_personal_message_with_credential,
+            &context);
+    return access == SuiZkLoginCredentialAccessResult::consumed
+        ? context.result
+        : SuiZkLoginSigningResult::account_unavailable;
 }
 
 SuiZkLoginSigningResult sign_sui_zklogin_transaction(
@@ -163,32 +185,20 @@ SuiZkLoginSigningResult sign_sui_zklogin_transaction(
         return SuiZkLoginSigningResult::invalid_input;
     }
 
-    SuiZkLoginCredentialRecord* credential = allocate_credential_record();
-    if (credential == nullptr) {
-        return SuiZkLoginSigningResult::signing_error;
-    }
-    const SuiZkLoginSigningResult credential_result = read_active_credential(credential);
-    if (credential_result != SuiZkLoginSigningResult::ok) {
-        wipe_and_free_credential_record(credential);
-        return credential_result;
-    }
-
-    uint8_t user_signature[signing::kSuiEd25519SignatureBytes] = {};
-    if (microsui_sign_ed25519(user_signature, tx_bytes, tx_bytes_size, credential->prepared_seed) != 0) {
-        wipe_sensitive_buffer(user_signature, sizeof(user_signature));
-        wipe_and_free_credential_record(credential);
-        return SuiZkLoginSigningResult::signing_error;
-    }
-
-    const SuiZkLoginSigningResult envelope_result =
-        build_zklogin_signature(
-            *credential,
-            user_signature,
-            signature_out,
-            signature_size_out);
-    wipe_sensitive_buffer(user_signature, sizeof(user_signature));
-    wipe_and_free_credential_record(credential);
-    return envelope_result;
+    TransactionSigningContext context{
+        tx_bytes,
+        tx_bytes_size,
+        signature_out,
+        signature_size_out,
+        SuiZkLoginSigningResult::signing_error,
+    };
+    const SuiZkLoginCredentialAccessResult access =
+        with_sui_zklogin_credential(
+            sign_transaction_with_credential,
+            &context);
+    return access == SuiZkLoginCredentialAccessResult::consumed
+        ? context.result
+        : SuiZkLoginSigningResult::account_unavailable;
 }
 
 const char* sui_zklogin_signing_result_name(SuiZkLoginSigningResult result)

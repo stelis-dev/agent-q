@@ -10,10 +10,11 @@ Sui zkLogin proof-bootstrap slice, and the Sui signing/policy slice:
 - `get_status` with shared status projection for first-run setup,
   local-authentication lock, neutral idle, active zkLogin proof, and error
   states;
-- rotary telephone-style touch passcode setup and unlock with the current
-  four-slot layout and a visible rotating digit ring on the round display;
-- persistent local-authentication verifier with persistent failed-attempt count
-  and time lock;
+- rotary telephone-style touch PIN setup and unlock with a one-to-four-digit
+  policy, four slots, and a visible rotating digit ring on the round display;
+- a PIN-wrapped random master key, authenticated encrypted zkLogin credential
+  and local-transport identity records, and separate non-secret persistent
+  failed-attempt and time-lock metadata;
 - neutral idle with a centered `IDLE` label after successful local
   authentication;
 - USB `connect` approval, Firmware sessions, same-link session recovery,
@@ -81,10 +82,23 @@ as a build input.
 
 ## Flash
 
+The current encrypted-keystore layout has no compatibility reader or migration
+from an earlier StopWatch storage layout. Before flashing it over an older
+development image, erase the whole flash and complete device-local setup again.
+Do not use a normal flash as an upgrade path from an older layout.
+
 After building, flash with ESP-IDF against the generated checkout and build
 directory:
 
 ```bash
+FIRMWARE_IDF_PATH=/path/to/esp-idf-v5.5.4 \
+  firmware/tools/stopwatch-esp32s3/with-idf.sh \
+  idf.py \
+    -C .firmware-cache/stopwatch-esp32s3/M5StopWatch-UserDemo \
+    -B .firmware-cache/stopwatch-esp32s3/M5StopWatch-UserDemo/build-stopwatch-esp32s3 \
+    -p /dev/cu.usbmodemXXXX \
+    erase-flash
+
 FIRMWARE_IDF_PATH=/path/to/esp-idf-v5.5.4 \
   firmware/tools/stopwatch-esp32s3/with-idf.sh \
   idf.py \
@@ -119,10 +133,11 @@ Firmware protocol method or app-owned product state transition.
 ## Boundary
 
 This target keeps display, touch, buttons, vibration, power behavior, physical
-USB integration, BLE memory buffers, identity-storage layout and configuration,
-QR composition, credential storage, proposal state, reset composition, and
-hardware glue target-local. The parameterized NVS identity-storage mechanism,
-BLE peripheral, encrypted carrier, and pairing state process are shared
+USB integration, BLE memory buffers, encrypted-record composition and storage
+names, the measured fixed KDF profile, QR composition, credential shape,
+proposal state, reset composition, and hardware glue target-local. The
+encrypted-keystore process, NVS storage operations, callback-scoped identity
+store, BLE peripheral, encrypted carrier, and pairing state process are shared
 Firmware owners.
 Protocol method and error rows are shared through
 `firmware/src/common/protocol/device_contract.{h,cpp}`. Protocol version,

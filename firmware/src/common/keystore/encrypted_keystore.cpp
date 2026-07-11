@@ -142,19 +142,6 @@ bool memory_ranges_overlap(
            second_start < first_start + first_size;
 }
 
-bool pin_shape_valid(const char* pin)
-{
-    if (pin == nullptr) {
-        return false;
-    }
-    for (size_t index = 0; index < kKeystorePinDigits; ++index) {
-        if (pin[index] < '0' || pin[index] > '9') {
-            return false;
-        }
-    }
-    return pin[kKeystorePinDigits] == '\0';
-}
-
 bool kdf_work_area_valid(
     const EncryptedKeystoreConfig& config,
     const void* work_area,
@@ -171,9 +158,14 @@ bool kdf_inputs_valid(
     const EncryptedKeystoreConfig& config,
     const char* pin,
     const void* work_area,
-    size_t work_area_size)
+    size_t work_area_size,
+    size_t* pin_length = nullptr)
 {
-    return pin_shape_valid(pin) &&
+    return keystore_pin_valid(
+               pin,
+               config.minimum_pin_digits,
+               config.maximum_pin_digits,
+               pin_length) &&
            kdf_work_area_valid(config, work_area, work_area_size) &&
            !memory_ranges_overlap(
                pin,
@@ -353,7 +345,7 @@ void wipe_record_scratch(KeystoreRecordScratch* scratch)
 
 bool derive_keys(
     const EncryptedKeystoreConfig& config,
-    char pin[kKeystorePinDigits + 1],
+    char pin[kKeystorePinBufferBytes],
     const uint8_t salt[kKeystoreSaltBytes],
     void* work_area,
     size_t work_area_size,
@@ -361,8 +353,9 @@ bool derive_keys(
     uint8_t confirmation_key[kKeystoreMasterKeyBytes])
 {
     uint8_t output[kKdfOutputBytes] = {};
+    size_t pin_length = 0;
     const bool ok = kdf_inputs_valid(
-        config, pin, work_area, work_area_size);
+        config, pin, work_area, work_area_size, &pin_length);
     if (ok) {
         const crypto_argon2_config argon_config{
             CRYPTO_ARGON2_ID,
@@ -373,7 +366,7 @@ bool derive_keys(
         const crypto_argon2_inputs inputs{
             reinterpret_cast<const uint8_t*>(pin),
             salt,
-            static_cast<uint32_t>(kKeystorePinDigits),
+            static_cast<uint32_t>(pin_length),
             static_cast<uint32_t>(kKeystoreSaltBytes),
         };
         const crypto_argon2_extras extras{
@@ -393,7 +386,8 @@ bool derive_keys(
             output, sizeof(output),
             kConfirmationKeyLabel, sizeof(kConfirmationKeyLabel) - 1);
     }
-    encrypted_keystore_wipe(pin, pin == nullptr ? 0 : kKeystorePinDigits + 1);
+    encrypted_keystore_wipe(
+        pin, pin == nullptr ? 0 : kKeystorePinBufferBytes);
     encrypted_keystore_wipe(output, sizeof(output));
     encrypted_keystore_wipe(work_area, work_area_size);
     if (!ok) {
@@ -519,13 +513,13 @@ KeystoreBlobReadStatus read_keyslot(
 void wipe_kdf_inputs(char* pin, void* work_area, size_t work_area_size)
 {
     encrypted_keystore_wipe(
-        pin, pin == nullptr ? 0 : kKeystorePinDigits + 1);
+        pin, pin == nullptr ? 0 : kKeystorePinBufferBytes);
     encrypted_keystore_wipe(work_area, work_area_size);
 }
 
 KeystoreOperationStatus open_current_keyslot(
     const EncryptedKeystoreConfig& config,
-    char pin[kKeystorePinDigits + 1],
+    char pin[kKeystorePinBufferBytes],
     void* kdf_work_area,
     size_t kdf_work_area_size,
     uint8_t keyslot[kKeystoreKeyslotBytes],
@@ -749,15 +743,13 @@ bool keystore_kdf_profile_valid(const KeystoreKdfProfile& profile)
            profile.lanes == 1;
 }
 
-bool keystore_pin_valid(const char* pin)
-{
-    return pin_shape_valid(pin);
-}
-
 bool encrypted_keystore_config_valid(const EncryptedKeystoreConfig& config)
 {
     return binding_valid(config.target_label, config.target_label_size) &&
            text_key_valid(config.keyslot_storage_key) &&
+           keystore_pin_policy_valid(
+               config.minimum_pin_digits,
+               config.maximum_pin_digits) &&
            keystore_kdf_profile_valid(config.kdf) &&
            config.storage.read_blob != nullptr &&
            config.storage.write_blob != nullptr &&
@@ -807,7 +799,7 @@ KeystoreState encrypted_keystore_state(const EncryptedKeystore* keystore)
 
 KeystoreOperationStatus encrypted_keystore_create(
     EncryptedKeystore* keystore,
-    char pin[kKeystorePinDigits + 1],
+    char pin[kKeystorePinBufferBytes],
     void* kdf_work_area,
     size_t kdf_work_area_size)
 {
@@ -884,7 +876,7 @@ KeystoreOperationStatus encrypted_keystore_create(
 
 KeystoreOperationStatus encrypted_keystore_unlock(
     EncryptedKeystore* keystore,
-    char pin[kKeystorePinDigits + 1],
+    char pin[kKeystorePinBufferBytes],
     void* kdf_work_area,
     size_t kdf_work_area_size)
 {
@@ -937,7 +929,7 @@ KeystoreOperationStatus encrypted_keystore_unlock(
 
 KeystoreOperationStatus encrypted_keystore_authenticate_pin(
     EncryptedKeystore* keystore,
-    char pin[kKeystorePinDigits + 1],
+    char pin[kKeystorePinBufferBytes],
     void* kdf_work_area,
     size_t kdf_work_area_size)
 {
@@ -999,15 +991,15 @@ KeystoreOperationStatus encrypted_keystore_authenticate_pin(
 
 KeystoreOperationStatus encrypted_keystore_rewrap(
     EncryptedKeystore* keystore,
-    char current_pin[kKeystorePinDigits + 1],
-    char new_pin[kKeystorePinDigits + 1],
+    char current_pin[kKeystorePinBufferBytes],
+    char new_pin[kKeystorePinBufferBytes],
     void* kdf_work_area,
     size_t kdf_work_area_size)
 {
     if (keystore == nullptr) {
         encrypted_keystore_wipe(
             current_pin,
-            current_pin == nullptr ? 0 : kKeystorePinDigits + 1);
+            current_pin == nullptr ? 0 : kKeystorePinBufferBytes);
         wipe_kdf_inputs(new_pin, kdf_work_area, kdf_work_area_size);
         return KeystoreOperationStatus::locked;
     }
@@ -1015,7 +1007,7 @@ KeystoreOperationStatus encrypted_keystore_rewrap(
     if (!operation.acquired()) {
         encrypted_keystore_wipe(
             current_pin,
-            current_pin == nullptr ? 0 : kKeystorePinDigits + 1);
+            current_pin == nullptr ? 0 : kKeystorePinBufferBytes);
         wipe_kdf_inputs(new_pin, kdf_work_area, kdf_work_area_size);
         return KeystoreOperationStatus::busy;
     }
@@ -1026,7 +1018,11 @@ KeystoreOperationStatus encrypted_keystore_rewrap(
             current_pin,
             kdf_work_area,
             kdf_work_area_size) ||
-        !pin_shape_valid(new_pin) ||
+        !keystore_pin_valid(
+            new_pin,
+            state.config->minimum_pin_digits,
+            state.config->maximum_pin_digits,
+            nullptr) ||
         memory_ranges_overlap(
             new_pin,
             new_pin == nullptr ? 0 : kKeystorePinBufferBytes,
@@ -1034,12 +1030,12 @@ KeystoreOperationStatus encrypted_keystore_rewrap(
             kdf_work_area_size) ||
         memory_ranges_overlap(
             current_pin,
-            current_pin == nullptr ? 0 : kKeystorePinDigits + 1,
+            current_pin == nullptr ? 0 : kKeystorePinBufferBytes,
             new_pin,
-            new_pin == nullptr ? 0 : kKeystorePinDigits + 1)) {
+            new_pin == nullptr ? 0 : kKeystorePinBufferBytes)) {
         encrypted_keystore_wipe(
             current_pin,
-            current_pin == nullptr ? 0 : kKeystorePinDigits + 1);
+            current_pin == nullptr ? 0 : kKeystorePinBufferBytes);
         wipe_kdf_inputs(new_pin, kdf_work_area, kdf_work_area_size);
         return state.state == KeystoreState::unlocked
             ? KeystoreOperationStatus::invalid_input

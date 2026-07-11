@@ -18,9 +18,9 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUNTIME_DIR="${REPO_ROOT}/firmware/src/stopwatch-esp32s3/overlay/main/runtime"
+COMMON_DIR="${REPO_ROOT}/firmware/src/common"
 
 for required in \
-  "${RUNTIME_DIR}/local_auth.cpp" \
   "${RUNTIME_DIR}/local_auth.h" \
   "${RUNTIME_DIR}/local_auth_setup_state.cpp" \
   "${RUNTIME_DIR}/local_auth_setup_state.h" \
@@ -61,18 +61,20 @@ int main()
 
     LocalAuthSetupState setup;
     expect(setup.length() == 0, "starts empty");
-    expect(!setup.matches("119", 3), "empty setup cannot match");
+    expect(!setup.matches("1", 1), "empty setup cannot match");
     expect(!setup.set_first_entry("", 0), "rejects empty first entry");
-    expect(!setup.set_first_entry("12345", 5), "rejects overlong first entry");
-    expect(setup.set_first_entry("119", 3), "stores first entry");
-    expect(setup.length() == 3, "stores first length");
-    expect(setup.contains_for_test("119"), "test seam observes first entry before clear");
-    expect(setup.matches("119", 3), "matching second entry accepted");
-    expect(!setup.matches("911", 3), "different second entry rejected");
+    expect(!setup.set_first_entry("12345", 5), "rejects five-digit first entry");
+    expect(setup.set_first_entry("1", 1), "stores one-digit first entry");
+    expect(setup.length() == 1, "stores one-digit length");
+    expect(setup.contains_for_test("1"), "test seam observes first entry before clear");
+    expect(setup.matches("1", 1), "matching one-digit second entry accepted");
+    expect(!setup.matches("2", 1), "different one-digit second entry rejected");
     setup.clear();
     expect(setup.length() == 0, "clear resets first length");
-    expect(!setup.contains_for_test("119"), "clear wipes first entry bytes");
-    expect(!setup.matches("119", 3), "cleared setup cannot match old entry");
+    expect(!setup.contains_for_test("1"), "clear wipes first entry bytes");
+    expect(!setup.matches("1", 1), "cleared setup cannot match old entry");
+    expect(setup.set_first_entry("1234", 4), "stores four-digit first entry");
+    expect(setup.matches("1234", 4), "matching four-digit second entry accepted");
 
     if (failures != 0) {
         fprintf(stderr, "StopWatch local auth setup state tests failed: %d\n", failures);
@@ -87,8 +89,8 @@ CPP
 "${CXX_BIN}" -std=c++17 \
   -DSTOPWATCH_LOCAL_AUTH_HOST_TEST \
   -I"${RUNTIME_DIR}" \
+  -I"${COMMON_DIR}" \
   "${TMP_DIR}/test.cpp" \
-  "${RUNTIME_DIR}/local_auth.cpp" \
   "${RUNTIME_DIR}/local_auth_setup_state.cpp" \
   "${RUNTIME_DIR}/sensitive_memory.cpp" \
   -o "${TMP_DIR}/test_local_auth_setup_state"

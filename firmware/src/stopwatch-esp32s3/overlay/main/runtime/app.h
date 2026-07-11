@@ -9,6 +9,7 @@
 #include "local_auth.h"
 #include "local_auth_entry_state.h"
 #include "local_auth_setup_state.h"
+#include "local_auth_worker.h"
 #include "local_transport_pairing_scene.h"
 #include "clock_scene.h"
 #include "device_reset.h"
@@ -34,6 +35,7 @@ private:
         setup_enter,
         setup_confirm,
         unlock,
+        auth_processing,
         idle,
         local_transport_pairing,
         local_transport_result,
@@ -60,6 +62,16 @@ private:
         failed,
     };
 
+    enum class LocalAuthPurpose {
+        none,
+        setup,
+        unlock,
+        proof_approval,
+        policy_approval,
+        signing_mode_change,
+        device_reset,
+    };
+
     std::unique_ptr<input::KeyManager> key_manager_;
     lv_obj_t* root_ = nullptr;
     lv_obj_t* input_slot_labels_[kLocalAuthMaxDigits] = {};
@@ -80,6 +92,10 @@ private:
     LocalTransportResult local_transport_result_ = LocalTransportResult::none;
     RuntimeState runtime_state_ = RuntimeState::setup_enter;
     bool locally_unlocked_ = false;
+    uint32_t local_auth_job_id_ = 0;
+    uint32_t local_auth_worker_deadline_ms_ = 0;
+    LocalAuthPurpose local_auth_purpose_ = LocalAuthPurpose::none;
+    bool local_auth_cancel_requested_ = false;
     bool previous_external_power_present_ = false;
     LocalAuthEntryState auth_entry_;
     LocalAuthSetupState setup_state_;
@@ -124,6 +140,18 @@ private:
     void cancel_local_transport_carrier();
     void sync_protocol_runtime_state();
     void sync_protocol_runtime_state(const LocalAuthSnapshot& snapshot);
+    bool start_local_auth_job(
+        LocalAuthWorkerOperation operation,
+        LocalAuthPurpose purpose,
+        const char* pin,
+        uint32_t now_ms);
+    void poll_local_auth_worker(uint32_t now_ms);
+    void finish_local_auth_worker_result(
+        const LocalAuthWorkerResult& result,
+        uint32_t now_ms);
+    void clear_local_auth_job();
+    void lock_local_auth();
+    bool unlocked_material_valid();
     void relock();
     void clear_entry();
     void clear_auth_scratch();

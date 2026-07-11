@@ -37,11 +37,68 @@ cat >"${TMP_DIR}/sui_zklogin_signing_service_test.cpp" <<'CPP'
 #include <stdio.h>
 #include <string.h>
 
+#include <vector>
+
+#include "stopwatch_keystore.h"
 #include "sui_zklogin_credential_store.h"
 #include "sui_zklogin_signing_service.h"
 
 using namespace signing;
 using namespace stopwatch_target;
+
+namespace stopwatch_target {
+
+std::vector<uint8_t> g_test_credential_blob;
+KeystoreState g_test_keystore_state = KeystoreState::unlocked;
+
+KeystoreState stopwatch_keystore_state()
+{
+    return g_test_keystore_state;
+}
+
+KeystoreOperationStatus stopwatch_keystore_credential_status()
+{
+    return g_test_credential_blob.empty()
+        ? KeystoreOperationStatus::missing
+        : KeystoreOperationStatus::success;
+}
+
+KeystoreOperationStatus stopwatch_keystore_with_credential(
+    KeystoreRecordConsumer consumer,
+    void* consumer_context)
+{
+    if (g_test_keystore_state != KeystoreState::unlocked) {
+        return KeystoreOperationStatus::locked;
+    }
+    if (g_test_credential_blob.empty()) {
+        return KeystoreOperationStatus::missing;
+    }
+    if (consumer == nullptr) {
+        return KeystoreOperationStatus::invalid_input;
+    }
+    return consumer(
+               g_test_credential_blob.data(),
+               g_test_credential_blob.size(),
+               consumer_context)
+        ? KeystoreOperationStatus::success
+        : KeystoreOperationStatus::consumer_failed;
+}
+
+KeystoreOperationStatus stopwatch_keystore_replace_credential(
+    const uint8_t* plaintext,
+    size_t plaintext_size)
+{
+    if (g_test_keystore_state != KeystoreState::unlocked) {
+        return KeystoreOperationStatus::locked;
+    }
+    if (plaintext == nullptr || plaintext_size == 0) {
+        return KeystoreOperationStatus::invalid_input;
+    }
+    g_test_credential_blob.assign(plaintext, plaintext + plaintext_size);
+    return KeystoreOperationStatus::success;
+}
+
+}  // namespace stopwatch_target
 
 namespace {
 
@@ -120,7 +177,8 @@ void fill(uint8_t* output, size_t size, uint8_t value)
 
 int main()
 {
-    sui_zklogin_credential_test_reset_store();
+    g_test_credential_blob.clear();
+    g_test_keystore_state = KeystoreState::unlocked;
 
     uint8_t signature[signing::kSuiSignatureEnvelopeMaxBytes] = {};
     size_t signature_size = 999;
@@ -158,6 +216,20 @@ int main()
     assert(signature_size > signing::kSuiEd25519SignatureBytes);
     assert(signature[0] == signing::kSuiSignatureSchemeFlagZkLogin);
 
+    g_test_keystore_state = KeystoreState::locked;
+    fill(signature, sizeof(signature), 0xff);
+    signature_size = 123;
+    assert(sign_sui_zklogin_transaction(
+               tx_bytes,
+               sizeof(tx_bytes),
+               signature,
+               &signature_size) == SuiZkLoginSigningResult::account_unavailable);
+    assert(signature_size == 0);
+    for (size_t index = 0; index < sizeof(signature); ++index) {
+        assert(signature[index] == 0);
+    }
+    g_test_keystore_state = KeystoreState::unlocked;
+
     uint8_t digest[signing::kSuiPersonalMessageIntentDigestBytes] = {};
     assert(signing::build_sui_personal_message_intent_digest(message, sizeof(message), digest));
     uint8_t zero_digest[signing::kSuiPersonalMessageIntentDigestBytes] = {};
@@ -193,7 +265,6 @@ CPP
   -o "${TMP_DIR}/monocypher.o"
 
 "${CXX_BIN}" -std=c++17 -Wall -Wextra -Werror \
-  -DSTOPWATCH_ZKLOGIN_CREDENTIAL_STORE_HOST_TEST \
   -I"${RUNTIME_DIR}" \
   -I"${COMMON_DIR}" \
   -I"${MICROSUI_CORE}" \

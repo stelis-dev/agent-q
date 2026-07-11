@@ -2,18 +2,13 @@
 
 #include "esp_attr.h"
 #include "secure_random.h"
+#include "stopwatch_keystore.h"
 #include "transport/local_transport_identity_store.h"
 #include "transport/local_transport_mbedtls_crypto.h"
 #include "transport/local_transport_nimble_pairing_session.h"
-#include "transport/local_transport_nvs_identity_storage.h"
 
 namespace stopwatch_target {
 namespace {
-
-constexpr const char* kTag = "StopWatchPairing";
-constexpr const char* kIdentityNamespace = "pairing_id";
-constexpr const char* kIdentityPrivateKey = "static_priv";
-constexpr const char* kIdentityPublicKey = "static_pub";
 
 LocalTransportRequestHandler g_request_handler = nullptr;
 bool g_event_pending = false;
@@ -43,23 +38,10 @@ const signing::LocalTransportCryptoOps& crypto_ops()
     return ops;
 }
 
-const signing::LocalTransportIdentityStorageOps& identity_storage_ops()
-{
-    static const signing::LocalTransportNvsIdentityStorageConfig config{
-        kIdentityNamespace,
-        kIdentityPrivateKey,
-        kIdentityPublicKey,
-        kTag,
-    };
-    static const signing::LocalTransportIdentityStorageOps ops =
-        signing::local_transport_nvs_identity_storage_ops(&config);
-    return ops;
-}
-
 const signing::LocalTransportIdentityStoreOps& identity_store_ops()
 {
     static const signing::LocalTransportIdentityStoreOps ops{
-        identity_storage_ops(),
+        stopwatch_transport_identity_storage_ops(),
         &crypto_ops(),
     };
     return ops;
@@ -144,11 +126,6 @@ bool local_transport_pairing_established()
 bool local_transport_pairing_connected()
 {
     return signing::local_transport_ble_connected();
-}
-
-bool local_transport_pairing_wipe_identity()
-{
-    return signing::local_transport_identity_wipe(identity_store_ops());
 }
 
 bool local_transport_pairing_take_event(signing::LocalTransportPairingEvent* event)
