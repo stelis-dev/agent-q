@@ -491,6 +491,29 @@ first use and state what they do and do not mean.
 
 When asked for a review, prioritize defect discovery.
 
+Review the affected boundary in this order:
+
+1. Define the correctness model first: responsibilities, invariants, allowed
+   state transitions, points at which changes become durable or externally
+   visible, terminal outcomes, rollback behavior where rollback is possible,
+   failure outcomes, recovery, and cleanup. Rigor means establishing whether
+   this model resists an adversarial path; it does not mean reading every
+   function or counting files.
+2. Derive boundary and adversarial checks from that model. Inspect malformed
+   input, parameter combinations, individual and aggregate size limits, numeric
+   limits, stale state, concurrency, cancellation, deadlines, ambiguous
+   outcomes such as lost responses, storage and memory limits, and error
+   precedence where they apply.
+3. Audit the tests independently. Do not accept a test as proof of the complete
+   boundary when it uses test-only production behavior, derives its oracle from
+   the implementation under test, bypasses production composition, manipulates
+   the outcome, or verifies only isolated components.
+
+Every layer is required. Boundary checks do not replace structural reasoning,
+and structural reasoning does not replace boundary checks. A counterexample
+that exposes an incomplete or incorrect correctness model must update that model
+and its checks.
+
 - Report findings first, ordered by severity.
 - Cite file and line evidence for each finding.
 - Check actual behavior instead of trusting comments or docs.
@@ -510,6 +533,27 @@ When asked for a review, prioritize defect discovery.
   demonstrably insufficient.
 - Do not duplicate logic, protocol metadata, parsers, policy checks, or SDK
   behavior without a clear reason.
+
+### Shared Process Ownership
+
+- When more than one code path performs the same ordered operation with the same
+  responsibilities, invariants, lifecycle, points at which changes become
+  durable or externally visible, terminal outcomes, failure behavior, and
+  cleanup requirements, implement that operation through one owner.
+- Sharing utility functions is not sufficient when each caller still controls
+  the order, validation, state changes, durable or externally visible effects,
+  terminal outcomes, error handling, recovery, or cleanup.
+- Pass caller-specific data and external dependencies as inputs. Do not make
+  callers configure, bypass, reorder, or reproduce the shared operation's
+  internal rules.
+- Repeated syntax alone is not evidence of a shared process. Keep operations
+  separate when they have different responsibilities, state lifecycles, commit
+  or rollback behavior, points at which changes become durable or externally
+  visible, terminal outcomes, failure meanings, trust boundaries, or
+  independent verification purposes.
+- Do not create a generic wrapper merely to remove repeated code. A wrapper
+  that only forwards calls or delegates its internal decisions back to callbacks
+  does not provide shared process ownership.
 - Do not hardcode values to bypass real validation, protocol checks, or product
   boundaries.
 - Do not add temporary branches solely to satisfy one failing case.
@@ -669,7 +713,22 @@ Project-specific rules:
   transitions once their contract is proven. Target directories may compose
   those common state modules with target-specific UI, power behavior, storage
   adapters, identity adapters, and signing-material adapters, but must not keep
-  a forked internal state machine for the same product operation.
+  a forked internal state machine for the same product operation. This is the
+  management baseline across Firmware targets: do not accumulate parallel
+  target-local implementations of the same product process merely because each
+  one works on its current hardware.
+- When two targets share a product process, promote the process and its state
+  transition rules as one common owner. Do not treat coincidentally identical
+  helper functions or repeated code as the unit of reuse. Promote a process
+  only when its sequence, guards, error precedence, cleanup, and responsibility
+  boundary have the same product meaning. For that proven shared process, the
+  common owner retains its internal transition and policy decisions. Target
+  adapters supply only external facts or actions that do not change the
+  operation's meaning, through explicit inputs, callbacks, or a bounded
+  configuration structure; they must not reconstruct or override shared
+  decisions. Keep a genuinely different hardware procedure explicit at its
+  target boundary. Do not add wrappers merely to make separate flows look
+  shared, and do not hide a behavior fork behind a common function name.
 - Firmware common source names must describe the owned responsibility, not the
   first target or transport that happened to use it. Do not use target,
   transport, display, touch, button, haptic, power, or board-specific names in
