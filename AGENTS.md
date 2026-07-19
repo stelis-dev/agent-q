@@ -219,6 +219,28 @@ has been implemented, but they must not create a middle success state for the
 unit. Do not use percentages, partial-pass language, or "mostly done" wording as
 a completion judgment.
 
+### Dependency Order And Work Units
+
+- A review boundary is observational. Removing it from a plan must not change
+  the planned production structure or behavior.
+- A work unit must leave its production structure and behavior in the final
+  task output. Do not introduce a transitional result merely to create a review
+  boundary. If later evidence requires deleting, replacing, or bypassing that
+  result, the unit remains `0`. Stop, record the plan conflict and alternatives,
+  and implement the correction only under an accepted replacement baseline.
+
+### Parallel Work
+
+- Parallelize only work whose results commute: every participant uses the same
+  fixed snapshot, has no dependency on another participant, owns a disjoint
+  write and decision surface, and produces the same integrated result regardless
+  of completion order.
+- One integrator reconciles the complete batch before the shared snapshot or
+  plan changes. Architecture decisions, plan editing, and dependency-connected
+  implementation remain sequential.
+- A changed shared premise invalidates every dependent parallel result. Recheck
+  it against the new snapshot; do not append stale findings in arrival order.
+
 For non-trivial work:
 
 1. State the current task goal.
